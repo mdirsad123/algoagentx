@@ -1,0 +1,2 @@
+Company,Annoucement_Time,Final_Sentiment,Chart_Pattern,ML_Prediction,ML_Confidence,Success_Chance,Trade_Execute_Or_Not,Fii_Dii_BUYING
+DOLLAR,04-Jul-2025 12:32:42,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.7467,85.33,yes,Fill Dii buy >30cr

@@ -1,0 +1,6 @@
+Company,Annoucement_Time,Final_Sentiment,Chart_Pattern,ML_Prediction,ML_Confidence,Success_Chance,Trade_Execute_Or_Not,Fii_Dii_BUYING
+JBCHEPHARM,30-Jun-2025 13:33:43,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.6,80.0,no,Fill Dii buy >30cr
+VSTIND,30-Jun-2025 19:07:48,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.82,88.0,yes,Fill Dii buy >30cr
+KPIL,30-Jun-2025 18:24:17,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.6333,81.21,yes,Fill Dii buy >30cr
+SMCGLOBAL,30-Jun-2025 20:43:52,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.6,80.0,yes,Fill Dii buy >30cr
+SMCGLOBAL,30-Jun-2025 20:42:02,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.6,80.0,yes,Fill Dii buy >30cr

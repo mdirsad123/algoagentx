@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: algoagentx-postgres
+    environment:
+      POSTGRES_DB: algo_db
+      POSTGRES_USER: algo_user
+      POSTGRES_PASSWORD: algo_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U algo_user -d algo_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - algoagentx-network
+
+  # Redis for Celery
+  redis:
+    image: redis:7-alpine
+    container_name: algoagentx-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - algoagentx-network
+
+  # Backend API
+  api:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile
+    container_name: algoagentx-api
+    env_file:
+      - ./AlgoAgentXAPI/.env.prod
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./AlgoAgentXAPI:/app
+    networks:
+      - algoagentx-network
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./AlgoAgentXApp
+      dockerfile: Dockerfile
+    container_name: algoagentx-frontend
+    env_file:
+      - ./AlgoAgentXApp/.env.production
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    networks:
+      - algoagentx-network
+    restart: unless-stopped
+
+  # Celery Worker
+  celery-worker:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile
+    container_name: algoagentx-celery
+    command: celery -A app.celery_app worker --loglevel=info
+    env_file:
+      - ./AlgoAgentXAPI/.env.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./AlgoAgentXAPI:/app
+    networks:
+      - algoagentx-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  algoagentx-network:
+    driver: bridge

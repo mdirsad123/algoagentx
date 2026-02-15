@@ -1,0 +1,41 @@
+"use client";
+
+import { useFetcher } from "@/hooks/use-query";
+import { ThreeDots } from "react-loader-spinner";
+import { Button } from "@/components/ui/button";
+import { useRouter } from "next/navigation";
+import VehicleTable from "../components/vehicle-table";
+
+export default function Page() {
+  const { data, isLoading } = useFetcher("/vehicle/list", "vehicleList");
+  const router = useRouter();
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center">
+        <section className="p-5">
+          <ThreeDots height="80" width="80" color="#4fa94d" />
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* <div className="flex items-center justify-between p-4 border-b bg-white">
+        <h1 className="text-2xl font-semibold text-gray-800">Vehicle List</h1>
+
+        <Button
+          className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700"
+          onClick={() => router.push("/master/vehicle/new")}
+        >
+          + Add Vehicle
+        </Button>
+      </div> */}
+
+      <div>
+        <VehicleTable vehicleList={data?.data || []} />
+      </div>
+    </>
+  );
+}

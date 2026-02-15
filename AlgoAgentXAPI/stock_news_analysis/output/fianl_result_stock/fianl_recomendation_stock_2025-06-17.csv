@@ -1,0 +1,6 @@
+Company,Annoucement_Time,Final_Sentiment,Chart_Pattern,ML_Prediction,ML_Confidence,Success_Chance,Trade_Execute_Or_Not,Fii_Dii_BUYING
+GODREJPROP,17-Jun-2025 06:36:53,Positive,"Resistance Breakout, Volume Spike",HOLD / SELL,0.41,58.18,yes,Fill Dii buy >30cr
+INOXINDIA,17-Jun-2025 10:57:57,Positive,"Resistance Breakout, Volume Spike",HOLD / SELL,0.48,58.18,yes,Fill Dii buy >30cr
+INOXINDIA,17-Jun-2025 10:51:54,Positive,"Resistance Breakout, Volume Spike",HOLD / SELL,0.48,58.18,yes,Fill Dii buy >30cr
+GILLETTE,17-Jun-2025 10:51:26,Positive,"Resistance Breakout, Volume Spike",HOLD / SELL,0.12,58.18,yes,Fill Dii buy >30cr
+DRCSYSTEMS,17-Jun-2025 12:56:20,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.9067,91.15,yes,

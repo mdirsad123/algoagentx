@@ -1,0 +1,3 @@
+Company,Annoucement_Time,Final_Sentiment,Chart_Pattern,ML_Prediction,ML_Confidence,Success_Chance,Trade_Execute_Or_Not,Fii_Dii_BUYING
+JITFINFRA,23-Jun-2025 12:58:04,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.8133,87.76,yes,Fill Dii buy >30cr
+

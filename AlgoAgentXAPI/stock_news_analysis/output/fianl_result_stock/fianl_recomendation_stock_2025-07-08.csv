@@ -1,0 +1,5 @@
+Company,Annoucement_Time,Final_Sentiment,Chart_Pattern,ML_Prediction,ML_Confidence,Success_Chance,Trade_Execute_Or_Not,Fii_Dii_BUYING
+ADANIPOWER,08-Jul-2025 08:28:08,Positive,"Resistance Breakout, Volume Spike",HOLD / SELL,0.4333,58.18,yes,Fill Dii buy >30cr
+LICI,08-Jul-2025 18:52:55,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.72,84.36,yes,Fill Dii buy >30cr
+OLAELEC,08-Jul-2025 15:47:44,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.6133,80.48,yes,Fill Dii buy >30cr
+PRECAM,08-Jul-2025 19:45:39,Positive,Resistance Breakout,STRONG BUY,0.5533,54.67,yes,Fill Dii buy >30cr

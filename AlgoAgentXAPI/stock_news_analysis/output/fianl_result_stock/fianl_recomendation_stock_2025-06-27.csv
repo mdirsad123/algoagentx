@@ -1,0 +1,3 @@
+Company,Annoucement_Time,Final_Sentiment,Chart_Pattern,ML_Prediction,ML_Confidence,Success_Chance,Trade_Execute_Or_Not,Fii_Dii_BUYING
+CENTURYPLY,https://www.bseindia.com/xml-data/corpfiling/AttachLive/2e67671c-77a9-4ee9-ac79-a97e38e529d2.pdf,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.52,77.09,yes,Fill Dii buy >30cr
+ITC,27-Jun-2025 15:12:41,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.56,78.55,yes,

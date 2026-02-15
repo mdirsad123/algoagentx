@@ -1,0 +1,726 @@
+2026-01-10 00:16:55,104 - INFO - EXECUTION MODE: Data will be inserted into database
+2026-01-10 00:16:55,330 - INFO - Instrument found: BTCUSD (1)
+2026-01-10 00:16:55,331 - INFO - Reading CSV: data/raw/BTCUSD_5M_1Year.csv
+2026-01-10 00:16:55,732 - INFO - Processing 833 records
+2026-01-10 00:16:55,747 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2025-12-24 02:40:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (1, '5m', Timestamp('2025-12-24 02:40:00'), Timestamp('2025-12-27 00:00:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:16:55,749 - INFO - 
+==================================================
+2026-01-10 00:16:55,749 - INFO - MIGRATION RESULTS
+2026-01-10 00:16:55,749 - INFO - ==================================================
+2026-01-10 00:16:55,749 - INFO - Instrument: BTCUSD
+2026-01-10 00:16:55,749 - INFO - Timeframe: 5m
+2026-01-10 00:16:55,750 - INFO - Total Records: 0
+2026-01-10 00:16:55,750 - INFO - Success Count: 0
+2026-01-10 00:16:55,750 - INFO - Status: success
+2026-01-10 00:16:55,750 - INFO - ==================================================
+2026-01-10 00:20:07,413 - INFO - EXECUTION MODE: Data will be inserted into database
+2026-01-10 00:20:07,741 - INFO - Instrument found: BTCUSD (1)
+2026-01-10 00:20:07,741 - INFO - Reading CSV: data/raw/BTCUSD_5M_1Year.csv
+2026-01-10 00:20:07,781 - INFO - Processing 833 records
+2026-01-10 00:20:07,987 - INFO - Inserted chunk 1: 833 records
+2026-01-10 00:20:07,995 - INFO - Successfully inserted 833/833 records
+2026-01-10 00:20:07,997 - INFO - 
+==================================================
+2026-01-10 00:20:07,997 - INFO - MIGRATION RESULTS
+2026-01-10 00:20:07,997 - INFO - ==================================================
+2026-01-10 00:20:07,997 - INFO - Instrument: BTCUSD
+2026-01-10 00:20:07,998 - INFO - Timeframe: 5m
+2026-01-10 00:20:07,998 - INFO - Total Records: 833
+2026-01-10 00:20:07,998 - INFO - Success Count: 833
+2026-01-10 00:20:07,998 - INFO - Status: success
+2026-01-10 00:20:07,998 - INFO - ==================================================
+2026-01-10 00:23:53,720 - INFO - ==================================================
+2026-01-10 00:23:53,722 - INFO - Populating strategies...
+2026-01-10 00:23:53,937 - INFO - Strategy already exists: EMA Crossover
+2026-01-10 00:23:53,939 - INFO - Strategy already exists: RSI Strategy
+2026-01-10 00:23:53,941 - INFO - Strategy already exists: SMC Strategy
+2026-01-10 00:23:53,943 - INFO - Strategy already exists: Stock Burner EMA 9-20
+2026-01-10 00:23:53,945 - INFO - Strategy already exists: Trend Continuation TCE
+2026-01-10 00:23:53,950 - INFO - Populating instruments...
+2026-01-10 00:23:54,016 - INFO - Instrument already exists: BTCUSD
+2026-01-10 00:23:54,018 - INFO - Instrument already exists: NIFTY
+2026-01-10 00:23:54,020 - INFO - Instrument already exists: XAUUSD
+2026-01-10 00:23:54,023 - INFO - Populating market data...
+2026-01-10 00:23:54,025 - INFO - Processing: BTCUSD 5m
+2026-01-10 00:23:54,088 - INFO - Instrument found: BTCUSD (1)
+2026-01-10 00:23:54,089 - INFO - Reading CSV: data/raw/BTCUSD_5M_1Year.csv
+2026-01-10 00:23:54,121 - INFO - Processing 833 records
+2026-01-10 00:23:54,174 - WARNING - Data already exists for 1/5m from 2025-12-24 02:40:00+00:00 to 2025-12-27 00:00:00+00:00
+2026-01-10 00:23:54,184 - INFO - Processing: BTCUSD 15m
+2026-01-10 00:23:54,187 - INFO - Instrument found: BTCUSD (1)
+2026-01-10 00:23:54,188 - INFO - Reading CSV: data/raw/BTCUSD_15M_1Year.csv
+2026-01-10 00:23:54,249 - INFO - Processing 33823 records
+2026-01-10 00:23:54,364 - INFO - Inserted chunk 1: 1000 records
+2026-01-10 00:23:54,461 - INFO - Inserted chunk 2: 1000 records
+2026-01-10 00:23:54,572 - INFO - Inserted chunk 3: 1000 records
+2026-01-10 00:23:54,669 - INFO - Inserted chunk 4: 1000 records
+2026-01-10 00:23:54,775 - INFO - Inserted chunk 5: 1000 records
+2026-01-10 00:23:54,876 - INFO - Inserted chunk 6: 1000 records
+2026-01-10 00:23:55,011 - INFO - Inserted chunk 7: 1000 records
+2026-01-10 00:23:55,120 - INFO - Inserted chunk 8: 1000 records
+2026-01-10 00:23:55,234 - INFO - Inserted chunk 9: 1000 records
+2026-01-10 00:23:55,353 - INFO - Inserted chunk 10: 1000 records
+2026-01-10 00:23:55,445 - INFO - Inserted chunk 11: 1000 records
+2026-01-10 00:23:55,544 - INFO - Inserted chunk 12: 1000 records
+2026-01-10 00:23:55,648 - INFO - Inserted chunk 13: 1000 records
+2026-01-10 00:23:55,747 - INFO - Inserted chunk 14: 1000 records
+2026-01-10 00:23:55,838 - INFO - Inserted chunk 15: 1000 records
+2026-01-10 00:23:55,926 - INFO - Inserted chunk 16: 1000 records
+2026-01-10 00:23:56,093 - INFO - Inserted chunk 17: 1000 records
+2026-01-10 00:23:56,203 - INFO - Inserted chunk 18: 1000 records
+2026-01-10 00:23:56,351 - INFO - Inserted chunk 19: 1000 records
+2026-01-10 00:23:56,468 - INFO - Inserted chunk 20: 1000 records
+2026-01-10 00:23:56,607 - INFO - Inserted chunk 21: 1000 records
+2026-01-10 00:23:56,733 - INFO - Inserted chunk 22: 1000 records
+2026-01-10 00:23:56,826 - INFO - Inserted chunk 23: 1000 records
+2026-01-10 00:23:56,932 - INFO - Inserted chunk 24: 1000 records
+2026-01-10 00:23:57,022 - INFO - Inserted chunk 25: 1000 records
+2026-01-10 00:23:57,129 - INFO - Inserted chunk 26: 1000 records
+2026-01-10 00:23:57,270 - INFO - Inserted chunk 27: 1000 records
+2026-01-10 00:23:57,382 - INFO - Inserted chunk 28: 1000 records
+2026-01-10 00:23:57,494 - INFO - Inserted chunk 29: 1000 records
+2026-01-10 00:23:57,612 - INFO - Inserted chunk 30: 1000 records
+2026-01-10 00:23:57,738 - INFO - Inserted chunk 31: 1000 records
+2026-01-10 00:23:57,848 - INFO - Inserted chunk 32: 1000 records
+2026-01-10 00:23:57,994 - INFO - Inserted chunk 33: 1000 records
+2026-01-10 00:23:58,086 - INFO - Inserted chunk 34: 823 records
+2026-01-10 00:23:58,088 - INFO - Successfully inserted 33823/33823 records
+2026-01-10 00:23:58,096 - INFO - Processing: BTCUSD 1h
+2026-01-10 00:23:58,099 - INFO - Instrument found: BTCUSD (1)
+2026-01-10 00:23:58,101 - INFO - Reading CSV: data/raw/BTCUSD_H1_1Year.csv
+2026-01-10 00:23:58,124 - INFO - Processing 8456 records
+2026-01-10 00:23:58,240 - INFO - Inserted chunk 1: 1000 records
+2026-01-10 00:23:58,370 - INFO - Inserted chunk 2: 1000 records
+2026-01-10 00:23:58,508 - INFO - Inserted chunk 3: 1000 records
+2026-01-10 00:23:58,641 - INFO - Inserted chunk 4: 1000 records
+2026-01-10 00:23:58,773 - INFO - Inserted chunk 5: 1000 records
+2026-01-10 00:23:58,909 - INFO - Inserted chunk 6: 1000 records
+2026-01-10 00:23:59,041 - INFO - Inserted chunk 7: 1000 records
+2026-01-10 00:23:59,180 - INFO - Inserted chunk 8: 1000 records
+2026-01-10 00:23:59,260 - INFO - Inserted chunk 9: 456 records
+2026-01-10 00:23:59,267 - INFO - Successfully inserted 8456/8456 records
+2026-01-10 00:23:59,274 - INFO - Processing: BTCUSD 1d
+2026-01-10 00:23:59,281 - INFO - Instrument found: BTCUSD (1)
+2026-01-10 00:23:59,283 - INFO - Reading CSV: data/raw/BTCUSD_D1_1Year.csv
+2026-01-10 00:23:59,290 - INFO - Processing 353 records
+2026-01-10 00:23:59,385 - INFO - Inserted chunk 1: 353 records
+2026-01-10 00:23:59,390 - INFO - Successfully inserted 353/353 records
+2026-01-10 00:23:59,394 - INFO - Processing: NIFTY 5m
+2026-01-10 00:23:59,398 - INFO - Instrument found: NIFTY (2)
+2026-01-10 00:23:59,400 - INFO - Reading CSV: data/raw/NIFTY_5M_1Year.csv
+2026-01-10 00:23:59,441 - INFO - Processing 17647 records
+2026-01-10 00:23:59,582 - INFO - Inserted chunk 1: 1000 records
+2026-01-10 00:23:59,725 - INFO - Inserted chunk 2: 1000 records
+2026-01-10 00:23:59,852 - INFO - Inserted chunk 3: 1000 records
+2026-01-10 00:23:59,964 - INFO - Inserted chunk 4: 1000 records
+2026-01-10 00:24:00,070 - INFO - Inserted chunk 5: 1000 records
+2026-01-10 00:24:00,188 - INFO - Inserted chunk 6: 1000 records
+2026-01-10 00:24:00,433 - ERROR - Integrity error in chunk 7: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-05-19 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-05-16 14:50:00+0000', tz='UTC'), 25011.05, 25019.45, 25008.35, 25013.1, 0.0), (2, '5m', Timestamp('2025-05-16 14:55:00+0000', tz='UTC'), 25013.4, 25016.5, 25005.3, 25011.9, 0.0), (2, '5m', Timestamp('2025-05-16 15:00:00+0000', tz='UTC'), 25012.3, 25027.7, 25011.65, 25023.25, 0.0), (2, '5m', Timestamp('2025-05-16 15:05:00+0000', tz='UTC'), 25023.65, 25032.9, 25020.05, 25032.9, 0.0), (2, '5m', Timestamp('2025-05-16 15:10:00+0000', tz='UTC'), 25033.15, 25034.5, 25023.55, 25024.2, 0.0), (2, '5m', Timestamp('2025-05-16 15:15:00+0000', tz='UTC'), 25025.45, 25025.6, 25015.35, 25017.0, 0.0), (2, '5m', Timestamp('2025-05-16 15:20:00+0000', tz='UTC'), 25017.5, 25018.3, 25010.8, 25015.95, 0.0), (2, '5m', Timestamp('2025-05-16 15:25:00+0000', tz='UTC'), 25015.0, 25018.9, 25002.7, 25013.1, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-06-04 10:20:00+0000', tz='UTC'), 24577.75, 24596.0, 24576.05, 24595.2, 0.0), (2, '5m', Timestamp('2025-06-04 10:25:00+0000', tz='UTC'), 24594.6, 24596.85, 24579.95, 24581.2, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:00,631 - ERROR - Integrity error in chunk 8: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-06-18 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-06-04 10:30:00+0000', tz='UTC'), 24581.65, 24601.1, 24581.65, 24600.45, 0.0), (2, '5m', Timestamp('2025-06-04 10:35:00+0000', tz='UTC'), 24600.1, 24603.25, 24588.6, 24594.4, 0.0), (2, '5m', Timestamp('2025-06-04 10:40:00+0000', tz='UTC'), 24593.8, 24609.6, 24590.95, 24600.8, 0.0), (2, '5m', Timestamp('2025-06-04 10:45:00+0000', tz='UTC'), 24601.25, 24603.8, 24589.25, 24589.7, 0.0), (2, '5m', Timestamp('2025-06-04 10:50:00+0000', tz='UTC'), 24589.4, 24591.7, 24581.65, 24583.0, 0.0), (2, '5m', Timestamp('2025-06-04 10:55:00+0000', tz='UTC'), 24582.75, 24590.9, 24577.05, 24589.0, 0.0), (2, '5m', Timestamp('2025-06-04 11:00:00+0000', tz='UTC'), 24589.1, 24593.15, 24583.8, 24584.85, 0.0), (2, '5m', Timestamp('2025-06-04 11:05:00+0000', tz='UTC'), 24584.95, 24589.25, 24582.8, 24586.45, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-06-20 12:25:00+0000', tz='UTC'), 25003.25, 25003.25, 24979.85, 24981.95, 0.0), (2, '5m', Timestamp('2025-06-20 12:30:00+0000', tz='UTC'), 24981.25, 24988.3, 24964.05, 24966.35, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:00,799 - INFO - Inserted chunk 9: 1000 records
+2026-01-10 00:24:00,929 - ERROR - Integrity error in chunk 10: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-07-18 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-07-09 14:40:00+0000', tz='UTC'), 25478.05, 25479.85, 25463.4, 25469.45, 0.0), (2, '5m', Timestamp('2025-07-09 14:45:00+0000', tz='UTC'), 25469.85, 25470.45, 25454.05, 25458.15, 0.0), (2, '5m', Timestamp('2025-07-09 14:50:00+0000', tz='UTC'), 25456.8, 25462.2, 25424.35, 25446.4, 0.0), (2, '5m', Timestamp('2025-07-09 14:55:00+0000', tz='UTC'), 25446.0, 25461.8, 25443.75, 25461.8, 0.0), (2, '5m', Timestamp('2025-07-09 15:00:00+0000', tz='UTC'), 25462.8, 25476.1, 25460.9, 25475.1, 0.0), (2, '5m', Timestamp('2025-07-09 15:05:00+0000', tz='UTC'), 25476.05, 25480.35, 25473.9, 25476.35, 0.0), (2, '5m', Timestamp('2025-07-09 15:10:00+0000', tz='UTC'), 25477.75, 25483.1, 25476.85, 25478.4, 0.0), (2, '5m', Timestamp('2025-07-09 15:15:00+0000', tz='UTC'), 25479.85, 25482.35, 25469.0, 25470.1, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-07-28 10:20:00+0000', tz='UTC'), 24865.55, 24889.2, 24864.4, 24876.25, 0.0), (2, '5m', Timestamp('2025-07-28 10:25:00+0000', tz='UTC'), 24876.4, 24881.3, 24867.85, 24870.9, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:01,074 - INFO - Inserted chunk 11: 1000 records
+2026-01-10 00:24:01,221 - INFO - Inserted chunk 12: 1000 records
+2026-01-10 00:24:01,343 - ERROR - Integrity error in chunk 13: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-09-16 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-09-04 14:40:00+0000', tz='UTC'), 24731.2, 24779.55, 24729.3, 24771.3, 0.0), (2, '5m', Timestamp('2025-09-04 14:45:00+0000', tz='UTC'), 24771.0, 24771.0, 24751.2, 24763.0, 0.0), (2, '5m', Timestamp('2025-09-04 14:50:00+0000', tz='UTC'), 24762.7, 24771.7, 24727.35, 24734.55, 0.0), (2, '5m', Timestamp('2025-09-04 14:55:00+0000', tz='UTC'), 24735.85, 24777.1, 24735.55, 24744.45, 0.0), (2, '5m', Timestamp('2025-09-04 15:00:00+0000', tz='UTC'), 24743.15, 24757.15, 24733.25, 24734.4, 0.0), (2, '5m', Timestamp('2025-09-04 15:05:00+0000', tz='UTC'), 24734.7, 24746.8, 24728.8, 24736.25, 0.0), (2, '5m', Timestamp('2025-09-04 15:10:00+0000', tz='UTC'), 24736.0, 24743.25, 24714.55, 24718.5, 0.0), (2, '5m', Timestamp('2025-09-04 15:15:00+0000', tz='UTC'), 24719.75, 24729.7, 24708.2, 24728.1, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-09-23 10:20:00+0000', tz='UTC'), 25131.3, 25131.3, 25111.0, 25118.2, 0.0), (2, '5m', Timestamp('2025-09-23 10:25:00+0000', tz='UTC'), 25118.4, 25131.4, 25111.5, 25129.5, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:01,479 - INFO - Inserted chunk 14: 1000 records
+2026-01-10 00:24:01,598 - ERROR - Integrity error in chunk 15: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-10-16 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-10-13 12:35:00+0000', tz='UTC'), 25182.8, 25195.35, 25181.75, 25189.45, 0.0), (2, '5m', Timestamp('2025-10-13 12:40:00+0000', tz='UTC'), 25189.05, 25205.9, 25186.55, 25205.75, 0.0), (2, '5m', Timestamp('2025-10-13 12:45:00+0000', tz='UTC'), 25205.3, 25209.6, 25179.65, 25181.05, 0.0), (2, '5m', Timestamp('2025-10-13 12:50:00+0000', tz='UTC'), 25180.95, 25193.9, 25173.5, 25192.35, 0.0), (2, '5m', Timestamp('2025-10-13 12:55:00+0000', tz='UTC'), 25193.0, 25210.65, 25190.7, 25207.7, 0.0), (2, '5m', Timestamp('2025-10-13 13:00:00+0000', tz='UTC'), 25207.3, 25210.0, 25168.85, 25171.15, 0.0), (2, '5m', Timestamp('2025-10-13 13:05:00+0000', tz='UTC'), 25171.15, 25192.6, 25169.7, 25188.9, 0.0), (2, '5m', Timestamp('2025-10-13 13:10:00+0000', tz='UTC'), 25188.9, 25212.25, 25187.15, 25210.0, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-10-31 13:30:00+0000', tz='UTC'), 25776.6, 25784.2, 25771.0, 25781.75, 0.0), (2, '5m', Timestamp('2025-10-31 13:35:00+0000', tz='UTC'), 25780.85, 25782.95, 25758.7, 25762.6, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:01,745 - INFO - Inserted chunk 16: 1000 records
+2026-01-10 00:24:01,890 - INFO - Inserted chunk 17: 1000 records
+2026-01-10 00:24:01,968 - ERROR - Integrity error in chunk 18: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-12-15 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-12-10 11:35:00+0000', tz='UTC'), 25839.75, 25851.65, 25831.7, 25842.1, 0.0), (2, '5m', Timestamp('2025-12-10 11:40:00+0000', tz='UTC'), 25841.85, 25852.5, 25838.0, 25839.25, 0.0), (2, '5m', Timestamp('2025-12-10 11:45:00+0000', tz='UTC'), 25840.25, 25840.25, 25829.6, 25836.3, 0.0), (2, '5m', Timestamp('2025-12-10 11:50:00+0000', tz='UTC'), 25836.6, 25836.65, 25823.05, 25828.1, 0.0), (2, '5m', Timestamp('2025-12-10 11:55:00+0000', tz='UTC'), 25827.95, 25841.05, 25827.55, 25835.0, 0.0), (2, '5m', Timestamp('2025-12-10 12:00:00+0000', tz='UTC'), 25834.65, 25839.45, 25817.35, 25837.65, 0.0), (2, '5m', Timestamp('2025-12-10 12:05:00+0000', tz='UTC'), 25838.6, 25859.95, 25834.3, 25834.55, 0.0), (2, '5m', Timestamp('2025-12-10 12:10:00+0000', tz='UTC'), 25834.35, 25836.9, 25823.6, 25830.65, 0.0)  ... displaying 10 of 647 total bound parameter sets ...  (2, '5m', Timestamp('2025-12-19 15:20:00+0000', tz='UTC'), 25970.6, 25974.25, 25967.15, 25970.15, 0.0), (2, '5m', Timestamp('2025-12-19 15:25:00+0000', tz='UTC'), 25970.15, 25973.2, 25955.6, 25961.4, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:01,969 - INFO - Successfully inserted 12000/17647 records
+2026-01-10 00:24:01,972 - INFO - Processing: NIFTY 15m
+2026-01-10 00:24:01,975 - INFO - Instrument found: NIFTY (2)
+2026-01-10 00:24:01,977 - INFO - Reading CSV: data/raw/NIFTY_15M_1Year.csv
+2026-01-10 00:24:01,999 - INFO - Processing 5889 records
+2026-01-10 00:24:02,123 - INFO - Inserted chunk 1: 1000 records
+2026-01-10 00:24:02,222 - INFO - Inserted chunk 2: 1000 records
+2026-01-10 00:24:02,315 - ERROR - Integrity error in chunk 3: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-05-19 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-05-16 13:30:00+0000', tz='UTC'), 25029.9, 25031.9, 24997.25, 25001.25, 0.0), (2, '15m', Timestamp('2025-05-16 13:45:00+0000', tz='UTC'), 24999.9, 25020.3, 24994.45, 25014.2, 0.0), (2, '15m', Timestamp('2025-05-16 14:00:00+0000', tz='UTC'), 25014.55, 25032.95, 25010.25, 25019.95, 0.0), (2, '15m', Timestamp('2025-05-16 14:15:00+0000', tz='UTC'), 25019.6, 25025.05, 24999.7, 25003.1, 0.0), (2, '15m', Timestamp('2025-05-16 14:30:00+0000', tz='UTC'), 25002.7, 25019.8, 24992.35, 25014.95, 0.0), (2, '15m', Timestamp('2025-05-16 14:45:00+0000', tz='UTC'), 25014.4, 25019.45, 25005.3, 25011.9, 0.0), (2, '15m', Timestamp('2025-05-16 15:00:00+0000', tz='UTC'), 25012.3, 25034.5, 25011.65, 25024.2, 0.0), (2, '15m', Timestamp('2025-05-16 15:15:00+0000', tz='UTC'), 25025.45, 25025.6, 25002.7, 25013.1, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '15m', Timestamp('2025-07-09 12:30:00+0000', tz='UTC'), 25539.55, 25545.95, 25532.4, 25533.3, 0.0), (2, '15m', Timestamp('2025-07-09 12:45:00+0000', tz='UTC'), 25532.85, 25537.4, 25523.0, 25531.65, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:02,407 - ERROR - Integrity error in chunk 4: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-07-18 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-07-09 13:00:00+0000', tz='UTC'), 25530.95, 25531.85, 25490.5, 25525.4, 0.0), (2, '15m', Timestamp('2025-07-09 13:15:00+0000', tz='UTC'), 25525.15, 25537.8, 25521.8, 25532.5, 0.0), (2, '15m', Timestamp('2025-07-09 13:30:00+0000', tz='UTC'), 25531.55, 25534.55, 25523.5, 25526.55, 0.0), (2, '15m', Timestamp('2025-07-09 13:45:00+0000', tz='UTC'), 25526.15, 25532.55, 25516.85, 25529.85, 0.0), (2, '15m', Timestamp('2025-07-09 14:00:00+0000', tz='UTC'), 25529.95, 25532.1, 25517.6, 25530.3, 0.0), (2, '15m', Timestamp('2025-07-09 14:15:00+0000', tz='UTC'), 25530.25, 25533.2, 25490.75, 25492.05, 0.0), (2, '15m', Timestamp('2025-07-09 14:30:00+0000', tz='UTC'), 25490.5, 25491.05, 25455.15, 25469.45, 0.0), (2, '15m', Timestamp('2025-07-09 14:45:00+0000', tz='UTC'), 25469.85, 25470.45, 25424.35, 25461.8, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '15m', Timestamp('2025-09-04 12:30:00+0000', tz='UTC'), 24775.0, 24819.35, 24774.95, 24819.35, 0.0), (2, '15m', Timestamp('2025-09-04 12:45:00+0000', tz='UTC'), 24819.8, 24837.3, 24809.5, 24833.2, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:02,537 - ERROR - Integrity error in chunk 5: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-09-16 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-09-04 13:00:00+0000', tz='UTC'), 24833.6, 24838.75, 24806.65, 24815.85, 0.0), (2, '15m', Timestamp('2025-09-04 13:15:00+0000', tz='UTC'), 24816.0, 24828.9, 24803.55, 24814.95, 0.0), (2, '15m', Timestamp('2025-09-04 13:30:00+0000', tz='UTC'), 24814.3, 24823.95, 24782.2, 24788.3, 0.0), (2, '15m', Timestamp('2025-09-04 13:45:00+0000', tz='UTC'), 24788.45, 24791.6, 24757.4, 24777.0, 0.0), (2, '15m', Timestamp('2025-09-04 14:00:00+0000', tz='UTC'), 24776.65, 24790.7, 24758.85, 24765.5, 0.0), (2, '15m', Timestamp('2025-09-04 14:15:00+0000', tz='UTC'), 24765.55, 24766.65, 24713.25, 24723.2, 0.0), (2, '15m', Timestamp('2025-09-04 14:30:00+0000', tz='UTC'), 24723.8, 24779.55, 24722.0, 24771.3, 0.0), (2, '15m', Timestamp('2025-09-04 14:45:00+0000', tz='UTC'), 24771.0, 24777.1, 24727.35, 24744.45, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '15m', Timestamp('2025-10-31 11:30:00+0000', tz='UTC'), 25778.1, 25809.55, 25773.7, 25806.25, 0.0), (2, '15m', Timestamp('2025-10-31 11:45:00+0000', tz='UTC'), 25805.25, 25819.8, 25791.35, 25819.8, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:02,633 - ERROR - Integrity error in chunk 6: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-12-15 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-10-31 12:00:00+0000', tz='UTC'), 25818.3, 25834.75, 25796.6, 25798.15, 0.0), (2, '15m', Timestamp('2025-10-31 12:15:00+0000', tz='UTC'), 25797.6, 25811.7, 25781.75, 25787.15, 0.0), (2, '15m', Timestamp('2025-10-31 12:30:00+0000', tz='UTC'), 25786.9, 25807.95, 25779.9, 25791.45, 0.0), (2, '15m', Timestamp('2025-10-31 12:45:00+0000', tz='UTC'), 25790.4, 25806.1, 25784.55, 25794.85, 0.0), (2, '15m', Timestamp('2025-10-31 13:00:00+0000', tz='UTC'), 25793.4, 25816.4, 25790.25, 25800.65, 0.0), (2, '15m', Timestamp('2025-10-31 13:15:00+0000', tz='UTC'), 25799.85, 25809.85, 25773.6, 25777.7, 0.0), (2, '15m', Timestamp('2025-10-31 13:30:00+0000', tz='UTC'), 25776.6, 25784.2, 25758.7, 25765.35, 0.0), (2, '15m', Timestamp('2025-10-31 13:45:00+0000', tz='UTC'), 25764.1, 25782.15, 25753.65, 25775.35, 0.0)  ... displaying 10 of 889 total bound parameter sets ...  (2, '15m', Timestamp('2025-12-19 15:00:00+0000', tz='UTC'), 25959.5, 25973.6, 25945.45, 25969.85, 0.0), (2, '15m', Timestamp('2025-12-19 15:15:00+0000', tz='UTC'), 25968.5, 25974.25, 25955.6, 25961.4, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:02,634 - INFO - Successfully inserted 2000/5889 records
+2026-01-10 00:24:02,637 - INFO - Processing: NIFTY 1h
+2026-01-10 00:24:02,641 - INFO - Instrument found: NIFTY (2)
+2026-01-10 00:24:02,643 - INFO - Reading CSV: data/raw/NIFTY_H1_1Year.csv
+2026-01-10 00:24:02,652 - INFO - Processing 1793 records
+2026-01-10 00:24:02,776 - ERROR - Integrity error in chunk 1: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 1h, 2025-01-21 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '1h', Timestamp('2024-12-23 09:15:00+0000', tz='UTC'), 23738.2, 23806.5, 23701.6, 23769.35, 0.0), (2, '1h', Timestamp('2024-12-23 10:15:00+0000', tz='UTC'), 23771.75, 23850.65, 23727.75, 23834.35, 0.0), (2, '1h', Timestamp('2024-12-23 11:15:00+0000', tz='UTC'), 23834.05, 23869.55, 23746.6, 23769.3, 0.0), (2, '1h', Timestamp('2024-12-23 12:15:00+0000', tz='UTC'), 23769.15, 23783.9, 23674.15, 23681.2, 0.0), (2, '1h', Timestamp('2024-12-23 13:15:00+0000', tz='UTC'), 23680.35, 23712.95, 23647.2, 23699.1, 0.0), (2, '1h', Timestamp('2024-12-23 14:15:00+0000', tz='UTC'), 23698.65, 23770.7, 23693.85, 23761.75, 0.0), (2, '1h', Timestamp('2024-12-23 15:15:00+0000', tz='UTC'), 23761.65, 23770.0, 23743.9, 23747.2, 0.0), (2, '1h', Timestamp('2024-12-24 09:15:00+0000', tz='UTC'), 23769.1, 23822.15, 23709.65, 23804.85, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '1h', Timestamp('2025-07-11 13:15:00+0000', tz='UTC'), 25155.7, 25191.55, 25144.0, 25168.4, 0.0), (2, '1h', Timestamp('2025-07-11 14:15:00+0000', tz='UTC'), 25168.3, 25175.8, 25150.15, 25150.15, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:02,916 - ERROR - Integrity error in chunk 2: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 1h, 2025-08-19 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '1h', Timestamp('2025-07-11 15:15:00+0000', tz='UTC'), 25149.8, 25153.6, 25129.0, 25140.55, 0.0), (2, '1h', Timestamp('2025-07-14 09:15:00+0000', tz='UTC'), 25149.5, 25151.1, 25041.9, 25119.8, 0.0), (2, '1h', Timestamp('2025-07-14 10:15:00+0000', tz='UTC'), 25120.75, 25127.05, 25061.85, 25063.95, 0.0), (2, '1h', Timestamp('2025-07-14 11:15:00+0000', tz='UTC'), 25063.75, 25066.4, 25019.75, 25045.4, 0.0), (2, '1h', Timestamp('2025-07-14 12:15:00+0000', tz='UTC'), 25046.45, 25060.95, 25001.95, 25026.35, 0.0), (2, '1h', Timestamp('2025-07-14 13:15:00+0000', tz='UTC'), 25027.25, 25058.55, 25012.9, 25046.65, 0.0), (2, '1h', Timestamp('2025-07-14 14:15:00+0000', tz='UTC'), 25046.85, 25108.5, 25037.2, 25079.85, 0.0), (2, '1h', Timestamp('2025-07-14 15:15:00+0000', tz='UTC'), 25080.0, 25092.7, 25077.1, 25087.1, 0.0)  ... displaying 10 of 793 total bound parameter sets ...  (2, '1h', Timestamp('2025-12-19 14:15:00+0000', tz='UTC'), 25967.95, 25993.35, 25945.45, 25969.85, 0.0), (2, '1h', Timestamp('2025-12-19 15:15:00+0000', tz='UTC'), 25968.5, 25974.25, 25955.6, 25961.4, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:02,917 - INFO - Successfully inserted 0/1793 records
+2026-01-10 00:24:02,920 - INFO - Processing: NIFTY 1d
+2026-01-10 00:24:02,924 - INFO - Instrument found: NIFTY (2)
+2026-01-10 00:24:02,926 - INFO - Reading CSV: data/raw/NIFTY_D1_1Year.csv
+2026-01-10 00:24:02,931 - INFO - Processing 242 records
+2026-01-10 00:24:03,009 - INFO - Inserted chunk 1: 242 records
+2026-01-10 00:24:03,013 - INFO - Successfully inserted 242/242 records
+2026-01-10 00:24:03,017 - INFO - Processing: NIFTY 5m
+2026-01-10 00:24:03,019 - INFO - Instrument found: NIFTY (2)
+2026-01-10 00:24:03,020 - INFO - Reading CSV: data/raw/NIFTY_5m_5Year.csv
+2026-01-10 00:24:03,136 - INFO - Processing 70078 records
+2026-01-10 00:24:03,238 - ERROR - Integrity error in chunk 1: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2022-01-18 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2022-01-03 09:15:00+0000', tz='UTC'), 17387.15, 17474.65, 17387.15, 17473.2, 0.0), (2, '5m', Timestamp('2022-01-03 09:20:00+0000', tz='UTC'), 17470.95, 17478.1, 17438.9, 17439.2, 0.0), (2, '5m', Timestamp('2022-01-03 09:25:00+0000', tz='UTC'), 17439.75, 17463.8, 17436.35, 17462.35, 0.0), (2, '5m', Timestamp('2022-01-03 09:30:00+0000', tz='UTC'), 17463.2, 17473.1, 17450.75, 17462.8, 0.0), (2, '5m', Timestamp('2022-01-03 09:35:00+0000', tz='UTC'), 17463.0, 17475.05, 17461.4, 17473.5, 0.0), (2, '5m', Timestamp('2022-01-03 09:40:00+0000', tz='UTC'), 17473.55, 17474.35, 17460.85, 17463.35, 0.0), (2, '5m', Timestamp('2022-01-03 09:45:00+0000', tz='UTC'), 17463.1, 17484.8, 17461.0, 17484.8, 0.0), (2, '5m', Timestamp('2022-01-03 09:50:00+0000', tz='UTC'), 17484.9, 17497.35, 17482.4, 17493.95, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2022-01-19 11:10:00+0000', tz='UTC'), 17984.35, 17990.35, 17972.6, 17977.35, 0.0), (2, '5m', Timestamp('2022-01-19 11:15:00+0000', tz='UTC'), 17976.15, 17976.8, 17946.1, 17946.1, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:03,349 - INFO - Inserted chunk 2: 1000 records
+2026-01-10 00:24:03,459 - INFO - Inserted chunk 3: 1000 records
+2026-01-10 00:24:03,561 - ERROR - Integrity error in chunk 4: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2022-04-18 14:40:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2022-03-28 15:05:00+0000', tz='UTC'), 17211.05, 17230.4, 17206.0, 17230.4, 0.0), (2, '5m', Timestamp('2022-03-28 15:10:00+0000', tz='UTC'), 17230.25, 17230.7, 17215.75, 17221.5, 0.0), (2, '5m', Timestamp('2022-03-28 15:15:00+0000', tz='UTC'), 17221.25, 17234.4, 17216.5, 17224.2, 0.0), (2, '5m', Timestamp('2022-03-28 15:20:00+0000', tz='UTC'), 17224.3, 17231.85, 17218.2, 17231.05, 0.0), (2, '5m', Timestamp('2022-03-28 15:25:00+0000', tz='UTC'), 17232.25, 17232.35, 17210.15, 17214.7, 0.0), (2, '5m', Timestamp('2022-03-28 15:30:00+0000', tz='UTC'), 17222.0, 17222.0, 17222.0, 17222.0, 0.0), (2, '5m', Timestamp('2022-03-29 09:10:00+0000', tz='UTC'), 17297.2, 17297.2, 17297.2, 17297.2, 0.0), (2, '5m', Timestamp('2022-03-29 09:15:00+0000', tz='UTC'), 17297.2, 17306.55, 17264.55, 17296.0, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2022-04-18 12:00:00+0000', tz='UTC'), 17160.2, 17162.6, 17137.15, 17146.8, 0.0), (2, '5m', Timestamp('2022-04-18 12:00:00+0000', tz='UTC'), 17160.2, 17162.6, 17137.15, 17146.8, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:03,650 - ERROR - Integrity error in chunk 5: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2022-04-18 17:35:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2022-04-18 12:05:00+0000', tz='UTC'), 17146.6, 17152.55, 17141.4, 17141.95, 0.0), (2, '5m', Timestamp('2022-04-18 12:05:00+0000', tz='UTC'), 17146.6, 17152.55, 17141.4, 17141.95, 0.0), (2, '5m', Timestamp('2022-04-18 12:10:00+0000', tz='UTC'), 17142.85, 17147.85, 17136.9, 17142.1, 0.0), (2, '5m', Timestamp('2022-04-18 12:10:00+0000', tz='UTC'), 17142.85, 17147.85, 17136.9, 17142.1, 0.0), (2, '5m', Timestamp('2022-04-18 12:15:00+0000', tz='UTC'), 17142.0, 17151.8, 17135.05, 17146.6, 0.0), (2, '5m', Timestamp('2022-04-18 12:15:00+0000', tz='UTC'), 17142.0, 17151.8, 17135.05, 17146.6, 0.0), (2, '5m', Timestamp('2022-04-18 12:20:00+0000', tz='UTC'), 17147.15, 17148.75, 17129.3, 17130.65, 0.0), (2, '5m', Timestamp('2022-04-18 12:20:00+0000', tz='UTC'), 17147.15, 17148.75, 17129.3, 17130.65, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2022-05-05 14:45:00+0000', tz='UTC'), 16699.45, 16743.75, 16680.35, 16724.5, 0.0), (2, '5m', Timestamp('2022-05-05 14:50:00+0000', tz='UTC'), 16724.95, 16730.4, 16716.4, 16720.6, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:03,777 - ERROR - Integrity error in chunk 6: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2022-05-18 14:40:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2022-05-05 14:55:00+0000', tz='UTC'), 16719.8, 16734.0, 16713.8, 16714.3, 0.0), (2, '5m', Timestamp('2022-05-05 15:00:00+0000', tz='UTC'), 16712.85, 16722.3, 16675.3, 16678.45, 0.0), (2, '5m', Timestamp('2022-05-05 15:05:00+0000', tz='UTC'), 16678.95, 16692.25, 16662.65, 16676.9, 0.0), (2, '5m', Timestamp('2022-05-05 15:10:00+0000', tz='UTC'), 16677.0, 16686.45, 16672.2, 16682.75, 0.0), (2, '5m', Timestamp('2022-05-05 15:15:00+0000', tz='UTC'), 16682.95, 16699.6, 16680.6, 16690.25, 0.0), (2, '5m', Timestamp('2022-05-05 15:20:00+0000', tz='UTC'), 16690.25, 16693.85, 16673.3, 16673.3, 0.0), (2, '5m', Timestamp('2022-05-05 15:25:00+0000', tz='UTC'), 16673.65, 16674.2, 16663.4, 16669.2, 0.0), (2, '5m', Timestamp('2022-05-05 15:30:00+0000', tz='UTC'), 16671.6, 16682.65, 16671.6, 16682.65, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2022-05-23 14:40:00+0000', tz='UTC'), 16246.45, 16271.55, 16246.05, 16249.45, 0.0), (2, '5m', Timestamp('2022-05-23 14:45:00+0000', tz='UTC'), 16251.0, 16265.15, 16238.9, 16257.1, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:03,908 - INFO - Inserted chunk 7: 1000 records
+2026-01-10 00:24:04,031 - ERROR - Integrity error in chunk 8: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2022-06-17 14:40:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2022-06-09 14:45:00+0000', tz='UTC'), 16449.25, 16456.7, 16438.05, 16447.3, 0.0), (2, '5m', Timestamp('2022-06-09 14:50:00+0000', tz='UTC'), 16448.35, 16463.55, 16446.1, 16455.45, 0.0), (2, '5m', Timestamp('2022-06-09 14:55:00+0000', tz='UTC'), 16455.5, 16468.6, 16450.35, 16452.05, 0.0), (2, '5m', Timestamp('2022-06-09 15:00:00+0000', tz='UTC'), 16454.0, 16478.25, 16454.0, 16476.5, 0.0), (2, '5m', Timestamp('2022-06-09 15:05:00+0000', tz='UTC'), 16475.25, 16478.85, 16455.95, 16478.2, 0.0), (2, '5m', Timestamp('2022-06-09 15:10:00+0000', tz='UTC'), 16477.75, 16479.1, 16469.9, 16477.55, 0.0), (2, '5m', Timestamp('2022-06-09 15:15:00+0000', tz='UTC'), 16477.65, 16485.95, 16475.05, 16480.7, 0.0), (2, '5m', Timestamp('2022-06-09 15:20:00+0000', tz='UTC'), 16480.45, 16492.5, 16474.7, 16490.2, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2022-06-27 14:30:00+0000', tz='UTC'), 15868.95, 15879.95, 15862.85, 15870.25, 0.0), (2, '5m', Timestamp('2022-06-27 14:35:00+0000', tz='UTC'), 15870.5, 15870.5, 15843.2, 15843.9, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:04,164 - INFO - Inserted chunk 9: 1000 records
+2026-01-10 00:24:04,275 - INFO - Inserted chunk 10: 1000 records
+2026-01-10 00:24:04,374 - ERROR - Integrity error in chunk 11: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2022-08-16 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2022-08-03 09:20:00+0000', tz='UTC'), 17362.2, 17384.6, 17355.6, 17382.1, 0.0), (2, '5m', Timestamp('2022-08-03 09:25:00+0000', tz='UTC'), 17380.45, 17383.9, 17357.3, 17357.6, 0.0), (2, '5m', Timestamp('2022-08-03 09:30:00+0000', tz='UTC'), 17357.1, 17358.3, 17319.7, 17331.8, 0.0), (2, '5m', Timestamp('2022-08-03 09:35:00+0000', tz='UTC'), 17331.4, 17333.7, 17296.45, 17301.75, 0.0), (2, '5m', Timestamp('2022-08-03 09:40:00+0000', tz='UTC'), 17301.95, 17309.9, 17271.05, 17273.4, 0.0), (2, '5m', Timestamp('2022-08-03 09:45:00+0000', tz='UTC'), 17272.65, 17296.05, 17263.1, 17294.9, 0.0), (2, '5m', Timestamp('2022-08-03 09:50:00+0000', tz='UTC'), 17296.05, 17325.75, 17294.2, 17298.75, 0.0), (2, '5m', Timestamp('2022-08-03 09:55:00+0000', tz='UTC'), 17297.65, 17318.35, 17296.1, 17317.5, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2022-08-23 11:15:00+0000', tz='UTC'), 17431.35, 17452.5, 17425.8, 17452.25, 0.0), (2, '5m', Timestamp('2022-08-23 11:20:00+0000', tz='UTC'), 17452.1, 17474.65, 17445.35, 17473.95, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:04,480 - INFO - Inserted chunk 12: 1000 records
+2026-01-10 00:24:04,568 - ERROR - Integrity error in chunk 13: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2022-09-15 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2022-09-12 13:30:00+0000', tz='UTC'), 17950.8, 17958.3, 17950.8, 17950.8, 0.0), (2, '5m', Timestamp('2022-09-12 13:35:00+0000', tz='UTC'), 17951.2, 17954.3, 17945.5, 17947.05, 0.0), (2, '5m', Timestamp('2022-09-12 13:40:00+0000', tz='UTC'), 17946.9, 17953.1, 17943.3, 17950.9, 0.0), (2, '5m', Timestamp('2022-09-12 13:45:00+0000', tz='UTC'), 17950.95, 17954.0, 17946.5, 17951.75, 0.0), (2, '5m', Timestamp('2022-09-12 13:50:00+0000', tz='UTC'), 17951.9, 17954.7, 17945.5, 17945.5, 0.0), (2, '5m', Timestamp('2022-09-12 13:55:00+0000', tz='UTC'), 17946.35, 17949.15, 17936.15, 17942.4, 0.0), (2, '5m', Timestamp('2022-09-12 14:00:00+0000', tz='UTC'), 17942.8, 17965.2, 17942.8, 17962.85, 0.0), (2, '5m', Timestamp('2022-09-12 14:05:00+0000', tz='UTC'), 17963.3, 17976.2, 17957.5, 17975.5, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2022-09-28 15:25:00+0000', tz='UTC'), 16841.65, 16842.9, 16820.9, 16826.15, 0.0), (2, '5m', Timestamp('2022-09-29 09:15:00+0000', tz='UTC'), 16993.6, 17021.4, 16983.95, 17008.25, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:04,702 - INFO - Inserted chunk 14: 1000 records
+2026-01-10 00:24:04,806 - INFO - Inserted chunk 15: 1000 records
+2026-01-10 00:24:04,934 - ERROR - Integrity error in chunk 16: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2022-11-14 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2022-11-10 12:30:00+0000', tz='UTC'), 17993.45, 18000.3, 17992.65, 17999.65, 0.0), (2, '5m', Timestamp('2022-11-10 12:35:00+0000', tz='UTC'), 17999.4, 18007.5, 17999.4, 18001.55, 0.0), (2, '5m', Timestamp('2022-11-10 12:40:00+0000', tz='UTC'), 18001.45, 18002.65, 17991.5, 17992.55, 0.0), (2, '5m', Timestamp('2022-11-10 12:45:00+0000', tz='UTC'), 17992.7, 18000.85, 17990.4, 17990.4, 0.0), (2, '5m', Timestamp('2022-11-10 12:50:00+0000', tz='UTC'), 17990.5, 17990.65, 17978.6, 17982.0, 0.0), (2, '5m', Timestamp('2022-11-10 12:55:00+0000', tz='UTC'), 17982.5, 17989.1, 17976.55, 17976.55, 0.0), (2, '5m', Timestamp('2022-11-10 13:00:00+0000', tz='UTC'), 17976.65, 17982.2, 17973.85, 17980.35, 0.0), (2, '5m', Timestamp('2022-11-10 13:05:00+0000', tz='UTC'), 17980.2, 17992.55, 17978.85, 17991.4, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2022-11-28 14:25:00+0000', tz='UTC'), 18595.25, 18600.05, 18590.8, 18590.8, 0.0), (2, '5m', Timestamp('2022-11-28 14:30:00+0000', tz='UTC'), 18590.9, 18592.1, 18584.45, 18586.5, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:05,081 - ERROR - Integrity error in chunk 17: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2022-12-14 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2022-11-28 14:35:00+0000', tz='UTC'), 18587.0, 18591.8, 18585.95, 18591.4, 0.0), (2, '5m', Timestamp('2022-11-28 14:40:00+0000', tz='UTC'), 18591.2, 18599.3, 18590.65, 18598.85, 0.0), (2, '5m', Timestamp('2022-11-28 14:45:00+0000', tz='UTC'), 18599.2, 18608.5, 18596.85, 18602.0, 0.0), (2, '5m', Timestamp('2022-11-28 14:50:00+0000', tz='UTC'), 18602.05, 18606.2, 18594.5, 18598.45, 0.0), (2, '5m', Timestamp('2022-11-28 14:55:00+0000', tz='UTC'), 18598.2, 18601.4, 18588.2, 18595.85, 0.0), (2, '5m', Timestamp('2022-11-28 15:00:00+0000', tz='UTC'), 18595.6, 18595.6, 18574.0, 18579.9, 0.0), (2, '5m', Timestamp('2022-11-28 15:05:00+0000', tz='UTC'), 18580.85, 18580.85, 18562.15, 18563.85, 0.0), (2, '5m', Timestamp('2022-11-28 15:10:00+0000', tz='UTC'), 18564.9, 18572.1, 18555.25, 18564.7, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2022-12-15 10:15:00+0000', tz='UTC'), 18565.05, 18580.95, 18561.0, 18578.45, 0.0), (2, '5m', Timestamp('2022-12-15 10:20:00+0000', tz='UTC'), 18578.5, 18588.65, 18578.25, 18586.55, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:05,223 - INFO - Inserted chunk 18: 1000 records
+2026-01-10 00:24:05,333 - ERROR - Integrity error in chunk 19: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2023-01-13 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2023-01-03 12:30:00+0000', tz='UTC'), 18175.4, 18178.5, 18168.45, 18170.5, 0.0), (2, '5m', Timestamp('2023-01-03 12:35:00+0000', tz='UTC'), 18171.35, 18184.8, 18170.4, 18181.05, 0.0), (2, '5m', Timestamp('2023-01-03 12:40:00+0000', tz='UTC'), 18180.8, 18187.0, 18179.15, 18181.3, 0.0), (2, '5m', Timestamp('2023-01-03 12:45:00+0000', tz='UTC'), 18181.8, 18188.4, 18174.7, 18175.95, 0.0), (2, '5m', Timestamp('2023-01-03 12:50:00+0000', tz='UTC'), 18176.4, 18181.55, 18170.8, 18176.85, 0.0), (2, '5m', Timestamp('2023-01-03 12:55:00+0000', tz='UTC'), 18177.25, 18185.5, 18176.35, 18179.7, 0.0), (2, '5m', Timestamp('2023-01-03 13:00:00+0000', tz='UTC'), 18180.6, 18187.75, 18179.2, 18184.75, 0.0), (2, '5m', Timestamp('2023-01-03 13:05:00+0000', tz='UTC'), 18185.3, 18192.3, 18174.35, 18176.1, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2023-01-19 14:25:00+0000', tz='UTC'), 18095.75, 18105.75, 18091.1, 18096.05, 0.0), (2, '5m', Timestamp('2023-01-19 14:30:00+0000', tz='UTC'), 18095.85, 18108.9, 18088.5, 18090.5, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:05,457 - INFO - Inserted chunk 20: 1000 records
+2026-01-10 00:24:05,619 - INFO - Inserted chunk 21: 1000 records
+2026-01-10 00:24:05,775 - ERROR - Integrity error in chunk 22: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2023-04-13 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2023-03-29 12:30:00+0000', tz='UTC'), 16951.05, 16953.0, 16946.1, 16952.15, 0.0), (2, '5m', Timestamp('2023-03-29 12:35:00+0000', tz='UTC'), 16952.5, 16964.15, 16951.55, 16958.15, 0.0), (2, '5m', Timestamp('2023-03-29 12:40:00+0000', tz='UTC'), 16957.85, 16960.35, 16954.05, 16957.5, 0.0), (2, '5m', Timestamp('2023-03-29 12:45:00+0000', tz='UTC'), 16957.35, 16975.0, 16957.15, 16968.95, 0.0), (2, '5m', Timestamp('2023-03-29 12:50:00+0000', tz='UTC'), 16969.0, 16972.45, 16963.05, 16963.05, 0.0), (2, '5m', Timestamp('2023-03-29 12:55:00+0000', tz='UTC'), 16962.9, 16976.9, 16958.5, 16976.45, 0.0), (2, '5m', Timestamp('2023-03-29 13:00:00+0000', tz='UTC'), 16976.05, 16988.85, 16972.15, 16973.5, 0.0), (2, '5m', Timestamp('2023-03-29 13:05:00+0000', tz='UTC'), 16973.7, 16986.15, 16971.15, 16982.3, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2023-04-20 14:25:00+0000', tz='UTC'), 17609.55, 17610.05, 17600.85, 17607.75, 0.0), (2, '5m', Timestamp('2023-04-20 14:30:00+0000', tz='UTC'), 17608.4, 17611.85, 17604.05, 17611.65, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:06,039 - INFO - Inserted chunk 23: 1000 records
+2026-01-10 00:24:06,265 - INFO - Inserted chunk 24: 1000 records
+2026-01-10 00:24:06,422 - ERROR - Integrity error in chunk 25: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2023-06-12 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2023-05-30 12:30:00+0000', tz='UTC'), 18608.75, 18610.3, 18597.8, 18606.95, 0.0), (2, '5m', Timestamp('2023-05-30 12:35:00+0000', tz='UTC'), 18607.3, 18608.05, 18599.15, 18601.2, 0.0), (2, '5m', Timestamp('2023-05-30 12:40:00+0000', tz='UTC'), 18601.55, 18603.3, 18590.1, 18590.2, 0.0), (2, '5m', Timestamp('2023-05-30 12:45:00+0000', tz='UTC'), 18589.75, 18598.65, 18587.65, 18595.8, 0.0), (2, '5m', Timestamp('2023-05-30 12:50:00+0000', tz='UTC'), 18596.4, 18604.35, 18592.2, 18603.8, 0.0), (2, '5m', Timestamp('2023-05-30 12:55:00+0000', tz='UTC'), 18603.75, 18612.25, 18602.2, 18610.3, 0.0), (2, '5m', Timestamp('2023-05-30 13:00:00+0000', tz='UTC'), 18610.2, 18615.05, 18609.0, 18614.05, 0.0), (2, '5m', Timestamp('2023-05-30 13:05:00+0000', tz='UTC'), 18614.0, 18617.95, 18613.25, 18616.5, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2023-06-15 14:25:00+0000', tz='UTC'), 18697.4, 18710.7, 18696.95, 18702.95, 0.0), (2, '5m', Timestamp('2023-06-15 14:30:00+0000', tz='UTC'), 18703.55, 18705.35, 18698.85, 18699.6, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:06,573 - INFO - Inserted chunk 26: 1000 records
+2026-01-10 00:24:06,675 - ERROR - Integrity error in chunk 27: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2023-07-12 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2023-07-06 10:25:00+0000', tz='UTC'), 19449.75, 19464.55, 19448.65, 19457.75, 0.0), (2, '5m', Timestamp('2023-07-06 10:30:00+0000', tz='UTC'), 19457.8, 19459.95, 19443.25, 19446.55, 0.0), (2, '5m', Timestamp('2023-07-06 10:35:00+0000', tz='UTC'), 19446.55, 19455.3, 19444.7, 19444.7, 0.0), (2, '5m', Timestamp('2023-07-06 10:40:00+0000', tz='UTC'), 19445.25, 19445.65, 19433.1, 19441.15, 0.0), (2, '5m', Timestamp('2023-07-06 10:45:00+0000', tz='UTC'), 19443.45, 19450.0, 19440.5, 19449.55, 0.0), (2, '5m', Timestamp('2023-07-06 10:50:00+0000', tz='UTC'), 19449.8, 19451.75, 19446.55, 19448.8, 0.0), (2, '5m', Timestamp('2023-07-06 10:55:00+0000', tz='UTC'), 19449.7, 19456.5, 19447.65, 19456.45, 0.0), (2, '5m', Timestamp('2023-07-06 11:00:00+0000', tz='UTC'), 19456.3, 19463.1, 19452.7, 19462.6, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2023-07-24 12:20:00+0000', tz='UTC'), 19708.95, 19719.35, 19708.85, 19715.25, 0.0), (2, '5m', Timestamp('2023-07-24 12:25:00+0000', tz='UTC'), 19714.2, 19718.7, 19707.05, 19713.8, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:06,787 - INFO - Inserted chunk 28: 1000 records
+2026-01-10 00:24:06,881 - ERROR - Integrity error in chunk 29: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2023-08-11 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2023-08-10 14:35:00+0000', tz='UTC'), 19555.3, 19556.05, 19541.5, 19545.05, 0.0), (2, '5m', Timestamp('2023-08-10 14:40:00+0000', tz='UTC'), 19543.7, 19547.25, 19533.9, 19542.85, 0.0), (2, '5m', Timestamp('2023-08-10 14:45:00+0000', tz='UTC'), 19542.35, 19546.25, 19530.65, 19535.05, 0.0), (2, '5m', Timestamp('2023-08-10 14:50:00+0000', tz='UTC'), 19534.95, 19534.95, 19523.7, 19533.15, 0.0), (2, '5m', Timestamp('2023-08-10 14:55:00+0000', tz='UTC'), 19532.45, 19546.8, 19527.6, 19528.05, 0.0), (2, '5m', Timestamp('2023-08-10 15:00:00+0000', tz='UTC'), 19527.85, 19536.65, 19517.95, 19526.15, 0.0), (2, '5m', Timestamp('2023-08-10 15:05:00+0000', tz='UTC'), 19525.9, 19550.85, 19524.45, 19549.15, 0.0), (2, '5m', Timestamp('2023-08-10 15:10:00+0000', tz='UTC'), 19548.6, 19551.65, 19542.35, 19545.95, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2023-08-30 10:15:00+0000', tz='UTC'), 19440.25, 19442.8, 19435.7, 19436.85, 0.0), (2, '5m', Timestamp('2023-08-30 10:20:00+0000', tz='UTC'), 19436.85, 19442.0, 19434.9, 19435.7, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:07,022 - INFO - Inserted chunk 30: 1000 records
+2026-01-10 00:24:07,124 - INFO - Inserted chunk 31: 1000 records
+2026-01-10 00:24:07,215 - ERROR - Integrity error in chunk 32: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2023-10-10 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2023-10-09 14:35:00+0000', tz='UTC'), 19516.35, 19527.0, 19516.2, 19523.2, 0.0), (2, '5m', Timestamp('2023-10-09 14:40:00+0000', tz='UTC'), 19523.05, 19525.65, 19518.7, 19521.15, 0.0), (2, '5m', Timestamp('2023-10-09 14:45:00+0000', tz='UTC'), 19520.4, 19532.7, 19519.3, 19530.1, 0.0), (2, '5m', Timestamp('2023-10-09 14:50:00+0000', tz='UTC'), 19530.35, 19537.3, 19530.35, 19534.35, 0.0), (2, '5m', Timestamp('2023-10-09 14:55:00+0000', tz='UTC'), 19534.25, 19537.3, 19531.55, 19533.05, 0.0), (2, '5m', Timestamp('2023-10-09 15:00:00+0000', tz='UTC'), 19533.0, 19540.9, 19526.1, 19528.2, 0.0), (2, '5m', Timestamp('2023-10-09 15:05:00+0000', tz='UTC'), 19528.35, 19532.5, 19516.25, 19520.95, 0.0), (2, '5m', Timestamp('2023-10-09 15:10:00+0000', tz='UTC'), 19521.45, 19523.6, 19512.3, 19512.45, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2023-10-27 10:15:00+0000', tz='UTC'), 18992.2, 18997.6, 18981.75, 18992.1, 0.0), (2, '5m', Timestamp('2023-10-27 10:20:00+0000', tz='UTC'), 18991.85, 19000.1, 18974.35, 18981.15, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:07,308 - ERROR - Integrity error in chunk 33: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2023-11-09 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2023-10-27 10:25:00+0000', tz='UTC'), 18981.5, 18996.65, 18976.35, 18991.4, 0.0), (2, '5m', Timestamp('2023-10-27 10:30:00+0000', tz='UTC'), 18991.55, 19009.3, 18989.5, 19005.7, 0.0), (2, '5m', Timestamp('2023-10-27 10:35:00+0000', tz='UTC'), 19005.85, 19008.15, 18994.8, 19002.15, 0.0), (2, '5m', Timestamp('2023-10-27 10:40:00+0000', tz='UTC'), 19002.55, 19007.9, 18999.6, 19000.5, 0.0), (2, '5m', Timestamp('2023-10-27 10:45:00+0000', tz='UTC'), 19000.2, 19012.5, 18993.35, 19010.25, 0.0), (2, '5m', Timestamp('2023-10-27 10:50:00+0000', tz='UTC'), 19010.1, 19010.75, 19004.0, 19008.75, 0.0), (2, '5m', Timestamp('2023-10-27 10:55:00+0000', tz='UTC'), 19008.65, 19010.65, 19003.6, 19009.3, 0.0), (2, '5m', Timestamp('2023-10-27 11:00:00+0000', tz='UTC'), 19009.85, 19023.0, 19008.4, 19022.15, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2023-11-15 11:20:00+0000', tz='UTC'), 19625.45, 19627.1, 19619.55, 19622.9, 0.0), (2, '5m', Timestamp('2023-11-15 11:25:00+0000', tz='UTC'), 19623.85, 19624.9, 19618.1, 19618.45, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:07,411 - INFO - Inserted chunk 34: 1000 records
+2026-01-10 00:24:07,516 - INFO - Inserted chunk 35: 1000 records
+2026-01-10 00:24:07,615 - ERROR - Integrity error in chunk 36: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2024-01-08 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2023-12-26 09:25:00+0000', tz='UTC'), 21379.2, 21381.5, 21337.4, 21338.6, 0.0), (2, '5m', Timestamp('2023-12-26 09:30:00+0000', tz='UTC'), 21335.2, 21367.8, 21335.05, 21366.9, 0.0), (2, '5m', Timestamp('2023-12-26 09:35:00+0000', tz='UTC'), 21367.35, 21379.7, 21353.15, 21355.5, 0.0), (2, '5m', Timestamp('2023-12-26 09:40:00+0000', tz='UTC'), 21354.7, 21374.6, 21353.3, 21367.7, 0.0), (2, '5m', Timestamp('2023-12-26 09:45:00+0000', tz='UTC'), 21368.3, 21377.9, 21364.55, 21366.8, 0.0), (2, '5m', Timestamp('2023-12-26 09:50:00+0000', tz='UTC'), 21365.45, 21379.8, 21350.65, 21376.8, 0.0), (2, '5m', Timestamp('2023-12-26 09:55:00+0000', tz='UTC'), 21376.75, 21393.85, 21372.65, 21393.85, 0.0), (2, '5m', Timestamp('2023-12-26 10:00:00+0000', tz='UTC'), 21395.55, 21419.5, 21394.25, 21417.05, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2024-01-11 11:20:00+0000', tz='UTC'), 21658.0, 21661.2, 21651.8, 21652.35, 0.0), (2, '5m', Timestamp('2024-01-11 11:25:00+0000', tz='UTC'), 21652.8, 21656.65, 21652.15, 21654.45, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:07,712 - INFO - Inserted chunk 37: 1000 records
+2026-01-10 00:24:07,807 - INFO - Inserted chunk 38: 1000 records
+2026-01-10 00:24:07,902 - INFO - Inserted chunk 39: 1000 records
+2026-01-10 00:24:08,023 - INFO - Inserted chunk 40: 1000 records
+2026-01-10 00:24:08,115 - ERROR - Integrity error in chunk 41: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2024-05-07 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2024-05-03 13:35:00+0000', tz='UTC'), 22410.95, 22416.05, 22358.65, 22366.4, 0.0), (2, '5m', Timestamp('2024-05-03 13:40:00+0000', tz='UTC'), 22365.9, 22386.6, 22365.65, 22375.65, 0.0), (2, '5m', Timestamp('2024-05-03 13:45:00+0000', tz='UTC'), 22374.7, 22388.75, 22372.95, 22382.1, 0.0), (2, '5m', Timestamp('2024-05-03 13:50:00+0000', tz='UTC'), 22381.35, 22385.1, 22348.05, 22380.7, 0.0), (2, '5m', Timestamp('2024-05-03 13:55:00+0000', tz='UTC'), 22381.05, 22399.95, 22380.0, 22385.05, 0.0), (2, '5m', Timestamp('2024-05-03 14:00:00+0000', tz='UTC'), 22384.6, 22394.7, 22373.2, 22382.7, 0.0), (2, '5m', Timestamp('2024-05-03 14:05:00+0000', tz='UTC'), 22383.1, 22406.0, 22383.1, 22389.5, 0.0), (2, '5m', Timestamp('2024-05-03 14:10:00+0000', tz='UTC'), 22388.5, 22416.0, 22382.95, 22408.8, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2024-05-22 13:45:00+0000', tz='UTC'), 22576.5, 22581.55, 22572.4, 22578.3, 0.0), (2, '5m', Timestamp('2024-05-22 13:50:00+0000', tz='UTC'), 22576.9, 22580.95, 22572.5, 22576.8, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:08,233 - ERROR - Integrity error in chunk 42: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2024-06-06 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2024-05-22 13:55:00+0000', tz='UTC'), 22575.45, 22589.3, 22574.95, 22582.7, 0.0), (2, '5m', Timestamp('2024-05-22 14:00:00+0000', tz='UTC'), 22581.6, 22608.15, 22580.05, 22596.85, 0.0), (2, '5m', Timestamp('2024-05-22 14:05:00+0000', tz='UTC'), 22594.95, 22596.25, 22563.65, 22564.45, 0.0), (2, '5m', Timestamp('2024-05-22 14:10:00+0000', tz='UTC'), 22563.95, 22577.6, 22562.7, 22576.8, 0.0), (2, '5m', Timestamp('2024-05-22 14:15:00+0000', tz='UTC'), 22575.25, 22588.85, 22570.85, 22586.0, 0.0), (2, '5m', Timestamp('2024-05-22 14:20:00+0000', tz='UTC'), 22586.1, 22587.45, 22580.7, 22586.0, 0.0), (2, '5m', Timestamp('2024-05-22 14:25:00+0000', tz='UTC'), 22584.95, 22587.8, 22571.65, 22573.2, 0.0), (2, '5m', Timestamp('2024-05-22 14:30:00+0000', tz='UTC'), 22573.0, 22587.5, 22572.35, 22581.25, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2024-06-10 09:35:00+0000', tz='UTC'), 23319.3, 23336.35, 23241.35, 23272.35, 0.0), (2, '5m', Timestamp('2024-06-10 09:40:00+0000', tz='UTC'), 23273.5, 23348.7, 23264.35, 23324.75, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:08,359 - INFO - Inserted chunk 43: 1000 records
+2026-01-10 00:24:08,469 - INFO - Inserted chunk 44: 1000 records
+2026-01-10 00:24:08,569 - ERROR - Integrity error in chunk 45: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2024-08-05 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2024-07-18 13:55:00+0000', tz='UTC'), 24753.1, 24768.55, 24750.95, 24758.0, 0.0), (2, '5m', Timestamp('2024-07-18 14:00:00+0000', tz='UTC'), 24758.35, 24804.35, 24757.8, 24801.45, 0.0), (2, '5m', Timestamp('2024-07-18 14:05:00+0000', tz='UTC'), 24800.85, 24802.85, 24783.85, 24791.5, 0.0), (2, '5m', Timestamp('2024-07-18 14:10:00+0000', tz='UTC'), 24790.85, 24828.8, 24789.7, 24819.9, 0.0), (2, '5m', Timestamp('2024-07-18 14:15:00+0000', tz='UTC'), 24820.4, 24829.35, 24809.15, 24819.25, 0.0), (2, '5m', Timestamp('2024-07-18 14:20:00+0000', tz='UTC'), 24819.65, 24821.7, 24803.4, 24810.55, 0.0), (2, '5m', Timestamp('2024-07-18 14:25:00+0000', tz='UTC'), 24810.15, 24820.55, 24793.1, 24799.05, 0.0), (2, '5m', Timestamp('2024-07-18 14:30:00+0000', tz='UTC'), 24799.9, 24802.45, 24775.8, 24787.15, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2024-08-06 09:35:00+0000', tz='UTC'), 24304.9, 24316.95, 24286.6, 24308.25, 0.0), (2, '5m', Timestamp('2024-08-06 09:40:00+0000', tz='UTC'), 24307.45, 24311.6, 24263.6, 24264.2, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:08,722 - INFO - Inserted chunk 46: 1000 records
+2026-01-10 00:24:08,823 - ERROR - Integrity error in chunk 47: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2024-09-04 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2024-08-26 11:50:00+0000', tz='UTC'), 25003.2, 25010.15, 24998.1, 25004.05, 0.0), (2, '5m', Timestamp('2024-08-26 11:55:00+0000', tz='UTC'), 25004.2, 25007.6, 24996.85, 25002.8, 0.0), (2, '5m', Timestamp('2024-08-26 12:00:00+0000', tz='UTC'), 25003.3, 25012.0, 25001.8, 25009.0, 0.0), (2, '5m', Timestamp('2024-08-26 12:05:00+0000', tz='UTC'), 25009.35, 25014.5, 25005.6, 25010.4, 0.0), (2, '5m', Timestamp('2024-08-26 12:10:00+0000', tz='UTC'), 25010.7, 25013.85, 24996.85, 25001.05, 0.0), (2, '5m', Timestamp('2024-08-26 12:15:00+0000', tz='UTC'), 25001.0, 25011.6, 24995.3, 25009.9, 0.0), (2, '5m', Timestamp('2024-08-26 12:20:00+0000', tz='UTC'), 25009.75, 25015.25, 25005.8, 25006.2, 0.0), (2, '5m', Timestamp('2024-08-26 12:25:00+0000', tz='UTC'), 25006.45, 25011.45, 25001.85, 25007.3, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2024-09-11 13:45:00+0000', tz='UTC'), 25021.5, 25026.5, 25003.8, 25023.5, 0.0), (2, '5m', Timestamp('2024-09-11 13:50:00+0000', tz='UTC'), 25022.8, 25032.25, 25019.35, 25022.5, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:08,921 - INFO - Inserted chunk 48: 1000 records
+2026-01-10 00:24:09,005 - ERROR - Integrity error in chunk 49: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2024-10-04 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2024-10-01 09:45:00+0000', tz='UTC'), 25861.3, 25873.0, 25852.7, 25859.75, 0.0), (2, '5m', Timestamp('2024-10-01 09:50:00+0000', tz='UTC'), 25860.0, 25860.0, 25841.75, 25847.95, 0.0), (2, '5m', Timestamp('2024-10-01 09:55:00+0000', tz='UTC'), 25847.65, 25852.75, 25825.4, 25845.7, 0.0), (2, '5m', Timestamp('2024-10-01 10:00:00+0000', tz='UTC'), 25846.6, 25852.35, 25827.85, 25829.3, 0.0), (2, '5m', Timestamp('2024-10-01 10:05:00+0000', tz='UTC'), 25829.65, 25850.5, 25828.8, 25848.3, 0.0), (2, '5m', Timestamp('2024-10-01 10:10:00+0000', tz='UTC'), 25847.65, 25848.65, 25822.35, 25824.05, 0.0), (2, '5m', Timestamp('2024-10-01 10:15:00+0000', tz='UTC'), 25824.6, 25831.8, 25801.1, 25801.1, 0.0), (2, '5m', Timestamp('2024-10-01 10:20:00+0000', tz='UTC'), 25801.95, 25820.95, 25794.65, 25814.15, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2024-10-18 11:40:00+0000', tz='UTC'), 24779.2, 24794.5, 24775.6, 24783.1, 0.0), (2, '5m', Timestamp('2024-10-18 11:45:00+0000', tz='UTC'), 24783.5, 24792.6, 24763.95, 24771.45, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:09,096 - INFO - Inserted chunk 50: 1000 records
+2026-01-10 00:24:09,186 - INFO - Inserted chunk 51: 1000 records
+2026-01-10 00:24:09,275 - ERROR - Integrity error in chunk 52: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2024-12-03 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2024-11-28 15:00:00+0000', tz='UTC'), 23909.4, 23909.8, 23884.2, 23899.2, 0.0), (2, '5m', Timestamp('2024-11-28 15:05:00+0000', tz='UTC'), 23899.5, 23906.7, 23887.95, 23905.3, 0.0), (2, '5m', Timestamp('2024-11-28 15:10:00+0000', tz='UTC'), 23905.9, 23916.3, 23901.15, 23915.6, 0.0), (2, '5m', Timestamp('2024-11-28 15:15:00+0000', tz='UTC'), 23915.35, 23930.8, 23913.4, 23929.2, 0.0), (2, '5m', Timestamp('2024-11-28 15:20:00+0000', tz='UTC'), 23928.9, 23953.85, 23921.45, 23953.8, 0.0), (2, '5m', Timestamp('2024-11-28 15:25:00+0000', tz='UTC'), 23953.8, 23959.45, 23945.85, 23957.45, 0.0), (2, '5m', Timestamp('2024-11-29 09:15:00+0000', tz='UTC'), 23927.15, 23989.55, 23927.15, 23975.65, 0.0), (2, '5m', Timestamp('2024-11-29 09:20:00+0000', tz='UTC'), 23969.55, 23992.75, 23958.7, 23964.6, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2024-12-17 10:40:00+0000', tz='UTC'), 24410.65, 24450.6, 24383.75, 24449.15, 0.0), (2, '5m', Timestamp('2024-12-17 10:45:00+0000', tz='UTC'), 24448.0, 24465.25, 24433.75, 24461.9, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:09,369 - ERROR - Integrity error in chunk 53: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-01-02 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2024-12-17 10:50:00+0000', tz='UTC'), 24461.9, 24470.25, 24446.1, 24446.25, 0.0), (2, '5m', Timestamp('2024-12-17 10:55:00+0000', tz='UTC'), 24446.6, 24493.15, 24437.75, 24485.65, 0.0), (2, '5m', Timestamp('2024-12-17 11:00:00+0000', tz='UTC'), 24485.5, 24500.1, 24474.3, 24482.1, 0.0), (2, '5m', Timestamp('2024-12-17 11:05:00+0000', tz='UTC'), 24481.15, 24496.05, 24470.4, 24492.3, 0.0), (2, '5m', Timestamp('2024-12-17 11:10:00+0000', tz='UTC'), 24491.4, 24492.0, 24465.45, 24467.85, 0.0), (2, '5m', Timestamp('2024-12-17 11:15:00+0000', tz='UTC'), 24468.05, 24488.1, 24457.95, 24458.15, 0.0), (2, '5m', Timestamp('2024-12-17 11:20:00+0000', tz='UTC'), 24458.45, 24467.6, 24449.55, 24454.55, 0.0), (2, '5m', Timestamp('2024-12-17 11:25:00+0000', tz='UTC'), 24454.45, 24455.05, 24415.4, 24419.45, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-01-03 12:45:00+0000', tz='UTC'), 24077.75, 24086.45, 24064.85, 24079.2, 0.0), (2, '5m', Timestamp('2025-01-03 12:50:00+0000', tz='UTC'), 24079.1, 24082.0, 24064.55, 24069.0, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:09,464 - INFO - Inserted chunk 54: 1000 records
+2026-01-10 00:24:09,594 - INFO - Inserted chunk 55: 1000 records
+2026-01-10 00:24:09,713 - INFO - Inserted chunk 56: 1000 records
+2026-01-10 00:24:09,827 - ERROR - Integrity error in chunk 57: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-04-02 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-03-28 12:55:00+0000', tz='UTC'), 23519.9, 23532.6, 23515.85, 23527.2, 0.0), (2, '5m', Timestamp('2025-03-28 13:00:00+0000', tz='UTC'), 23526.6, 23527.5, 23473.45, 23473.85, 0.0), (2, '5m', Timestamp('2025-03-28 13:05:00+0000', tz='UTC'), 23474.6, 23500.8, 23471.1, 23498.3, 0.0), (2, '5m', Timestamp('2025-03-28 13:10:00+0000', tz='UTC'), 23498.1, 23505.9, 23488.65, 23499.55, 0.0), (2, '5m', Timestamp('2025-03-28 13:15:00+0000', tz='UTC'), 23499.6, 23500.0, 23485.9, 23485.9, 0.0), (2, '5m', Timestamp('2025-03-28 13:20:00+0000', tz='UTC'), 23486.0, 23504.9, 23481.15, 23503.5, 0.0), (2, '5m', Timestamp('2025-03-28 13:25:00+0000', tz='UTC'), 23505.15, 23512.35, 23493.4, 23493.95, 0.0), (2, '5m', Timestamp('2025-03-28 13:30:00+0000', tz='UTC'), 23493.65, 23518.0, 23491.55, 23516.65, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-04-21 14:50:00+0000', tz='UTC'), 24152.5, 24156.0, 24143.55, 24146.85, 0.0), (2, '5m', Timestamp('2025-04-21 14:55:00+0000', tz='UTC'), 24146.45, 24154.5, 24142.75, 24145.25, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:09,948 - ERROR - Integrity error in chunk 58: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-05-02 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-04-21 15:00:00+0000', tz='UTC'), 24146.75, 24148.2, 24115.2, 24117.55, 0.0), (2, '5m', Timestamp('2025-04-21 15:05:00+0000', tz='UTC'), 24116.5, 24125.45, 24113.35, 24119.95, 0.0), (2, '5m', Timestamp('2025-04-21 15:10:00+0000', tz='UTC'), 24121.4, 24121.85, 24109.95, 24114.4, 0.0), (2, '5m', Timestamp('2025-04-21 15:15:00+0000', tz='UTC'), 24114.55, 24134.4, 24112.25, 24132.65, 0.0), (2, '5m', Timestamp('2025-04-21 15:20:00+0000', tz='UTC'), 24131.25, 24135.65, 24119.95, 24125.7, 0.0), (2, '5m', Timestamp('2025-04-21 15:25:00+0000', tz='UTC'), 24123.85, 24133.65, 24118.05, 24121.2, 0.0), (2, '5m', Timestamp('2025-04-22 09:15:00+0000', tz='UTC'), 24185.4, 24201.65, 24085.35, 24089.1, 0.0), (2, '5m', Timestamp('2025-04-22 09:20:00+0000', tz='UTC'), 24089.4, 24143.0, 24072.0, 24136.65, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-05-09 10:10:00+0000', tz='UTC'), 23985.35, 24063.45, 23978.7, 24060.65, 0.0), (2, '5m', Timestamp('2025-05-09 10:15:00+0000', tz='UTC'), 24061.2, 24086.75, 24045.05, 24048.9, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:10,179 - INFO - Inserted chunk 59: 1000 records
+2026-01-10 00:24:10,370 - INFO - Inserted chunk 60: 1000 records
+2026-01-10 00:24:10,534 - ERROR - Integrity error in chunk 61: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-07-01 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-06-16 14:10:00+0000', tz='UTC'), 24959.9, 24967.1, 24955.0, 24961.5, 0.0), (2, '5m', Timestamp('2025-06-16 14:15:00+0000', tz='UTC'), 24961.65, 24965.75, 24957.2, 24959.25, 0.0), (2, '5m', Timestamp('2025-06-16 14:20:00+0000', tz='UTC'), 24959.6, 24961.4, 24947.25, 24948.6, 0.0), (2, '5m', Timestamp('2025-06-16 14:25:00+0000', tz='UTC'), 24948.55, 24954.75, 24939.25, 24941.4, 0.0), (2, '5m', Timestamp('2025-06-16 14:30:00+0000', tz='UTC'), 24941.5, 24946.5, 24935.5, 24939.35, 0.0), (2, '5m', Timestamp('2025-06-16 14:35:00+0000', tz='UTC'), 24940.5, 24942.85, 24928.5, 24931.5, 0.0), (2, '5m', Timestamp('2025-06-16 14:40:00+0000', tz='UTC'), 24931.4, 24940.4, 24929.9, 24936.7, 0.0), (2, '5m', Timestamp('2025-06-16 14:45:00+0000', tz='UTC'), 24935.85, 24941.35, 24929.95, 24939.2, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-07-03 09:50:00+0000', tz='UTC'), 25517.25, 25538.25, 25502.35, 25531.7, 0.0), (2, '5m', Timestamp('2025-07-03 09:55:00+0000', tz='UTC'), 25532.3, 25547.25, 25528.6, 25545.35, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:10,674 - INFO - Inserted chunk 62: 1000 records
+2026-01-10 00:24:10,833 - ERROR - Integrity error in chunk 63: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-07-31 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-07-22 12:05:00+0000', tz='UTC'), 25079.6, 25084.15, 25072.1, 25074.85, 0.0), (2, '5m', Timestamp('2025-07-22 12:10:00+0000', tz='UTC'), 25075.1, 25080.55, 25073.05, 25075.1, 0.0), (2, '5m', Timestamp('2025-07-22 12:15:00+0000', tz='UTC'), 25075.6, 25085.25, 25071.1, 25084.45, 0.0), (2, '5m', Timestamp('2025-07-22 12:20:00+0000', tz='UTC'), 25084.6, 25101.85, 25082.0, 25100.15, 0.0), (2, '5m', Timestamp('2025-07-22 12:25:00+0000', tz='UTC'), 25099.55, 25102.1, 25091.85, 25099.6, 0.0), (2, '5m', Timestamp('2025-07-22 12:30:00+0000', tz='UTC'), 25099.3, 25111.85, 25098.3, 25110.8, 0.0), (2, '5m', Timestamp('2025-07-22 12:35:00+0000', tz='UTC'), 25109.6, 25110.55, 25100.55, 25106.55, 0.0), (2, '5m', Timestamp('2025-07-22 12:40:00+0000', tz='UTC'), 25107.35, 25110.75, 25097.25, 25110.25, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-08-07 14:00:00+0000', tz='UTC'), 24388.4, 24404.9, 24388.4, 24404.9, 0.0), (2, '5m', Timestamp('2025-08-07 14:05:00+0000', tz='UTC'), 24404.95, 24422.85, 24404.3, 24413.95, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:10,980 - INFO - Inserted chunk 64: 1000 records
+2026-01-10 00:24:11,114 - INFO - Inserted chunk 65: 1000 records
+2026-01-10 00:24:11,226 - ERROR - Integrity error in chunk 66: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-09-29 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-09-17 12:05:00+0000', tz='UTC'), 25324.6, 25327.95, 25323.15, 25326.2, 0.0), (2, '5m', Timestamp('2025-09-17 12:10:00+0000', tz='UTC'), 25325.4, 25327.45, 25319.35, 25325.5, 0.0), (2, '5m', Timestamp('2025-09-17 12:15:00+0000', tz='UTC'), 25326.0, 25326.9, 25318.95, 25320.15, 0.0), (2, '5m', Timestamp('2025-09-17 12:20:00+0000', tz='UTC'), 25319.05, 25333.95, 25318.75, 25326.35, 0.0), (2, '5m', Timestamp('2025-09-17 12:25:00+0000', tz='UTC'), 25325.55, 25334.95, 25324.8, 25334.65, 0.0), (2, '5m', Timestamp('2025-09-17 12:30:00+0000', tz='UTC'), 25334.2, 25346.4, 25326.55, 25338.45, 0.0), (2, '5m', Timestamp('2025-09-17 12:35:00+0000', tz='UTC'), 25337.55, 25341.55, 25332.25, 25334.7, 0.0), (2, '5m', Timestamp('2025-09-17 12:40:00+0000', tz='UTC'), 25334.5, 25336.55, 25330.95, 25332.05, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-10-06 14:00:00+0000', tz='UTC'), 25072.2, 25084.85, 25063.6, 25066.2, 0.0), (2, '5m', Timestamp('2025-10-06 14:05:00+0000', tz='UTC'), 25065.7, 25073.15, 25051.45, 25062.1, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:11,355 - INFO - Inserted chunk 67: 1000 records
+2026-01-10 00:24:11,473 - ERROR - Integrity error in chunk 68: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-10-29 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-10-27 15:15:00+0000', tz='UTC'), 25963.75, 25969.35, 25958.05, 25968.05, 0.0), (2, '5m', Timestamp('2025-10-27 15:20:00+0000', tz='UTC'), 25968.65, 25970.6, 25962.4, 25967.25, 0.0), (2, '5m', Timestamp('2025-10-27 15:25:00+0000', tz='UTC'), 25966.95, 25981.0, 25966.95, 25974.0, 0.0), (2, '5m', Timestamp('2025-10-28 09:15:00+0000', tz='UTC'), 25939.95, 26005.85, 25929.65, 25968.1, 0.0), (2, '5m', Timestamp('2025-10-28 09:20:00+0000', tz='UTC'), 25968.05, 25999.2, 25952.6, 25971.35, 0.0), (2, '5m', Timestamp('2025-10-28 09:25:00+0000', tz='UTC'), 25971.85, 25988.85, 25956.1, 25988.85, 0.0), (2, '5m', Timestamp('2025-10-28 09:30:00+0000', tz='UTC'), 25987.45, 26034.2, 25978.1, 26028.8, 0.0), (2, '5m', Timestamp('2025-10-28 09:35:00+0000', tz='UTC'), 26028.65, 26039.35, 26024.4, 26024.4, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-11-14 10:55:00+0000', tz='UTC'), 25837.45, 25852.15, 25826.2, 25848.15, 0.0), (2, '5m', Timestamp('2025-11-14 11:00:00+0000', tz='UTC'), 25849.15, 25861.4, 25837.8, 25842.3, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:11,587 - ERROR - Integrity error in chunk 69: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 5m, 2025-11-28 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '5m', Timestamp('2025-11-14 11:05:00+0000', tz='UTC'), 25842.5, 25853.4, 25839.95, 25849.6, 0.0), (2, '5m', Timestamp('2025-11-14 11:10:00+0000', tz='UTC'), 25849.15, 25864.05, 25845.3, 25855.25, 0.0), (2, '5m', Timestamp('2025-11-14 11:15:00+0000', tz='UTC'), 25854.75, 25863.1, 25814.95, 25821.95, 0.0), (2, '5m', Timestamp('2025-11-14 11:20:00+0000', tz='UTC'), 25821.65, 25828.0, 25813.95, 25818.4, 0.0), (2, '5m', Timestamp('2025-11-14 11:25:00+0000', tz='UTC'), 25818.3, 25821.9, 25813.15, 25815.2, 0.0), (2, '5m', Timestamp('2025-11-14 11:30:00+0000', tz='UTC'), 25815.2, 25821.6, 25799.1, 25808.6, 0.0), (2, '5m', Timestamp('2025-11-14 11:35:00+0000', tz='UTC'), 25808.5, 25815.15, 25799.05, 25801.15, 0.0), (2, '5m', Timestamp('2025-11-14 11:40:00+0000', tz='UTC'), 25800.85, 25805.9, 25786.15, 25789.95, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '5m', Timestamp('2025-12-02 13:00:00+0000', tz='UTC'), 26041.15, 26043.3, 26036.9, 26043.3, 0.0), (2, '5m', Timestamp('2025-12-02 13:05:00+0000', tz='UTC'), 26043.05, 26052.65, 26031.4, 26051.5, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-10 00:24:11,693 - INFO - Inserted chunk 70: 1000 records
+2026-01-10 00:24:11,744 - INFO - Inserted chunk 71: 78 records
+2026-01-10 00:24:11,748 - INFO - Successfully inserted 39078/70078 records
+2026-01-10 00:24:11,751 - INFO - Processing: XAUUSD 5m
+2026-01-10 00:24:11,755 - INFO - Instrument found: XAUUSD (3)
+2026-01-10 00:24:11,759 - INFO - Reading CSV: data/raw/XAUUSD_5M_1Year.csv
+2026-01-10 00:24:11,871 - INFO - Processing 68937 records
+2026-01-10 00:24:11,991 - INFO - Inserted chunk 1: 1000 records
+2026-01-10 00:24:12,105 - INFO - Inserted chunk 2: 1000 records
+2026-01-10 00:24:12,226 - INFO - Inserted chunk 3: 1000 records
+2026-01-10 00:24:12,356 - INFO - Inserted chunk 4: 1000 records
+2026-01-10 00:24:12,463 - INFO - Inserted chunk 5: 1000 records
+2026-01-10 00:24:12,579 - INFO - Inserted chunk 6: 1000 records
+2026-01-10 00:24:12,683 - INFO - Inserted chunk 7: 1000 records
+2026-01-10 00:24:12,778 - INFO - Inserted chunk 8: 1000 records
+2026-01-10 00:24:12,910 - INFO - Inserted chunk 9: 1000 records
+2026-01-10 00:24:13,015 - INFO - Inserted chunk 10: 1000 records
+2026-01-10 00:24:13,111 - INFO - Inserted chunk 11: 1000 records
+2026-01-10 00:24:13,205 - INFO - Inserted chunk 12: 1000 records
+2026-01-10 00:24:13,312 - INFO - Inserted chunk 13: 1000 records
+2026-01-10 00:24:13,418 - INFO - Inserted chunk 14: 1000 records
+2026-01-10 00:24:13,529 - INFO - Inserted chunk 15: 1000 records
+2026-01-10 00:24:13,633 - INFO - Inserted chunk 16: 1000 records
+2026-01-10 00:24:13,729 - INFO - Inserted chunk 17: 1000 records
+2026-01-10 00:24:13,823 - INFO - Inserted chunk 18: 1000 records
+2026-01-10 00:24:13,917 - INFO - Inserted chunk 19: 1000 records
+2026-01-10 00:24:14,011 - INFO - Inserted chunk 20: 1000 records
+2026-01-10 00:24:14,120 - INFO - Inserted chunk 21: 1000 records
+2026-01-10 00:24:14,265 - INFO - Inserted chunk 22: 1000 records
+2026-01-10 00:24:14,415 - INFO - Inserted chunk 23: 1000 records
+2026-01-10 00:24:14,575 - INFO - Inserted chunk 24: 1000 records
+2026-01-10 00:24:14,704 - INFO - Inserted chunk 25: 1000 records
+2026-01-10 00:24:14,892 - INFO - Inserted chunk 26: 1000 records
+2026-01-10 00:24:15,029 - INFO - Inserted chunk 27: 1000 records
+2026-01-10 00:24:15,184 - INFO - Inserted chunk 28: 1000 records
+2026-01-10 00:24:15,309 - INFO - Inserted chunk 29: 1000 records
+2026-01-10 00:24:15,462 - INFO - Inserted chunk 30: 1000 records
+2026-01-10 00:24:15,589 - INFO - Inserted chunk 31: 1000 records
+2026-01-10 00:24:15,693 - INFO - Inserted chunk 32: 1000 records
+2026-01-10 00:24:15,783 - INFO - Inserted chunk 33: 1000 records
+2026-01-10 00:24:15,873 - INFO - Inserted chunk 34: 1000 records
+2026-01-10 00:24:15,970 - INFO - Inserted chunk 35: 1000 records
+2026-01-10 00:24:16,066 - INFO - Inserted chunk 36: 1000 records
+2026-01-10 00:24:16,167 - INFO - Inserted chunk 37: 1000 records
+2026-01-10 00:24:16,273 - INFO - Inserted chunk 38: 1000 records
+2026-01-10 00:24:16,372 - INFO - Inserted chunk 39: 1000 records
+2026-01-10 00:24:16,489 - INFO - Inserted chunk 40: 1000 records
+2026-01-10 00:24:16,606 - INFO - Inserted chunk 41: 1000 records
+2026-01-10 00:24:16,808 - INFO - Inserted chunk 42: 1000 records
+2026-01-10 00:24:16,935 - INFO - Inserted chunk 43: 1000 records
+2026-01-10 00:24:17,035 - INFO - Inserted chunk 44: 1000 records
+2026-01-10 00:24:17,149 - INFO - Inserted chunk 45: 1000 records
+2026-01-10 00:24:17,263 - INFO - Inserted chunk 46: 1000 records
+2026-01-10 00:24:17,360 - INFO - Inserted chunk 47: 1000 records
+2026-01-10 00:24:17,452 - INFO - Inserted chunk 48: 1000 records
+2026-01-10 00:24:17,544 - INFO - Inserted chunk 49: 1000 records
+2026-01-10 00:24:17,638 - INFO - Inserted chunk 50: 1000 records
+2026-01-10 00:24:17,732 - INFO - Inserted chunk 51: 1000 records
+2026-01-10 00:24:17,830 - INFO - Inserted chunk 52: 1000 records
+2026-01-10 00:24:17,925 - INFO - Inserted chunk 53: 1000 records
+2026-01-10 00:24:18,025 - INFO - Inserted chunk 54: 1000 records
+2026-01-10 00:24:18,118 - INFO - Inserted chunk 55: 1000 records
+2026-01-10 00:24:18,210 - INFO - Inserted chunk 56: 1000 records
+2026-01-10 00:24:18,309 - INFO - Inserted chunk 57: 1000 records
+2026-01-10 00:24:18,428 - INFO - Inserted chunk 58: 1000 records
+2026-01-10 00:24:18,534 - INFO - Inserted chunk 59: 1000 records
+2026-01-10 00:24:18,663 - INFO - Inserted chunk 60: 1000 records
+2026-01-10 00:24:18,799 - INFO - Inserted chunk 61: 1000 records
+2026-01-10 00:24:18,932 - INFO - Inserted chunk 62: 1000 records
+2026-01-10 00:24:19,053 - INFO - Inserted chunk 63: 1000 records
+2026-01-10 00:24:19,171 - INFO - Inserted chunk 64: 1000 records
+2026-01-10 00:24:19,310 - INFO - Inserted chunk 65: 1000 records
+2026-01-10 00:24:19,438 - INFO - Inserted chunk 66: 1000 records
+2026-01-10 00:24:19,572 - INFO - Inserted chunk 67: 1000 records
+2026-01-10 00:24:19,697 - INFO - Inserted chunk 68: 1000 records
+2026-01-10 00:24:19,812 - INFO - Inserted chunk 69: 937 records
+2026-01-10 00:24:19,826 - INFO - Successfully inserted 68937/68937 records
+2026-01-10 00:24:19,830 - INFO - Processing: XAUUSD 15m
+2026-01-10 00:24:19,835 - INFO - Instrument found: XAUUSD (3)
+2026-01-10 00:24:19,837 - INFO - Reading CSV: data/raw/XAUUSD_15M_1Year.csv
+2026-01-10 00:24:19,884 - INFO - Processing 22983 records
+2026-01-10 00:24:19,995 - INFO - Inserted chunk 1: 1000 records
+2026-01-10 00:24:20,095 - INFO - Inserted chunk 2: 1000 records
+2026-01-10 00:24:20,192 - INFO - Inserted chunk 3: 1000 records
+2026-01-10 00:24:20,291 - INFO - Inserted chunk 4: 1000 records
+2026-01-10 00:24:20,386 - INFO - Inserted chunk 5: 1000 records
+2026-01-10 00:24:20,511 - INFO - Inserted chunk 6: 1000 records
+2026-01-10 00:24:20,615 - INFO - Inserted chunk 7: 1000 records
+2026-01-10 00:24:20,721 - INFO - Inserted chunk 8: 1000 records
+2026-01-10 00:24:20,819 - INFO - Inserted chunk 9: 1000 records
+2026-01-10 00:24:20,933 - INFO - Inserted chunk 10: 1000 records
+2026-01-10 00:24:21,034 - INFO - Inserted chunk 11: 1000 records
+2026-01-10 00:24:21,133 - INFO - Inserted chunk 12: 1000 records
+2026-01-10 00:24:21,232 - INFO - Inserted chunk 13: 1000 records
+2026-01-10 00:24:21,329 - INFO - Inserted chunk 14: 1000 records
+2026-01-10 00:24:21,425 - INFO - Inserted chunk 15: 1000 records
+2026-01-10 00:24:21,548 - INFO - Inserted chunk 16: 1000 records
+2026-01-10 00:24:21,678 - INFO - Inserted chunk 17: 1000 records
+2026-01-10 00:24:21,788 - INFO - Inserted chunk 18: 1000 records
+2026-01-10 00:24:21,901 - INFO - Inserted chunk 19: 1000 records
+2026-01-10 00:24:22,016 - INFO - Inserted chunk 20: 1000 records
+2026-01-10 00:24:22,133 - INFO - Inserted chunk 21: 1000 records
+2026-01-10 00:24:22,274 - INFO - Inserted chunk 22: 1000 records
+2026-01-10 00:24:22,374 - INFO - Inserted chunk 23: 983 records
+2026-01-10 00:24:22,386 - INFO - Successfully inserted 22983/22983 records
+2026-01-10 00:24:22,389 - INFO - Processing: XAUUSD 1h
+2026-01-10 00:24:22,392 - INFO - Instrument found: XAUUSD (3)
+2026-01-10 00:24:22,394 - INFO - Reading CSV: data/raw/XAUUSD_H1_1Year.csv
+2026-01-10 00:24:22,424 - INFO - Processing 5749 records
+2026-01-10 00:24:22,611 - INFO - Inserted chunk 1: 1000 records
+2026-01-10 00:24:22,714 - INFO - Inserted chunk 2: 1000 records
+2026-01-10 00:24:22,820 - INFO - Inserted chunk 3: 1000 records
+2026-01-10 00:24:22,924 - INFO - Inserted chunk 4: 1000 records
+2026-01-10 00:24:23,112 - INFO - Inserted chunk 5: 1000 records
+2026-01-10 00:24:23,216 - INFO - Inserted chunk 6: 749 records
+2026-01-10 00:24:23,232 - INFO - Successfully inserted 5749/5749 records
+2026-01-10 00:24:23,236 - INFO - Processing: XAUUSD 1d
+2026-01-10 00:24:23,240 - INFO - Instrument found: XAUUSD (3)
+2026-01-10 00:24:23,243 - INFO - Reading CSV: data/raw/XAUUSD_D1_1Year.csv
+2026-01-10 00:24:23,252 - INFO - Processing 301 records
+2026-01-10 00:24:23,349 - INFO - Inserted chunk 1: 301 records
+2026-01-10 00:24:23,354 - INFO - Successfully inserted 301/301 records
+2026-01-10 00:24:23,365 - INFO - ==================================================
+2026-01-10 00:24:23,369 - INFO - You can now test the backtest functionality.
+2026-01-10 00:24:23,369 - INFO - 
+2026-01-10 00:24:23,370 - INFO - Next steps:
+2026-01-10 00:24:23,370 - INFO - 1. Start the API server: python main.py
+2026-01-10 00:24:23,370 - INFO - 2. Start the frontend: cd ../AlgoAgentXApp && npm run dev
+2026-01-10 00:24:23,370 - INFO - 3. Navigate to /backtest to test the functionality
+2026-01-10 00:29:51,301 - INFO - Starting AlgoAgentX Database Setup
+2026-01-10 00:29:51,301 - INFO - ==================================================
+2026-01-10 00:29:51,302 - INFO - Populating strategies...
+2026-01-10 00:29:51,750 - INFO - Strategy already exists: EMA Crossover
+2026-01-10 00:29:51,752 - INFO - Strategy already exists: RSI Strategy
+2026-01-10 00:29:51,757 - INFO - Strategy already exists: SMC Strategy
+2026-01-10 00:29:51,762 - INFO - Strategy already exists: Stock Burner EMA 9-20
+2026-01-10 00:29:51,765 - INFO - Strategy already exists: Trend Continuation TCE
+2026-01-10 00:29:51,775 - INFO - Populating instruments...
+2026-01-10 00:29:51,945 - INFO - Instrument already exists: BTCUSD
+2026-01-10 00:29:51,950 - INFO - Instrument already exists: NIFTY
+2026-01-10 00:29:51,954 - INFO - Instrument already exists: XAUUSD
+2026-01-10 00:29:51,962 - INFO - Populating market data...
+2026-01-10 00:29:51,964 - INFO - Processing: BTCUSD 5m
+2026-01-10 00:29:52,182 - INFO - Instrument found: BTCUSD (1)
+2026-01-10 00:29:52,182 - INFO - Reading CSV: data/raw/BTCUSD_5M_1Year.csv
+2026-01-10 00:29:52,247 - INFO - Processing 833 records
+2026-01-10 00:29:52,349 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2025-12-24 02:40:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (1, '5m', Timestamp('2025-12-24 02:40:00'), Timestamp('2025-12-27 00:00:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:52,349 - INFO - SUCCESS BTCUSD 5m: 0 records
+2026-01-10 00:29:52,351 - INFO - Processing: BTCUSD 15m
+2026-01-10 00:29:52,358 - INFO - Instrument found: BTCUSD (1)
+2026-01-10 00:29:52,363 - INFO - Reading CSV: data/raw/BTCUSD_15M_1Year.csv
+2026-01-10 00:29:52,518 - INFO - Processing 33823 records
+2026-01-10 00:29:52,528 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2025-01-01 14:00:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (1, '15m', Timestamp('2025-01-01 14:00:00'), Timestamp('2025-12-19 21:45:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:52,528 - INFO - SUCCESS BTCUSD 15m: 0 records
+2026-01-10 00:29:52,528 - INFO - Processing: BTCUSD 1h
+2026-01-10 00:29:52,538 - INFO - Instrument found: BTCUSD (1)
+2026-01-10 00:29:52,543 - INFO - Reading CSV: data/raw/BTCUSD_H1_1Year.csv
+2026-01-10 00:29:52,585 - INFO - Processing 8456 records
+2026-01-10 00:29:52,593 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2025-01-01 14:00:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (1, '1h', Timestamp('2025-01-01 14:00:00'), Timestamp('2025-12-19 21:00:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:52,593 - INFO - SUCCESS BTCUSD 1h: 0 records
+2026-01-10 00:29:52,593 - INFO - Processing: BTCUSD 1d
+2026-01-10 00:29:52,604 - INFO - Instrument found: BTCUSD (1)
+2026-01-10 00:29:52,608 - INFO - Reading CSV: data/raw/BTCUSD_D1_1Year.csv
+2026-01-10 00:29:52,619 - INFO - Processing 353 records
+2026-01-10 00:29:52,625 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2025-01-01 00:00:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (1, '1d', Timestamp('2025-01-01 00:00:00'), Timestamp('2025-12-19 00:00:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:52,626 - INFO - SUCCESS BTCUSD 1d: 0 records
+2026-01-10 00:29:52,626 - INFO - Processing: NIFTY 5m
+2026-01-10 00:29:52,633 - INFO - Instrument found: NIFTY (2)
+2026-01-10 00:29:52,636 - INFO - Reading CSV: data/raw/NIFTY_5M_1Year.csv
+2026-01-10 00:29:52,724 - INFO - Processing 17647 records
+2026-01-10 00:29:52,735 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2024-12-20 09:15:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (2, '5m', Timestamp('2024-12-20 09:15:00'), Timestamp('2025-12-19 15:25:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:52,736 - INFO - SUCCESS NIFTY 5m: 0 records
+2026-01-10 00:29:52,738 - INFO - Processing: NIFTY 15m
+2026-01-10 00:29:52,744 - INFO - Instrument found: NIFTY (2)
+2026-01-10 00:29:52,747 - INFO - Reading CSV: data/raw/NIFTY_15M_1Year.csv
+2026-01-10 00:29:52,789 - INFO - Processing 5889 records
+2026-01-10 00:29:52,801 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2024-12-20 09:15:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (2, '15m', Timestamp('2024-12-20 09:15:00'), Timestamp('2025-12-19 15:15:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:52,804 - INFO - SUCCESS NIFTY 15m: 0 records
+2026-01-10 00:29:52,805 - INFO - Processing: NIFTY 1h
+2026-01-10 00:29:52,812 - INFO - Instrument found: NIFTY (2)
+2026-01-10 00:29:52,815 - INFO - Reading CSV: data/raw/NIFTY_H1_1Year.csv
+2026-01-10 00:29:52,838 - INFO - Processing 1793 records
+2026-01-10 00:29:52,848 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2024-12-23 09:15:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (2, '1h', Timestamp('2024-12-23 09:15:00'), Timestamp('2025-12-19 15:15:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:52,849 - INFO - SUCCESS NIFTY 1h: 0 records
+2026-01-10 00:29:52,849 - INFO - Processing: NIFTY 1d
+2026-01-10 00:29:52,857 - INFO - Instrument found: NIFTY (2)
+2026-01-10 00:29:52,862 - INFO - Reading CSV: data/raw/NIFTY_D1_1Year.csv
+2026-01-10 00:29:52,877 - INFO - Processing 242 records
+2026-01-10 00:29:52,885 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2025-01-01 00:00:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (2, '1d', Timestamp('2025-01-01 00:00:00'), Timestamp('2025-12-19 00:00:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:52,888 - INFO - SUCCESS NIFTY 1d: 0 records
+2026-01-10 00:29:52,888 - INFO - Processing: NIFTY 5m
+2026-01-10 00:29:52,930 - INFO - Instrument found: NIFTY (2)
+2026-01-10 00:29:52,940 - INFO - Reading CSV: data/raw/NIFTY_5m_5Year.csv
+2026-01-10 00:29:53,344 - INFO - Processing 70078 records
+2026-01-10 00:29:53,362 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2022-01-03 09:15:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (2, '5m', Timestamp('2022-01-03 09:15:00'), Timestamp('2025-12-22 15:25:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:53,362 - INFO - SUCCESS NIFTY 5m: 0 records
+2026-01-10 00:29:53,364 - INFO - Processing: XAUUSD 5m
+2026-01-10 00:29:53,369 - INFO - Instrument found: XAUUSD (3)
+2026-01-10 00:29:53,375 - INFO - Reading CSV: data/raw/XAUUSD_5M_1Year.csv
+2026-01-10 00:29:53,777 - INFO - Processing 68937 records
+2026-01-10 00:29:53,839 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2025-01-01 23:00:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (3, '5m', Timestamp('2025-01-01 23:00:00'), Timestamp('2025-12-19 21:55:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:53,844 - INFO - SUCCESS XAUUSD 5m: 0 records
+2026-01-10 00:29:53,844 - INFO - Processing: XAUUSD 15m
+2026-01-10 00:29:53,852 - INFO - Instrument found: XAUUSD (3)
+2026-01-10 00:29:53,856 - INFO - Reading CSV: data/raw/XAUUSD_15M_1Year.csv
+2026-01-10 00:29:54,027 - INFO - Processing 22983 records
+2026-01-10 00:29:54,119 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2025-01-01 23:00:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (3, '15m', Timestamp('2025-01-01 23:00:00'), Timestamp('2025-12-19 21:45:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:54,148 - INFO - SUCCESS XAUUSD 15m: 0 records
+2026-01-10 00:29:54,149 - INFO - Processing: XAUUSD 1h
+2026-01-10 00:29:54,165 - INFO - Instrument found: XAUUSD (3)
+2026-01-10 00:29:54,170 - INFO - Reading CSV: data/raw/XAUUSD_H1_1Year.csv
+2026-01-10 00:29:54,213 - INFO - Processing 5749 records
+2026-01-10 00:29:54,221 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2025-01-01 23:00:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (3, '1h', Timestamp('2025-01-01 23:00:00'), Timestamp('2025-12-19 21:00:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:54,222 - INFO - SUCCESS XAUUSD 1h: 0 records
+2026-01-10 00:29:54,223 - INFO - Processing: XAUUSD 1d
+2026-01-10 00:29:54,235 - INFO - Instrument found: XAUUSD (3)
+2026-01-10 00:29:54,238 - INFO - Reading CSV: data/raw/XAUUSD_D1_1Year.csv
+2026-01-10 00:29:54,252 - INFO - Processing 301 records
+2026-01-10 00:29:54,260 - ERROR - Error processing CSV: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: invalid input for query argument $3: Timestamp('2025-01-01 00:00:00') (Cannot convert tz-naive Timestamp, use tz_localize to localize)
+[SQL: SELECT market_data.instrument_id, market_data.timeframe, market_data.timestamp, market_data.open, market_data.high, market_data.low, market_data.close, market_data.volume 
+FROM market_data 
+WHERE market_data.instrument_id = $1::INTEGER AND market_data.timeframe = $2::VARCHAR AND market_data.timestamp >= $3::TIMESTAMP WITH TIME ZONE AND market_data.timestamp <= $4::TIMESTAMP WITH TIME ZONE 
+ LIMIT $5::INTEGER]
+[parameters: (3, '1d', Timestamp('2025-01-01 00:00:00'), Timestamp('2025-12-19 00:00:00'), 1)]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-01-10 00:29:54,261 - INFO - SUCCESS XAUUSD 1d: 0 records
+2026-01-10 00:29:54,276 - INFO - ==================================================
+2026-01-10 00:29:54,277 - INFO - Database setup completed successfully!
+2026-01-10 00:29:54,278 - INFO - You can now test the backtest functionality.
+2026-01-10 00:29:54,278 - INFO - 
+2026-01-10 00:29:54,279 - INFO - Next steps:
+2026-01-10 00:29:54,279 - INFO - 1. Start the API server: python main.py
+2026-01-10 00:29:54,279 - INFO - 2. Start the frontend: cd ../AlgoAgentXApp && npm run dev
+2026-01-10 00:29:54,279 - INFO - 3. Navigate to /backtest to test the functionality
+2026-01-10 00:30:15,430 - INFO - EXECUTION MODE: Data will be inserted into database
+2026-01-10 00:30:15,611 - INFO - Instrument found: BTCUSD (1)
+2026-01-10 00:30:15,613 - INFO - Reading CSV: data/raw/BTCUSD_5M_1Year.csv
+2026-01-10 00:30:15,626 - INFO - Processing 833 records
+2026-01-10 00:30:15,649 - WARNING - Data already exists for 1/5m from 2025-12-24 02:40:00+00:00 to 2025-12-27 00:00:00+00:00
+2026-01-10 00:30:15,653 - INFO - 
+==================================================
+2026-01-10 00:30:15,653 - INFO - MIGRATION RESULTS
+2026-01-10 00:30:15,654 - INFO - ==================================================
+2026-01-10 00:30:15,654 - INFO - Instrument: BTCUSD
+2026-01-10 00:30:15,654 - INFO - Timeframe: 5m
+2026-01-10 00:30:15,654 - INFO - Total Records: 833
+2026-01-10 00:30:15,654 - INFO - Success Count: 0
+2026-01-10 00:30:15,655 - INFO - Status: failed
+2026-01-10 00:30:15,655 - INFO - ==================================================
