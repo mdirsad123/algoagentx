@@ -1,0 +1,2 @@
+Company,companyname,Headline,Description,Time,pdf_link,vader_score,textblob_score,bert_sentiment,confidence,final_sentiment,Chart_Pattern,Fii_Dii_BUYING
+ZENTEC.NS,ZEN Technologies Ltd,Announcement under Regulation 30 (LODR)-Press Release / Media Release,Press Release,22-06-2025 13:22:17,https://www.bseindia.com/xml-data/corpfiling/AttachLive/de3eae0b-9575-4e48-8a05-31fc5b63c9c4.pdf,0.9731,0.1665772633163938,0.6737630367279053,0.643749294470674,Positive,,

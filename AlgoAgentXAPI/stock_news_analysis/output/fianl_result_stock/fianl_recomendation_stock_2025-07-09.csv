@@ -1,0 +1,9 @@
+Company,Annoucement_Time,Final_Sentiment,Chart_Pattern,ML_Prediction,ML_Confidence,Success_Chance,Trade_Execute_Or_Not,Fii_Dii_BUYING
+AURIONPRO,09-Jul-2025 11:18:35,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.5933,79.76,yes,
+INDIGO,09-Jul-2025 12:25:02,Positive,"Resistance Breakout, Volume Spike",HOLD / SELL,0.48,58.18,yes,
+PRESTIGE,09-Jul-2025 13:10:41,Positive,Resistance Breakout,STRONG BUY,0.5667,55.15,yes,
+NIITMTS,09-Jul-2025 19:38:59,Positive,"Resistance Breakout, Volume Spike",HOLD / SELL,0.4867,58.18,yes,Fill Dii buy >30cr
+ACC,09-Jul-2025 17:13:29,Positive,"Resistance Breakout, Volume Spike",HOLD / SELL,0.4333,58.18,yes,Fill Dii buy >30cr
+PTL,09-Jul-2025 16:32:34,Positive,"Resistance Breakout, Volume Spike",HOLD / SELL,0.32,58.18,yes,Fill Dii buy >30cr
+BSL,09-Jul-2025 15:08:01,Positive,"Resistance Breakout, Volume Spike",NAN,,58.18,yes,Fill Dii buy >30cr
+ZODIAC,09-Jul-2025 15:56:16,Positive,Resistance Breakout,STRONG BUY,0.5067,52.97,yes,Fill Dii buy >30cr

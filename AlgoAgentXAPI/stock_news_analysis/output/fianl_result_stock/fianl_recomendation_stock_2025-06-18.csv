@@ -1,0 +1,5 @@
+Company,Annoucement_Time,Final_Sentiment,Chart_Pattern,ML_Prediction,ML_Confidence,Success_Chance,Trade_Execute_Or_Not,Fii_Dii_BUYING
+OPTIEMUS,18-Jun-2025 11:44:48,Positive,"Resistance Breakout, Volume Spike",HOLD / SELL,0.1467,58.18,yes,Fill Dii buy >30cr
+VEDL,18-Jun-2025 12:32:28,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.72,84.36,yes,Fill Dii buy >30cr
+BLISSGVS,18-Jun-2025 18:05:45,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.62,80.73,yes,Fill Dii buy >30cr
+IDEA,18-Jun-2025 15:41:56,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.7867,86.79,yes,Fill Dii buy >30cr

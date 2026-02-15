@@ -1,0 +1,2 @@
+Company,Annoucement_Time,Final_Sentiment,Chart_Pattern,ML_Prediction,ML_Confidence,Success_Chance,Trade_Execute_Or_Not,Fii_Dii_BUYING
+TATAMOTORS,07-Jul-2025 18:08:25,Positive,"Resistance Breakout, Volume Spike",STRONG BUY,0.6467,81.7,yes,Fill Dii buy >30cr

@@ -1,0 +1,66 @@
+2026-01-10 00:05:08,101 - INFO - DRY RUN MODE: Data will be validated but not inserted
+2026-01-10 00:05:08,361 - INFO - Starting initial data population...
+2026-01-10 00:05:08,362 - INFO - DRY RUN MODE - No data will be inserted
+2026-01-10 00:05:08,362 - INFO - Populating strategies...
+2026-01-10 00:05:08,363 - INFO - Populating instruments...
+2026-01-10 00:05:08,364 - INFO - Populating market data...
+2026-01-10 00:05:08,364 - INFO - Initial data population completed successfully!
+2026-01-10 00:05:08,364 - INFO - 
+============================================================
+2026-01-10 00:05:08,365 - INFO - INITIAL DATA POPULATION RESULTS
+2026-01-10 00:05:08,366 - INFO - ============================================================
+2026-01-10 00:05:08,546 - INFO - ============================================================
+2026-01-10 00:05:21,261 - INFO - EXECUTION MODE: Data will be inserted into database
+2026-01-10 00:05:21,424 - INFO - Starting initial data population...
+2026-01-10 00:05:21,424 - INFO - Populating strategies...
+2026-01-10 00:05:21,633 - ERROR - Initial data population failed: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.DatatypeMismatchError'>: column "created_by" is of type integer but expression is of type uuid
+HINT:  You will need to rewrite or cast the expression.
+[SQL: INSERT INTO strategies (name, description, parameters, created_by) VALUES ($1::VARCHAR, $2::VARCHAR, $3::JSON, $4::UUID) RETURNING strategies.id, strategies.created_at]
+[parameters: ('EMA Crossover', 'EMA Crossover trading strategy implementation', '{"description": "EMA Crossover trading strategy", "risk_per_trade": 0.01, "max_positions": 5}', 'system')]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+2026-01-10 00:05:21,633 - INFO - 
+============================================================
+2026-01-10 00:05:21,637 - INFO - INITIAL DATA POPULATION RESULTS
+2026-01-10 00:05:21,637 - INFO - ============================================================
+2026-01-10 00:05:21,646 - ERROR - Error: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.DatatypeMismatchError'>: column "created_by" is of type integer but expression is of type uuid
+HINT:  You will need to rewrite or cast the expression.
+[SQL: INSERT INTO strategies (name, description, parameters, created_by) VALUES ($1::VARCHAR, $2::VARCHAR, $3::JSON, $4::UUID) RETURNING strategies.id, strategies.created_at]
+[parameters: ('EMA Crossover', 'EMA Crossover trading strategy implementation', '{"description": "EMA Crossover trading strategy", "risk_per_trade": 0.01, "max_positions": 5}', 'system')]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+2026-01-10 00:05:21,647 - INFO - ============================================================
+2026-01-10 00:06:03,402 - INFO - EXECUTION MODE: Data will be inserted into database
+2026-01-10 00:06:03,500 - INFO - Starting initial data population...
+2026-01-10 00:06:03,502 - INFO - Populating strategies...
+2026-01-10 00:06:03,709 - ERROR - Initial data population failed: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.DatatypeMismatchError'>: column "created_by" is of type integer but expression is of type uuid
+HINT:  You will need to rewrite or cast the expression.
+[SQL: INSERT INTO strategies (name, description, parameters, created_by) VALUES ($1::VARCHAR, $2::VARCHAR, $3::JSON, $4::UUID) RETURNING strategies.id, strategies.created_at]
+[parameters: ('EMA Crossover', 'EMA Crossover trading strategy implementation', '{"description": "EMA Crossover trading strategy", "risk_per_trade": 0.01, "max_positions": 5}', None)]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+2026-01-10 00:06:03,709 - INFO - 
+============================================================
+2026-01-10 00:06:03,710 - INFO - INITIAL DATA POPULATION RESULTS
+2026-01-10 00:06:03,710 - INFO - ============================================================
+2026-01-10 00:06:03,721 - ERROR - Error: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.DatatypeMismatchError'>: column "created_by" is of type integer but expression is of type uuid
+HINT:  You will need to rewrite or cast the expression.
+[SQL: INSERT INTO strategies (name, description, parameters, created_by) VALUES ($1::VARCHAR, $2::VARCHAR, $3::JSON, $4::UUID) RETURNING strategies.id, strategies.created_at]
+[parameters: ('EMA Crossover', 'EMA Crossover trading strategy implementation', '{"description": "EMA Crossover trading strategy", "risk_per_trade": 0.01, "max_positions": 5}', None)]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+2026-01-10 00:06:03,722 - INFO - ============================================================
+2026-01-10 00:06:48,923 - INFO - EXECUTION MODE: Data will be inserted into database
+2026-01-10 00:06:49,035 - INFO - Starting initial data population...
+2026-01-10 00:06:49,036 - INFO - Populating strategies...
+2026-01-10 00:06:49,142 - ERROR - Initial data population failed: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.DatatypeMismatchError'>: column "created_by" is of type integer but expression is of type uuid
+HINT:  You will need to rewrite or cast the expression.
+[SQL: INSERT INTO strategies (name, description, parameters, created_by) VALUES ($1::VARCHAR, $2::VARCHAR, $3::JSON, $4::UUID) RETURNING strategies.id, strategies.created_at]
+[parameters: ('EMA Crossover', 'EMA Crossover trading strategy implementation', '{"description": "EMA Crossover trading strategy", "risk_per_trade": 0.01, "max_positions": 5}', 1)]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+2026-01-10 00:06:49,143 - INFO - 
+============================================================
+2026-01-10 00:06:49,143 - INFO - INITIAL DATA POPULATION RESULTS
+2026-01-10 00:06:49,143 - INFO - ============================================================
+2026-01-10 00:06:49,149 - ERROR - Error: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.DatatypeMismatchError'>: column "created_by" is of type integer but expression is of type uuid
+HINT:  You will need to rewrite or cast the expression.
+[SQL: INSERT INTO strategies (name, description, parameters, created_by) VALUES ($1::VARCHAR, $2::VARCHAR, $3::JSON, $4::UUID) RETURNING strategies.id, strategies.created_at]
+[parameters: ('EMA Crossover', 'EMA Crossover trading strategy implementation', '{"description": "EMA Crossover trading strategy", "risk_per_trade": 0.01, "max_positions": 5}', 1)]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+2026-01-10 00:06:49,150 - INFO - ============================================================

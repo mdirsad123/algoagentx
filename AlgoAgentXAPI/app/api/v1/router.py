@@ -1,0 +1,25 @@
+from fastapi import APIRouter
+from . import auth, users, strategies, backtests, signals, metrics, instruments, jobs, market_data, credits, billing, payments, subscriptions, ai_screener, notifications, strategy_requests, admin_strategy_requests, ai_screener_jobs, admin
+
+api_router = APIRouter()
+
+# Include all API routes (read-only, no auth required)
+api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(strategies.router, prefix="/strategies", tags=["strategies"])
+api_router.include_router(instruments.router, prefix="/instruments", tags=["instruments"])
+api_router.include_router(market_data.router, prefix="/market-data", tags=["market-data"])
+api_router.include_router(backtests.router, prefix="/backtests", tags=["backtests"])
+api_router.include_router(signals.router, prefix="/signals", tags=["signals"])
+api_router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
+api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
+api_router.include_router(credits.router, prefix="/credits", tags=["credits"])
+api_router.include_router(billing.router, prefix="/billing", tags=["billing"])
+api_router.include_router(payments.router, prefix="/payments", tags=["payments"])
+api_router.include_router(subscriptions.router, prefix="/subscriptions", tags=["subscriptions"])
+api_router.include_router(ai_screener.router, prefix="/ai-screener", tags=["ai-screener"])
+api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
+api_router.include_router(strategy_requests.router, prefix="/strategy-requests", tags=["strategy-requests"])
+api_router.include_router(admin_strategy_requests.router, prefix="/admin/strategy-requests", tags=["admin-strategy-requests"])
+api_router.include_router(ai_screener_jobs.router, prefix="/ai-screener-jobs", tags=["ai-screener-jobs"])
+api_router.include_router(admin.router, prefix="/admin", tags=["admin"])

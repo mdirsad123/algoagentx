@@ -1,0 +1,565 @@
+2026-01-11 22:37:23,149 - INFO - Starting AlgoAgentX Database Setup
+2026-01-11 22:37:23,149 - INFO - ==================================================
+2026-01-11 22:37:23,149 - INFO - Populating strategies...
+2026-01-11 22:37:23,363 - INFO - Strategy already exists: EMA Crossover
+2026-01-11 22:37:23,368 - INFO - Strategy already exists: RSI Strategy
+2026-01-11 22:37:23,368 - INFO - Strategy already exists: SMC Strategy
+2026-01-11 22:37:23,375 - INFO - Strategy already exists: Stock Burner EMA 9-20
+2026-01-11 22:37:23,377 - INFO - Strategy already exists: Trend Continuation TCE
+2026-01-11 22:37:23,383 - INFO - Populating instruments...
+2026-01-11 22:37:23,523 - INFO - Instrument already exists: BTCUSD
+2026-01-11 22:37:23,523 - INFO - Instrument already exists: NIFTY
+2026-01-11 22:37:23,523 - INFO - Instrument already exists: XAUUSD
+2026-01-11 22:37:23,537 - INFO - Populating market data...
+2026-01-11 22:37:23,538 - INFO - Processing: BTCUSD 5m
+2026-01-11 22:37:23,621 - INFO - Instrument found: BTCUSD (1)
+2026-01-11 22:37:23,621 - INFO - Reading CSV: data/raw/BTCUSD_5M_1Year.csv
+2026-01-11 22:37:23,695 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/BTCUSD_5M_1Year.csv'
+2026-01-11 22:37:23,695 - INFO - SUCCESS BTCUSD 5m: 0 records
+2026-01-11 22:37:23,695 - INFO - Processing: BTCUSD 15m
+2026-01-11 22:37:23,699 - INFO - Instrument found: BTCUSD (1)
+2026-01-11 22:37:23,699 - INFO - Reading CSV: data/raw/BTCUSD_15M_1Year.csv
+2026-01-11 22:37:23,699 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/BTCUSD_15M_1Year.csv'
+2026-01-11 22:37:23,699 - INFO - SUCCESS BTCUSD 15m: 0 records
+2026-01-11 22:37:23,699 - INFO - Processing: BTCUSD 1h
+2026-01-11 22:37:23,706 - INFO - Instrument found: BTCUSD (1)
+2026-01-11 22:37:23,707 - INFO - Reading CSV: data/raw/BTCUSD_H1_1Year.csv
+2026-01-11 22:37:23,708 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/BTCUSD_H1_1Year.csv'
+2026-01-11 22:37:23,708 - INFO - SUCCESS BTCUSD 1h: 0 records
+2026-01-11 22:37:23,708 - INFO - Processing: BTCUSD 1d
+2026-01-11 22:37:23,714 - INFO - Instrument found: BTCUSD (1)
+2026-01-11 22:37:23,717 - INFO - Reading CSV: data/raw/BTCUSD_D1_1Year.csv
+2026-01-11 22:37:23,717 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/BTCUSD_D1_1Year.csv'
+2026-01-11 22:37:23,717 - INFO - SUCCESS BTCUSD 1d: 0 records
+2026-01-11 22:37:23,717 - INFO - Processing: NIFTY 5m
+2026-01-11 22:37:23,721 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:37:23,723 - INFO - Reading CSV: data/raw/NIFTY_5M_1Year.csv
+2026-01-11 22:37:23,724 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/NIFTY_5M_1Year.csv'
+2026-01-11 22:37:23,724 - INFO - SUCCESS NIFTY 5m: 0 records
+2026-01-11 22:37:23,724 - INFO - Processing: NIFTY 15m
+2026-01-11 22:37:23,731 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:37:23,732 - INFO - Reading CSV: data/raw/NIFTY_15M_1Year.csv
+2026-01-11 22:37:23,732 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/NIFTY_15M_1Year.csv'
+2026-01-11 22:37:23,734 - INFO - SUCCESS NIFTY 15m: 0 records
+2026-01-11 22:37:23,734 - INFO - Processing: NIFTY 1h
+2026-01-11 22:37:23,739 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:37:23,741 - INFO - Reading CSV: data/raw/NIFTY_H1_1Year.csv
+2026-01-11 22:37:23,741 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/NIFTY_H1_1Year.csv'
+2026-01-11 22:37:23,741 - INFO - SUCCESS NIFTY 1h: 0 records
+2026-01-11 22:37:23,742 - INFO - Processing: NIFTY 1d
+2026-01-11 22:37:23,748 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:37:23,749 - INFO - Reading CSV: data/raw/NIFTY_D1_1Year.csv
+2026-01-11 22:37:23,749 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/NIFTY_D1_1Year.csv'
+2026-01-11 22:37:23,751 - INFO - SUCCESS NIFTY 1d: 0 records
+2026-01-11 22:37:23,751 - INFO - Processing: NIFTY 5m
+2026-01-11 22:37:23,754 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:37:23,756 - INFO - Reading CSV: data/raw/NIFTY_5m_5Year.csv
+2026-01-11 22:37:23,757 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/NIFTY_5m_5Year.csv'
+2026-01-11 22:37:23,757 - INFO - SUCCESS NIFTY 5m: 0 records
+2026-01-11 22:37:23,757 - INFO - Processing: XAUUSD 5m
+2026-01-11 22:37:23,761 - INFO - Instrument found: XAUUSD (3)
+2026-01-11 22:37:23,765 - INFO - Reading CSV: data/raw/XAUUSD_5M_1Year.csv
+2026-01-11 22:37:23,765 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/XAUUSD_5M_1Year.csv'
+2026-01-11 22:37:23,765 - INFO - SUCCESS XAUUSD 5m: 0 records
+2026-01-11 22:37:23,765 - INFO - Processing: XAUUSD 15m
+2026-01-11 22:37:23,766 - INFO - Instrument found: XAUUSD (3)
+2026-01-11 22:37:23,770 - INFO - Reading CSV: data/raw/XAUUSD_15M_1Year.csv
+2026-01-11 22:37:23,771 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/XAUUSD_15M_1Year.csv'
+2026-01-11 22:37:23,771 - INFO - SUCCESS XAUUSD 15m: 0 records
+2026-01-11 22:37:23,771 - INFO - Processing: XAUUSD 1h
+2026-01-11 22:37:23,774 - INFO - Instrument found: XAUUSD (3)
+2026-01-11 22:37:23,776 - INFO - Reading CSV: data/raw/XAUUSD_H1_1Year.csv
+2026-01-11 22:37:23,777 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/XAUUSD_H1_1Year.csv'
+2026-01-11 22:37:23,778 - INFO - SUCCESS XAUUSD 1h: 0 records
+2026-01-11 22:37:23,779 - INFO - Processing: XAUUSD 1d
+2026-01-11 22:37:23,782 - INFO - Instrument found: XAUUSD (3)
+2026-01-11 22:37:23,783 - INFO - Reading CSV: data/raw/XAUUSD_D1_1Year.csv
+2026-01-11 22:37:23,783 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/XAUUSD_D1_1Year.csv'
+2026-01-11 22:37:23,783 - INFO - SUCCESS XAUUSD 1d: 0 records
+2026-01-11 22:37:23,789 - INFO - ==================================================
+2026-01-11 22:37:23,789 - INFO - Database setup completed successfully!
+2026-01-11 22:37:23,791 - INFO - You can now test the backtest functionality.
+2026-01-11 22:37:23,791 - INFO - 
+2026-01-11 22:37:23,791 - INFO - Next steps:
+2026-01-11 22:37:23,791 - INFO - 1. Start the API server: python main.py
+2026-01-11 22:37:23,791 - INFO - 2. Start the frontend: cd ../AlgoAgentXApp && npm run dev
+2026-01-11 22:37:23,792 - INFO - 3. Navigate to /backtest to test the functionality
+2026-01-11 22:49:23,285 - INFO - Starting AlgoAgentX Database Setup
+2026-01-11 22:49:23,285 - INFO - ==================================================
+2026-01-11 22:49:23,285 - INFO - Populating strategies...
+2026-01-11 22:49:23,510 - INFO - Strategy already exists: EMA Crossover
+2026-01-11 22:49:23,514 - INFO - Strategy already exists: RSI Strategy
+2026-01-11 22:49:23,516 - INFO - Strategy already exists: SMC Strategy
+2026-01-11 22:49:23,519 - INFO - Strategy already exists: Stock Burner EMA 9-20
+2026-01-11 22:49:23,522 - INFO - Strategy already exists: Trend Continuation TCE
+2026-01-11 22:49:23,528 - INFO - Populating instruments...
+2026-01-11 22:49:23,608 - INFO - Instrument already exists: BTCUSD
+2026-01-11 22:49:23,611 - INFO - Instrument already exists: NIFTY
+2026-01-11 22:49:23,612 - INFO - Instrument already exists: XAUUSD
+2026-01-11 22:49:23,618 - INFO - Populating market data...
+2026-01-11 22:49:23,619 - INFO - Processing: BTCUSD 5m
+2026-01-11 22:49:23,687 - INFO - Instrument found: BTCUSD (1)
+2026-01-11 22:49:23,688 - INFO - Reading CSV: data/raw/BTCUSD_5M_1Year.csv
+2026-01-11 22:49:23,732 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/BTCUSD_5M_1Year.csv'
+2026-01-11 22:49:23,733 - INFO - SUCCESS BTCUSD 5m: 0 records
+2026-01-11 22:49:23,733 - INFO - Processing: BTCUSD 15m
+2026-01-11 22:49:23,738 - INFO - Instrument found: BTCUSD (1)
+2026-01-11 22:49:23,740 - INFO - Reading CSV: data/raw/BTCUSD_15M_1Year.csv
+2026-01-11 22:49:23,741 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/BTCUSD_15M_1Year.csv'
+2026-01-11 22:49:23,741 - INFO - SUCCESS BTCUSD 15m: 0 records
+2026-01-11 22:49:23,741 - INFO - Processing: BTCUSD 1h
+2026-01-11 22:49:23,745 - INFO - Instrument found: BTCUSD (1)
+2026-01-11 22:49:23,748 - INFO - Reading CSV: data/raw/BTCUSD_H1_1Year.csv
+2026-01-11 22:49:23,748 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/BTCUSD_H1_1Year.csv'
+2026-01-11 22:49:23,748 - INFO - SUCCESS BTCUSD 1h: 0 records
+2026-01-11 22:49:23,749 - INFO - Processing: BTCUSD 1d
+2026-01-11 22:49:23,752 - INFO - Instrument found: BTCUSD (1)
+2026-01-11 22:49:23,754 - INFO - Reading CSV: data/raw/BTCUSD_D1_1Year.csv
+2026-01-11 22:49:23,754 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/BTCUSD_D1_1Year.csv'
+2026-01-11 22:49:23,754 - INFO - SUCCESS BTCUSD 1d: 0 records
+2026-01-11 22:49:23,755 - INFO - Processing: NIFTY 5m
+2026-01-11 22:49:23,757 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:49:23,761 - INFO - Reading CSV: data/raw/NIFTY_5M_1Year.csv
+2026-01-11 22:49:23,761 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/NIFTY_5M_1Year.csv'
+2026-01-11 22:49:23,761 - INFO - SUCCESS NIFTY 5m: 0 records
+2026-01-11 22:49:23,762 - INFO - Processing: NIFTY 15m
+2026-01-11 22:49:23,764 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:49:23,766 - INFO - Reading CSV: data/raw/NIFTY_15M_1Year.csv
+2026-01-11 22:49:23,766 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/NIFTY_15M_1Year.csv'
+2026-01-11 22:49:23,766 - INFO - SUCCESS NIFTY 15m: 0 records
+2026-01-11 22:49:23,766 - INFO - Processing: NIFTY 1h
+2026-01-11 22:49:23,770 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:49:23,772 - INFO - Reading CSV: data/raw/NIFTY_H1_1Year.csv
+2026-01-11 22:49:23,773 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/NIFTY_H1_1Year.csv'
+2026-01-11 22:49:23,773 - INFO - SUCCESS NIFTY 1h: 0 records
+2026-01-11 22:49:23,773 - INFO - Processing: NIFTY 1d
+2026-01-11 22:49:23,773 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:49:23,779 - INFO - Reading CSV: data/raw/NIFTY_D1_1Year.csv
+2026-01-11 22:49:23,779 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/NIFTY_D1_1Year.csv'
+2026-01-11 22:49:23,779 - INFO - SUCCESS NIFTY 1d: 0 records
+2026-01-11 22:49:23,780 - INFO - Processing: NIFTY 5m
+2026-01-11 22:49:23,783 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:49:23,784 - INFO - Reading CSV: data/raw/NIFTY_5m_5Year.csv
+2026-01-11 22:49:23,785 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/NIFTY_5m_5Year.csv'
+2026-01-11 22:49:23,785 - INFO - SUCCESS NIFTY 5m: 0 records
+2026-01-11 22:49:23,786 - INFO - Processing: XAUUSD 5m
+2026-01-11 22:49:23,788 - INFO - Instrument found: XAUUSD (3)
+2026-01-11 22:49:23,788 - INFO - Reading CSV: data/raw/XAUUSD_5M_1Year.csv
+2026-01-11 22:49:23,788 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/XAUUSD_5M_1Year.csv'
+2026-01-11 22:49:23,788 - INFO - SUCCESS XAUUSD 5m: 0 records
+2026-01-11 22:49:23,788 - INFO - Processing: XAUUSD 15m
+2026-01-11 22:49:23,793 - INFO - Instrument found: XAUUSD (3)
+2026-01-11 22:49:23,795 - INFO - Reading CSV: data/raw/XAUUSD_15M_1Year.csv
+2026-01-11 22:49:23,796 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/XAUUSD_15M_1Year.csv'
+2026-01-11 22:49:23,796 - INFO - SUCCESS XAUUSD 15m: 0 records
+2026-01-11 22:49:23,796 - INFO - Processing: XAUUSD 1h
+2026-01-11 22:49:23,800 - INFO - Instrument found: XAUUSD (3)
+2026-01-11 22:49:23,802 - INFO - Reading CSV: data/raw/XAUUSD_H1_1Year.csv
+2026-01-11 22:49:23,802 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/XAUUSD_H1_1Year.csv'
+2026-01-11 22:49:23,802 - INFO - SUCCESS XAUUSD 1h: 0 records
+2026-01-11 22:49:23,802 - INFO - Processing: XAUUSD 1d
+2026-01-11 22:49:23,805 - INFO - Instrument found: XAUUSD (3)
+2026-01-11 22:49:23,806 - INFO - Reading CSV: data/raw/XAUUSD_D1_1Year.csv
+2026-01-11 22:49:23,806 - ERROR - Error processing CSV: [Errno 2] No such file or directory: 'data/raw/XAUUSD_D1_1Year.csv'
+2026-01-11 22:49:23,806 - INFO - SUCCESS XAUUSD 1d: 0 records
+2026-01-11 22:49:23,812 - INFO - ==================================================
+2026-01-11 22:49:23,812 - INFO - Database setup completed successfully!
+2026-01-11 22:49:23,812 - INFO - You can now test the backtest functionality.
+2026-01-11 22:49:23,812 - INFO - 
+2026-01-11 22:49:23,812 - INFO - Next steps:
+2026-01-11 22:49:23,812 - INFO - 1. Start the API server: python main.py
+2026-01-11 22:49:23,813 - INFO - 2. Start the frontend: cd ../AlgoAgentXApp && npm run dev
+2026-01-11 22:49:23,813 - INFO - 3. Navigate to /backtest to test the functionality
+2026-01-11 22:50:27,538 - INFO - Starting AlgoAgentX Database Setup
+2026-01-11 22:50:27,538 - INFO - ==================================================
+2026-01-11 22:50:27,538 - INFO - Populating strategies...
+2026-01-11 22:50:27,703 - INFO - Strategy already exists: EMA Crossover
+2026-01-11 22:50:27,705 - INFO - Strategy already exists: RSI Strategy
+2026-01-11 22:50:27,707 - INFO - Strategy already exists: SMC Strategy
+2026-01-11 22:50:27,709 - INFO - Strategy already exists: Stock Burner EMA 9-20
+2026-01-11 22:50:27,712 - INFO - Strategy already exists: Trend Continuation TCE
+2026-01-11 22:50:27,715 - INFO - Populating instruments...
+2026-01-11 22:50:27,873 - INFO - Instrument already exists: BTCUSD
+2026-01-11 22:50:27,873 - INFO - Instrument already exists: NIFTY
+2026-01-11 22:50:27,873 - INFO - Instrument already exists: XAUUSD
+2026-01-11 22:50:27,883 - INFO - Populating market data...
+2026-01-11 22:50:27,883 - INFO - Processing: BTCUSD 5m
+2026-01-11 22:50:27,983 - INFO - Instrument found: BTCUSD (1)
+2026-01-11 22:50:27,983 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/BTCUSD_5M_1Year.csv
+2026-01-11 22:50:28,043 - INFO - Processing 833 records
+2026-01-11 22:50:28,077 - WARNING - Data already exists for 1/5m from 2025-12-24 02:40:00+00:00 to 2025-12-27 00:00:00+00:00
+2026-01-11 22:50:28,079 - WARNING - FAILED BTCUSD 5m: Unknown error
+2026-01-11 22:50:28,079 - INFO - Processing: BTCUSD 15m
+2026-01-11 22:50:28,083 - INFO - Instrument found: BTCUSD (1)
+2026-01-11 22:50:28,086 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/BTCUSD_15M_1Year.csv
+2026-01-11 22:50:28,158 - INFO - Processing 33823 records
+2026-01-11 22:50:28,159 - WARNING - Data already exists for 1/15m from 2025-01-01 14:00:00+00:00 to 2025-12-19 21:45:00+00:00
+2026-01-11 22:50:28,159 - WARNING - FAILED BTCUSD 15m: Unknown error
+2026-01-11 22:50:28,171 - INFO - Processing: BTCUSD 1h
+2026-01-11 22:50:28,174 - INFO - Instrument found: BTCUSD (1)
+2026-01-11 22:50:28,176 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/BTCUSD_H1_1Year.csv
+2026-01-11 22:50:28,213 - INFO - Processing 8456 records
+2026-01-11 22:50:28,214 - WARNING - Data already exists for 1/1h from 2025-01-01 14:00:00+00:00 to 2025-12-19 21:00:00+00:00
+2026-01-11 22:50:28,221 - WARNING - FAILED BTCUSD 1h: Unknown error
+2026-01-11 22:50:28,221 - INFO - Processing: BTCUSD 1d
+2026-01-11 22:50:28,224 - INFO - Instrument found: BTCUSD (1)
+2026-01-11 22:50:28,226 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/BTCUSD_D1_1Year.csv
+2026-01-11 22:50:28,248 - INFO - Processing 353 records
+2026-01-11 22:50:28,254 - WARNING - Data already exists for 1/1d from 2025-01-01 00:00:00+00:00 to 2025-12-19 00:00:00+00:00
+2026-01-11 22:50:28,256 - WARNING - FAILED BTCUSD 1d: Unknown error
+2026-01-11 22:50:28,256 - INFO - Processing: NIFTY 5m
+2026-01-11 22:50:28,261 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:50:28,264 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_5M_1Year.csv
+2026-01-11 22:50:28,325 - INFO - Processing 17647 records
+2026-01-11 22:50:28,328 - WARNING - Data already exists for 2/5m from 2024-12-20 09:15:00+00:00 to 2025-12-19 15:25:00+00:00
+2026-01-11 22:50:28,335 - WARNING - FAILED NIFTY 5m: Unknown error
+2026-01-11 22:50:28,335 - INFO - Processing: NIFTY 15m
+2026-01-11 22:50:28,339 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:50:28,342 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_15M_1Year.csv
+2026-01-11 22:50:28,382 - INFO - Processing 5889 records
+2026-01-11 22:50:28,540 - INFO - Inserted chunk 1: 1000 records
+2026-01-11 22:50:28,793 - INFO - Inserted chunk 2: 1000 records
+2026-01-11 22:50:28,951 - ERROR - Integrity error in chunk 3: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-05-19 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-05-16 13:30:00+0000', tz='UTC'), 25029.9, 25031.9, 24997.25, 25001.25, 0.0), (2, '15m', Timestamp('2025-05-16 13:45:00+0000', tz='UTC'), 24999.9, 25020.3, 24994.45, 25014.2, 0.0), (2, '15m', Timestamp('2025-05-16 14:00:00+0000', tz='UTC'), 25014.55, 25032.95, 25010.25, 25019.95, 0.0), (2, '15m', Timestamp('2025-05-16 14:15:00+0000', tz='UTC'), 25019.6, 25025.05, 24999.7, 25003.1, 0.0), (2, '15m', Timestamp('2025-05-16 14:30:00+0000', tz='UTC'), 25002.7, 25019.8, 24992.35, 25014.95, 0.0), (2, '15m', Timestamp('2025-05-16 14:45:00+0000', tz='UTC'), 25014.4, 25019.45, 25005.3, 25011.9, 0.0), (2, '15m', Timestamp('2025-05-16 15:00:00+0000', tz='UTC'), 25012.3, 25034.5, 25011.65, 25024.2, 0.0), (2, '15m', Timestamp('2025-05-16 15:15:00+0000', tz='UTC'), 25025.45, 25025.6, 25002.7, 25013.1, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '15m', Timestamp('2025-07-09 12:30:00+0000', tz='UTC'), 25539.55, 25545.95, 25532.4, 25533.3, 0.0), (2, '15m', Timestamp('2025-07-09 12:45:00+0000', tz='UTC'), 25532.85, 25537.4, 25523.0, 25531.65, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-11 22:50:29,125 - ERROR - Integrity error in chunk 4: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-07-18 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-07-09 13:00:00+0000', tz='UTC'), 25530.95, 25531.85, 25490.5, 25525.4, 0.0), (2, '15m', Timestamp('2025-07-09 13:15:00+0000', tz='UTC'), 25525.15, 25537.8, 25521.8, 25532.5, 0.0), (2, '15m', Timestamp('2025-07-09 13:30:00+0000', tz='UTC'), 25531.55, 25534.55, 25523.5, 25526.55, 0.0), (2, '15m', Timestamp('2025-07-09 13:45:00+0000', tz='UTC'), 25526.15, 25532.55, 25516.85, 25529.85, 0.0), (2, '15m', Timestamp('2025-07-09 14:00:00+0000', tz='UTC'), 25529.95, 25532.1, 25517.6, 25530.3, 0.0), (2, '15m', Timestamp('2025-07-09 14:15:00+0000', tz='UTC'), 25530.25, 25533.2, 25490.75, 25492.05, 0.0), (2, '15m', Timestamp('2025-07-09 14:30:00+0000', tz='UTC'), 25490.5, 25491.05, 25455.15, 25469.45, 0.0), (2, '15m', Timestamp('2025-07-09 14:45:00+0000', tz='UTC'), 25469.85, 25470.45, 25424.35, 25461.8, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '15m', Timestamp('2025-09-04 12:30:00+0000', tz='UTC'), 24775.0, 24819.35, 24774.95, 24819.35, 0.0), (2, '15m', Timestamp('2025-09-04 12:45:00+0000', tz='UTC'), 24819.8, 24837.3, 24809.5, 24833.2, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-11 22:50:29,235 - ERROR - Integrity error in chunk 5: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-09-16 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-09-04 13:00:00+0000', tz='UTC'), 24833.6, 24838.75, 24806.65, 24815.85, 0.0), (2, '15m', Timestamp('2025-09-04 13:15:00+0000', tz='UTC'), 24816.0, 24828.9, 24803.55, 24814.95, 0.0), (2, '15m', Timestamp('2025-09-04 13:30:00+0000', tz='UTC'), 24814.3, 24823.95, 24782.2, 24788.3, 0.0), (2, '15m', Timestamp('2025-09-04 13:45:00+0000', tz='UTC'), 24788.45, 24791.6, 24757.4, 24777.0, 0.0), (2, '15m', Timestamp('2025-09-04 14:00:00+0000', tz='UTC'), 24776.65, 24790.7, 24758.85, 24765.5, 0.0), (2, '15m', Timestamp('2025-09-04 14:15:00+0000', tz='UTC'), 24765.55, 24766.65, 24713.25, 24723.2, 0.0), (2, '15m', Timestamp('2025-09-04 14:30:00+0000', tz='UTC'), 24723.8, 24779.55, 24722.0, 24771.3, 0.0), (2, '15m', Timestamp('2025-09-04 14:45:00+0000', tz='UTC'), 24771.0, 24777.1, 24727.35, 24744.45, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '15m', Timestamp('2025-10-31 11:30:00+0000', tz='UTC'), 25778.1, 25809.55, 25773.7, 25806.25, 0.0), (2, '15m', Timestamp('2025-10-31 11:45:00+0000', tz='UTC'), 25805.25, 25819.8, 25791.35, 25819.8, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-11 22:50:29,337 - ERROR - Integrity error in chunk 6: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-12-15 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-10-31 12:00:00+0000', tz='UTC'), 25818.3, 25834.75, 25796.6, 25798.15, 0.0), (2, '15m', Timestamp('2025-10-31 12:15:00+0000', tz='UTC'), 25797.6, 25811.7, 25781.75, 25787.15, 0.0), (2, '15m', Timestamp('2025-10-31 12:30:00+0000', tz='UTC'), 25786.9, 25807.95, 25779.9, 25791.45, 0.0), (2, '15m', Timestamp('2025-10-31 12:45:00+0000', tz='UTC'), 25790.4, 25806.1, 25784.55, 25794.85, 0.0), (2, '15m', Timestamp('2025-10-31 13:00:00+0000', tz='UTC'), 25793.4, 25816.4, 25790.25, 25800.65, 0.0), (2, '15m', Timestamp('2025-10-31 13:15:00+0000', tz='UTC'), 25799.85, 25809.85, 25773.6, 25777.7, 0.0), (2, '15m', Timestamp('2025-10-31 13:30:00+0000', tz='UTC'), 25776.6, 25784.2, 25758.7, 25765.35, 0.0), (2, '15m', Timestamp('2025-10-31 13:45:00+0000', tz='UTC'), 25764.1, 25782.15, 25753.65, 25775.35, 0.0)  ... displaying 10 of 889 total bound parameter sets ...  (2, '15m', Timestamp('2025-12-19 15:00:00+0000', tz='UTC'), 25959.5, 25973.6, 25945.45, 25969.85, 0.0), (2, '15m', Timestamp('2025-12-19 15:15:00+0000', tz='UTC'), 25968.5, 25974.25, 25955.6, 25961.4, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-11 22:50:29,338 - INFO - Successfully inserted 2000/5889 records
+2026-01-11 22:50:29,338 - WARNING - FAILED NIFTY 15m: Unknown error
+2026-01-11 22:50:29,338 - INFO - Processing: NIFTY 1h
+2026-01-11 22:50:29,345 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:50:29,346 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_H1_1Year.csv
+2026-01-11 22:50:29,365 - INFO - Processing 1793 records
+2026-01-11 22:50:29,609 - ERROR - Integrity error in chunk 1: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 1h, 2025-01-21 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '1h', Timestamp('2024-12-23 09:15:00+0000', tz='UTC'), 23738.2, 23806.5, 23701.6, 23769.35, 0.0), (2, '1h', Timestamp('2024-12-23 10:15:00+0000', tz='UTC'), 23771.75, 23850.65, 23727.75, 23834.35, 0.0), (2, '1h', Timestamp('2024-12-23 11:15:00+0000', tz='UTC'), 23834.05, 23869.55, 23746.6, 23769.3, 0.0), (2, '1h', Timestamp('2024-12-23 12:15:00+0000', tz='UTC'), 23769.15, 23783.9, 23674.15, 23681.2, 0.0), (2, '1h', Timestamp('2024-12-23 13:15:00+0000', tz='UTC'), 23680.35, 23712.95, 23647.2, 23699.1, 0.0), (2, '1h', Timestamp('2024-12-23 14:15:00+0000', tz='UTC'), 23698.65, 23770.7, 23693.85, 23761.75, 0.0), (2, '1h', Timestamp('2024-12-23 15:15:00+0000', tz='UTC'), 23761.65, 23770.0, 23743.9, 23747.2, 0.0), (2, '1h', Timestamp('2024-12-24 09:15:00+0000', tz='UTC'), 23769.1, 23822.15, 23709.65, 23804.85, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '1h', Timestamp('2025-07-11 13:15:00+0000', tz='UTC'), 25155.7, 25191.55, 25144.0, 25168.4, 0.0), (2, '1h', Timestamp('2025-07-11 14:15:00+0000', tz='UTC'), 25168.3, 25175.8, 25150.15, 25150.15, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-11 22:50:29,700 - ERROR - Integrity error in chunk 2: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 1h, 2025-08-19 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '1h', Timestamp('2025-07-11 15:15:00+0000', tz='UTC'), 25149.8, 25153.6, 25129.0, 25140.55, 0.0), (2, '1h', Timestamp('2025-07-14 09:15:00+0000', tz='UTC'), 25149.5, 25151.1, 25041.9, 25119.8, 0.0), (2, '1h', Timestamp('2025-07-14 10:15:00+0000', tz='UTC'), 25120.75, 25127.05, 25061.85, 25063.95, 0.0), (2, '1h', Timestamp('2025-07-14 11:15:00+0000', tz='UTC'), 25063.75, 25066.4, 25019.75, 25045.4, 0.0), (2, '1h', Timestamp('2025-07-14 12:15:00+0000', tz='UTC'), 25046.45, 25060.95, 25001.95, 25026.35, 0.0), (2, '1h', Timestamp('2025-07-14 13:15:00+0000', tz='UTC'), 25027.25, 25058.55, 25012.9, 25046.65, 0.0), (2, '1h', Timestamp('2025-07-14 14:15:00+0000', tz='UTC'), 25046.85, 25108.5, 25037.2, 25079.85, 0.0), (2, '1h', Timestamp('2025-07-14 15:15:00+0000', tz='UTC'), 25080.0, 25092.7, 25077.1, 25087.1, 0.0)  ... displaying 10 of 793 total bound parameter sets ...  (2, '1h', Timestamp('2025-12-19 14:15:00+0000', tz='UTC'), 25967.95, 25993.35, 25945.45, 25969.85, 0.0), (2, '1h', Timestamp('2025-12-19 15:15:00+0000', tz='UTC'), 25968.5, 25974.25, 25955.6, 25961.4, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-11 22:50:29,701 - INFO - Successfully inserted 0/1793 records
+2026-01-11 22:50:29,701 - WARNING - FAILED NIFTY 1h: Unknown error
+2026-01-11 22:50:29,701 - INFO - Processing: NIFTY 1d
+2026-01-11 22:50:29,705 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:50:29,706 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_D1_1Year.csv
+2026-01-11 22:50:29,715 - INFO - Processing 242 records
+2026-01-11 22:50:29,719 - WARNING - Data already exists for 2/1d from 2025-01-01 00:00:00+00:00 to 2025-12-19 00:00:00+00:00
+2026-01-11 22:50:29,720 - WARNING - FAILED NIFTY 1d: Unknown error
+2026-01-11 22:50:29,720 - INFO - Processing: NIFTY 5m
+2026-01-11 22:50:29,724 - INFO - Instrument found: NIFTY (2)
+2026-01-11 22:50:29,728 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_5m_5Year.csv
+2026-01-11 22:50:29,867 - INFO - Processing 70078 records
+2026-01-11 22:50:29,873 - WARNING - Data already exists for 2/5m from 2022-01-03 09:15:00+00:00 to 2025-12-22 15:25:00+00:00
+2026-01-11 22:50:29,877 - WARNING - FAILED NIFTY 5m: Unknown error
+2026-01-11 22:50:29,877 - INFO - Processing: XAUUSD 5m
+2026-01-11 22:50:29,877 - INFO - Instrument found: XAUUSD (3)
+2026-01-11 22:50:29,877 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/XAUUSD_5M_1Year.csv
+2026-01-11 22:50:30,007 - INFO - Processing 68937 records
+2026-01-11 22:50:30,108 - WARNING - Data already exists for 3/5m from 2025-01-01 23:00:00+00:00 to 2025-12-19 21:55:00+00:00
+2026-01-11 22:50:30,108 - WARNING - FAILED XAUUSD 5m: Unknown error
+2026-01-11 22:50:30,108 - INFO - Processing: XAUUSD 15m
+2026-01-11 22:50:30,108 - INFO - Instrument found: XAUUSD (3)
+2026-01-11 22:50:30,119 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/XAUUSD_15M_1Year.csv
+2026-01-11 22:50:30,179 - INFO - Processing 22983 records
+2026-01-11 22:50:30,193 - WARNING - Data already exists for 3/15m from 2025-01-01 23:00:00+00:00 to 2025-12-19 21:45:00+00:00
+2026-01-11 22:50:30,194 - WARNING - FAILED XAUUSD 15m: Unknown error
+2026-01-11 22:50:30,195 - INFO - Processing: XAUUSD 1h
+2026-01-11 22:50:30,197 - INFO - Instrument found: XAUUSD (3)
+2026-01-11 22:50:30,202 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/XAUUSD_H1_1Year.csv
+2026-01-11 22:50:30,241 - INFO - Processing 5749 records
+2026-01-11 22:50:30,260 - WARNING - Data already exists for 3/1h from 2025-01-01 23:00:00+00:00 to 2025-12-19 21:00:00+00:00
+2026-01-11 22:50:30,263 - WARNING - FAILED XAUUSD 1h: Unknown error
+2026-01-11 22:50:30,263 - INFO - Processing: XAUUSD 1d
+2026-01-11 22:50:30,266 - INFO - Instrument found: XAUUSD (3)
+2026-01-11 22:50:30,267 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/XAUUSD_D1_1Year.csv
+2026-01-11 22:50:30,282 - INFO - Processing 301 records
+2026-01-11 22:50:30,290 - WARNING - Data already exists for 3/1d from 2025-01-01 00:00:00+00:00 to 2025-12-19 00:00:00+00:00
+2026-01-11 22:50:30,293 - WARNING - FAILED XAUUSD 1d: Unknown error
+2026-01-11 22:50:30,293 - INFO - ==================================================
+2026-01-11 22:50:30,293 - INFO - Database setup completed successfully!
+2026-01-11 22:50:30,293 - INFO - You can now test the backtest functionality.
+2026-01-11 22:50:30,293 - INFO - 
+2026-01-11 22:50:30,293 - INFO - Next steps:
+2026-01-11 22:50:30,293 - INFO - 1. Start the API server: python main.py
+2026-01-11 22:50:30,293 - INFO - 2. Start the frontend: cd ../AlgoAgentXApp && npm run dev
+2026-01-11 22:50:30,293 - INFO - 3. Navigate to /backtest to test the functionality
+2026-01-18 22:46:19,608 - INFO - Starting AlgoAgentX Database Setup
+2026-01-18 22:46:19,613 - INFO - ==================================================
+2026-01-18 22:46:19,613 - INFO - Populating strategies...
+2026-01-18 22:46:19,843 - INFO - Strategy already exists: EMA Crossover
+2026-01-18 22:46:19,851 - INFO - Strategy already exists: RSI Strategy
+2026-01-18 22:46:19,855 - INFO - Strategy already exists: SMC Strategy
+2026-01-18 22:46:19,858 - INFO - Strategy already exists: Stock Burner EMA 9-20
+2026-01-18 22:46:19,863 - INFO - Strategy already exists: Trend Continuation TCE
+2026-01-18 22:46:19,874 - INFO - Populating instruments...
+2026-01-18 22:46:19,970 - INFO - Instrument already exists: BTCUSD
+2026-01-18 22:46:19,972 - INFO - Instrument already exists: NIFTY
+2026-01-18 22:46:19,976 - INFO - Instrument already exists: XAUUSD
+2026-01-18 22:46:19,978 - INFO - Populating market data...
+2026-01-18 22:46:19,984 - INFO - Processing: BTCUSD 5m
+2026-01-18 22:46:20,079 - INFO - Instrument found: BTCUSD (1)
+2026-01-18 22:46:20,085 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/BTCUSD_5M_1Year.csv
+2026-01-18 22:46:20,504 - INFO - Processing 833 records
+2026-01-18 22:46:20,540 - WARNING - Data already exists for 1/5m from 2025-12-24 02:40:00+00:00 to 2025-12-27 00:00:00+00:00
+2026-01-18 22:46:20,542 - WARNING - FAILED BTCUSD 5m: Unknown error
+2026-01-18 22:46:20,544 - INFO - Processing: BTCUSD 15m
+2026-01-18 22:46:20,546 - INFO - Instrument found: BTCUSD (1)
+2026-01-18 22:46:20,548 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/BTCUSD_15M_1Year.csv
+2026-01-18 22:46:20,627 - INFO - Processing 33823 records
+2026-01-18 22:46:20,639 - WARNING - Data already exists for 1/15m from 2025-01-01 14:00:00+00:00 to 2025-12-19 21:45:00+00:00
+2026-01-18 22:46:20,639 - WARNING - FAILED BTCUSD 15m: Unknown error
+2026-01-18 22:46:20,639 - INFO - Processing: BTCUSD 1h
+2026-01-18 22:46:20,648 - INFO - Instrument found: BTCUSD (1)
+2026-01-18 22:46:20,649 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/BTCUSD_H1_1Year.csv
+2026-01-18 22:46:20,681 - INFO - Processing 8456 records
+2026-01-18 22:46:20,689 - WARNING - Data already exists for 1/1h from 2025-01-01 14:00:00+00:00 to 2025-12-19 21:00:00+00:00
+2026-01-18 22:46:20,689 - WARNING - FAILED BTCUSD 1h: Unknown error
+2026-01-18 22:46:20,689 - INFO - Processing: BTCUSD 1d
+2026-01-18 22:46:20,761 - INFO - Instrument found: BTCUSD (1)
+2026-01-18 22:46:20,765 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/BTCUSD_D1_1Year.csv
+2026-01-18 22:46:20,777 - INFO - Processing 353 records
+2026-01-18 22:46:20,785 - WARNING - Data already exists for 1/1d from 2025-01-01 00:00:00+00:00 to 2025-12-19 00:00:00+00:00
+2026-01-18 22:46:20,794 - WARNING - FAILED BTCUSD 1d: Unknown error
+2026-01-18 22:46:20,796 - INFO - Processing: NIFTY 5m
+2026-01-18 22:46:20,800 - INFO - Instrument found: NIFTY (2)
+2026-01-18 22:46:20,802 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_5M_1Year.csv
+2026-01-18 22:46:20,840 - INFO - Processing 17647 records
+2026-01-18 22:46:20,853 - WARNING - Data already exists for 2/5m from 2024-12-20 09:15:00+00:00 to 2025-12-19 15:25:00+00:00
+2026-01-18 22:46:20,858 - WARNING - FAILED NIFTY 5m: Unknown error
+2026-01-18 22:46:20,858 - INFO - Processing: NIFTY 15m
+2026-01-18 22:46:20,858 - INFO - Instrument found: NIFTY (2)
+2026-01-18 22:46:20,858 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_15M_1Year.csv
+2026-01-18 22:46:20,885 - INFO - Processing 5889 records
+2026-01-18 22:46:21,107 - INFO - Inserted chunk 1: 1000 records
+2026-01-18 22:46:21,280 - INFO - Inserted chunk 2: 1000 records
+2026-01-18 22:46:21,496 - ERROR - Integrity error in chunk 3: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-05-19 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-05-16 13:30:00+0000', tz='UTC'), 25029.9, 25031.9, 24997.25, 25001.25, 0.0), (2, '15m', Timestamp('2025-05-16 13:45:00+0000', tz='UTC'), 24999.9, 25020.3, 24994.45, 25014.2, 0.0), (2, '15m', Timestamp('2025-05-16 14:00:00+0000', tz='UTC'), 25014.55, 25032.95, 25010.25, 25019.95, 0.0), (2, '15m', Timestamp('2025-05-16 14:15:00+0000', tz='UTC'), 25019.6, 25025.05, 24999.7, 25003.1, 0.0), (2, '15m', Timestamp('2025-05-16 14:30:00+0000', tz='UTC'), 25002.7, 25019.8, 24992.35, 25014.95, 0.0), (2, '15m', Timestamp('2025-05-16 14:45:00+0000', tz='UTC'), 25014.4, 25019.45, 25005.3, 25011.9, 0.0), (2, '15m', Timestamp('2025-05-16 15:00:00+0000', tz='UTC'), 25012.3, 25034.5, 25011.65, 25024.2, 0.0), (2, '15m', Timestamp('2025-05-16 15:15:00+0000', tz='UTC'), 25025.45, 25025.6, 25002.7, 25013.1, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '15m', Timestamp('2025-07-09 12:30:00+0000', tz='UTC'), 25539.55, 25545.95, 25532.4, 25533.3, 0.0), (2, '15m', Timestamp('2025-07-09 12:45:00+0000', tz='UTC'), 25532.85, 25537.4, 25523.0, 25531.65, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-18 22:46:21,689 - ERROR - Integrity error in chunk 4: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-07-18 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-07-09 13:00:00+0000', tz='UTC'), 25530.95, 25531.85, 25490.5, 25525.4, 0.0), (2, '15m', Timestamp('2025-07-09 13:15:00+0000', tz='UTC'), 25525.15, 25537.8, 25521.8, 25532.5, 0.0), (2, '15m', Timestamp('2025-07-09 13:30:00+0000', tz='UTC'), 25531.55, 25534.55, 25523.5, 25526.55, 0.0), (2, '15m', Timestamp('2025-07-09 13:45:00+0000', tz='UTC'), 25526.15, 25532.55, 25516.85, 25529.85, 0.0), (2, '15m', Timestamp('2025-07-09 14:00:00+0000', tz='UTC'), 25529.95, 25532.1, 25517.6, 25530.3, 0.0), (2, '15m', Timestamp('2025-07-09 14:15:00+0000', tz='UTC'), 25530.25, 25533.2, 25490.75, 25492.05, 0.0), (2, '15m', Timestamp('2025-07-09 14:30:00+0000', tz='UTC'), 25490.5, 25491.05, 25455.15, 25469.45, 0.0), (2, '15m', Timestamp('2025-07-09 14:45:00+0000', tz='UTC'), 25469.85, 25470.45, 25424.35, 25461.8, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '15m', Timestamp('2025-09-04 12:30:00+0000', tz='UTC'), 24775.0, 24819.35, 24774.95, 24819.35, 0.0), (2, '15m', Timestamp('2025-09-04 12:45:00+0000', tz='UTC'), 24819.8, 24837.3, 24809.5, 24833.2, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-18 22:46:21,923 - ERROR - Integrity error in chunk 5: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-09-16 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-09-04 13:00:00+0000', tz='UTC'), 24833.6, 24838.75, 24806.65, 24815.85, 0.0), (2, '15m', Timestamp('2025-09-04 13:15:00+0000', tz='UTC'), 24816.0, 24828.9, 24803.55, 24814.95, 0.0), (2, '15m', Timestamp('2025-09-04 13:30:00+0000', tz='UTC'), 24814.3, 24823.95, 24782.2, 24788.3, 0.0), (2, '15m', Timestamp('2025-09-04 13:45:00+0000', tz='UTC'), 24788.45, 24791.6, 24757.4, 24777.0, 0.0), (2, '15m', Timestamp('2025-09-04 14:00:00+0000', tz='UTC'), 24776.65, 24790.7, 24758.85, 24765.5, 0.0), (2, '15m', Timestamp('2025-09-04 14:15:00+0000', tz='UTC'), 24765.55, 24766.65, 24713.25, 24723.2, 0.0), (2, '15m', Timestamp('2025-09-04 14:30:00+0000', tz='UTC'), 24723.8, 24779.55, 24722.0, 24771.3, 0.0), (2, '15m', Timestamp('2025-09-04 14:45:00+0000', tz='UTC'), 24771.0, 24777.1, 24727.35, 24744.45, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '15m', Timestamp('2025-10-31 11:30:00+0000', tz='UTC'), 25778.1, 25809.55, 25773.7, 25806.25, 0.0), (2, '15m', Timestamp('2025-10-31 11:45:00+0000', tz='UTC'), 25805.25, 25819.8, 25791.35, 25819.8, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-18 22:46:22,113 - ERROR - Integrity error in chunk 6: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-12-15 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-10-31 12:00:00+0000', tz='UTC'), 25818.3, 25834.75, 25796.6, 25798.15, 0.0), (2, '15m', Timestamp('2025-10-31 12:15:00+0000', tz='UTC'), 25797.6, 25811.7, 25781.75, 25787.15, 0.0), (2, '15m', Timestamp('2025-10-31 12:30:00+0000', tz='UTC'), 25786.9, 25807.95, 25779.9, 25791.45, 0.0), (2, '15m', Timestamp('2025-10-31 12:45:00+0000', tz='UTC'), 25790.4, 25806.1, 25784.55, 25794.85, 0.0), (2, '15m', Timestamp('2025-10-31 13:00:00+0000', tz='UTC'), 25793.4, 25816.4, 25790.25, 25800.65, 0.0), (2, '15m', Timestamp('2025-10-31 13:15:00+0000', tz='UTC'), 25799.85, 25809.85, 25773.6, 25777.7, 0.0), (2, '15m', Timestamp('2025-10-31 13:30:00+0000', tz='UTC'), 25776.6, 25784.2, 25758.7, 25765.35, 0.0), (2, '15m', Timestamp('2025-10-31 13:45:00+0000', tz='UTC'), 25764.1, 25782.15, 25753.65, 25775.35, 0.0)  ... displaying 10 of 889 total bound parameter sets ...  (2, '15m', Timestamp('2025-12-19 15:00:00+0000', tz='UTC'), 25959.5, 25973.6, 25945.45, 25969.85, 0.0), (2, '15m', Timestamp('2025-12-19 15:15:00+0000', tz='UTC'), 25968.5, 25974.25, 25955.6, 25961.4, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-18 22:46:22,114 - INFO - Successfully inserted 2000/5889 records
+2026-01-18 22:46:22,115 - WARNING - FAILED NIFTY 15m: Unknown error
+2026-01-18 22:46:22,115 - INFO - Processing: NIFTY 1h
+2026-01-18 22:46:22,121 - INFO - Instrument found: NIFTY (2)
+2026-01-18 22:46:22,123 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_H1_1Year.csv
+2026-01-18 22:46:22,139 - INFO - Processing 1793 records
+2026-01-18 22:46:22,331 - ERROR - Integrity error in chunk 1: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 1h, 2025-01-21 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '1h', Timestamp('2024-12-23 09:15:00+0000', tz='UTC'), 23738.2, 23806.5, 23701.6, 23769.35, 0.0), (2, '1h', Timestamp('2024-12-23 10:15:00+0000', tz='UTC'), 23771.75, 23850.65, 23727.75, 23834.35, 0.0), (2, '1h', Timestamp('2024-12-23 11:15:00+0000', tz='UTC'), 23834.05, 23869.55, 23746.6, 23769.3, 0.0), (2, '1h', Timestamp('2024-12-23 12:15:00+0000', tz='UTC'), 23769.15, 23783.9, 23674.15, 23681.2, 0.0), (2, '1h', Timestamp('2024-12-23 13:15:00+0000', tz='UTC'), 23680.35, 23712.95, 23647.2, 23699.1, 0.0), (2, '1h', Timestamp('2024-12-23 14:15:00+0000', tz='UTC'), 23698.65, 23770.7, 23693.85, 23761.75, 0.0), (2, '1h', Timestamp('2024-12-23 15:15:00+0000', tz='UTC'), 23761.65, 23770.0, 23743.9, 23747.2, 0.0), (2, '1h', Timestamp('2024-12-24 09:15:00+0000', tz='UTC'), 23769.1, 23822.15, 23709.65, 23804.85, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '1h', Timestamp('2025-07-11 13:15:00+0000', tz='UTC'), 25155.7, 25191.55, 25144.0, 25168.4, 0.0), (2, '1h', Timestamp('2025-07-11 14:15:00+0000', tz='UTC'), 25168.3, 25175.8, 25150.15, 25150.15, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-18 22:46:22,487 - ERROR - Integrity error in chunk 2: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 1h, 2025-08-19 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '1h', Timestamp('2025-07-11 15:15:00+0000', tz='UTC'), 25149.8, 25153.6, 25129.0, 25140.55, 0.0), (2, '1h', Timestamp('2025-07-14 09:15:00+0000', tz='UTC'), 25149.5, 25151.1, 25041.9, 25119.8, 0.0), (2, '1h', Timestamp('2025-07-14 10:15:00+0000', tz='UTC'), 25120.75, 25127.05, 25061.85, 25063.95, 0.0), (2, '1h', Timestamp('2025-07-14 11:15:00+0000', tz='UTC'), 25063.75, 25066.4, 25019.75, 25045.4, 0.0), (2, '1h', Timestamp('2025-07-14 12:15:00+0000', tz='UTC'), 25046.45, 25060.95, 25001.95, 25026.35, 0.0), (2, '1h', Timestamp('2025-07-14 13:15:00+0000', tz='UTC'), 25027.25, 25058.55, 25012.9, 25046.65, 0.0), (2, '1h', Timestamp('2025-07-14 14:15:00+0000', tz='UTC'), 25046.85, 25108.5, 25037.2, 25079.85, 0.0), (2, '1h', Timestamp('2025-07-14 15:15:00+0000', tz='UTC'), 25080.0, 25092.7, 25077.1, 25087.1, 0.0)  ... displaying 10 of 793 total bound parameter sets ...  (2, '1h', Timestamp('2025-12-19 14:15:00+0000', tz='UTC'), 25967.95, 25993.35, 25945.45, 25969.85, 0.0), (2, '1h', Timestamp('2025-12-19 15:15:00+0000', tz='UTC'), 25968.5, 25974.25, 25955.6, 25961.4, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-18 22:46:22,487 - INFO - Successfully inserted 0/1793 records
+2026-01-18 22:46:22,497 - WARNING - FAILED NIFTY 1h: Unknown error
+2026-01-18 22:46:22,499 - INFO - Processing: NIFTY 1d
+2026-01-18 22:46:22,506 - INFO - Instrument found: NIFTY (2)
+2026-01-18 22:46:22,510 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_D1_1Year.csv
+2026-01-18 22:46:22,518 - INFO - Processing 242 records
+2026-01-18 22:46:22,527 - WARNING - Data already exists for 2/1d from 2025-01-01 00:00:00+00:00 to 2025-12-19 00:00:00+00:00
+2026-01-18 22:46:22,533 - WARNING - FAILED NIFTY 1d: Unknown error
+2026-01-18 22:46:22,533 - INFO - Processing: NIFTY 5m
+2026-01-18 22:46:22,540 - INFO - Instrument found: NIFTY (2)
+2026-01-18 22:46:22,543 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_5m_5Year.csv
+2026-01-18 22:46:22,795 - INFO - Processing 70078 records
+2026-01-18 22:46:22,804 - WARNING - Data already exists for 2/5m from 2022-01-03 09:15:00+00:00 to 2025-12-22 15:25:00+00:00
+2026-01-18 22:46:22,807 - WARNING - FAILED NIFTY 5m: Unknown error
+2026-01-18 22:46:22,807 - INFO - Processing: XAUUSD 5m
+2026-01-18 22:46:22,811 - INFO - Instrument found: XAUUSD (3)
+2026-01-18 22:46:22,814 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/XAUUSD_5M_1Year.csv
+2026-01-18 22:46:23,012 - INFO - Processing 68937 records
+2026-01-18 22:46:23,211 - WARNING - Data already exists for 3/5m from 2025-01-01 23:00:00+00:00 to 2025-12-19 21:55:00+00:00
+2026-01-18 22:46:23,211 - WARNING - FAILED XAUUSD 5m: Unknown error
+2026-01-18 22:46:23,211 - INFO - Processing: XAUUSD 15m
+2026-01-18 22:46:23,222 - INFO - Instrument found: XAUUSD (3)
+2026-01-18 22:46:23,227 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/XAUUSD_15M_1Year.csv
+2026-01-18 22:46:23,291 - INFO - Processing 22983 records
+2026-01-18 22:46:23,307 - WARNING - Data already exists for 3/15m from 2025-01-01 23:00:00+00:00 to 2025-12-19 21:45:00+00:00
+2026-01-18 22:46:23,307 - WARNING - FAILED XAUUSD 15m: Unknown error
+2026-01-18 22:46:23,307 - INFO - Processing: XAUUSD 1h
+2026-01-18 22:46:23,307 - INFO - Instrument found: XAUUSD (3)
+2026-01-18 22:46:23,307 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/XAUUSD_H1_1Year.csv
+2026-01-18 22:46:23,335 - INFO - Processing 5749 records
+2026-01-18 22:46:23,357 - WARNING - Data already exists for 3/1h from 2025-01-01 23:00:00+00:00 to 2025-12-19 21:00:00+00:00
+2026-01-18 22:46:23,359 - WARNING - FAILED XAUUSD 1h: Unknown error
+2026-01-18 22:46:23,359 - INFO - Processing: XAUUSD 1d
+2026-01-18 22:46:23,361 - INFO - Instrument found: XAUUSD (3)
+2026-01-18 22:46:23,361 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/XAUUSD_D1_1Year.csv
+2026-01-18 22:46:23,369 - INFO - Processing 301 records
+2026-01-18 22:46:23,376 - WARNING - Data already exists for 3/1d from 2025-01-01 00:00:00+00:00 to 2025-12-19 00:00:00+00:00
+2026-01-18 22:46:23,380 - WARNING - FAILED XAUUSD 1d: Unknown error
+2026-01-18 22:46:23,385 - INFO - ==================================================
+2026-01-18 22:46:23,385 - INFO - Database setup completed successfully!
+2026-01-18 22:46:23,385 - INFO - You can now test the backtest functionality.
+2026-01-18 22:46:23,385 - INFO - 
+2026-01-18 22:46:23,385 - INFO - Next steps:
+2026-01-18 22:46:23,387 - INFO - 1. Start the API server: python main.py
+2026-01-18 22:46:23,387 - INFO - 2. Start the frontend: cd ../AlgoAgentXApp && npm run dev
+2026-01-18 22:46:23,388 - INFO - 3. Navigate to /backtest to test the functionality
+2026-01-18 23:01:07,948 - INFO - Starting AlgoAgentX Database Setup
+2026-01-18 23:01:07,958 - INFO - ==================================================
+2026-01-18 23:01:07,959 - INFO - Populating strategies...
+2026-01-18 23:01:08,153 - INFO - Strategy already exists: EMA Crossover
+2026-01-18 23:01:08,155 - INFO - Strategy already exists: RSI Strategy
+2026-01-18 23:01:08,156 - INFO - Strategy already exists: SMC Strategy
+2026-01-18 23:01:08,159 - INFO - Strategy already exists: Stock Burner EMA 9-20
+2026-01-18 23:01:08,162 - INFO - Strategy already exists: Trend Continuation TCE
+2026-01-18 23:01:08,171 - INFO - Populating instruments...
+2026-01-18 23:01:08,351 - INFO - Instrument already exists: BTCUSD
+2026-01-18 23:01:08,354 - INFO - Instrument already exists: NIFTY
+2026-01-18 23:01:08,376 - INFO - Instrument already exists: XAUUSD
+2026-01-18 23:01:08,384 - INFO - Populating market data...
+2026-01-18 23:01:08,387 - INFO - Processing: BTCUSD 5m
+2026-01-18 23:01:08,474 - INFO - Instrument found: BTCUSD (1)
+2026-01-18 23:01:08,476 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/BTCUSD_5M_1Year.csv
+2026-01-18 23:01:08,736 - INFO - Processing 833 records
+2026-01-18 23:01:08,769 - WARNING - Data already exists for 1/5m from 2025-12-24 02:40:00+00:00 to 2025-12-27 00:00:00+00:00
+2026-01-18 23:01:08,773 - WARNING - FAILED BTCUSD 5m: Unknown error
+2026-01-18 23:01:08,773 - INFO - Processing: BTCUSD 15m
+2026-01-18 23:01:08,777 - INFO - Instrument found: BTCUSD (1)
+2026-01-18 23:01:08,779 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/BTCUSD_15M_1Year.csv
+2026-01-18 23:01:08,881 - INFO - Processing 33823 records
+2026-01-18 23:01:08,890 - WARNING - Data already exists for 1/15m from 2025-01-01 14:00:00+00:00 to 2025-12-19 21:45:00+00:00
+2026-01-18 23:01:08,893 - WARNING - FAILED BTCUSD 15m: Unknown error
+2026-01-18 23:01:08,893 - INFO - Processing: BTCUSD 1h
+2026-01-18 23:01:08,897 - INFO - Instrument found: BTCUSD (1)
+2026-01-18 23:01:08,899 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/BTCUSD_H1_1Year.csv
+2026-01-18 23:01:08,942 - INFO - Processing 8456 records
+2026-01-18 23:01:08,948 - WARNING - Data already exists for 1/1h from 2025-01-01 14:00:00+00:00 to 2025-12-19 21:00:00+00:00
+2026-01-18 23:01:08,950 - WARNING - FAILED BTCUSD 1h: Unknown error
+2026-01-18 23:01:08,950 - INFO - Processing: BTCUSD 1d
+2026-01-18 23:01:08,954 - INFO - Instrument found: BTCUSD (1)
+2026-01-18 23:01:08,958 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/BTCUSD_D1_1Year.csv
+2026-01-18 23:01:08,979 - INFO - Processing 353 records
+2026-01-18 23:01:08,989 - WARNING - Data already exists for 1/1d from 2025-01-01 00:00:00+00:00 to 2025-12-19 00:00:00+00:00
+2026-01-18 23:01:08,992 - WARNING - FAILED BTCUSD 1d: Unknown error
+2026-01-18 23:01:08,992 - INFO - Processing: NIFTY 5m
+2026-01-18 23:01:08,996 - INFO - Instrument found: NIFTY (2)
+2026-01-18 23:01:08,998 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_5M_1Year.csv
+2026-01-18 23:01:09,057 - INFO - Processing 17647 records
+2026-01-18 23:01:09,064 - WARNING - Data already exists for 2/5m from 2024-12-20 09:15:00+00:00 to 2025-12-19 15:25:00+00:00
+2026-01-18 23:01:09,066 - WARNING - FAILED NIFTY 5m: Unknown error
+2026-01-18 23:01:09,066 - INFO - Processing: NIFTY 15m
+2026-01-18 23:01:09,070 - INFO - Instrument found: NIFTY (2)
+2026-01-18 23:01:09,074 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_15M_1Year.csv
+2026-01-18 23:01:09,109 - INFO - Processing 5889 records
+2026-01-18 23:01:09,302 - INFO - Inserted chunk 1: 1000 records
+2026-01-18 23:01:09,599 - INFO - Inserted chunk 2: 1000 records
+2026-01-18 23:01:09,816 - ERROR - Integrity error in chunk 3: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-05-19 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-05-16 13:30:00+0000', tz='UTC'), 25029.9, 25031.9, 24997.25, 25001.25, 0.0), (2, '15m', Timestamp('2025-05-16 13:45:00+0000', tz='UTC'), 24999.9, 25020.3, 24994.45, 25014.2, 0.0), (2, '15m', Timestamp('2025-05-16 14:00:00+0000', tz='UTC'), 25014.55, 25032.95, 25010.25, 25019.95, 0.0), (2, '15m', Timestamp('2025-05-16 14:15:00+0000', tz='UTC'), 25019.6, 25025.05, 24999.7, 25003.1, 0.0), (2, '15m', Timestamp('2025-05-16 14:30:00+0000', tz='UTC'), 25002.7, 25019.8, 24992.35, 25014.95, 0.0), (2, '15m', Timestamp('2025-05-16 14:45:00+0000', tz='UTC'), 25014.4, 25019.45, 25005.3, 25011.9, 0.0), (2, '15m', Timestamp('2025-05-16 15:00:00+0000', tz='UTC'), 25012.3, 25034.5, 25011.65, 25024.2, 0.0), (2, '15m', Timestamp('2025-05-16 15:15:00+0000', tz='UTC'), 25025.45, 25025.6, 25002.7, 25013.1, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '15m', Timestamp('2025-07-09 12:30:00+0000', tz='UTC'), 25539.55, 25545.95, 25532.4, 25533.3, 0.0), (2, '15m', Timestamp('2025-07-09 12:45:00+0000', tz='UTC'), 25532.85, 25537.4, 25523.0, 25531.65, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-18 23:01:09,985 - ERROR - Integrity error in chunk 4: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-07-18 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-07-09 13:00:00+0000', tz='UTC'), 25530.95, 25531.85, 25490.5, 25525.4, 0.0), (2, '15m', Timestamp('2025-07-09 13:15:00+0000', tz='UTC'), 25525.15, 25537.8, 25521.8, 25532.5, 0.0), (2, '15m', Timestamp('2025-07-09 13:30:00+0000', tz='UTC'), 25531.55, 25534.55, 25523.5, 25526.55, 0.0), (2, '15m', Timestamp('2025-07-09 13:45:00+0000', tz='UTC'), 25526.15, 25532.55, 25516.85, 25529.85, 0.0), (2, '15m', Timestamp('2025-07-09 14:00:00+0000', tz='UTC'), 25529.95, 25532.1, 25517.6, 25530.3, 0.0), (2, '15m', Timestamp('2025-07-09 14:15:00+0000', tz='UTC'), 25530.25, 25533.2, 25490.75, 25492.05, 0.0), (2, '15m', Timestamp('2025-07-09 14:30:00+0000', tz='UTC'), 25490.5, 25491.05, 25455.15, 25469.45, 0.0), (2, '15m', Timestamp('2025-07-09 14:45:00+0000', tz='UTC'), 25469.85, 25470.45, 25424.35, 25461.8, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '15m', Timestamp('2025-09-04 12:30:00+0000', tz='UTC'), 24775.0, 24819.35, 24774.95, 24819.35, 0.0), (2, '15m', Timestamp('2025-09-04 12:45:00+0000', tz='UTC'), 24819.8, 24837.3, 24809.5, 24833.2, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-18 23:01:10,134 - ERROR - Integrity error in chunk 5: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-09-16 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-09-04 13:00:00+0000', tz='UTC'), 24833.6, 24838.75, 24806.65, 24815.85, 0.0), (2, '15m', Timestamp('2025-09-04 13:15:00+0000', tz='UTC'), 24816.0, 24828.9, 24803.55, 24814.95, 0.0), (2, '15m', Timestamp('2025-09-04 13:30:00+0000', tz='UTC'), 24814.3, 24823.95, 24782.2, 24788.3, 0.0), (2, '15m', Timestamp('2025-09-04 13:45:00+0000', tz='UTC'), 24788.45, 24791.6, 24757.4, 24777.0, 0.0), (2, '15m', Timestamp('2025-09-04 14:00:00+0000', tz='UTC'), 24776.65, 24790.7, 24758.85, 24765.5, 0.0), (2, '15m', Timestamp('2025-09-04 14:15:00+0000', tz='UTC'), 24765.55, 24766.65, 24713.25, 24723.2, 0.0), (2, '15m', Timestamp('2025-09-04 14:30:00+0000', tz='UTC'), 24723.8, 24779.55, 24722.0, 24771.3, 0.0), (2, '15m', Timestamp('2025-09-04 14:45:00+0000', tz='UTC'), 24771.0, 24777.1, 24727.35, 24744.45, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '15m', Timestamp('2025-10-31 11:30:00+0000', tz='UTC'), 25778.1, 25809.55, 25773.7, 25806.25, 0.0), (2, '15m', Timestamp('2025-10-31 11:45:00+0000', tz='UTC'), 25805.25, 25819.8, 25791.35, 25819.8, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-18 23:01:10,260 - ERROR - Integrity error in chunk 6: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 15m, 2025-12-15 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '15m', Timestamp('2025-10-31 12:00:00+0000', tz='UTC'), 25818.3, 25834.75, 25796.6, 25798.15, 0.0), (2, '15m', Timestamp('2025-10-31 12:15:00+0000', tz='UTC'), 25797.6, 25811.7, 25781.75, 25787.15, 0.0), (2, '15m', Timestamp('2025-10-31 12:30:00+0000', tz='UTC'), 25786.9, 25807.95, 25779.9, 25791.45, 0.0), (2, '15m', Timestamp('2025-10-31 12:45:00+0000', tz='UTC'), 25790.4, 25806.1, 25784.55, 25794.85, 0.0), (2, '15m', Timestamp('2025-10-31 13:00:00+0000', tz='UTC'), 25793.4, 25816.4, 25790.25, 25800.65, 0.0), (2, '15m', Timestamp('2025-10-31 13:15:00+0000', tz='UTC'), 25799.85, 25809.85, 25773.6, 25777.7, 0.0), (2, '15m', Timestamp('2025-10-31 13:30:00+0000', tz='UTC'), 25776.6, 25784.2, 25758.7, 25765.35, 0.0), (2, '15m', Timestamp('2025-10-31 13:45:00+0000', tz='UTC'), 25764.1, 25782.15, 25753.65, 25775.35, 0.0)  ... displaying 10 of 889 total bound parameter sets ...  (2, '15m', Timestamp('2025-12-19 15:00:00+0000', tz='UTC'), 25959.5, 25973.6, 25945.45, 25969.85, 0.0), (2, '15m', Timestamp('2025-12-19 15:15:00+0000', tz='UTC'), 25968.5, 25974.25, 25955.6, 25961.4, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-18 23:01:10,260 - INFO - Successfully inserted 2000/5889 records
+2026-01-18 23:01:10,261 - WARNING - FAILED NIFTY 15m: Unknown error
+2026-01-18 23:01:10,261 - INFO - Processing: NIFTY 1h
+2026-01-18 23:01:10,264 - INFO - Instrument found: NIFTY (2)
+2026-01-18 23:01:10,267 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_H1_1Year.csv
+2026-01-18 23:01:10,295 - INFO - Processing 1793 records
+2026-01-18 23:01:10,473 - ERROR - Integrity error in chunk 1: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 1h, 2025-01-21 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '1h', Timestamp('2024-12-23 09:15:00+0000', tz='UTC'), 23738.2, 23806.5, 23701.6, 23769.35, 0.0), (2, '1h', Timestamp('2024-12-23 10:15:00+0000', tz='UTC'), 23771.75, 23850.65, 23727.75, 23834.35, 0.0), (2, '1h', Timestamp('2024-12-23 11:15:00+0000', tz='UTC'), 23834.05, 23869.55, 23746.6, 23769.3, 0.0), (2, '1h', Timestamp('2024-12-23 12:15:00+0000', tz='UTC'), 23769.15, 23783.9, 23674.15, 23681.2, 0.0), (2, '1h', Timestamp('2024-12-23 13:15:00+0000', tz='UTC'), 23680.35, 23712.95, 23647.2, 23699.1, 0.0), (2, '1h', Timestamp('2024-12-23 14:15:00+0000', tz='UTC'), 23698.65, 23770.7, 23693.85, 23761.75, 0.0), (2, '1h', Timestamp('2024-12-23 15:15:00+0000', tz='UTC'), 23761.65, 23770.0, 23743.9, 23747.2, 0.0), (2, '1h', Timestamp('2024-12-24 09:15:00+0000', tz='UTC'), 23769.1, 23822.15, 23709.65, 23804.85, 0.0)  ... displaying 10 of 1000 total bound parameter sets ...  (2, '1h', Timestamp('2025-07-11 13:15:00+0000', tz='UTC'), 25155.7, 25191.55, 25144.0, 25168.4, 0.0), (2, '1h', Timestamp('2025-07-11 14:15:00+0000', tz='UTC'), 25168.3, 25175.8, 25150.15, 25150.15, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-18 23:01:10,616 - ERROR - Integrity error in chunk 2: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "market_data_pkey"
+DETAIL:  Key (instrument_id, timeframe, "timestamp")=(2, 1h, 2025-08-19 14:45:00) already exists.
+[SQL: INSERT INTO market_data (instrument_id, timeframe, timestamp, open, high, low, close, volume) VALUES ($1::INTEGER, $2::VARCHAR, $3::TIMESTAMP WITH TIME ZONE, $4::NUMERIC, $5::NUMERIC, $6::NUMERIC, $7::NUMERIC, $8::NUMERIC)]
+[parameters: [(2, '1h', Timestamp('2025-07-11 15:15:00+0000', tz='UTC'), 25149.8, 25153.6, 25129.0, 25140.55, 0.0), (2, '1h', Timestamp('2025-07-14 09:15:00+0000', tz='UTC'), 25149.5, 25151.1, 25041.9, 25119.8, 0.0), (2, '1h', Timestamp('2025-07-14 10:15:00+0000', tz='UTC'), 25120.75, 25127.05, 25061.85, 25063.95, 0.0), (2, '1h', Timestamp('2025-07-14 11:15:00+0000', tz='UTC'), 25063.75, 25066.4, 25019.75, 25045.4, 0.0), (2, '1h', Timestamp('2025-07-14 12:15:00+0000', tz='UTC'), 25046.45, 25060.95, 25001.95, 25026.35, 0.0), (2, '1h', Timestamp('2025-07-14 13:15:00+0000', tz='UTC'), 25027.25, 25058.55, 25012.9, 25046.65, 0.0), (2, '1h', Timestamp('2025-07-14 14:15:00+0000', tz='UTC'), 25046.85, 25108.5, 25037.2, 25079.85, 0.0), (2, '1h', Timestamp('2025-07-14 15:15:00+0000', tz='UTC'), 25080.0, 25092.7, 25077.1, 25087.1, 0.0)  ... displaying 10 of 793 total bound parameter sets ...  (2, '1h', Timestamp('2025-12-19 14:15:00+0000', tz='UTC'), 25967.95, 25993.35, 25945.45, 25969.85, 0.0), (2, '1h', Timestamp('2025-12-19 15:15:00+0000', tz='UTC'), 25968.5, 25974.25, 25955.6, 25961.4, 0.0)]]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+2026-01-18 23:01:10,616 - INFO - Successfully inserted 0/1793 records
+2026-01-18 23:01:10,616 - WARNING - FAILED NIFTY 1h: Unknown error
+2026-01-18 23:01:10,616 - INFO - Processing: NIFTY 1d
+2026-01-18 23:01:10,638 - INFO - Instrument found: NIFTY (2)
+2026-01-18 23:01:10,642 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_D1_1Year.csv
+2026-01-18 23:01:10,669 - INFO - Processing 242 records
+2026-01-18 23:01:10,679 - WARNING - Data already exists for 2/1d from 2025-01-01 00:00:00+00:00 to 2025-12-19 00:00:00+00:00
+2026-01-18 23:01:10,682 - WARNING - FAILED NIFTY 1d: Unknown error
+2026-01-18 23:01:10,682 - INFO - Processing: NIFTY 5m
+2026-01-18 23:01:10,687 - INFO - Instrument found: NIFTY (2)
+2026-01-18 23:01:10,692 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/NIFTY_5m_5Year.csv
+2026-01-18 23:01:10,846 - INFO - Processing 70078 records
+2026-01-18 23:01:10,874 - WARNING - Data already exists for 2/5m from 2022-01-03 09:15:00+00:00 to 2025-12-22 15:25:00+00:00
+2026-01-18 23:01:10,877 - WARNING - FAILED NIFTY 5m: Unknown error
+2026-01-18 23:01:10,878 - INFO - Processing: XAUUSD 5m
+2026-01-18 23:01:10,883 - INFO - Instrument found: XAUUSD (3)
+2026-01-18 23:01:10,893 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/XAUUSD_5M_1Year.csv
+2026-01-18 23:01:11,098 - INFO - Processing 68937 records
+2026-01-18 23:01:11,216 - WARNING - Data already exists for 3/5m from 2025-01-01 23:00:00+00:00 to 2025-12-19 21:55:00+00:00
+2026-01-18 23:01:11,216 - WARNING - FAILED XAUUSD 5m: Unknown error
+2026-01-18 23:01:11,216 - INFO - Processing: XAUUSD 15m
+2026-01-18 23:01:11,228 - INFO - Instrument found: XAUUSD (3)
+2026-01-18 23:01:11,230 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/XAUUSD_15M_1Year.csv
+2026-01-18 23:01:11,289 - INFO - Processing 22983 records
+2026-01-18 23:01:11,306 - WARNING - Data already exists for 3/15m from 2025-01-01 23:00:00+00:00 to 2025-12-19 21:45:00+00:00
+2026-01-18 23:01:11,309 - WARNING - FAILED XAUUSD 15m: Unknown error
+2026-01-18 23:01:11,310 - INFO - Processing: XAUUSD 1h
+2026-01-18 23:01:11,314 - INFO - Instrument found: XAUUSD (3)
+2026-01-18 23:01:11,316 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/XAUUSD_H1_1Year.csv
+2026-01-18 23:01:11,350 - INFO - Processing 5749 records
+2026-01-18 23:01:11,370 - WARNING - Data already exists for 3/1h from 2025-01-01 23:00:00+00:00 to 2025-12-19 21:00:00+00:00
+2026-01-18 23:01:11,375 - WARNING - FAILED XAUUSD 1h: Unknown error
+2026-01-18 23:01:11,375 - INFO - Processing: XAUUSD 1d
+2026-01-18 23:01:11,379 - INFO - Instrument found: XAUUSD (3)
+2026-01-18 23:01:11,381 - INFO - Reading CSV: AlgoAgentXAPI/data/raw/XAUUSD_D1_1Year.csv
+2026-01-18 23:01:11,399 - INFO - Processing 301 records
+2026-01-18 23:01:11,406 - WARNING - Data already exists for 3/1d from 2025-01-01 00:00:00+00:00 to 2025-12-19 00:00:00+00:00
+2026-01-18 23:01:11,408 - WARNING - FAILED XAUUSD 1d: Unknown error
+2026-01-18 23:01:11,413 - INFO - ==================================================
+2026-01-18 23:01:11,413 - INFO - Database setup completed successfully!
+2026-01-18 23:01:11,413 - INFO - You can now test the backtest functionality.
+2026-01-18 23:01:11,413 - INFO - 
+2026-01-18 23:01:11,414 - INFO - Next steps:
+2026-01-18 23:01:11,414 - INFO - 1. Start the API server: python main.py
+2026-01-18 23:01:11,414 - INFO - 2. Start the frontend: cd ../AlgoAgentXApp && npm run dev
+2026-01-18 23:01:11,414 - INFO - 3. Navigate to /backtest to test the functionality

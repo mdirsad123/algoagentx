@@ -1,0 +1,912 @@
+
+  .theme-zinc {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+
+    --highlight: 244 17% 26%;
+    --highlight-foreground: 244 17% 91;
+
+    --hover: 244 80% 0%;
+    --hover-foreground: 244 17% 91;
+
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --ring: 240 5.9% 10%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark .theme-zinc {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --highlight: 244 17% 91;
+    --highlight-foreground: 244 17% 26%;
+
+    --hover: 244 17% 91;
+    --hover-foreground: 244 80% 0%;
+
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --ring: 240 4.9% 83.9%;
+  }
+
+  .theme-slate {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --highlight: 222.2 73% 16%;
+    --highlight-foreground: 210 40% 98%;
+
+    --hover: 222 89% 4%;
+    --hover-foreground: 210 40% 98%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --ring: 222.2 84% 4.9%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark .theme-slate {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --highlight: 210 40% 98%;
+    --highlight-foreground: 222.2 73% 16%;
+
+    --hover: 210 40% 98%;
+    --hover-foreground: 222 89% 4%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --ring: 212.7 26.8% 83.9;
+  }
+
+  .theme-stone {
+    --background: 0 0% 100%;
+    --foreground: 20 14.3% 4.1%;
+
+    --highlight: 222.2 73% 16%;
+    --highlight-foreground: 210 40% 98%;
+
+    --hover: 222 89% 4%;
+    --hover-foreground: 210 40% 98%;
+
+    --muted: 60 4.8% 95.9%;
+    --muted-foreground: 25 5.3% 44.7%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 20 14.3% 4.1%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 20 14.3% 4.1%;
+
+    --border: 20 5.9% 90%;
+    --input: 20 5.9% 90%;
+
+    --primary: 24 9.8% 10%;
+    --primary-foreground: 60 9.1% 97.8%;
+
+    --secondary: 60 4.8% 95.9%;
+    --secondary-foreground: 24 9.8% 10%;
+
+    --accent: 60 4.8% 95.9%;
+    --accent-foreground: 24 9.8% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 60 9.1% 97.8%;
+
+    --ring: 20 14.3% 4.1%;
+
+    --radius: 0.95rem;
+  }
+
+  .dark .theme-stone {
+    --background: 20 14.3% 4.1%;
+    --foreground: 60 9.1% 97.8%;
+
+    --highlight: 210 40% 98%;
+    --highlight-foreground: 222.2 73% 16%;
+
+    --hover: 210 40% 98%;
+    --hover-foreground: 222 89% 4%;
+
+    --muted: 12 6.5% 15.1%;
+    --muted-foreground: 24 5.4% 63.9%;
+
+    --popover: 20 14.3% 4.1%;
+    --popover-foreground: 60 9.1% 97.8%;
+
+    --card: 20 14.3% 4.1%;
+    --card-foreground: 60 9.1% 97.8%;
+
+    --border: 12 6.5% 15.1%;
+    --input: 12 6.5% 15.1%;
+
+    --primary: 60 9.1% 97.8%;
+    --primary-foreground: 24 9.8% 10%;
+
+    --secondary: 12 6.5% 15.1%;
+    --secondary-foreground: 60 9.1% 97.8%;
+
+    --accent: 12 6.5% 15.1%;
+    --accent-foreground: 60 9.1% 97.8%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 60 9.1% 97.8%;
+
+    --ring: 24 5.7% 82.9%;
+  }
+
+  .theme-gray {
+    --background: 0 0% 100%;
+    --foreground: 224 71.4% 4.1%;
+
+    --highlight: 222.2 73% 16%;
+    --highlight-foreground: 210 40% 98%;
+
+    --hover: 222 89% 4%;
+    --hover-foreground: 210 40% 98%;
+
+    --muted: 220 14.3% 95.9%;
+    --muted-foreground: 220 8.9% 46.1%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71.4% 4.1%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 224 71.4% 4.1%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+
+    --primary: 220.9 39.3% 11%;
+    --primary-foreground: 210 20% 98%;
+
+    --secondary: 220 14.3% 95.9%;
+    --secondary-foreground: 220.9 39.3% 11%;
+
+    --accent: 220 14.3% 95.9%;
+    --accent-foreground: 220.9 39.3% 11%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 20% 98%;
+
+    --ring: 224 71.4% 4.1%;
+
+    --radius: 0.35rem;
+  }
+
+  .dark .theme-gray {
+    --background: 224 71.4% 4.1%;
+    --foreground: 210 20% 98%;
+
+    --highlight: 210 40% 98%;
+    --highlight-foreground: 222.2 73% 16%;
+
+    --hover: 210 40% 98%;
+    --hover-foreground: 222 89% 4%;
+
+    --muted: 215 27.9% 16.9%;
+    --muted-foreground: 217.9 10.6% 64.9%;
+
+    --popover: 224 71.4% 4.1%;
+    --popover-foreground: 210 20% 98%;
+
+    --card: 224 71.4% 4.1%;
+    --card-foreground: 210 20% 98%;
+
+    --border: 215 27.9% 16.9%;
+    --input: 215 27.9% 16.9%;
+
+    --primary: 210 20% 98%;
+    --primary-foreground: 220.9 39.3% 11%;
+
+    --secondary: 215 27.9% 16.9%;
+    --secondary-foreground: 210 20% 98%;
+
+    --accent: 215 27.9% 16.9%;
+    --accent-foreground: 210 20% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 20% 98%;
+
+    --ring: 216 12.2% 83.9%;
+  }
+
+  .theme-navy {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 3.9%;
+
+    --highlight: 217 80% 46%;
+    --highlight-foreground: 217 80% 98%;
+
+    --hover: 250 100% 10%;
+    --hover-foreground: 0 0% 98%;
+
+    --muted: 0 0% 96.1%;
+    --muted-foreground: 0 0% 45.1%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 3.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 3.9%;
+
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+
+    --primary: 250 100% 20%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 250 75% 90%;
+    --secondary-foreground: 250 10% 35%;
+
+    --accent: 0 0% 96.1%;
+    --accent-foreground: 0 0% 9%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --ring: 0 0% 3.9%;
+
+    --radius: ;
+  }
+
+  .dark .theme-navy {
+    --background: 0 0% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --highlight: 217 80% 98%;
+    --highlight-foreground: 217 80% 46%;
+
+    --hover: 0 0% 98%;
+    --hover-foreground: 250 100% 10%;
+
+    --muted: 0 0% 14.9%;
+    --muted-foreground: 0 0% 63.9%;
+
+    --popover: 0 0% 3.9%;
+    --popover-foreground: 0 0% 98%;
+
+    --card: 0 0% 3.9%;
+    --card-foreground: 0 0% 98%;
+
+    --border: 0 0% 14.9%;
+    --input: 0 0% 14.9%;
+
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 9%;
+
+    --secondary: 0 0% 14.9%;
+    --secondary-foreground: 0 0% 98%;
+
+    --accent: 0 0% 14.9%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --ring: 0 0% 83.1%;
+  }
+
+  .theme-red {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 3.9%;
+
+    --highlight: 36 100% 54%;
+    --highlight-foreground: 36 100% 8%;
+
+    --hover: 0 84% 35%;
+    --hover-foreground: 0 85.7% 97.3%;
+
+    --muted: 0 0% 96.1%;
+    --muted-foreground: 0 0% 45.1%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 3.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 3.9%;
+
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+
+    --primary: 0 72.2% 50.6%;
+    --primary-foreground: 0 85.7% 97.3%;
+
+    --secondary: 0 75% 92%;
+    --secondary-foreground: 0 0% 9%;
+
+    --accent: 0 0% 96.1%;
+    --accent-foreground: 0 0% 9%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --ring: 0 72.2% 50.6%;
+
+    --radius: 0.4rem;
+  }
+
+  .dark .theme-red {
+    --background: 0 0% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --highlight: 36 100% 8%;
+    --highlight-foreground: 36 100% 54%;
+
+    --hover: 0 85.7% 97.3%;
+    --hover-foreground: 0 84% 35%;
+
+    --muted: 0 0% 14.9%;
+    --muted-foreground: 0 0% 63.9%;
+
+    --popover: 0 0% 3.9%;
+    --popover-foreground: 0 0% 98%;
+
+    --card: 0 0% 3.9%;
+    --card-foreground: 0 0% 98%;
+
+    --border: 0 0% 14.9%;
+    --input: 0 0% 14.9%;
+
+    --primary: 0 72.2% 50.6%;
+    --primary-foreground: 0 85.7% 97.3%;
+
+    --secondary: 0 0% 14.9%;
+    --secondary-foreground: 0 0% 98%;
+
+    --accent: 0 0% 14.9%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --ring: 0 72.2% 50.6%;
+  }
+
+  .theme-rose {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+
+    --highlight: 360 44% 33%;
+    --highlight-foreground: 328 95% 98%;
+
+    --hover: 346.8 89% 36%;
+    --hover-foreground: 355.7 100% 97.3%;
+
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+
+    --primary: 346.8 77.2% 49.8%;
+    --primary-foreground: 355.7 100% 97.3%;
+
+    --secondary: 300, 75%, 90%;
+    --secondary-foreground: 240 5.9% 10%;
+
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --ring: 346.8 77.2% 49.8%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark .theme-rose {
+    --background: 20 14.3% 4.1%;
+    --foreground: 0 0% 95%;
+
+    --highlight: 328 95% 98%;
+    --highlight-foreground: 283 77% 45%;
+
+    --hover: 355.7 100% 97.3%;
+    --hover-foreground: 346.8 89% 36%;
+
+    --muted: 0 0% 15%;
+    --muted-foreground: 240 5% 64.9%;
+
+    --popover: 0 0% 9%;
+    --popover-foreground: 0 0% 95%;
+
+    --card: 24 9.8% 10%;
+    --card-foreground: 0 0% 95%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+
+    --primary: 346.8 77.2% 49.8%;
+    --primary-foreground: 355.7 100% 97.3%;
+
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+
+    --accent: 12 6.5% 15.1%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 85.7% 97.3%;
+
+    --ring: 346.8 77.2% 49.8%;
+  }
+
+  .theme-orange {
+    --background: 0 0% 100%;
+    --foreground: 20 14.3% 4.1%;
+
+    --highlight: 248 65% 37%;
+    --highlight-foreground: 328 95% 98%;
+
+    --hover: 23 95% 45%;
+    --hover-foreground: 60 9.1% 97.8%;
+
+    --muted: 60 4.8% 95.9%;
+    --muted-foreground: 25 5.3% 44.7%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 20 14.3% 4.1%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 20 14.3% 4.1%;
+
+    --border: 20 5.9% 90%;
+    --input: 20 5.9% 90%;
+
+    --primary: 24.6 95% 53.1%;
+    --primary-foreground: 60 9.1% 97.8%;
+
+    --secondary: 50 75% 90%;
+    --secondary-foreground: 24 9.8% 10%;
+
+    --accent: 60 4.8% 95.9%;
+    --accent-foreground: 24 9.8% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 60 9.1% 97.8%;
+
+    --ring: 24.6 95% 53.1%;
+
+    --radius: 0.95rem;
+  }
+
+  .dark .theme-orange {
+    --background: 20 14.3% 4.1%;
+    --foreground: 60 9.1% 97.8%;
+
+    --highlight: 328 95% 98%;
+    --highlight-foreground: 248 65% 37%;
+
+    --hover: 60 9.1% 97.8%;
+    --hover-foreground: 23 95% 45%;
+
+    --muted: 12 6.5% 15.1%;
+    --muted-foreground: 24 5.4% 63.9%;
+
+    --popover: 20 14.3% 4.1%;
+    --popover-foreground: 60 9.1% 97.8%;
+
+    --card: 20 14.3% 4.1%;
+    --card-foreground: 60 9.1% 97.8%;
+
+    --border: 12 6.5% 15.1%;
+    --input: 12 6.5% 15.1%;
+
+    --primary: 20.5 90.2% 48.2%;
+    --primary-foreground: 60 9.1% 97.8%;
+
+    --secondary: 12 6.5% 15.1%;
+    --secondary-foreground: 60 9.1% 97.8%;
+
+    --accent: 12 6.5% 15.1%;
+    --accent-foreground: 60 9.1% 97.8%;
+
+    --destructive: 0 72.2% 50.6%;
+    --destructive-foreground: 60 9.1% 97.8%;
+
+    --ring: 20.5 90.2% 48.2%;
+  }
+
+  .theme-green {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+
+    --highlight: 86 32% 70%;
+    --highlight-foreground: 328 95% 98%;
+
+    --hover: 142.1 76.2% 25.3%;
+    --hover-foreground: 355.7 100% 97.3%;
+
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+
+    --primary: 142.1 76.2% 36.3%;
+    --primary-foreground: 355.7 100% 97.3%;
+
+    --secondary: 100 75% 90%;
+    --secondary-foreground: 240 5.9% 10%;
+
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --ring: 142.1 76.2% 36.3%;
+
+    --radius: ;
+  }
+
+  .dark .theme-green {
+    --background: 20 14.3% 4.1%;
+    --foreground: 0 0% 95%;
+
+    --highlight: 328 95% 98%;
+    --highlight-foreground: 86 32% 70%;
+
+    --hover: 355.7 100% 97.3%;
+    --hover-foreground: 142.1 76.2% 25.3%;
+
+    --muted: 0 0% 15%;
+    --muted-foreground: 240 5% 64.9%;
+
+    --popover: 0 0% 9%;
+    --popover-foreground: 0 0% 95%;
+
+    --card: 24 9.8% 10%;
+    --card-foreground: 0 0% 95%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+
+    --primary: 142.1 70.6% 45.3%;
+    --primary-foreground: 144.9 80.4% 10%;
+
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+
+    --accent: 12 6.5% 15.1%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 85.7% 97.3%;
+
+    --ring: 142.4 71.8% 29.2%;
+  }
+
+  .theme-blue {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --highlight: 222 43% 32%;
+    --highlight-foreground: 222 95% 98%;
+
+    --hover: 221.2 83.2% 34.3%;
+    --hover-foreground: 210 40% 98%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 230 75% 90%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --ring: 221.2 83.2% 53.3%;
+
+    --radius: ;
+  }
+
+  .dark .theme-blue {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --highlight: 222 95% 98%;
+    --highlight-foreground: 222 43% 32%;
+
+    --hover: 210 40% 98%;
+    --hover-foreground: 221.2 83.2% 34.3%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --ring: 224.3 76.3% 48%;
+  }
+
+  .theme-yellow {
+    --background: 0 0% 100%;
+    --foreground: 20 14.3% 4.1%;
+
+    --highlight: 238 69% 32%;
+    --highlight-foreground: 238 95% 98%;
+
+    --hover: 41 99% 52%;
+    --hover-foreground: 26 83.3% 14.1%;
+
+    --muted: 60 4.8% 95.9%;
+    --muted-foreground: 25 5.3% 44.7%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 20 14.3% 4.1%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 20 14.3% 4.1%;
+
+    --border: 20 5.9% 90%;
+    --input: 20 5.9% 90%;
+
+    --primary: 47.9 95.8% 53.1%;
+    --primary-foreground: 26 83.3% 14.1%;
+
+    --secondary: 60 75% 90%;
+    --secondary-foreground: 24 9.8% 10%;
+
+    --accent: 60 4.8% 95.9%;
+    --accent-foreground: 24 9.8% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 60 9.1% 97.8%;
+
+    --ring: 20 14.3% 4.1%;
+
+    --radius: 0.95rem;
+  }
+
+  .dark .theme-yellow {
+    --background: 20 14.3% 4.1%;
+    --foreground: 60 9.1% 97.8%;
+
+    --highlight: 238 95% 98%;
+    --highlight-foreground: 238 69% 32%;
+
+    --hover: 26 83.3% 14.1%;
+    --hover-foreground: 41 99% 52%;
+
+    --muted: 12 6.5% 15.1%;
+    --muted-foreground: 24 5.4% 63.9%;
+
+    --popover: 20 14.3% 4.1%;
+    --popover-foreground: 60 9.1% 97.8%;
+
+    --card: 20 14.3% 4.1%;
+    --card-foreground: 60 9.1% 97.8%;
+
+    --border: 12 6.5% 15.1%;
+    --input: 12 6.5% 15.1%;
+
+    --primary: 47.9 95.8% 53.1%;
+    --primary-foreground: 26 83.3% 14.1%;
+
+    --secondary: 12 6.5% 15.1%;
+    --secondary-foreground: 60 9.1% 97.8%;
+
+    --accent: 12 6.5% 15.1%;
+    --accent-foreground: 60 9.1% 97.8%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 60 9.1% 97.8%;
+
+    --ring: 35.5 91.7% 32.9%;
+  }
+
+  .theme-violet {
+    --background: 0 0% 100%;
+    --foreground: 224 71.4% 4.1%;
+
+    --highlight: 328 95% 60%;
+    --highlight-foreground: 328 95% 98%;
+
+    --hover: 262.1 83.3% 47.8%;
+    --hover-foreground: 210 20% 98%;
+
+    --muted: 220 14.3% 95.9%;
+    --muted-foreground: 220 8.9% 46.1%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71.4% 4.1%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 224 71.4% 4.1%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+
+    --primary: 262.1 83.3% 57.8%;
+    --primary-foreground: 210 20% 98%;
+
+    --secondary: 280 75% 90%;
+    --secondary-foreground: 220.9 39.3% 11%;
+
+    --accent: 220 14.3% 95.9%;
+    --accent-foreground: 220.9 39.3% 11%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 20% 98%;
+
+    --ring: 262.1 83.3% 57.8%;
+
+    --radius: ;
+  }
+
+  .dark .theme-violet {
+    --background: 224 71.4% 4.1%;
+    --foreground: 210 20% 98%;
+
+    --highlight: 328 95% 98%;
+    --highlight-foreground: 328 95% 60%;
+
+    --hover: 210 20% 98%;
+    --hover-foreground: 262.1 83.3% 47.8%;
+
+    --muted: 215 27.9% 16.9%;
+    --muted-foreground: 217.9 10.6% 64.9%;
+
+    --popover: 224 71.4% 4.1%;
+    --popover-foreground: 210 20% 98%;
+
+    --card: 224 71.4% 4.1%;
+    --card-foreground: 210 20% 98%;
+
+    --border: 215 27.9% 16.9%;
+    --input: 215 27.9% 16.9%;
+
+    --primary: 263.4 70% 50.4%;
+    --primary-foreground: 210 20% 98%;
+
+    --secondary: 215 27.9% 16.9%;
+    --secondary-foreground: 210 20% 98%;
+
+    --accent: 215 27.9% 16.9%;
+    --accent-foreground: 210 20% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 20% 98%;
+
+    --ring: 263.4 70% 50.4%;
+  }
