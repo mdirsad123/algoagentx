@@ -1,4 +1,5 @@
 import axiosInstance from "../axios";
+import { parseApiError } from "./error";
 
 // TypeScript interfaces for AI screener API responses
 

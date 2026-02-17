@@ -23,6 +23,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronDown, ChevronUp, Eye, Download, Filter, Calendar, TrendingUp, TrendingDown, Clock, Play, X, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import EmptyState from "@/components/shared/empty-state";
 import axios from "@/lib/axios";
 import Toast from "@/components/shared/toast";
 import { PageHeader } from "@/components/ui/page-header";
@@ -469,33 +470,15 @@ export default function BacktestHistoryPage() {
               <div className="h-96 bg-gray-200 rounded animate-pulse"></div>
             </div>
           ) : backtests.length === 0 ? (
-            <div className="text-center py-12 bg-gradient-to-br from-gray-50 to-white rounded-xl border border-gray-200">
-              <div className="mb-6">
-                <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-100 to-cyan-100 rounded-full mx-auto mb-4">
-                  <Play className="w-8 h-8 text-blue-600" />
-                </div>
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">No Backtest Results Yet</h3>
-              <p className="text-gray-600 mb-8 text-lg max-w-md mx-auto">
-                Your backtest history will appear here once you run your first backtest
-              </p>
-              <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                <Button 
-                  onClick={() => window.location.href = '/backtest'}
-                  className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white px-8 py-3 text-sm font-medium shadow-lg hover:shadow-xl transition-all duration-200 transform hover:-translate-y-1"
-                >
-                  <Play className="w-4 h-4 mr-2" />
-                  Run Your First Backtest
-                </Button>
-                <Button 
-                  variant="outline"
-                  onClick={() => window.location.href = '/strategies'}
-                  className="border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400 px-8 py-3 text-sm font-medium transition-all duration-200"
-                >
-                  Browse Strategies
-                </Button>
-              </div>
-            </div>
+            <EmptyState
+              title="No Backtest Results Yet"
+              description="Your backtest history will appear here once you run your first backtest"
+              icon={<Play className="w-12 h-12 text-blue-500" />}
+              actionLabel="Run Your First Backtest"
+              onAction={() => window.location.href = '/backtest'}
+              secondaryActionLabel="Browse Strategies"
+              secondaryActionHref="/strategies"
+            />
           ) : (
             <>
               <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">

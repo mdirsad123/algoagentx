@@ -1,5 +1,6 @@
 // lib/axios.ts
 import axios from "axios";
+import { parseApiError } from "./api/error";
 
 const apiURL = process.env.NEXT_PUBLIC_API_SERVER;
 

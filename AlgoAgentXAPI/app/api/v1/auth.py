@@ -86,6 +86,9 @@ async def login(login_data: UserLogin):
             algorithm=settings.jwt_algorithm
         )
 
+        # Create display name - use fullname if available, otherwise use email
+        display_name = user.fullname if user.fullname else user.email
+
         return {
             "access_token": token,
             "token_type": "bearer",
@@ -93,7 +96,8 @@ async def login(login_data: UserLogin):
                 "id": str(user.id),
                 "email": user.email,
                 "role": user.role,
-                "fullname": user.fullname
+                "fullname": user.fullname,
+                "displayName": display_name
             }
         }
 

@@ -9,6 +9,7 @@ import { useConfig } from "@/hooks/use-config";
 import React from "react";
 import { NotificationProvider } from "@/contexts/notification-context";
 import { Menu } from "lucide-react"; // ⭐ Hamburger icon
+import RouteGuard from "@/components/guards/RouteGuard";
 
 // Memoize components to prevent unnecessary re-renders
 const MemoizedSideBar = React.memo(SideBar);
@@ -99,7 +100,9 @@ export default function Layout({
               <div className="p-3 sm:p-4 md:p-6 dark:bg-gray-800 min-h-full">
                 {/* Page transition wrapper */}
                 <div className="animate-in fade-in-0 slide-in-from-right-1 duration-300">
-                  {children}
+                  <RouteGuard requireAuth>
+                    {children}
+                  </RouteGuard>
                 </div>
               </div>
             </div>

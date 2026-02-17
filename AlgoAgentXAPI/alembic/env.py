@@ -65,7 +65,13 @@ def run_migrations_online() -> None:
     # If not, we'll use the default from settings
     
     from app.core.config import settings
-    configuration["sqlalchemy.url"] = settings.database_url.replace("aiosqlite://", "sqlite://")
+    # Handle SQLite URL conversion properly
+    db_url = settings.database_url
+    if db_url.startswith("sqlite+aiosqlite://"):
+        # Convert to sync SQLite URL for Alembic
+        configuration["sqlalchemy.url"] = db_url.replace("sqlite+aiosqlite://", "sqlite://")
+    else:
+        configuration["sqlalchemy.url"] = db_url
 
     connectable = engine_from_config(
         configuration,

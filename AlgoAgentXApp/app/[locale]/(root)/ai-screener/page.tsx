@@ -13,12 +13,14 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableHead, TableCell, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, ExternalLink, Calendar as CalendarIcon, Play, PlayCircle, Lock, AlertCircle, CheckCircle, Clock, X, Loader2, TrendingUp, TrendingDown } from "lucide-react";
+import { RefreshCw, ExternalLink, Calendar as CalendarIcon, Play, PlayCircle, Lock, AlertCircle, CheckCircle, Clock, X, Loader2, TrendingUp, TrendingDown, Search } from "lucide-react";
+import EmptyState from "@/components/shared/empty-state";
 import { format } from "date-fns";
 import { useTranslation } from "@/hooks/use-translations";
 import { toast } from "@/components/ui/use-toast";
 import { StatusBar } from "@/components/ai-screener/StatusBar";
 import { useUser } from "@/contexts/user-context";
+import { parseApiError, formatErrorMessage } from "@/lib/api/error";
 
 // Import types and API
 import { NewsItem, AnnouncementItem } from "@/types/ai-screener";
@@ -224,12 +226,11 @@ export default function AiScreenerPage() {
       pollJobStatus(response.job_id);
     } catch (error: any) {
       console.error("Error running AI screener:", error);
-      const errorMessage = error.response?.data?.detail || error.message || "Failed to start AI screener";
-      const requestId = error.response?.headers?.['x-request-id'] || error.response?.data?.request_id;
+      const errorInfo = parseApiError(error);
       
       toast({
         title: "Error Starting Analysis",
-        description: requestId ? `${errorMessage} (Request ID: ${requestId})` : errorMessage,
+        description: formatErrorMessage(errorInfo),
         variant: "destructive"
       });
     } finally {
@@ -302,9 +303,10 @@ export default function AiScreenerPage() {
       setHistory(response.jobs);
     } catch (error) {
       console.error("Error fetching history:", error);
+      const errorInfo = parseApiError(error);
       toast({
         title: "Error",
-        description: "Failed to fetch job history",
+        description: formatErrorMessage(errorInfo),
         variant: "destructive"
       });
     } finally {
@@ -346,9 +348,10 @@ export default function AiScreenerPage() {
       setNegativeNews(negativeRes.items);
     } catch (error) {
       console.error("Error fetching news:", error);
+      const errorInfo = parseApiError(error);
       toast({
         title: "Error",
-        description: "Failed to fetch news data",
+        description: formatErrorMessage(errorInfo),
         variant: "destructive"
       });
     } finally {
@@ -365,9 +368,10 @@ export default function AiScreenerPage() {
       setAnnouncements(res.items);
     } catch (error) {
       console.error("Error fetching announcements:", error);
+      const errorInfo = parseApiError(error);
       toast({
         title: "Error",
-        description: "Failed to fetch announcements",
+        description: formatErrorMessage(errorInfo),
         variant: "destructive"
       });
     } finally {
@@ -386,9 +390,10 @@ export default function AiScreenerPage() {
       setSearchResults(res.items);
     } catch (error) {
       console.error("Error fetching search results:", error);
+      const errorInfo = parseApiError(error);
       toast({
         title: "Error",
-        description: "Failed to fetch search results",
+        description: formatErrorMessage(errorInfo),
         variant: "destructive"
       });
     } finally {
@@ -449,9 +454,13 @@ export default function AiScreenerPage() {
             ))}
           </div>
         ) : data.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            No {sentimentType} news found for {format(date, "MMM dd, yyyy")}
-          </div>
+          <EmptyState
+            title={`No ${sentimentType} News Found`}
+            description={`No ${sentimentType} news found for ${format(date, "MMM dd, yyyy")}`}
+            icon={sentimentType === "positive" ? <TrendingUp className="w-12 h-12 text-green-500" /> : <TrendingDown className="w-12 h-12 text-red-500" />}
+            actionLabel="Refresh"
+            onAction={onRefresh}
+          />
         ) : (
           <Table>
             <TableHeader>
@@ -561,9 +570,13 @@ export default function AiScreenerPage() {
             ))}
           </div>
         ) : data.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            No announcements found for {format(date, "MMM dd, yyyy")}
-          </div>
+          <EmptyState
+            title="No Announcements Found"
+            description={`No announcements found for ${format(date, "MMM dd, yyyy")}`}
+            icon={<AlertCircle className="w-12 h-12 text-yellow-500" />}
+            actionLabel="Refresh"
+            onAction={onRefresh}
+          />
         ) : (
           <Table>
             <TableHeader>
@@ -660,9 +673,13 @@ export default function AiScreenerPage() {
             ))}
           </div>
         ) : data.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            {query ? `No results found for "${query}"` : "Enter a search query to get started"}
-          </div>
+          <EmptyState
+            title={query ? "No Results Found" : "No Search Query"}
+            description={query ? `No results found for "${query}"` : "Enter a search query to get started"}
+            icon={query ? <Search className="w-12 h-12 text-gray-400" /> : <Search className="w-12 h-12 text-gray-400" />}
+            actionLabel={query ? "Try a different search" : "Search"}
+            onAction={() => onSearch(searchQuery)}
+          />
         ) : (
           <Table>
             <TableHeader>
@@ -768,9 +785,13 @@ export default function AiScreenerPage() {
             ))}
           </div>
         ) : history.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            No analysis history found. Run your first AI screener analysis to see results here.
-          </div>
+          <EmptyState
+            title="No Analysis History"
+            description="No analysis history found. Run your first AI screener analysis to see results here."
+            icon={<Clock className="w-12 h-12 text-blue-500" />}
+            actionLabel="Run Analysis"
+            onAction={() => setShowRunModal(true)}
+          />
         ) : (
           <Table>
             <TableHeader>

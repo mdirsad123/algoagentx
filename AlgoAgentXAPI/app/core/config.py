@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     # Database
-    database_url: str = "postgresql+asyncpg://algo_user:algo_password@localhost:5432/algo_db"
+    database_url: str = "sqlite+aiosqlite:///./algoagentx.db"
     
     # Environment detection - supports both 'env' and 'ENVIRONMENT' variables
     env: str = Field(default="development", description="Environment: development, staging, production")
