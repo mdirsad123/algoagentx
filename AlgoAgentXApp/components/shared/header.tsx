@@ -10,6 +10,8 @@ import { useUser } from "@/contexts/user-context";
 import { NotificationResponse } from "@/types/notifications";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { withLocale } from "@/lib/route";
+import { parseApiError, formatErrorMessage } from "@/lib/api/error";
+import { toast } from "@/components/ui/use-toast";
 
 export default function MinimalHeader() {
   const [showLangDropdown, setShowLangDropdown] = useState(false);
@@ -64,6 +66,13 @@ export default function MinimalHeader() {
       setAvatarLetter(backendUser.email.charAt(0).toUpperCase());
     } catch (error) {
       console.error("[AUTH] Token verification failed:", error);
+      const errorInfo = parseApiError(error);
+      toast({
+        title: "Authentication Error",
+        description: formatErrorMessage(errorInfo),
+        variant: "destructive"
+      });
+      
       // Fallback to cookies if token verification fails
       const fullname = Cookies.get("loggedinuserfullname");
       const username = Cookies.get("loggedinusername");

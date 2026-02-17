@@ -7,6 +7,7 @@ import { NotificationResponse } from '@/types/notifications';
 import Toast from "@/components/shared/toast";
 import { MdMessage } from "react-icons/md";
 import { PageHeader } from "@/components/ui/page-header";
+import EmptyState from "@/components/shared/empty-state";
 
 export default function FullNotificationsPage() {
   const [activeTab, setActiveTab] = useState('All');
@@ -152,7 +153,13 @@ export default function FullNotificationsPage() {
   {/* Notifications List */}
   <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700">
     {filteredNotifications.length === 0 ? (
-      <div className="p-6 text-gray-500 dark:text-gray-400">No notifications to show.</div>
+      <EmptyState
+        title="No Notifications"
+        description="You don't have any notifications at the moment"
+        icon={<Eye className="w-12 h-12 text-gray-400" />}
+        actionLabel="Refresh"
+        onAction={fetchNotifications}
+      />
     ) : (
       filteredNotifications.map((notification: NotificationResponse) => {
         return (

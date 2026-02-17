@@ -5,6 +5,8 @@ from .api.v1.router import api_router
 from .core.config import settings
 from .core.redis_manager import redis_manager
 from .middleware.security import SecurityHeadersMiddleware, RequestIDMiddleware, HealthCheckMiddleware
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import text
 import logging
 import sys
 
@@ -33,6 +35,33 @@ async def lifespan(app: FastAPI):
     logger.info(f"  - Port: {settings.database_port}")
     logger.info(f"  - Environment: {settings.env}")
     logger.info("-" * 60)
+    
+    # Verify database tables exist
+    try:
+        engine = create_async_engine(settings.database_url)
+        async with engine.begin() as conn:
+            result = await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table';"))
+            tables = [row[0] for row in result.fetchall()]
+            
+            expected_tables = [
+                'users', 'instruments', 'strategies', 'market_data', 'performance_metrics',
+                'trades', 'equity_curve', 'pnl_calendar', 'job_status', 'credit_transactions',
+                'plans', 'user_subscriptions', 'user_credits', 'payments', 'notifications',
+                'strategy_requests', 'screener_news', 'screener_announcements', 'screener_runs',
+                'support_tickets', 'support_ticket_replies'
+            ]
+            
+            missing_tables = [table for table in expected_tables if table not in tables]
+            
+            if missing_tables:
+                logger.error(f"[DATABASE] Missing tables: {missing_tables}")
+                logger.error("[DATABASE] Please run 'python create_tables.py' to create the database schema")
+            else:
+                logger.info(f"[DATABASE] All {len(expected_tables)} tables verified successfully")
+                
+        await engine.dispose()
+    except Exception as e:
+        logger.error(f"[DATABASE] Failed to verify tables: {e}")
     
     # Initialize Redis connection
     redis_available = await redis_manager.initialize()

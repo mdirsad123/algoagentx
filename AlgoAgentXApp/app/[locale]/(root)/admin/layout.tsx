@@ -5,6 +5,7 @@ import { useUser } from "@/contexts/user-context"
 import { toast } from "sonner"
 import { useRouter, usePathname } from "next/navigation"
 import { withLocale } from "@/lib/route"
+import RouteGuard from "@/components/guards/RouteGuard"
 
 // Admin Sidebar Component
 const AdminSidebar = React.memo(function AdminSidebar() {
@@ -13,10 +14,13 @@ const AdminSidebar = React.memo(function AdminSidebar() {
   const adminMenuItems = [
     { label: "Dashboard", href: "/admin/dashboard", icon: "📊" },
     { label: "Users", href: "/admin/users", icon: "👥" },
+    { label: "Orders", href: "/admin/orders", icon: "📋" },
     { label: "Payments", href: "/admin/payments", icon: "💳" },
     { label: "Subscriptions", href: "/admin/subscriptions", icon: "🔄" },
     { label: "Credits", href: "/admin/credits", icon: "💎" },
     { label: "Support Tickets", href: "/admin/support-tickets", icon: "🎫" },
+    { label: "AI Jobs", href: "/admin/ai-jobs", icon: "🤖" },
+    { label: "Backtests", href: "/admin/backtests", icon: "📈" },
   ]
 
   const isActive = (href: string) => {
@@ -99,42 +103,6 @@ export default function AdminLayout({
   children: React.ReactNode
   params: { locale: string }
 }>) {
-  const { user, isLoading } = useUser()
-  const router = useRouter()
-  const pathname = usePathname()
-
-  // Access control
-  React.useEffect(() => {
-    if (!isLoading) {
-      if (!user) {
-        // User not loaded yet, wait
-        return
-      }
-      
-      if (user.role !== "admin") {
-        toast.error("Not authorized")
-        router.push(withLocale(pathname, "/dashboard"))
-      }
-    }
-  }, [user, isLoading, router, pathname])
-
-  // Show loading while checking permissions
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600 mx-auto"></div>
-          <p className="mt-2 text-sm text-gray-600">Checking permissions...</p>
-        </div>
-      </div>
-    )
-  }
-
-  // Don't render admin layout if not authorized
-  if (user?.role !== "admin") {
-    return null
-  }
-
   return (
     <div className="flex h-screen overflow-hidden">
       <AdminSidebar />
@@ -145,7 +113,9 @@ export default function AdminLayout({
         <div className="overflow-y-auto hide-scrollbar bg-white mt-3 flex-1 mx-2 sm:mx-4 lg:ml-4 lg:mr-0">
           <div className="p-3 sm:p-4 md:p-6 dark:bg-gray-800 min-h-full">
             <div className="animate-in fade-in-0 slide-in-from-right-1 duration-300">
-              {children}
+              <RouteGuard requireAuth requireAdmin>
+                {children}
+              </RouteGuard>
             </div>
           </div>
         </div>

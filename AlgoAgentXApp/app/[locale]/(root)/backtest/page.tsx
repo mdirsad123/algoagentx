@@ -29,6 +29,8 @@ import AppShell from "@/components/layout/AppShell";
 import { PageHeader } from "@/components/ui/page-header";
 import { StandardCard, StandardCardHeader, StandardCardTitle, StandardCardDescription, StandardCardContent } from "@/components/ui/standard-card";
 import { CardSkeleton, TableSkeleton, StatsSkeleton } from "@/components/ui/loading-skeleton";
+import { parseApiError, formatErrorMessage } from "@/lib/api/error";
+import { toast } from "@/components/ui/use-toast";
 
 import {
   PieChart,
@@ -144,13 +146,14 @@ export default function BacktestPage() {
         setStrategies(strategiesRes.data);
         setInstruments(instrumentsRes.data);
         setUserBalance(balanceRes.data.balance);
-      } catch (error: any) {
-        Toast.fire({
-          icon: 'error',
-          title: 'Failed to load data',
-          text: error.response?.data?.detail || 'Unable to load strategies, instruments, or credit balance'
-        });
-      }
+    } catch (error: any) {
+      const errorInfo = parseApiError(error);
+      Toast.fire({
+        icon: 'error',
+        title: 'Failed to load data',
+        text: formatErrorMessage(errorInfo)
+      });
+    }
     };
     loadData();
   }, []);
@@ -275,10 +278,11 @@ export default function BacktestPage() {
       await calculateCostPreview(minDate, maxDate, timeframe);
 
     } catch (error: any) {
+      const errorInfo = parseApiError(error);
       Toast.fire({
         icon: 'error',
         title: 'Failed to preview data',
-        text: error.response?.data?.detail || 'Unable to fetch market data range'
+        text: formatErrorMessage(errorInfo)
       });
     }
   };
@@ -307,6 +311,12 @@ export default function BacktestPage() {
       setInsufficientCredits(userBalance !== null && cost > userBalance);
     } catch (error: any) {
       console.error('Error calculating cost preview:', error);
+      const errorInfo = parseApiError(error);
+      toast({
+        title: "Cost Calculation Failed",
+        description: formatErrorMessage(errorInfo),
+        variant: "destructive"
+      });
       setEstimatedCost(null);
       setInsufficientCredits(false);
     } finally {
@@ -358,10 +368,11 @@ export default function BacktestPage() {
 
     } catch (error: any) {
       setLoading(false);
+      const errorInfo = parseApiError(error);
       Toast.fire({
         icon: 'error',
         title: 'Failed to start backtest',
-        text: error.response?.data?.detail || 'An error occurred while starting the backtest'
+        text: formatErrorMessage(errorInfo)
       });
     } finally {
       setLoading(false);
