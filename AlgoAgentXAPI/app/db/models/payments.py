@@ -1,5 +1,5 @@
 from sqlalchemy import Column, String, Integer, DateTime, Boolean, JSON, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from ..base import Base
 import uuid
 
@@ -7,7 +7,7 @@ import uuid
 class Payment(Base):
     __tablename__ = "payments"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(String(36), nullable=False)  # String to handle both UUID and Integer
     provider = Column(String(50), nullable=False)  # RAZORPAY
     purpose = Column(String(50), nullable=False)  # SUBSCRIPTION, CREDITS_TOPUP

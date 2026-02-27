@@ -1,12 +1,14 @@
-from sqlalchemy import Column, String, Date, Numeric, UUID, Integer, ForeignKey, DateTime, Index
+from sqlalchemy import Column, String, Date, Numeric, Integer, ForeignKey, DateTime, Index
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.sql import func
 from ..base import Base
+import uuid
 
 class PerformanceMetric(Base):
     __tablename__ = "performance_metrics"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=func.gen_random_uuid())
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), index=True)
     strategy_id = Column(String, ForeignKey("strategies.id"), index=True)
     instrument_id = Column(Integer, ForeignKey("instruments.id"), index=True)
     timeframe = Column(String)

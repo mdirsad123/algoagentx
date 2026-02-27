@@ -10,7 +10,7 @@ class StrategyRequest(Base):
     __tablename__ = "strategy_requests"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     title = Column(Text, nullable=False)
     strategy_type = Column(Text, nullable=True)
     market = Column(Text, nullable=True)

@@ -1,5 +1,5 @@
 from sqlalchemy import Column, String, DateTime, Text, Integer, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.sql import func
 from ..base import Base
 
@@ -8,7 +8,7 @@ class JobStatus(Base):
     __tablename__ = "job_status"
 
     id = Column(String, primary_key=True)  # UUID as string
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     job_type = Column(String, nullable=False)  # 'backtest', 'strategy_test', etc.
     status = Column(String, nullable=False)  # 'pending', 'running', 'completed', 'failed', 'retry'
     progress = Column(Integer, default=0)  # 0-100

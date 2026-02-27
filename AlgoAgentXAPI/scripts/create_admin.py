@@ -39,7 +39,7 @@ async def create_admin_user():
     
     # Check if we're in production
     if settings.is_production:
-        print("❌ ERROR: Admin creation script cannot be run in production environment")
+        print("ERROR: Admin creation script cannot be run in production environment")
         print("Use a secure method to create admin users in production.")
         return False
     
@@ -48,19 +48,19 @@ async def create_admin_user():
     admin_password = os.getenv("ADMIN_PASSWORD")
     
     if not admin_email or not admin_password:
-        print("❌ ERROR: Missing required environment variables")
+        print("ERROR: Missing required environment variables")
         print("Please set ADMIN_EMAIL and ADMIN_PASSWORD")
         print("Example: ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD=securepassword123 python scripts/create_admin.py")
         return False
     
     # Validate email format (basic check)
     if "@" not in admin_email or "." not in admin_email:
-        print(f"❌ ERROR: Invalid email format: {admin_email}")
+        print(f"ERROR: Invalid email format: {admin_email}")
         return False
     
     # Validate password strength
     if len(admin_password) < 8:
-        print("❌ ERROR: Password must be at least 8 characters long")
+        print("ERROR: Password must be at least 8 characters long")
         return False
     
     async with AsyncSessionLocal() as session:
@@ -73,7 +73,7 @@ async def create_admin_user():
             existing_user = result.scalar_one_or_none()
             
             if existing_user:
-                print(f"⚠️  WARNING: User with email {admin_email} already exists")
+                print(f"WARNING: User with email {admin_email} already exists")
                 print(f"   User ID: {existing_user.id}")
                 print(f"   Role: {existing_user.role}")
                 return False
@@ -98,13 +98,13 @@ async def create_admin_user():
             await session.commit()
             await session.refresh(admin_user)
             
-            print("✅ Admin user created successfully!")
+            print("Admin user created successfully!")
             print(f"   Email: {admin_user.email}")
             print(f"   User ID: {admin_user.id}")
             print(f"   Role: {admin_user.role}")
             print(f"   Created at: {admin_user.created_at}")
             print("")
-            print("⚠️  SECURITY REMINDER:")
+            print("SECURITY REMINDER:")
             print("   - Store the admin credentials securely")
             print("   - Consider changing the default fullname")
             print("   - This script should only be used in development/testing")
@@ -112,24 +112,24 @@ async def create_admin_user():
             return True
             
         except Exception as e:
-            print(f"❌ ERROR: Failed to create admin user: {e}")
+            print(f"ERROR: Failed to create admin user: {e}")
             await session.rollback()
             return False
 
 if __name__ == "__main__":
-    print("🚀 AlgoAgentX Admin User Creation Script")
+    print("AlgoAgentX Admin User Creation Script")
     print("=" * 50)
     
     # Check if running in production
     if settings.is_production:
-        print("❌ ERROR: This script cannot be run in production")
+        print("ERROR: This script cannot be run in production")
         sys.exit(1)
     
     success = asyncio.run(create_admin_user())
     
     if success:
-        print("\n✅ Admin user creation completed successfully!")
+        print("\nAdmin user creation completed successfully!")
         sys.exit(0)
     else:
-        print("\n❌ Admin user creation failed!")
+        print("\nAdmin user creation failed!")
         sys.exit(1)
