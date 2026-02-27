@@ -10,96 +10,26 @@ import { useUser } from "@/contexts/user-context";
 import { NotificationResponse } from "@/types/notifications";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { withLocale } from "@/lib/route";
-import { parseApiError, formatErrorMessage } from "@/lib/api/error";
-import { toast } from "@/components/ui/use-toast";
 
 export default function MinimalHeader() {
   const [showLangDropdown, setShowLangDropdown] = useState(false);
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showNotificationDropdown, setShowNotificationDropdown] = useState(false);
   const [selectedLang, setSelectedLang] = useState("Eng (US)");
-  const [displayName, setDisplayName] = useState("User");
-  const [userEmail, setUserEmail] = useState("");
-  const [userRole, setUserRole] = useState("User");
-  const [avatarLetter, setAvatarLetter] = useState("U");
 
   // Use notifications from context
   const { unreadCount, notifications, markAllRead, fetchNotifications } = useNotifications();
   
   // Use user from context
-  const { user, isLoading: userLoading } = useUser();
+  const { user, isLoading: userLoading, clearUser } = useUser();
   const router = useRouter();
   const pathname = usePathname();
 
-  // Function to verify token and fetch user data from backend
-  const verifyTokenAndFetchUser = async () => {
-    try {
-      // Try to get token from localStorage first (as per axios config)
-      const token = localStorage.getItem("access_token");
-      // Also check cookies as fallback
-      const cookieToken = Cookies.get("accessToken");
-      const authToken = token || cookieToken;
-
-      if (!authToken) {
-        // No token available, use cookie fallbacks
-        const fullname = Cookies.get("loggedinuserfullname");
-        const username = Cookies.get("loggedinusername");
-        const email = Cookies.get("loggedinuseremail") || "";
-        const role = Cookies.get("loggedinuserrole") || "User";
-
-        const display = fullname || username || "User";
-        setDisplayName(display);
-        setUserEmail(email);
-        setUserRole(role);
-        setAvatarLetter(display.charAt(0).toUpperCase());
-        return;
-      }
-
-      // Verify token and get user data from backend
-      const response = await axiosInstance.get("/api/v1/auth/verify");
-      const backendUser = response.data.user;
-
-      // Set user data from backend response
-      setDisplayName(backendUser.email);
-      setUserEmail(backendUser.email);
-      setUserRole(backendUser.role || "User");
-      setAvatarLetter(backendUser.email.charAt(0).toUpperCase());
-    } catch (error) {
-      console.error("[AUTH] Token verification failed:", error);
-      const errorInfo = parseApiError(error);
-      toast({
-        title: "Authentication Error",
-        description: formatErrorMessage(errorInfo),
-        variant: "destructive"
-      });
-      
-      // Fallback to cookies if token verification fails
-      const fullname = Cookies.get("loggedinuserfullname");
-      const username = Cookies.get("loggedinusername");
-      const email = Cookies.get("loggedinuseremail") || "";
-      const role = Cookies.get("loggedinuserrole") || "User";
-
-      const display = fullname || username || "User";
-      setDisplayName(display);
-      setUserEmail(email);
-      setUserRole(role);
-      setAvatarLetter(display.charAt(0).toUpperCase());
-    }
-  };
-
-  useEffect(() => {
-    // If user context has data, use it
-    if (user) {
-      const display = user.displayName || user.email;
-      setDisplayName(display);
-      setUserEmail(user.email);
-      setUserRole(user.role || "User");
-      setAvatarLetter(display.charAt(0).toUpperCase());
-    } else if (!userLoading) {
-      // Otherwise, verify token and fetch from backend
-      verifyTokenAndFetchUser();
-    }
-  }, [user, userLoading]);
+  // Calculate display values from user context
+  const displayName = user?.displayName || user?.fullname || user?.username || user?.email || "User";
+  const userEmail = user?.email || "";
+  const userRole = user?.role || "User";
+  const avatarLetter = displayName.charAt(0).toUpperCase();
 
   const languages = [
     "Eng (US)",
@@ -227,13 +157,13 @@ export default function MinimalHeader() {
 
               {notifications.length > 5 && (
                 <div className="px-4 py-2 border-t border-gray-100 bg-gray-50">
-                  <Link
-                    href="/notifications"
-                    onClick={() => setShowNotificationDropdown(false)}
-                    className="text-xs text-blue-600 hover:text-blue-800 transition-colors block text-center"
-                  >
-                    View all notifications
-                  </Link>
+              <Link
+                href={withLocale(pathname, "/notifications")}
+                onClick={() => setShowNotificationDropdown(false)}
+                className="text-xs text-blue-600 hover:text-blue-800 transition-colors block text-center"
+              >
+                View all notifications
+              </Link>
                 </div>
               )}
             </div>
@@ -295,6 +225,9 @@ export default function MinimalHeader() {
   );
 
   function handleLogout() {
+    // Clear user from context (this also clears localStorage)
+    clearUser();
+    
     // Remove all authentication cookies
     Cookies.remove("accessToken");
     Cookies.remove("loggedinuserid");

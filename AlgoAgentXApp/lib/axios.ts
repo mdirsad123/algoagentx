@@ -1,6 +1,5 @@
 // lib/axios.ts
 import axios from "axios";
-import { parseApiError } from "./api/error";
 
 const apiURL = process.env.NEXT_PUBLIC_API_SERVER;
 
@@ -24,9 +23,27 @@ const axiosInstance = axios.create({
   },
 });
 
-// 🔹 Request interceptor: attach token
+// 🔹 Request interceptor: attach token (except for auth endpoints)
 axiosInstance.interceptors.request.use(
   (config) => {
+    // Check if this is an auth endpoint that should NOT have Authorization header
+    const authEndpoints = [
+      "/api/v1/auth/login",
+      "/api/v1/auth/signup", 
+      "/api/v1/auth/refresh"
+    ];
+    
+    const isAuthEndpoint = authEndpoints.some(endpoint => config.url?.includes(endpoint));
+    
+    if (isAuthEndpoint) {
+      // Skip token attachment for auth endpoints
+      if (process.env.NODE_ENV === "development") {
+        console.log("[AXIOS] auth request - skipping token", config.url);
+      }
+      return config;
+    }
+    
+    // For non-auth endpoints, attach token if available
     const token = localStorage.getItem("access_token");
     if (token) {
       config.headers["Authorization"] = `Bearer ${token}`;

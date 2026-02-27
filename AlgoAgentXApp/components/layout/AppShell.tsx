@@ -4,6 +4,8 @@ import React from "react";
 import { usePathname } from "next/navigation";
 import { NotificationProvider } from "@/contexts/notification-context";
 import { Toaster } from "@/components/ui/toaster";
+import Sidebar from "./Sidebar";
+import Topbar from "./Topbar";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -22,8 +24,14 @@ export default function AppShell({ children, pageTitle }: AppShellProps) {
   return (
     <NotificationProvider>
       <div className="flex h-screen overflow-hidden bg-gray-50">
-        {/* Main Content Area - Full width without sidebar or topbar */}
+        {/* Sidebar */}
+        <Sidebar />
+        
+        {/* Main Content Area */}
         <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Topbar */}
+          <Topbar pageTitle={pageTitle} />
+          
           {/* Scrollable Content */}
           <main className="flex-1 overflow-y-auto hide-scrollbar">
             <div className="p-6">

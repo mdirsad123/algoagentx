@@ -12,14 +12,9 @@ import {
   Settings,
   Sparkles,
   CreditCard,
-  Badge,
-  Coins,
 } from "lucide-react";
 import React from "react";
 import { withLocale, normalizePath } from "@/lib/route";
-import { useCreditsSummary } from "@/hooks/useCreditsSummary";
-import { LoadingSkeleton } from "@/components/ui/loading-skeleton";
-import EmptyState from "@/components/shared/empty-state";
 
 // Define menu items with proper locale-aware URLs
 const menuItems = [
@@ -66,7 +61,6 @@ SidebarItem.displayName = "SidebarItem";
 
 export default React.memo(function Sidebar() {
   const pathname = usePathname();
-  const { creditsSummary, loading, error } = useCreditsSummary();
 
   // Determine active menu item based on current pathname
   const getIsActive = React.useCallback((href: string) => {
@@ -79,28 +73,6 @@ export default React.memo(function Sidebar() {
     return normalizedPath === normalizedHref || normalizedPath.startsWith(normalizedHref + '/');
   }, [pathname]);
 
-  // Get plan display name and credits display
-  const getPlanDisplay = (planName: string) => {
-    switch (planName?.toUpperCase()) {
-      case 'PRO':
-        return 'Pro';
-      case 'PREMIUM':
-        return 'Premium';
-      case 'TRIAL':
-        return 'Trial';
-      default:
-        return 'Free';
-    }
-  };
-
-  const getCreditsDisplay = (planName: string, balance: number) => {
-    const plan = planName?.toUpperCase();
-    if (plan === 'PRO' || plan === 'PREMIUM') {
-      return 'Unlimited';
-    }
-    return Math.floor(balance).toString();
-  };
-
   // Memoize the sidebar content to prevent unnecessary re-renders
   const sidebarContent = React.useMemo(() => (
     <aside className="w-[260px] min-h-screen border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col">
@@ -111,51 +83,6 @@ export default React.memo(function Sidebar() {
           alt="AlgoAgentX"
           className="h-[60px] object-contain"
         />
-      </div>
-
-      {/* CREDITS BADGE */}
-      <div className="px-3 py-3 border-b border-gray-200 dark:border-gray-700">
-        {loading ? (
-          <LoadingSkeleton className="h-20 w-full rounded-lg" />
-        ) : error ? (
-          <EmptyState
-            title="Unable to load credits"
-            description="Please try again later"
-            variant="error"
-          />
-        ) : creditsSummary ? (
-          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-gray-800 dark:to-gray-900 rounded-lg p-3 border border-blue-100 dark:border-gray-700">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Plan</span>
-              <Badge 
-                variant="secondary" 
-                className="text-xs px-2 py-1"
-              >
-                {getPlanDisplay(creditsSummary.plan_name)}
-              </Badge>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Coins className="w-4 h-4 text-yellow-600" />
-                <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Credits</span>
-              </div>
-              <span className="text-sm font-bold text-gray-900 dark:text-white">
-                {getCreditsDisplay(creditsSummary.plan_name, creditsSummary.credit_balance)}
-              </span>
-            </div>
-            {creditsSummary.plan_name?.toUpperCase() !== 'PRO' && creditsSummary.plan_name?.toUpperCase() !== 'PREMIUM' && (
-              <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-                <Link
-                  href={withLocale(pathname, "/pricing")}
-                  prefetch={true}
-                  className="w-full flex items-center justify-center px-3 py-1.5 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-xs font-medium transition-colors duration-200"
-                >
-                  Upgrade Plan
-                </Link>
-              </div>
-            )}
-          </div>
-        ) : null}
       </div>
 
       {/* MENU */}
@@ -191,7 +118,7 @@ export default React.memo(function Sidebar() {
         </Link>
       </div>
     </aside>
-  ), [getIsActive, creditsSummary, loading, error, pathname]);
+  ), [getIsActive]);
 
   return sidebarContent;
 });

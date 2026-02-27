@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     # Database
-    database_url: str = "sqlite+aiosqlite:///./algoagentx.db"
+    database_url: str = "postgresql+asyncpg://algo_user:algo_password@localhost:5432/algo_db"
     
     # Environment detection - supports both 'env' and 'ENVIRONMENT' variables
     env: str = Field(default="development", description="Environment: development, staging, production")
@@ -198,6 +198,14 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Check for .env file in development
+if settings.is_development:
+    env_file_path = ".env"
+    if not os.path.exists(env_file_path):
+        logger.warning(".env missing, using default DATABASE_URL and configuration values")
+        logger.info(f"Current DATABASE_URL: {settings.masked_database_url}")
+        logger.info("To customize configuration, copy .env.example to .env and modify as needed")
 
 # Validate production requirements on import
 settings.validate_production_requirements()

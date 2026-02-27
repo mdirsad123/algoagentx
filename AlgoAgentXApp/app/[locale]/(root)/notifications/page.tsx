@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Eye, Trash2, CheckSquare } from 'lucide-react';
+import { Eye, Trash2, CheckSquare, Bell, ExternalLink, RefreshCw, AlertCircle } from 'lucide-react';
 import { useNotifications } from '@/contexts/notification-context';
 import { NotificationResponse } from '@/types/notifications';
 import Toast from "@/components/shared/toast";
 import { MdMessage } from "react-icons/md";
 import { PageHeader } from "@/components/ui/page-header";
-import EmptyState from "@/components/shared/empty-state";
+import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
 
 export default function FullNotificationsPage() {
   const [activeTab, setActiveTab] = useState('All');
@@ -15,6 +16,9 @@ export default function FullNotificationsPage() {
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const router = useRouter();
 
   // Use notifications from context
   const { notifications, unreadCount, markRead, markAllRead, fetchNotifications } = useNotifications();
@@ -88,6 +92,47 @@ export default function FullNotificationsPage() {
     }
   };
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await fetchNotifications();
+      Toast.fire({
+        icon: "success",
+        title: "Notifications refreshed!",
+      });
+    } catch (error) {
+      console.error('Error refreshing notifications:', error);
+      Toast.fire({
+        icon: "error",
+        title: "Failed to refresh notifications",
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // Handle navigation to target URL
+  const handleNavigateToTarget = async (notification: NotificationResponse) => {
+    // Mark as read first
+    if (!notification.is_read) {
+      try {
+        await markRead([notification.id]);
+        await fetchNotifications();
+      } catch (error) {
+        console.error('Error marking notification as read:', error);
+      }
+    }
+
+    // Navigate to target URL if it exists (safely check)
+    const targetUrl = (notification as any).target_url;
+    if (targetUrl && typeof targetUrl === 'string') {
+      router.push(targetUrl);
+    } else {
+      // Just open the detail view if no target URL
+      setSelectedNotification(notification);
+    }
+  };
+
   // Note: Delete functionality is not available in the context
   // If needed, this would require adding a delete method to the notification context
   const handleDeleteClick = async (notification: NotificationResponse) => {
@@ -153,13 +198,44 @@ export default function FullNotificationsPage() {
   {/* Notifications List */}
   <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700">
     {filteredNotifications.length === 0 ? (
-      <EmptyState
-        title="No Notifications"
-        description="You don't have any notifications at the moment"
-        icon={<Eye className="w-12 h-12 text-gray-400" />}
-        actionLabel="Refresh"
-        onAction={fetchNotifications}
-      />
+      <div className="text-center py-16 bg-gradient-to-br from-gray-50 to-white dark:from-gray-800 dark:to-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+        <div className="mb-6">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-blue-100 to-cyan-100 dark:from-blue-900 dark:to-cyan-900 rounded-full mx-auto mb-4">
+            <Bell className="w-8 h-8 text-blue-600 dark:text-blue-400" />
+          </div>
+        </div>
+        <h3 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">
+          {activeTab === 'All' ? 'No Notifications' : 
+           activeTab === 'Unread' ? 'All Caught Up!' : 
+           'No Read Notifications'}
+        </h3>
+        <p className="text-gray-600 dark:text-gray-400 mb-8 text-lg max-w-md mx-auto">
+          {activeTab === 'All' ? "You don't have any notifications yet. We'll notify you when there's something important." :
+           activeTab === 'Unread' ? "You've read all your notifications. Great job staying on top of things!" :
+           "You haven't read any notifications yet."}
+        </p>
+        <div className="flex flex-col sm:flex-row gap-4 justify-center">
+          <Button 
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white px-8 py-3 text-sm font-medium shadow-lg hover:shadow-xl transition-all duration-200 transform hover:-translate-y-1"
+          >
+            {isRefreshing ? (
+              <div className="w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            ) : (
+              <RefreshCw className="w-4 h-4 mr-2" />
+            )}
+            {isRefreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
+          <Button 
+            variant="outline"
+            onClick={() => router.push('/dashboard')}
+            className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 hover:border-gray-400 dark:hover:border-gray-500 px-8 py-3 text-sm font-medium transition-all duration-200"
+          >
+            Go to Dashboard
+          </Button>
+        </div>
+      </div>
     ) : (
       filteredNotifications.map((notification: NotificationResponse) => {
         return (

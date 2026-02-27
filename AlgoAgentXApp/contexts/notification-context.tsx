@@ -2,7 +2,6 @@ import React, { createContext, useContext, useEffect, useState, ReactNode } from
 import { notificationApi } from "@/lib/api/notifications";
 import { NotificationResponse, UnreadCountResponse } from "@/types/notifications";
 import { toast } from "@/components/ui/use-toast";
-import { parseApiError, formatErrorMessage } from "@/lib/api/error";
 
 interface NotificationContextType {
   notifications: NotificationResponse[];
@@ -44,9 +43,8 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
       const data = await notificationApi.getNotifications(0, 10, false);
       setNotifications(data);
     } catch (err) {
-      const errorInfo = parseApiError(err);
-      setError(errorInfo.message);
-      console.error('Error fetching notifications:', errorInfo);
+      setError('Failed to fetch notifications');
+      console.error('Error fetching notifications:', err);
     } finally {
       setIsLoading(false);
     }
@@ -74,9 +72,8 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
       );
       setUnreadCount(prev => Math.max(0, prev - notificationIds.length));
     } catch (err) {
-      const errorInfo = parseApiError(err);
-      setError(errorInfo.message);
-      console.error('Error marking notifications as read:', errorInfo);
+      setError('Failed to mark notifications as read');
+      console.error('Error marking notifications as read:', err);
     }
   };
 
@@ -89,9 +86,8 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
       );
       setUnreadCount(0);
     } catch (err) {
-      const errorInfo = parseApiError(err);
-      setError(errorInfo.message);
-      console.error('Error marking all notifications as read:', errorInfo);
+      setError('Failed to mark all notifications as read');
+      console.error('Error marking all notifications as read:', err);
     }
   };
 

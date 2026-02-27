@@ -17,7 +17,6 @@ from .strategy_requests import StrategyRequest
 from .screener_news import ScreenerNews
 from .screener_announcements import ScreenerAnnouncements
 from .screener_runs import ScreenerRuns
-from .support_tickets import SupportTicket, SupportTicketReply, TicketStatus, TicketPriority
 
 __all__ = [
     "User",
@@ -40,8 +39,4 @@ __all__ = [
     "ScreenerNews",
     "ScreenerAnnouncements",
     "ScreenerRuns",
-    "SupportTicket",
-    "SupportTicketReply",
-    "TicketStatus",
-    "TicketPriority",
 ]

@@ -1,11 +1,12 @@
 from sqlalchemy import Column, UUID, DateTime, Numeric, ForeignKey, Index
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from ..base import Base
 
 
 class EquityCurve(Base):
     __tablename__ = "equity_curve"
 
-    backtest_id = Column(UUID(as_uuid=True), ForeignKey("performance_metrics.id"), primary_key=True)
+    backtest_id = Column(PG_UUID(as_uuid=True), ForeignKey("performance_metrics.id"), primary_key=True)
     timestamp = Column(DateTime(timezone=True), primary_key=True)
     equity = Column(Numeric)
 

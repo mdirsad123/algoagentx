@@ -1,13 +1,16 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Bell, User, ChevronDown, Globe, Settings, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { useNotifications } from "@/contexts/notification-context";
+import { useUser } from "@/contexts/user-context";
 import { NotificationResponse } from "@/types/notifications";
 import { formatDistanceToNow } from "date-fns";
+import { ModeToggle } from "@/components/mode-toggle";
+import { withLocale } from "@/lib/route";
 
 interface TopbarProps {
   pageTitle?: string;
@@ -15,6 +18,7 @@ interface TopbarProps {
 
 export default function Topbar({ pageTitle }: TopbarProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const { toast } = useToast();
   const { 
     unreadCount, 
@@ -23,7 +27,11 @@ export default function Topbar({ pageTitle }: TopbarProps) {
     markRead, 
     markAllRead 
   } = useNotifications();
+  const { user, isLoading: userLoading, clearUser } = useUser();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
+  const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
+  const [selectedLang, setSelectedLang] = useState("English");
 
   // Extract page title from pathname if not provided
   const getPageTitle = () => {
@@ -41,6 +49,44 @@ export default function Topbar({ pageTitle }: TopbarProps) {
   };
 
   const title = getPageTitle();
+
+  // Calculate display values from user context
+  const displayName = user?.displayName || user?.fullname || user?.username || user?.email || "User";
+  const userEmail = user?.email || "";
+  const userRole = user?.role || "User";
+  const avatarLetter = displayName.charAt(0).toUpperCase();
+
+  const languages = [
+    "English",
+    "Spanish",
+    "French",
+    "German"
+  ];
+
+  const handleProfileClick = () => {
+    router.push(withLocale(pathname, "/myprofile"));
+  };
+
+  const handleLogout = () => {
+    // Clear user from context (this also clears localStorage)
+    clearUser();
+    
+    // Remove all authentication cookies
+    document.cookie = 'accessToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
+    document.cookie = 'loggedinuserid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
+    document.cookie = 'loggedinusername=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
+    document.cookie = 'loggedinuserfullname=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
+    document.cookie = 'loggedinuserroleid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
+    document.cookie = 'loggedinuseremail=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
+    document.cookie = 'loggedinuserrole=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
+
+    // Remove localStorage token
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('currentUser');
+
+    // Navigate to login
+    router.push('/auth/login');
+  };
 
   const handleMarkRead = async (notificationId: string) => {
     try {
@@ -93,10 +139,44 @@ export default function Topbar({ pageTitle }: TopbarProps) {
         {/* Right side: Actions and user menu */}
         <div className="flex items-center gap-3">
           {/* Language Selector */}
-          <Button variant="outline" size="sm" className="gap-2 border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300">
-            <Globe className="w-4 h-4 text-gray-600" />
-            <span className="hidden sm:inline text-gray-700">English</span>
-          </Button>
+          <div className="relative">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="gap-2 border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300"
+              onClick={() => setIsLangDropdownOpen(!isLangDropdownOpen)}
+            >
+              <Globe className="w-4 h-4 text-gray-600" />
+              <span className="hidden sm:inline text-gray-700">{selectedLang}</span>
+              <ChevronDown className="w-4 h-4 text-gray-600" />
+            </Button>
+            
+            {isLangDropdownOpen && (
+              <div 
+                className="absolute right-0 mt-2 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-50"
+                onMouseDown={(e) => e.preventDefault()}
+                onBlur={() => setIsLangDropdownOpen(false)}
+              >
+                {languages.map((lang) => (
+                  <button
+                    key={lang}
+                    onClick={() => {
+                      setSelectedLang(lang);
+                      setIsLangDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 transition-colors ${
+                      selectedLang === lang ? "bg-blue-50 text-blue-600" : "text-gray-700"
+                    }`}
+                  >
+                    {lang}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Theme Toggle */}
+          <ModeToggle />
 
           {/* Notifications */}
           <div className="relative">
@@ -185,38 +265,52 @@ export default function Topbar({ pageTitle }: TopbarProps) {
           </div>
 
           {/* User Menu */}
-          <div className="relative group">
-            <Button variant="ghost" size="sm" className="gap-2 text-gray-700 hover:bg-gray-50">
+          <div className="relative">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="gap-2 text-gray-700 hover:bg-gray-50"
+              onClick={() => setIsUserDropdownOpen(!isUserDropdownOpen)}
+            >
               <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
                 <User className="w-4 h-4 text-white" />
               </div>
-              <span className="hidden md:inline text-gray-900 font-medium">John Doe</span>
+              <span className="hidden md:inline text-gray-900 font-medium">{displayName}</span>
               <ChevronDown className="w-4 h-4 text-gray-500" />
             </Button>
             
             {/* Dropdown Menu */}
-            <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
-              <div className="p-3 border-b border-gray-100">
-                <p className="text-sm font-medium text-gray-900">John Doe</p>
-                <p className="text-xs text-gray-600">admin@algoagentx.com</p>
-                <span className="inline-block mt-1 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-md font-medium">Admin</span>
+            {isUserDropdownOpen && (
+              <div 
+                className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-xl z-50"
+                onMouseDown={(e) => e.preventDefault()}
+                onBlur={() => setIsUserDropdownOpen(false)}
+              >
+                <div className="p-3 border-b border-gray-100">
+                  <p className="text-sm font-medium text-gray-900">{displayName}</p>
+                  <p className="text-xs text-gray-600">{userEmail}</p>
+                  <span className="inline-block mt-1 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-md font-medium">{userRole}</span>
+                </div>
+                <div className="p-2 space-y-1">
+                  <button 
+                    onClick={handleProfileClick}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-gray-900 rounded-md transition-colors"
+                  >
+                    My Profile
+                  </button>
+                  <button className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-gray-900 rounded-md transition-colors">
+                    Change Password
+                  </button>
+                  <hr className="border-gray-100 my-1" />
+                  <button 
+                    onClick={handleLogout}
+                    className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 hover:text-red-700 rounded-md transition-colors"
+                  >
+                    Sign Out
+                  </button>
+                </div>
               </div>
-              <div className="p-2 space-y-1">
-                <button className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-gray-900 rounded-md transition-colors">
-                  Profile Settings
-                </button>
-                <button className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-gray-900 rounded-md transition-colors">
-                  Account Settings
-                </button>
-                <button className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-gray-900 rounded-md transition-colors">
-                  Security
-                </button>
-                <hr className="border-gray-100 my-1" />
-                <button className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-gray-900 rounded-md transition-colors">
-                  Sign Out
-                </button>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

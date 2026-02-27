@@ -1,5 +1,5 @@
 from sqlalchemy import Column, String, Integer, DateTime, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from ..base import Base
 
 

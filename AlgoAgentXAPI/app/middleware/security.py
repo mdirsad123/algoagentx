@@ -100,8 +100,8 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             # Calculate duration even for errors
             duration = time.time() - start_time
             
-            # Log error
-            logger.error(
+            # Log error with full stack trace
+            logger.exception(
                 f"REQUEST_ERROR - ID: {request_id} | "
                 f"Method: {request.method} | "
                 f"Path: {request.url.path} | "
@@ -112,13 +112,19 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             )
             
             # Return error response with request ID
+            error_content = {
+                "error": "Internal server error",
+                "request_id": request_id,
+                "message": "An error occurred while processing your request"
+            }
+            
+            # In development, include debug error details
+            if settings.is_development:
+                error_content["debug_error"] = str(e)
+            
             return JSONResponse(
                 status_code=500,
-                content={
-                    "error": "Internal server error",
-                    "request_id": request_id,
-                    "message": "An error occurred while processing your request"
-                }
+                content=error_content
             )
 
 

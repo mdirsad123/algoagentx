@@ -1,5 +1,5 @@
 from sqlalchemy import Column, String, DateTime, Text, Integer, ForeignKey, DECIMAL, Enum
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from ..base import Base
@@ -16,7 +16,7 @@ class CreditTransaction(Base):
     __tablename__ = "credit_transactions"
 
     id = Column(String, primary_key=True)  # UUID as string
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     transaction_type = Column(Enum(CreditTransactionType), nullable=False)
     amount = Column(DECIMAL(10, 2), nullable=False)
     balance_after = Column(DECIMAL(10, 2), nullable=False)

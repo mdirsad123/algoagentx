@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from typing import Optional
 import uuid
 import bcrypt
@@ -18,135 +19,190 @@ async def login(login_data: UserLogin):
     """
     Authenticate user and return JWT token
     """
-    async with async_session() as db:
-        # Find user by email
-        stmt = select(User).where(User.email == login_data.email)
-        result = await db.execute(stmt)
-        user = result.scalar_one_or_none()
+    try:
+        async with async_session() as db:
+            # Find user by email
+            stmt = select(User).where(User.email == login_data.email)
+            result = await db.execute(stmt)
+            user = result.scalar_one_or_none()
 
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials"
-            )
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid credentials"
+                )
 
-        # DEBUG: Log the stored hash for debugging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"[AUTH DEBUG] User found: {user.email}")
-        logger.info(f"[AUTH DEBUG] Stored hash type: {type(user.password_hash)}")
-        logger.info(f"[AUTH DEBUG] Stored hash length: {len(user.password_hash)}")
-        logger.info(f"[AUTH DEBUG] Stored hash preview: {user.password_hash[:20]}..." if len(user.password_hash) > 20 else f"[AUTH DEBUG] Stored hash: {user.password_hash}")
+            # DEBUG: Log the stored hash for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"[AUTH DEBUG] User found: {user.email}")
+            logger.info(f"[AUTH DEBUG] Stored hash type: {type(user.password_hash)}")
+            logger.info(f"[AUTH DEBUG] Stored hash length: {len(user.password_hash)}")
+            logger.info(f"[AUTH DEBUG] Stored hash preview: {user.password_hash[:20]}..." if len(user.password_hash) > 20 else f"[AUTH DEBUG] Stored hash: {user.password_hash}")
 
-        # Verify password with robust handling
-        password_bytes = login_data.password.encode('utf-8')
-        stored_hash = user.password_hash.strip()
+            # Verify password with robust handling
+            password_bytes = login_data.password.encode('utf-8')
+            stored_hash = user.password_hash.strip()
 
-        # Handle both bytes and string stored hashes
-        if isinstance(stored_hash, str):
-            stored_hash_bytes = stored_hash.encode('utf-8')
-        else:
-            stored_hash_bytes = stored_hash
+            # Handle both bytes and string stored hashes
+            if isinstance(stored_hash, str):
+                stored_hash_bytes = stored_hash.encode('utf-8')
+            else:
+                stored_hash_bytes = stored_hash
 
-        logger.info(f"[AUTH DEBUG] Password bytes length: {len(password_bytes)}")
-        
-        try:
-            password_valid = bcrypt.checkpw(password_bytes, stored_hash_bytes)
-            logger.info(f"[AUTH DEBUG] bcrypt.checkpw result: {password_valid}")
-        except Exception as e:
-            logger.error(f"[AUTH DEBUG] bcrypt error: {e}")
-            # Try alternative approach - maybe the hash is already a string that bcrypt can check
+            logger.info(f"[AUTH DEBUG] Password bytes length: {len(password_bytes)}")
+            
             try:
-                password_valid = bcrypt.checkpw(password_bytes, stored_hash.encode('utf-8'))
-                logger.info(f"[AUTH DEBUG] bcrypt.checkpw (alt) result: {password_valid}")
-            except Exception as e2:
-                logger.error(f"[AUTH DEBUG] bcrypt alt error: {e2}")
-                password_valid = False
+                password_valid = bcrypt.checkpw(password_bytes, stored_hash_bytes)
+                logger.info(f"[AUTH DEBUG] bcrypt.checkpw result: {password_valid}")
+            except Exception as e:
+                logger.error(f"[AUTH DEBUG] bcrypt error: {e}")
+                # Try alternative approach - maybe the hash is already a string that bcrypt can check
+                try:
+                    password_valid = bcrypt.checkpw(password_bytes, stored_hash.encode('utf-8'))
+                    logger.info(f"[AUTH DEBUG] bcrypt.checkpw (alt) result: {password_valid}")
+                except Exception as e2:
+                    logger.error(f"[AUTH DEBUG] bcrypt alt error: {e2}")
+                    password_valid = False
 
-        if not password_valid:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials"
-            )
+            if not password_valid:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid credentials"
+                )
 
-        # Generate JWT token
-        from jose import jwt
-        from datetime import datetime, timedelta
+            # Generate JWT token
+            from jose import jwt
+            from datetime import datetime, timedelta
 
-        payload = {
-            "sub": str(user.id),
-            "email": user.email,
-            "role": user.role,
-            "exp": datetime.utcnow() + timedelta(days=1)
-        }
-
-        token = jwt.encode(
-            payload,
-            settings.jwt_secret_key,
-            algorithm=settings.jwt_algorithm
-        )
-
-        # Create display name - use fullname if available, otherwise use email
-        display_name = user.fullname if user.fullname else user.email
-
-        return {
-            "access_token": token,
-            "token_type": "bearer",
-            "user": {
-                "id": str(user.id),
+            payload = {
+                "sub": str(user.id),
                 "email": user.email,
                 "role": user.role,
-                "fullname": user.fullname,
-                "displayName": display_name
+                "exp": datetime.utcnow() + timedelta(days=1)
             }
-        }
+
+            token = jwt.encode(
+                payload,
+                settings.jwt_secret_key,
+                algorithm=settings.jwt_algorithm
+            )
+
+            return {
+                "access_token": token,
+                "token_type": "bearer",
+                "user": {
+                    "id": str(user.id),
+                    "email": user.email,
+                    "role": user.role,
+                    "fullname": user.fullname
+                }
+            }
+            
+    except SQLAlchemyError as e:
+        # Database connection or SQL-related errors
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"[AUTH] Database error during login: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database unavailable"
+        )
+    except Exception as e:
+        # Check if it's a connection error (asyncpg, psycopg2, etc.)
+        error_str = str(e).lower()
+        if any(keyword in error_str for keyword in ["connection", "connect", "database", "server"]):
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"[AUTH] Database connection error during login: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database unavailable"
+            )
+        # For other exceptions, re-raise to let middleware handle
+        raise
 
 @router.post("/signup")
 async def signup(user_data: UserCreate):
     """
     Create new user account
     """
-    async with async_session() as db:
-        # Check if user already exists
-        stmt = select(User).where(User.email == user_data.email)
-        result = await db.execute(stmt)
-        existing_user = result.scalar_one_or_none()
+    try:
+        async with async_session() as db:
+            # Check if user already exists by email
+            stmt = select(User).where(User.email == user_data.email)
+            result = await db.execute(stmt)
+            existing_user = result.scalar_one_or_none()
 
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User with this email already exists"
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User with this email already exists"
+                )
+
+            # Check if mobile number already exists (if provided)
+            if user_data.mobile:
+                stmt = select(User).where(User.mobile == user_data.mobile)
+                result = await db.execute(stmt)
+                existing_mobile = result.scalar_one_or_none()
+
+                if existing_mobile:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="User with this mobile number already exists"
+                    )
+
+            # Hash password
+            hashed_password = bcrypt.hashpw(
+                user_data.password.encode('utf-8'),
+                bcrypt.gensalt()
+            ).decode('utf-8')
+
+            # Create new user (id will be auto-generated by the model default)
+            new_user = User(
+                email=user_data.email,
+                password_hash=hashed_password,
+                role="user",
+                fullname=user_data.fullname,
+                mobile=user_data.mobile
             )
 
-        # Hash password
-        hashed_password = bcrypt.hashpw(
-            user_data.password.encode('utf-8'),
-            bcrypt.gensalt()
-        ).decode('utf-8')
+            db.add(new_user)
+            await db.commit()
+            await db.refresh(new_user)
 
-        # Create new user
-        new_user = User(
-            id=uuid.uuid4(),
-            email=user_data.email,
-            password_hash=hashed_password,
-            role="user",
-            fullname=user_data.fullname,
-            mobile=user_data.mobile
-        )
-
-        db.add(new_user)
-        await db.commit()
-        await db.refresh(new_user)
-
-        return {
-            "message": "User created successfully",
-            "user": {
-                "id": str(new_user.id),
-                "email": new_user.email,
-                "role": new_user.role,
-                "fullname": new_user.fullname
+            return {
+                "message": "User created successfully",
+                "user": {
+                    "id": str(new_user.id),
+                    "email": new_user.email,
+                    "role": new_user.role,
+                    "fullname": new_user.fullname
+                }
             }
-        }
+            
+    except SQLAlchemyError as e:
+        # Database connection or SQL-related errors
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"[AUTH] Database error during signup: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database unavailable"
+        )
+    except Exception as e:
+        # Check if it's a connection error (asyncpg, psycopg2, etc.)
+        error_str = str(e).lower()
+        if any(keyword in error_str for keyword in ["connection", "connect", "database", "server"]):
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"[AUTH] Database connection error during signup: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database unavailable"
+            )
+        # For other exceptions, re-raise to let middleware handle
+        raise
 
 @router.get("/verify")
 async def verify_token(current_user: dict = Depends(get_current_user)):
@@ -164,6 +220,101 @@ async def me(current_user: dict = Depends(get_current_user)):
     Get current user information
     """
     return {"user": current_user}
+
+@router.post("/forgot-password")
+async def forgot_password(body: dict):
+    """
+    Request password reset - sends reset instructions
+    In production, this would send an email with reset link
+    For development, it returns a temporary reset token
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    email = body.get("email")
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email is required"
+        )
+    
+    async with async_session() as db:
+        # Find user by email
+        stmt = select(User).where(User.email == email)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            # For security, don't reveal if email exists or not
+            return {
+                "message": "If the email exists in our system, you will receive password reset instructions shortly."
+            }
+        
+        logger.info(f"[AUTH] Password reset requested for: {email}")
+        
+        # In production, you would:
+        # 1. Generate a secure reset token
+        # 2. Store it in database with expiration time
+        # 3. Send email with reset link
+        
+        # For development, return success message
+        return {
+            "message": "If the email exists in our system, you will receive password reset instructions shortly.",
+            "dev_note": "In development mode - password reset functionality would send email in production"
+        }
+
+@router.post("/reset-password")
+async def reset_password(body: dict):
+    """
+    Reset password with token (production would use secure token)
+    For development, this allows direct password reset by email
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    email = body.get("email") 
+    new_password = body.get("new_password")
+    reset_token = body.get("reset_token", "dev-token")  # In prod, this would be required
+    
+    if not email or not new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email and new password are required"
+        )
+    
+    if len(new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 6 characters"
+        )
+    
+    async with async_session() as db:
+        # Find user by email
+        stmt = select(User).where(User.email == email)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Hash new password
+        new_hash = bcrypt.hashpw(
+            new_password.encode('utf-8'),
+            bcrypt.gensalt()
+        ).decode('utf-8')
+        
+        # Update user password
+        user.password_hash = new_hash
+        await db.commit()
+        
+        logger.info(f"[AUTH] Password reset successful for: {email}")
+        
+        return {
+            "message": "Password reset successful. You can now log in with your new password."
+        }
 
 
 # ============= DEV-ONLY DEBUG ENDPOINTS =============

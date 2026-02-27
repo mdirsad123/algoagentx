@@ -1,127 +1,56 @@
-import React, { useState, useEffect, useRef } from "react";
-import { X } from "lucide-react";
+"use client";
+
+import React from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { withLocale } from "@/lib/route";
+import { Sparkles } from "lucide-react";
 
-interface PromoTickerProps {
-  content?: string;
-  buttonText?: string;
-  buttonLink?: string;
-}
+export default function PromoTicker() {
+  const pathname = usePathname();
 
-export default function PromoTicker({ 
-  content = "Get 30% OFF on first upgrade with code FIRST30 (new users only)", 
-  buttonText = "Upgrade now", 
-  buttonLink = "/pricing" 
-}: PromoTickerProps) {
-  const [isVisible, setIsVisible] = useState(true);
-  const [isHovered, setIsHovered] = useState(false);
-  const tickerRef = useRef<HTMLDivElement>(null);
-  const textRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    // Check if ticker was dismissed
-    const dismissed = localStorage.getItem('promo-ticker-dismissed');
-    if (dismissed === 'true') {
-      setIsVisible(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // Handle infinite scrolling animation
-    const ticker = tickerRef.current;
-    const text = textRef.current;
-    
-    if (!ticker || !text) return;
-
-    const tickerWidth = ticker.offsetWidth;
-    const textWidth = text.scrollWidth;
-
-    if (textWidth <= tickerWidth) return; // No need to scroll if text fits
-
-    let animationId: number;
-    let startTime: number;
-    const duration = 20000; // 20 seconds for one complete cycle
-
-    const animate = (timestamp: number) => {
-      if (!startTime) startTime = timestamp;
-      const elapsed = timestamp - startTime;
-      
-      // Calculate progress (0 to 1)
-      const progress = (elapsed % duration) / duration;
-      
-      // Move text from right to left
-      const translateX = tickerWidth - (progress * (textWidth + tickerWidth));
-      
-      text.style.transform = `translateX(${translateX}px)`;
-      
-      if (isVisible && !isHovered) {
-        animationId = requestAnimationFrame(animate);
-      }
-    };
-
-    if (isVisible && !isHovered) {
-      animationId = requestAnimationFrame(animate);
-    }
-
-    return () => {
-      if (animationId) cancelAnimationFrame(animationId);
-    };
-  }, [isVisible, isHovered]);
-
-  const handleClose = () => {
-    setIsVisible(false);
-    localStorage.setItem('promo-ticker-dismissed', 'true');
-  };
-
-  if (!isVisible) {
-    return null;
-  }
+  // Array of promo items for clean duplication
+  const promoItems = [
+    {
+      icon: "🎉",
+      text: "Use code FIRST30 to get 30% OFF on your first upgrade",
+      buttonText: "Upgrade now",
+    },
+    {
+      icon: "🚀", 
+      text: "Join 10,000+ traders using AlgoAgentX for automated trading",
+      buttonText: "Get Started",
+    },
+    {
+      icon: "💎",
+      text: "Limited Time: Free AI Screener credits with Pro plans", 
+      buttonText: "Learn More",
+    },
+  ];
 
   return (
-    <div 
-      className="bg-gradient-to-r from-blue-600 via-blue-700 to-blue-800 text-white shadow-lg"
-      ref={tickerRef}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-12">
-          {/* Scrolling text container */}
-          <div className="flex-1 overflow-hidden">
-            <div 
-              ref={textRef}
-              className="whitespace-nowrap text-sm font-medium"
-              style={{ 
-                willChange: 'transform',
-                display: 'inline-block'
-              }}
-            >
-              {/* Duplicate text for seamless loop */}
-              <span className="mr-8">{content}</span>
-              <span>{content}</span>
-            </div>
-          </div>
-
-          {/* Action button */}
-          <div className="ml-4 flex-shrink-0">
+    <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white py-2 px-4 overflow-hidden relative">
+      <div className="flex animate-marquee hover:[animation-play-state:paused]">
+        {/* Render items twice for seamless loop */}
+        {[...promoItems, ...promoItems].map((item, index) => (
+          <div key={index} className="flex items-center space-x-2 whitespace-nowrap px-8">
+            <Sparkles className="w-4 h-4 shrink-0" />
+            <span className="font-medium">
+              {item.icon} {item.text}
+            </span>
             <Link
-              href={buttonLink}
-              className="bg-white text-blue-600 px-4 py-1.5 rounded-md text-sm font-semibold hover:bg-gray-100 transition-colors shadow-md"
+              href={withLocale(pathname, "/pricing")}
+              className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1 rounded-full text-sm font-semibold transition-all duration-200 hover:scale-105 backdrop-blur-sm shrink-0"
             >
-              {buttonText}
+              {item.buttonText}
             </Link>
           </div>
-
-          {/* Close button */}
-          <button
-            onClick={handleClose}
-            className="ml-2 p-1 rounded-md hover:bg-white/20 transition-colors"
-            aria-label="Close promo banner"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+        ))}
       </div>
+      
+      {/* Subtle fade edges */}
+      <div className="absolute left-0 top-0 w-8 h-full bg-gradient-to-r from-blue-600 to-transparent pointer-events-none" />
+      <div className="absolute right-0 top-0 w-8 h-full bg-gradient-to-l from-purple-600 to-transparent pointer-events-none" />
     </div>
   );
 }
