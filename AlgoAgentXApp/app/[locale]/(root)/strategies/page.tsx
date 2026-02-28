@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/enhanced-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,6 +11,10 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { StrategyRequestForm } from "@/components/strategies/StrategyRequestForm";
 import { MyStrategyRequests } from "@/components/strategies/MyStrategyRequests";
+import { PageHeader } from "@/components/ui/page-header";
+import { EmptyState } from "@/components/shared/EmptyState";
+import { Plus } from "lucide-react";
+import AppShell from "@/components/layout/AppShell";
 
 interface StrategyTemplate {
   id: string;
@@ -129,7 +133,7 @@ export default function StrategiesPage() {
   };
 
   const renderStrategyCard = (strategy: StrategyTemplate | StrategyMy) => (
-    <Card key={strategy.id} className="h-full">
+    <Card key={strategy.id} variant="elevated" className="h-full">
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg">{strategy.name}</CardTitle>
@@ -143,40 +147,40 @@ export default function StrategiesPage() {
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-500">Win Rate</span>
+              <span className="text-sm text-gray-600">Win Rate</span>
               <span className="text-sm font-medium text-green-600">
                 {strategy.winRate ? `${strategy.winRate}%` : "N/A"}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-500">Total Trades</span>
-              <span className="text-sm font-medium">
+              <span className="text-sm text-gray-600">Total Trades</span>
+              <span className="text-sm font-medium text-gray-900">
                 {strategy.totalTrades || "N/A"}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-500">Profit Factor</span>
-              <span className="text-sm font-medium">
+              <span className="text-sm text-gray-600">Profit Factor</span>
+              <span className="text-sm font-medium text-gray-900">
                 {strategy.profitFactor || "N/A"}
               </span>
             </div>
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-500">Sharpe Ratio</span>
-              <span className="text-sm font-medium">
+              <span className="text-sm text-gray-600">Sharpe Ratio</span>
+              <span className="text-sm font-medium text-gray-900">
                 {strategy.sharpeRatio || "N/A"}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-500">Max Drawdown</span>
+              <span className="text-sm text-gray-600">Max Drawdown</span>
               <span className="text-sm font-medium text-red-600">
                 {strategy.maxDrawdown ? `${strategy.maxDrawdown}%` : "N/A"}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-500">Last Updated</span>
-              <span className="text-sm font-medium">
+              <span className="text-sm text-gray-600">Last Updated</span>
+              <span className="text-sm font-medium text-gray-900">
                 {new Date(strategy.lastUpdated).toLocaleDateString()}
               </span>
             </div>
@@ -196,28 +200,35 @@ export default function StrategiesPage() {
   );
 
   const renderEmptyState = (tab: string) => (
-    <div className="text-center py-12">
-      <div className="text-gray-500 mb-4">
-        {tab === "templates" ? "No strategy templates available" : 
-         tab === "my" ? "You don't have any strategies yet" : 
-         "No strategy requests found"}
-      </div>
-      {tab === "request" && (
-        <Button onClick={() => router.push("/strategies/request")}>
+    <EmptyState
+      title={tab === "templates" ? "No Strategy Templates" : 
+             tab === "my" ? "No Strategies Found" : 
+             "No Strategy Requests"}
+      description={tab === "templates" ? "Browse our strategy templates to get started" : 
+                  tab === "my" ? "You don't have any strategies yet" : 
+                  "No strategy requests found"}
+      action={tab === "request" && (
+        <Button onClick={() => router.push("/strategies/request")} className="flex items-center gap-2">
+          <Plus className="h-4 w-4" />
           Request a Strategy
         </Button>
       )}
-    </div>
+    />
   );
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Trading Strategies</h1>
-        <p className="text-gray-600 mt-2">
-          Browse templates, manage your strategies, or request custom strategies
-        </p>
-      </div>
+    <AppShell pageTitle="Trading Strategies">
+      <div className="space-y-6">
+      <PageHeader 
+        title="Trading Strategies"
+        subtitle="Browse templates, manage your strategies, or request custom strategies"
+        actions={
+          <Button onClick={() => router.push("/strategies/request")} className="flex items-center gap-2">
+            <Plus className="h-4 w-4" />
+            Request Strategy
+          </Button>
+        }
+      />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
@@ -230,7 +241,7 @@ export default function StrategiesPage() {
           {loading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {[...Array(4)].map((_, index) => (
-                <Card key={index} className="animate-pulse">
+                <Card key={index} variant="elevated" className="animate-pulse">
                   <CardHeader>
                     <div className="h-6 bg-gray-200 rounded w-3/4 mb-2"></div>
                     <div className="h-4 bg-gray-200 rounded w-full"></div>
@@ -267,7 +278,7 @@ export default function StrategiesPage() {
           {loading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {[...Array(2)].map((_, index) => (
-                <Card key={index} className="animate-pulse">
+                <Card key={index} variant="elevated" className="animate-pulse">
                   <CardHeader>
                     <div className="h-6 bg-gray-200 rounded w-3/4 mb-2"></div>
                     <div className="h-4 bg-gray-200 rounded w-full"></div>
@@ -291,6 +302,7 @@ export default function StrategiesPage() {
           )}
         </TabsContent>
       </Tabs>
-    </div>
+      </div>
+    </AppShell>
   );
 }

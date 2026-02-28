@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Bell, ChevronDown, Globe, X } from "lucide-react";
 import Cookies from "js-cookie";
 import Link from "next/link";
@@ -10,12 +10,40 @@ import { useUser } from "@/contexts/user-context";
 import { NotificationResponse } from "@/types/notifications";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { withLocale } from "@/lib/route";
+import { useAutoCloseOverlay } from "@/hooks/useAutoCloseOverlay";
 
 export default function MinimalHeader() {
   const [showLangDropdown, setShowLangDropdown] = useState(false);
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showNotificationDropdown, setShowNotificationDropdown] = useState(false);
   const [selectedLang, setSelectedLang] = useState("Eng (US)");
+
+  // Refs for dropdown containers
+  const langDropdownRef = useRef<HTMLDivElement>(null);
+  const notificationDropdownRef = useRef<HTMLDivElement>(null);
+  const userDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Auto-close hooks for each dropdown
+  useAutoCloseOverlay({
+    open: showLangDropdown,
+    onClose: () => setShowLangDropdown(false),
+    containerRef: langDropdownRef,
+    closeOnPathChange: true
+  });
+
+  useAutoCloseOverlay({
+    open: showNotificationDropdown,
+    onClose: () => setShowNotificationDropdown(false),
+    containerRef: notificationDropdownRef,
+    closeOnPathChange: true
+  });
+
+  useAutoCloseOverlay({
+    open: showUserDropdown,
+    onClose: () => setShowUserDropdown(false),
+    containerRef: userDropdownRef,
+    closeOnPathChange: true
+  });
 
   // Use notifications from context
   const { unreadCount, notifications, markAllRead, fetchNotifications } = useNotifications();
@@ -56,6 +84,7 @@ export default function MinimalHeader() {
           
           {showLangDropdown && (
             <div 
+              ref={langDropdownRef}
               className="absolute right-0 mt-2 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-50"
               onMouseDown={(e) => e.preventDefault()}
             >
@@ -94,6 +123,7 @@ export default function MinimalHeader() {
 
           {showNotificationDropdown && (
             <div 
+              ref={notificationDropdownRef}
               className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-96 overflow-hidden"
               onMouseDown={(e) => e.preventDefault()}
             >
@@ -188,6 +218,7 @@ export default function MinimalHeader() {
 
           {showUserDropdown && (
             <div 
+              ref={userDropdownRef}
               className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50"
               onMouseDown={(e) => e.preventDefault()}
             >
@@ -197,14 +228,18 @@ export default function MinimalHeader() {
               </div>
               <Link
                 href={withLocale(pathname, "/myprofile")}
-                onClick={() => setShowUserDropdown(false)}
+                onClick={() => {
+                  setShowUserDropdown(false);
+                }}
                 className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors block"
               >
                 My Profile
               </Link>
               <Link
                 href={withLocale(pathname, "/changepassword")}
-                onClick={() => setShowUserDropdown(false)}
+                onClick={() => {
+                  setShowUserDropdown(false);
+                }}
                 className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors block"
               >
                 Change Password

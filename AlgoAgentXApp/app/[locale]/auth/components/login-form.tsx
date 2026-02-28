@@ -50,6 +50,7 @@ const LoginForm = () => {
       Cookies.set("loggedinuserroleid", user.role, { expires: 7 });
       Cookies.set("loggedinuserid", user.id, { expires: 7 });
       Cookies.set("loggedinusername", user.email, { expires: 7 });
+      Cookies.set("loggedinuseremail", user.email, { expires: 7 });
 
       // Set authorization header for future requests
       axiosInstance.defaults.headers["Authorization"] = `Bearer ${access_token}`;
@@ -60,8 +61,12 @@ const LoginForm = () => {
         text: 'Welcome to AlgoAgentX'
       });
 
-      // Redirect to dashboard
-      router.push("/dashboard");
+      // Redirect based on user role
+      if (user.role === 'admin') {
+        router.push("/admin/dashboard");
+      } else {
+        router.push("/dashboard");
+      }
 
     } catch (error: any) {
       console.error('Login error:', error);

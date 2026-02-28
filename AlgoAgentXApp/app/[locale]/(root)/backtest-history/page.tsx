@@ -29,6 +29,7 @@ import Toast from "@/components/shared/toast";
 import { PageHeader } from "@/components/ui/page-header";
 import { StandardCard, StandardCardHeader, StandardCardTitle, StandardCardDescription, StandardCardContent } from "@/components/ui/standard-card";
 import { CardSkeleton, TableSkeleton } from "@/components/ui/loading-skeleton";
+import AppShell from "@/components/layout/AppShell";
 
 interface BacktestHistoryItem {
   id: string;
@@ -227,7 +228,8 @@ export default function BacktestHistoryPage() {
   };
 
   return (
-    <div className="p-6 space-y-6 bg-gray-50 min-h-screen">
+    <AppShell pageTitle="Backtest History">
+      <div className="p-6 space-y-6 bg-gray-50 min-h-screen">
       <PageHeader 
         title="Backtest History"
         subtitle="Review and analyze your completed backtest results"
@@ -725,6 +727,7 @@ export default function BacktestHistoryPage() {
           </CardContent>
         </Card>
       )}
-    </div>
+      </div>
+    </AppShell>
   );
 }
