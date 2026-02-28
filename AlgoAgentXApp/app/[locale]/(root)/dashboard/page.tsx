@@ -1,14 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, TrendingDown, DollarSign, Activity, ArrowUp, ArrowDown, Users, Shield, Zap } from "lucide-react";
+import { TrendingUp, TrendingDown, DollarSign, Activity, ArrowUp, ArrowDown, Users, Shield, Zap, BarChart3, PlayCircle, FileText } from "lucide-react";
 import AppShell from "@/components/layout/AppShell";
 import { PageHeader } from "@/components/ui/page-header";
-import { StandardCard, StandardCardHeader, StandardCardTitle, StandardCardDescription, StandardCardContent } from "@/components/ui/standard-card";
-import { DashboardSkeleton } from "@/components/ui/loading-skeleton";
+import { ModernCard, ModernCardHeader, ModernCardTitle, ModernCardDescription, ModernCardContent } from "@/components/ui/modern-card";
 
 interface StatData {
   title: string;
@@ -16,7 +14,7 @@ interface StatData {
   change: string;
   trend: "up" | "down";
   icon: any;
-  color: string;
+  variant?: "default" | "highlight" | "subtle";
 }
 
 interface SignalData {
@@ -35,7 +33,7 @@ export default function HomePage() {
       change: "+13.5%",
       trend: "up",
       icon: DollarSign,
-      color: "from-blue-500 to-cyan-500",
+      variant: "highlight",
     },
     {
       title: "Active Strategies",
@@ -43,7 +41,7 @@ export default function HomePage() {
       change: "+2",
       trend: "up",
       icon: Activity,
-      color: "from-green-500 to-emerald-500",
+      variant: "default",
     },
     {
       title: "Today's P&L",
@@ -51,7 +49,7 @@ export default function HomePage() {
       change: "+5.2%",
       trend: "up",
       icon: TrendingUp,
-      color: "from-emerald-500 to-green-500",
+      variant: "default",
     },
     {
       title: "Win Rate",
@@ -59,7 +57,7 @@ export default function HomePage() {
       change: "-2.1%",
       trend: "down",
       icon: TrendingDown,
-      color: "from-orange-500 to-red-500",
+      variant: "subtle",
     },
   ]);
   const [recentSignals, setRecentSignals] = useState<SignalData[]>([
@@ -80,53 +78,133 @@ export default function HomePage() {
       />
 
       <div className="space-y-6">
-        {/* Stats Grid - Premium KPI Cards with Gradient Backgrounds */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {stats.map((stat, index) => (
-            <Card key={index} className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+      
+      {/* Stats Grid - 12-column responsive grid with consistent card heights */}
+        <div className="grid grid-cols-12 gap-6">
+          {/* Portfolio Value - Takes 3 columns on large screens, full width on mobile */}
+          <ModernCard className="col-span-12 lg:col-span-3 h-full" variant="highlight">
+            <ModernCardHeader>
+              <div className="flex items-center justify-between">
                 <div>
-                  <CardDescription className="text-gray-500 text-sm font-medium">
-                    {stat.title}
-                  </CardDescription>
-                  <div className="flex items-end space-x-2">
-                    <CardTitle className="text-3xl font-bold tracking-tight text-gray-900">
-                      {stat.value}
-                    </CardTitle>
-                    <div className={`flex items-center space-x-1 text-sm ${
-                      stat.trend === 'up' ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {stat.trend === 'up' ? (
-                        <ArrowUp className="h-4 w-4" />
-                      ) : (
-                        <ArrowDown className="h-4 w-4" />
-                      )}
-                      <span className="font-medium">{stat.change}</span>
+                  <ModernCardDescription className="text-sm font-medium text-gray-600">
+                    Total Portfolio Value
+                  </ModernCardDescription>
+                  <div className="flex items-end space-x-2 mt-1">
+                    <ModernCardTitle className="text-2xl font-bold text-gray-900">
+                      $127,110.86
+                    </ModernCardTitle>
+                    <div className="flex items-center space-x-1 text-sm text-green-600">
+                      <ArrowUp className="h-4 w-4" />
+                      <span className="font-medium">+13.5%</span>
                     </div>
                   </div>
                 </div>
-                <div className={`p-3 rounded-lg bg-gradient-to-r ${stat.color} text-white`}>
-                  <stat.icon className="h-6 w-6" />
+                <div className="p-3 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg text-white shadow-lg">
+                  <DollarSign className="h-6 w-6" />
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-gray-500">vs last month</p>
-              </CardContent>
-            </Card>
-          ))}
+              </div>
+            </ModernCardHeader>
+            <ModernCardContent>
+              <p className="text-xs text-gray-500">vs last month</p>
+            </ModernCardContent>
+          </ModernCard>
+
+          {/* Active Strategies - Takes 3 columns */}
+          <ModernCard className="col-span-12 lg:col-span-3 h-full" variant="default">
+            <ModernCardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <ModernCardDescription className="text-sm font-medium text-gray-600">
+                    Active Strategies
+                  </ModernCardDescription>
+                  <div className="flex items-end space-x-2 mt-1">
+                    <ModernCardTitle className="text-2xl font-bold text-gray-900">
+                      12
+                    </ModernCardTitle>
+                    <div className="flex items-center space-x-1 text-sm text-green-600">
+                      <ArrowUp className="h-4 w-4" />
+                      <span className="font-medium">+2</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="p-3 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg text-white shadow-lg">
+                  <Activity className="h-6 w-6" />
+                </div>
+              </div>
+            </ModernCardHeader>
+            <ModernCardContent>
+              <p className="text-xs text-gray-500">Currently running</p>
+            </ModernCardContent>
+          </ModernCard>
+
+          {/* Today's P&L - Takes 3 columns */}
+          <ModernCard className="col-span-12 lg:col-span-3 h-full" variant="default">
+            <ModernCardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <ModernCardDescription className="text-sm font-medium text-gray-600">
+                    Today's P&L
+                  </ModernCardDescription>
+                  <div className="flex items-end space-x-2 mt-1">
+                    <ModernCardTitle className="text-2xl font-bold text-gray-900">
+                      +$1,250.50
+                    </ModernCardTitle>
+                    <div className="flex items-center space-x-1 text-sm text-green-600">
+                      <ArrowUp className="h-4 w-4" />
+                      <span className="font-medium">+5.2%</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="p-3 bg-gradient-to-r from-emerald-500 to-green-500 rounded-lg text-white shadow-lg">
+                  <TrendingUp className="h-6 w-6" />
+                </div>
+              </div>
+            </ModernCardHeader>
+            <ModernCardContent>
+              <p className="text-xs text-gray-500">Real-time updates</p>
+            </ModernCardContent>
+          </ModernCard>
+
+          {/* Win Rate - Takes 3 columns */}
+          <ModernCard className="col-span-12 lg:col-span-3 h-full" variant="subtle">
+            <ModernCardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <ModernCardDescription className="text-sm font-medium text-gray-600">
+                    Win Rate
+                  </ModernCardDescription>
+                  <div className="flex items-end space-x-2 mt-1">
+                    <ModernCardTitle className="text-2xl font-bold text-gray-900">
+                      67.1%
+                    </ModernCardTitle>
+                    <div className="flex items-center space-x-1 text-sm text-red-600">
+                      <ArrowDown className="h-4 w-4" />
+                      <span className="font-medium">-2.1%</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="p-3 bg-gradient-to-r from-orange-500 to-red-500 rounded-lg text-white shadow-lg">
+                  <TrendingDown className="h-6 w-6" />
+                </div>
+              </div>
+            </ModernCardHeader>
+            <ModernCardContent>
+              <p className="text-xs text-gray-500">Last 30 days</p>
+            </ModernCardContent>
+          </ModernCard>
         </div>
 
-        {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Recent Signals */}
-          <Card className="lg:col-span-2 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
-            <CardHeader>
-              <CardTitle className="text-gray-900">Recent AI Signals</CardTitle>
-              <CardDescription className="text-gray-600">
+        {/* Main Content Grid - 12-column layout */}
+        <div className="grid grid-cols-12 gap-6">
+          {/* Recent AI Signals - Takes 8 columns on large screens */}
+          <ModernCard className="col-span-12 lg:col-span-8">
+            <ModernCardHeader>
+              <ModernCardTitle>Recent AI Signals</ModernCardTitle>
+              <ModernCardDescription>
                 Latest algorithmic trading signals with confidence scores
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+              </ModernCardDescription>
+            </ModernCardHeader>
+            <ModernCardContent>
               <div className="space-y-4">
                 {recentSignals.map((signal, index) => (
                   <div key={index} className="flex items-center justify-between p-4 border border-gray-100 rounded-xl hover:border-gray-200 transition-all duration-200 bg-gradient-to-r from-gray-50 to-white">
@@ -159,18 +237,18 @@ export default function HomePage() {
                   </div>
                 ))}
               </div>
-            </CardContent>
-          </Card>
+            </ModernCardContent>
+          </ModernCard>
 
-          {/* Performance Summary */}
-          <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
-            <CardHeader>
-              <CardTitle className="text-gray-900">Performance Summary</CardTitle>
-              <CardDescription className="text-gray-600">
+          {/* Performance Summary - Takes 4 columns on large screens */}
+          <ModernCard className="col-span-12 lg:col-span-4">
+            <ModernCardHeader>
+              <ModernCardTitle>Performance Summary</ModernCardTitle>
+              <ModernCardDescription>
                 Key metrics overview
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+              </ModernCardDescription>
+            </ModernCardHeader>
+            <ModernCardContent className="space-y-4">
               <div className="flex justify-between items-center p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-gray-100">
                 <div>
                   <p className="text-gray-600 text-sm">Total Trades</p>
@@ -207,26 +285,26 @@ export default function HomePage() {
                   </p>
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </ModernCardContent>
+          </ModernCard>
         </div>
 
-        {/* Quick Actions with Enhanced Design */}
-        <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
-          <CardHeader>
-            <CardTitle className="text-gray-900">Quick Actions</CardTitle>
-            <CardDescription className="text-gray-600">
+        {/* Quick Actions - 12-column grid */}
+        <ModernCard>
+          <ModernCardHeader>
+            <ModernCardTitle>Quick Actions</ModernCardTitle>
+            <ModernCardDescription>
               Get started with AlgoAgentX
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            </ModernCardDescription>
+          </ModernCardHeader>
+          <ModernCardContent>
+            <div className="grid grid-cols-12 gap-6">
               <Link
                 href="/strategies"
                 prefetch={true}
-                className="p-6 border border-gray-100 rounded-xl hover:border-gray-200 hover:bg-gradient-to-r hover:from-blue-50 hover:to-cyan-50 transition-all duration-300 group"
+                className="col-span-12 md:col-span-4 p-6 border border-gray-100 rounded-xl hover:border-gray-200 hover:bg-gradient-to-r hover:from-blue-50 hover:to-cyan-50 transition-all duration-300 group"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between h-full">
                   <div>
                     <h3 className="font-semibold text-gray-900 text-lg group-hover:text-blue-600 transition-colors">
                       View Strategies
@@ -235,17 +313,17 @@ export default function HomePage() {
                       Browse and analyze trading strategies
                     </p>
                   </div>
-                  <div className="p-3 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg text-white group-hover:scale-110 transition-transform duration-200">
-                    <Activity className="h-6 w-6" />
+                  <div className="p-3 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg text-white group-hover:scale-110 transition-transform duration-200 shadow-lg">
+                    <BarChart3 className="h-6 w-6" />
                   </div>
                 </div>
               </Link>
               <Link
                 href="/backtest"
                 prefetch={true}
-                className="p-6 border border-gray-100 rounded-xl hover:border-gray-200 hover:bg-gradient-to-r hover:from-green-50 hover:to-emerald-50 transition-all duration-300 group"
+                className="col-span-12 md:col-span-4 p-6 border border-gray-100 rounded-xl hover:border-gray-200 hover:bg-gradient-to-r hover:from-green-50 hover:to-emerald-50 transition-all duration-300 group"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between h-full">
                   <div>
                     <h3 className="font-semibold text-gray-900 text-lg group-hover:text-green-600 transition-colors">
                       Run Backtest
@@ -254,17 +332,17 @@ export default function HomePage() {
                       Execute and view strategy backtest results
                     </p>
                   </div>
-                  <div className="p-3 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg text-white group-hover:scale-110 transition-transform duration-200">
-                    <TrendingUp className="h-6 w-6" />
+                  <div className="p-3 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg text-white group-hover:scale-110 transition-transform duration-200 shadow-lg">
+                    <PlayCircle className="h-6 w-6" />
                   </div>
                 </div>
               </Link>
               <Link
                 href="/reports"
                 prefetch={true}
-                className="p-6 border border-gray-100 rounded-xl hover:border-gray-200 hover:bg-gradient-to-r hover:from-purple-50 hover:to-pink-50 transition-all duration-300 group"
+                className="col-span-12 md:col-span-4 p-6 border border-gray-100 rounded-xl hover:border-gray-200 hover:bg-gradient-to-r hover:from-purple-50 hover:to-pink-50 transition-all duration-300 group"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between h-full">
                   <div>
                     <h3 className="font-semibold text-gray-900 text-lg group-hover:text-purple-600 transition-colors">
                       View Reports
@@ -273,67 +351,73 @@ export default function HomePage() {
                       Check performance analytics
                     </p>
                   </div>
-                  <div className="p-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg text-white group-hover:scale-110 transition-transform duration-200">
-                    <DollarSign className="h-6 w-6" />
+                  <div className="p-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg text-white group-hover:scale-110 transition-transform duration-200 shadow-lg">
+                    <FileText className="h-6 w-6" />
                   </div>
                 </div>
               </Link>
             </div>
-          </CardContent>
-        </Card>
+          </ModernCardContent>
+        </ModernCard>
 
-        {/* Additional Stats Row */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card className="border-gray-200">
-            <CardHeader className="pb-2">
-              <CardDescription className="text-gray-500 text-sm">Active Users</CardDescription>
-            </CardHeader>
-            <CardContent>
+        {/* Additional Stats Row - 12-column grid */}
+        <div className="grid grid-cols-12 gap-6">
+          <ModernCard className="col-span-12 md:col-span-4">
+            <ModernCardHeader>
+              <ModernCardDescription className="text-sm font-medium text-gray-600">
+                Active Users
+              </ModernCardDescription>
+            </ModernCardHeader>
+            <ModernCardContent>
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-2xl font-bold text-gray-900">1,234</p>
                   <p className="text-sm text-green-600 font-medium">+12.5% this month</p>
                 </div>
-                <div className="p-3 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-lg text-white">
+                <div className="p-3 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-lg text-white shadow-lg">
                   <Users className="h-6 w-6" />
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </ModernCardContent>
+          </ModernCard>
           
-          <Card className="border-gray-200">
-            <CardHeader className="pb-2">
-              <CardDescription className="text-gray-500 text-sm">System Uptime</CardDescription>
-            </CardHeader>
-            <CardContent>
+          <ModernCard className="col-span-12 md:col-span-4">
+            <ModernCardHeader>
+              <ModernCardDescription className="text-sm font-medium text-gray-600">
+                System Uptime
+              </ModernCardDescription>
+            </ModernCardHeader>
+            <ModernCardContent>
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-2xl font-bold text-gray-900">99.9%</p>
                   <p className="text-sm text-green-600 font-medium">Excellent</p>
                 </div>
-                <div className="p-3 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg text-white">
+                <div className="p-3 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg text-white shadow-lg">
                   <Shield className="h-6 w-6" />
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </ModernCardContent>
+          </ModernCard>
           
-          <Card className="border-gray-200">
-            <CardHeader className="pb-2">
-              <CardDescription className="text-gray-500 text-sm">AI Signals Today</CardDescription>
-            </CardHeader>
-            <CardContent>
+          <ModernCard className="col-span-12 md:col-span-4">
+            <ModernCardHeader>
+              <ModernCardDescription className="text-sm font-medium text-gray-600">
+                AI Signals Today
+              </ModernCardDescription>
+            </ModernCardHeader>
+            <ModernCardContent>
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-2xl font-bold text-gray-900">156</p>
                   <p className="text-sm text-blue-600 font-medium">High activity</p>
                 </div>
-                <div className="p-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg text-white">
+                <div className="p-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg text-white shadow-lg">
                   <Zap className="h-6 w-6" />
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </ModernCardContent>
+          </ModernCard>
         </div>
       </div>
     </AppShell>

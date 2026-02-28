@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CalendarDays, TrendingUp, AlertTriangle, CheckCircle } from "lucide-react";
+import AppShell from "@/components/layout/AppShell";
 
 export default function ReportsPage() {
   const performanceMetrics = [
@@ -98,7 +99,8 @@ export default function ReportsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <AppShell pageTitle="Analytics & Logs">
+      <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Analytics & Logs</h1>
         <p className="text-gray-600 mt-2">
@@ -288,6 +290,7 @@ export default function ReportsPage() {
           </Card>
         </TabsContent>
       </Tabs>
-    </div>
+      </div>
+    </AppShell>
   );
 }

@@ -1,0 +1,111 @@
+/* Design System CSS Variables */
+/* This file contains all CSS custom properties for the AlgoAgentX design system */
+
+:root {
+  /* Color Palette */
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --danger: #ef4444;
+  --danger-foreground: #ffffff;
+  --success: #10b981;
+  --success-foreground: #ffffff;
+  --warning: #f59e0b;
+  --warning-foreground: #ffffff;
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-2xl: 48px;
+
+  /* Border Radius */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+/* Dark theme variables - Advanced Blue/White Mixture Theme */
+[data-theme="dark"] {
+  --bg: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  --surface: rgba(30, 41, 59, 0.8);
+  --surface-2: rgba(51, 65, 85, 0.6);
+  --text: #f8fafc;
+  --muted: #cbd5e1;
+  --border: rgba(148, 163, 184, 0.3);
+  --primary: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+  --primary-foreground: #ffffff;
+  --danger: #f87171;
+  --danger-foreground: #ffffff;
+  --success: #22c55e;
+  --success-foreground: #ffffff;
+  --warning: #f59e0b;
+  --warning-foreground: #ffffff;
+}
+
+/* High-contrast dark theme (alternative) */
+[data-theme="dark-high-contrast"] {
+  --bg: #000000;
+  --surface: #111111;
+  --surface-2: #222222;
+  --text: #ffffff;
+  --muted: #cccccc;
+  --border: #444444;
+  --primary: #00aaff;
+  --primary-foreground: #ffffff;
+  --danger: #ff4444;
+  --danger-foreground: #ffffff;
+  --success: #44ff88;
+  --success-foreground: #ffffff;
+  --warning: #ffaa00;
+  --warning-foreground: #ffffff;
+}
+
+/* Component-specific variables */
+:root {
+  /* Button */
+  --button-height-sm: 32px;
+  --button-height-md: 36px;
+  --button-height-lg: 44px;
+  --button-padding-sm: 8px 12px;
+  --button-padding-md: 10px 16px;
+  --button-padding-lg: 12px 20px;
+
+  /* Card */
+  --card-padding: 16px;
+  --card-header-padding: 16px;
+  --card-content-padding: 16px;
+
+  /* Badge */
+  --badge-padding: 2px 8px;
+  --badge-radius: 9999px;
+
+  /* Modal */
+  --modal-backdrop: rgba(0, 0, 0, 0.5);
+  --modal-width: 500px;
+  --modal-max-width: 90vw;
+
+  /* Dropdown */
+  --dropdown-width: 200px;
+  --dropdown-min-width: 120px;
+  --dropdown-max-height: 300px;
+
+  /* Table */
+  --table-header-bg: var(--surface-2);
+  --table-row-hover: var(--surface);
+  --table-border: var(--border);
+}
+
+/* Ensure CSS variables are available to Tailwind */
+/* Note: Base layer styles moved to globals.css to avoid Tailwind processing conflicts */

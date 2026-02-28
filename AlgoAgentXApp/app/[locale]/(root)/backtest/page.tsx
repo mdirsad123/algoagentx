@@ -12,7 +12,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/enhanced-card";
 import { Progress } from "@/components/ui/progress";
 import {
   Table,
@@ -439,8 +439,9 @@ export default function BacktestPage() {
       />
 
       <div className="space-y-6">
-        {/* Credit Balance Section */}
-        <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
+
+      {/* Credit Balance Section */}
+        <Card variant="elevated">
           <CardHeader>
             <CardTitle className="text-gray-900 flex items-center gap-2">
               <CreditCard className="w-5 h-5 text-gray-700" />
@@ -544,7 +545,7 @@ export default function BacktestPage() {
         </Card>
 
         {/* Form Card - Premium Design */}
-        <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
+        <Card variant="elevated">
           <CardHeader>
             <CardTitle className="text-gray-900">Backtest Configuration</CardTitle>
             <CardDescription className="text-gray-600">
@@ -687,7 +688,7 @@ export default function BacktestPage() {
 
         {/* Progress Section */}
         {currentJob && (
-          <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
+          <Card variant="elevated">
             <CardHeader>
               <CardTitle className="text-gray-900">Backtest Progress</CardTitle>
               <CardDescription className="text-gray-600">
@@ -768,7 +769,7 @@ export default function BacktestPage() {
 
             {/* Metrics Cards - Premium KPI Dashboard */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <Card className="hover:shadow-xl hover:shadow-green-500/10 transition-all duration-300 border-gray-200">
+              <Card variant="elevated">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <div>
                     <CardDescription className="text-gray-600 text-sm font-medium">Net Profit</CardDescription>
@@ -789,7 +790,7 @@ export default function BacktestPage() {
                 </CardContent>
               </Card>
 
-              <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
+              <Card variant="elevated">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <div>
                     <CardDescription className="text-gray-600 text-sm font-medium">Win Rate</CardDescription>
@@ -806,7 +807,7 @@ export default function BacktestPage() {
                 </CardContent>
               </Card>
 
-              <Card className="hover:shadow-xl hover:shadow-red-500/10 transition-all duration-300 border-gray-200">
+              <Card variant="elevated">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <div>
                     <CardDescription className="text-gray-600 text-sm font-medium">Max Drawdown</CardDescription>
@@ -823,7 +824,7 @@ export default function BacktestPage() {
                 </CardContent>
               </Card>
 
-              <Card className="hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 border-gray-200">
+              <Card variant="elevated">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <div>
                     <CardDescription className="text-gray-600 text-sm font-medium">Sharpe Ratio</CardDescription>
@@ -844,7 +845,7 @@ export default function BacktestPage() {
             {/* Charts Section */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Win/Loss Pie Chart */}
-              <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
+              <Card variant="elevated">
                 <CardHeader>
                   <CardTitle className="text-gray-900">Win/Loss Distribution</CardTitle>
                   <CardDescription className="text-gray-600">
@@ -882,7 +883,7 @@ export default function BacktestPage() {
               </Card>
 
               {/* Equity Curve */}
-              <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
+              <Card variant="elevated">
                 <CardHeader>
                   <CardTitle className="text-gray-900">Equity Curve</CardTitle>
                   <CardDescription className="text-gray-600">
@@ -926,7 +927,7 @@ export default function BacktestPage() {
             </div>
 
             {/* Trade History Table */}
-            <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
+            <Card variant="elevated">
               <CardHeader>
                 <CardTitle className="text-gray-900">Trade History</CardTitle>
                 <CardDescription className="text-gray-600">

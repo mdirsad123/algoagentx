@@ -23,12 +23,12 @@ export default function AppShell({ children, pageTitle }: AppShellProps) {
 
   return (
     <NotificationProvider>
-      <div className="flex h-screen overflow-hidden bg-gray-50">
-        {/* Sidebar */}
+      <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-dark-background">
+        {/* Sidebar - Fixed Position */}
         <Sidebar />
         
-        {/* Main Content Area */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Main Content Area - Offset for fixed sidebar */}
+        <div className="flex-1 flex flex-col ml-16 lg:ml-64 transition-all duration-300 ease-in-out">
           {/* Topbar */}
           <Topbar pageTitle={pageTitle} />
           

@@ -50,11 +50,19 @@ export default function LoginPage() {
       localStorage.setItem('access_token', access_token)
       axiosInstance.defaults.headers['Authorization'] = `Bearer ${access_token}`
 
-      // Set cookie for middleware authentication check
+      // Set cookies for middleware authentication check and user context
       document.cookie = `accessToken=${access_token}; path=/; max-age=86400; samesite=strict`
+      document.cookie = `loggedinuserroleid=${user.role}; path=/; max-age=86400; samesite=strict`
+      document.cookie = `loggedinuserid=${user.id}; path=/; max-age=86400; samesite=strict`
+      document.cookie = `loggedinusername=${user.email}; path=/; max-age=86400; samesite=strict`
+      document.cookie = `loggedinuseremail=${user.email}; path=/; max-age=86400; samesite=strict`
 
-      // TEMPORARILY DISABLE ROLE-BASED REDIRECTS - Redirect to single dashboard
-      router.push(`/${locale}/dashboard`)
+      // Redirect based on user role
+      if (user.role === 'admin') {
+        router.push(`/${locale}/admin/dashboard`)
+      } else {
+        router.push(`/${locale}/dashboard`)
+      }
 
     } catch (error: any) {
       console.error('Login error:', error)
