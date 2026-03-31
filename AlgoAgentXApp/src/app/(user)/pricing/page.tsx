@@ -114,7 +114,7 @@ export default function PricingPage() {
             billing_period: billingPeriod
           },
           theme: {
-            color: '#2563eb'
+            color: '#8b5cf6'
           }
         };
 
@@ -160,16 +160,16 @@ export default function PricingPage() {
       return value ? (
         <CheckCircle className="h-5 w-5 text-green-500" />
       ) : (
-        <XCircle className="h-5 w-5 text-red-500" />
+        <XCircle className="h-5 w-5 text-red-500/50" />
       );
     }
     if (typeof value === 'string' && value.includes('Unlimited')) {
-      return <span className="text-green-500 font-medium">{value}</span>;
+      return <span className="text-green-400 font-medium">{value}</span>;
     }
     if (typeof value === 'number') {
-      return <span className="font-medium">{value.toLocaleString()}</span>;
+      return <span className="font-medium text-white">{value.toLocaleString()}</span>;
     }
-    return <span className="text-gray-600">{value}</span>;
+    return <span className="text-gray-400">{value}</span>;
   };
 
   const features = [
@@ -240,34 +240,36 @@ export default function PricingPage() {
 
   if (loading) {
     return (
-      <>
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          <span className="ml-2 text-gray-600">Loading pricing plans...</span>
+      <div className="min-h-screen bg-gradient-to-br from-[#1a0f2e] via-[#2a1458] to-[#0f172a] flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500 mx-auto mb-4"></div>
+          <span className="text-gray-400">Loading pricing plans...</span>
         </div>
-      </>
+      </div>
     );
   }
 
   if (error) {
     return (
-      <>
-        <div className="text-center py-8">
-          <div className="text-red-500 mb-4">{error}</div>
-          <Button onClick={fetchPlans}>Try Again</Button>
+      <div className="min-h-screen bg-gradient-to-br from-[#1a0f2e] via-[#2a1458] to-[#0f172a] flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-red-400 mb-4">{error}</div>
+          <Button onClick={fetchPlans} className="bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600">
+            Try Again
+          </Button>
         </div>
-      </>
+      </div>
     );
   }
 
   return (
     <RazorpayScript>
-      <>
-        <div className="space-y-8">
+      <div className="min-h-screen bg-gradient-to-br from-[#1a0f2e] via-[#2a1458] to-[#0f172a]">
+        <div className="space-y-8 p-6">
         {/* Header Section */}
         <div className="text-center">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">Choose Your Plan</h1>
-          <p className="text-gray-600 text-lg mb-8">
+          <h1 className="text-4xl font-bold text-white mb-4">Choose Your Plan</h1>
+          <p className="text-gray-400 text-lg mb-8">
             Start with our free plan or upgrade to unlock premium features and unlimited trading potential
           </p>
           
@@ -276,16 +278,24 @@ export default function PricingPage() {
             <Button
               variant={billingPeriod === 'monthly' ? 'default' : 'outline'}
               onClick={() => setBillingPeriod('monthly')}
-              className="text-gray-700 border-gray-300 hover:bg-gray-50"
+              className={`px-6 ${
+                billingPeriod === 'monthly' 
+                  ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white' 
+                  : 'border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40'
+              }`}
             >
               Monthly
             </Button>
             <Button
               variant={billingPeriod === 'yearly' ? 'default' : 'outline'}
               onClick={() => setBillingPeriod('yearly')}
-              className="text-gray-700 border-gray-300 hover:bg-gray-50"
+              className={`px-6 ${
+                billingPeriod === 'yearly' 
+                  ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white' 
+                  : 'border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40'
+              }`}
             >
-              Yearly <span className="text-green-600 ml-2">(Save 20%)</span>
+              Yearly <span className="text-green-400 ml-2">(Save 20%)</span>
             </Button>
           </div>
         </div>
@@ -293,35 +303,35 @@ export default function PricingPage() {
         {/* Pricing Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {/* Free Plan */}
-          <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
-            <CardHeader className="bg-gradient-to-br from-gray-50 to-gray-100 border-b border-gray-200">
+          <Card className="hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 border-white/10 bg-white/5 backdrop-blur-lg rounded-2xl">
+            <CardHeader className="bg-gradient-to-br from-white/10 to-white/5 border-b border-white/10">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-gray-900 text-2xl">Free</CardTitle>
-                  <CardDescription className="text-gray-600">Get started</CardDescription>
+                  <CardTitle className="text-white text-2xl">Free</CardTitle>
+                  <CardDescription className="text-gray-400">Get started</CardDescription>
                 </div>
-                <Badge variant="secondary" className="bg-gray-200 text-gray-700">Basic</Badge>
+                <Badge variant="secondary" className="bg-white/10 text-gray-300">Basic</Badge>
               </div>
             </CardHeader>
             <CardContent className="pt-6">
-              <div className="text-4xl font-bold text-gray-900 mb-2">
+              <div className="text-4xl font-bold text-white mb-2">
                 {formatPrice(0)}
               </div>
-              <p className="text-gray-600 text-sm mb-6">No credit card required</p>
+              <p className="text-gray-400 text-sm mb-6">No credit card required</p>
               
               <div className="space-y-3 mb-6">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">Trial Period</span>
-                  <span className="text-green-600 font-medium">7 days</span>
+                  <span className="text-gray-400">Trial Period</span>
+                  <span className="text-green-400 font-medium">7 days</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">Included Credits</span>
-                  <span className="text-gray-900 font-medium">{formatCredits(100)}</span>
+                  <span className="text-gray-400">Included Credits</span>
+                  <span className="text-white font-medium">{formatCredits(100)}</span>
                 </div>
               </div>
 
               <Button 
-                className="w-full bg-gray-600 hover:bg-gray-700 text-white mb-4"
+                className="w-full bg-gray-600/50 hover:bg-gray-600 text-white mb-4 border-white/20"
                 onClick={() => handleSubscribe('FREE', billingPeriod.toUpperCase())}
               >
                 <Sparkles className="h-4 w-4 mr-2" />
@@ -330,7 +340,7 @@ export default function PricingPage() {
               
               <Button 
                 variant="outline" 
-                className="w-full border-gray-300 text-gray-700 hover:bg-gray-50"
+                className="w-full border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
                 onClick={() => router.push('/dashboard')}
               >
                 Continue with Credits
@@ -339,36 +349,36 @@ export default function PricingPage() {
           </Card>
 
           {/* Pro Plan */}
-          <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-blue-200 relative overflow-hidden">
+          <Card className="hover:shadow-xl hover:shadow-blue-500/20 transition-all duration-300 border-blue-500/30 relative overflow-hidden bg-white/5 backdrop-blur-lg rounded-2xl">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-500"></div>
-            <CardHeader className="bg-gradient-to-br from-blue-50 to-purple-50 border-b border-blue-200">
+            <CardHeader className="bg-gradient-to-br from-blue-900/30 to-purple-900/30 border-b border-blue-500/20">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-gray-900 text-2xl">Pro</CardTitle>
-                  <CardDescription className="text-blue-700">For serious traders</CardDescription>
+                  <CardTitle className="text-white text-2xl">Pro</CardTitle>
+                  <CardDescription className="text-blue-300">For serious traders</CardDescription>
                 </div>
-                <Badge className="bg-blue-600 text-white">Popular</Badge>
+                <Badge className="bg-blue-500 text-white">Popular</Badge>
               </div>
             </CardHeader>
             <CardContent className="pt-6">
-              <div className="text-4xl font-bold text-gray-900 mb-2">
+              <div className="text-4xl font-bold text-white mb-2">
                 {formatPrice(2999)}
               </div>
-              <p className="text-gray-600 text-sm mb-6">per month</p>
+              <p className="text-gray-400 text-sm mb-6">per month</p>
               
               <div className="space-y-3 mb-6">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">Included Credits</span>
-                  <span className="text-gray-900 font-medium">{formatCredits(5000)}</span>
+                  <span className="text-gray-400">Included Credits</span>
+                  <span className="text-white font-medium">{formatCredits(5000)}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">Best Value</span>
-                  <span className="text-green-600 font-medium">Save 20%</span>
+                  <span className="text-gray-400">Best Value</span>
+                  <span className="text-green-400 font-medium">Save 20%</span>
                 </div>
               </div>
 
               <Button 
-                className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white mb-4"
+                className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white mb-4 shadow-lg"
                 onClick={() => handleSubscribe('PRO', billingPeriod.toUpperCase())}
               >
                 <CreditCard className="h-4 w-4 mr-2" />
@@ -377,7 +387,7 @@ export default function PricingPage() {
               
               <Button 
                 variant="outline" 
-                className="w-full border-blue-200 text-blue-700 hover:bg-blue-50"
+                className="w-full border-blue-500/30 text-blue-300 hover:bg-blue-900/30 hover:border-blue-500/50"
                 onClick={() => router.push('/dashboard')}
               >
                 Continue with Credits
@@ -386,36 +396,36 @@ export default function PricingPage() {
           </Card>
 
           {/* Premium Plan */}
-          <Card className="hover:shadow-xl hover:shadow-green-500/10 transition-all duration-300 border-green-200 relative overflow-hidden">
+          <Card className="hover:shadow-xl hover:shadow-green-500/20 transition-all duration-300 border-green-500/30 relative overflow-hidden bg-white/5 backdrop-blur-lg rounded-2xl">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-green-500 to-emerald-500"></div>
-            <CardHeader className="bg-gradient-to-br from-green-50 to-emerald-50 border-b border-green-200">
+            <CardHeader className="bg-gradient-to-br from-green-900/30 to-emerald-900/30 border-b border-green-500/20">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-gray-900 text-2xl">Premium</CardTitle>
-                  <CardDescription className="text-green-700">For professionals</CardDescription>
+                  <CardTitle className="text-white text-2xl">Premium</CardTitle>
+                  <CardDescription className="text-green-300">For professionals</CardDescription>
                 </div>
-                <Badge className="bg-green-600 text-white">Advanced</Badge>
+                <Badge className="bg-green-500 text-white">Advanced</Badge>
               </div>
             </CardHeader>
             <CardContent className="pt-6">
-              <div className="text-4xl font-bold text-gray-900 mb-2">
+              <div className="text-4xl font-bold text-white mb-2">
                 {formatPrice(7999)}
               </div>
-              <p className="text-gray-600 text-sm mb-6">per month</p>
+              <p className="text-gray-400 text-sm mb-6">per month</p>
               
               <div className="space-y-3 mb-6">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">Included Credits</span>
-                  <span className="text-gray-900 font-medium">{formatCredits(15000)}</span>
+                  <span className="text-gray-400">Included Credits</span>
+                  <span className="text-white font-medium">{formatCredits(15000)}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">Priority Support</span>
-                  <span className="text-green-600 font-medium">Included</span>
+                  <span className="text-gray-400">Priority Support</span>
+                  <span className="text-green-400 font-medium">Included</span>
                 </div>
               </div>
 
               <Button 
-                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white mb-4"
+                className="w-full bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white mb-4 shadow-lg"
                 onClick={() => handleSubscribe('PREMIUM', billingPeriod.toUpperCase())}
               >
                 <Shield className="h-4 w-4 mr-2" />
@@ -424,7 +434,7 @@ export default function PricingPage() {
               
               <Button 
                 variant="outline" 
-                className="w-full border-green-200 text-green-700 hover:bg-green-50"
+                className="w-full border-green-500/30 text-green-300 hover:bg-green-900/30 hover:border-green-500/50"
                 onClick={() => router.push('/dashboard')}
               >
                 Continue with Credits
@@ -433,36 +443,36 @@ export default function PricingPage() {
           </Card>
 
           {/* Ultimate Plan */}
-          <Card className="hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 border-purple-200 relative overflow-hidden">
+          <Card className="hover:shadow-xl hover:shadow-purple-500/20 transition-all duration-300 border-purple-500/30 relative overflow-hidden bg-white/5 backdrop-blur-lg rounded-2xl">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-pink-500"></div>
-            <CardHeader className="bg-gradient-to-br from-purple-50 to-pink-50 border-b border-purple-200">
+            <CardHeader className="bg-gradient-to-br from-purple-900/30 to-pink-900/30 border-b border-purple-500/20">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-gray-900 text-2xl">Ultimate</CardTitle>
-                  <CardDescription className="text-purple-700">For institutions</CardDescription>
+                  <CardTitle className="text-white text-2xl">Ultimate</CardTitle>
+                  <CardDescription className="text-purple-300">For institutions</CardDescription>
                 </div>
-                <Badge className="bg-purple-600 text-white">Enterprise</Badge>
+                <Badge className="bg-purple-500 text-white">Enterprise</Badge>
               </div>
             </CardHeader>
             <CardContent className="pt-6">
-              <div className="text-4xl font-bold text-gray-900 mb-2">
+              <div className="text-4xl font-bold text-white mb-2">
                 {formatPrice(19999)}
               </div>
-              <p className="text-gray-600 text-sm mb-6">per month</p>
+              <p className="text-gray-400 text-sm mb-6">per month</p>
               
               <div className="space-y-3 mb-6">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">Included Credits</span>
-                  <span className="text-gray-900 font-medium">{formatCredits(50000)}</span>
+                  <span className="text-gray-400">Included Credits</span>
+                  <span className="text-white font-medium">{formatCredits(50000)}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">Dedicated Manager</span>
-                  <span className="text-purple-600 font-medium">Included</span>
+                  <span className="text-gray-400">Dedicated Manager</span>
+                  <span className="text-purple-400 font-medium">Included</span>
                 </div>
               </div>
 
               <Button 
-                className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white mb-4"
+                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white mb-4 shadow-lg"
                 onClick={() => handleSubscribe('ULTIMATE', billingPeriod.toUpperCase())}
               >
                 <Crown className="h-4 w-4 mr-2" />
@@ -471,7 +481,7 @@ export default function PricingPage() {
               
               <Button 
                 variant="outline" 
-                className="w-full border-purple-200 text-purple-700 hover:bg-purple-50"
+                className="w-full border-purple-500/30 text-purple-300 hover:bg-purple-900/30 hover:border-purple-500/50"
                 onClick={() => router.push('/dashboard')}
               >
                 Continue with Credits
@@ -481,10 +491,10 @@ export default function PricingPage() {
         </div>
 
         {/* Feature Comparison Table */}
-        <Card className="border-gray-200">
+        <Card className="border-white/10 bg-white/5 backdrop-blur-lg rounded-2xl">
           <CardHeader>
-            <CardTitle className="text-gray-900">Feature Comparison</CardTitle>
-            <CardDescription className="text-gray-600">
+            <CardTitle className="text-white">Feature Comparison</CardTitle>
+            <CardDescription className="text-gray-400">
               Compare all features across our plans
             </CardDescription>
           </CardHeader>
@@ -492,18 +502,18 @@ export default function PricingPage() {
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left text-gray-600 py-3 px-4">Features</th>
-                    <th className="text-center text-gray-600 py-3 px-4">Free</th>
-                    <th className="text-center text-gray-600 py-3 px-4">Pro</th>
-                    <th className="text-center text-gray-600 py-3 px-4">Premium</th>
-                    <th className="text-center text-gray-600 py-3 px-4">Ultimate</th>
+                  <tr className="border-b border-white/10">
+                    <th className="text-left text-gray-400 py-3 px-4">Features</th>
+                    <th className="text-center text-gray-400 py-3 px-4">Free</th>
+                    <th className="text-center text-gray-400 py-3 px-4">Pro</th>
+                    <th className="text-center text-gray-400 py-3 px-4">Premium</th>
+                    <th className="text-center text-gray-400 py-3 px-4">Ultimate</th>
                   </tr>
                 </thead>
                 <tbody>
                   {features.map((feature, index) => (
-                    <tr key={index} className="border-b border-gray-100">
-                      <td className="py-4 px-4 text-gray-900 font-medium">{feature.name}</td>
+                    <tr key={index} className="border-b border-white/5">
+                      <td className="py-4 px-4 text-white font-medium">{feature.name}</td>
                       <td className="py-4 px-4 text-center">
                         {renderFeatureValue(getFeatureValue(feature, 'FREE'))}
                       </td>
@@ -525,49 +535,47 @@ export default function PricingPage() {
         </Card>
 
         {/* Credit-Only Section */}
-        <Card className="border-gray-200 bg-gradient-to-r from-blue-50 to-purple-50">
+        <Card className="border-white/10 bg-gradient-to-r from-blue-900/30 to-purple-900/30 backdrop-blur-lg rounded-2xl">
           <CardHeader>
-            <CardTitle className="text-gray-900 flex items-center">
-              <CreditCard className="h-6 w-6 mr-2 text-gray-700" />
+            <CardTitle className="text-white flex items-center">
+              <CreditCard className="h-6 w-6 mr-2 text-purple-400" />
               Credit-Only Option
             </CardTitle>
-            <CardDescription className="text-gray-600">
+            <CardDescription className="text-gray-400">
               Prefer to pay per usage? Buy credits and pay only for what you use.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="text-center p-6 bg-white rounded-xl border border-gray-200">
-                <div className="text-3xl font-bold text-blue-600 mb-2">₹100</div>
-                <div className="text-gray-600 mb-4">100 Credits</div>
-                <Button variant="outline" className="border-blue-200 text-blue-700 hover:bg-blue-50">
+              <div className="text-center p-6 bg-white/5 rounded-xl border border-white/10 hover:border-purple-500/30 transition-all duration-300">
+                <div className="text-3xl font-bold text-blue-400 mb-2">₹100</div>
+                <div className="text-gray-400 mb-4">100 Credits</div>
+                <Button variant="outline" className="border-blue-500/30 text-blue-300 hover:bg-blue-900/30 hover:border-blue-500/50">
                   Buy Now
                 </Button>
               </div>
-              <div className="text-center p-6 bg-white rounded-xl border border-gray-200">
-                <div className="text-3xl font-bold text-green-600 mb-2">₹500</div>
-                <div className="text-gray-600 mb-4">600 Credits</div>
-                <Button variant="outline" className="border-green-200 text-green-700 hover:bg-green-50">
+              <div className="text-center p-6 bg-white/5 rounded-xl border border-white/10 hover:border-green-500/30 transition-all duration-300">
+                <div className="text-3xl font-bold text-green-400 mb-2">₹500</div>
+                <div className="text-gray-400 mb-4">600 Credits</div>
+                <Button variant="outline" className="border-green-500/30 text-green-300 hover:bg-green-900/30 hover:border-green-500/50">
                   Buy Now
                 </Button>
               </div>
-              <div className="text-center p-6 bg-white rounded-xl border border-gray-200">
-                <div className="text-3xl font-bold text-purple-600 mb-2">₹2000</div>
-                <div className="text-gray-600 mb-4">2500 Credits</div>
-                <Button variant="outline" className="border-purple-200 text-purple-700 hover:bg-purple-50">
+              <div className="text-center p-6 bg-white/5 rounded-xl border border-white/10 hover:border-purple-500/30 transition-all duration-300">
+                <div className="text-3xl font-bold text-purple-400 mb-2">₹2000</div>
+                <div className="text-gray-400 mb-4">2500 Credits</div>
+                <Button variant="outline" className="border-purple-500/30 text-purple-300 hover:bg-purple-900/30 hover:border-purple-500/50">
                   Buy Now
                 </Button>
               </div>
             </div>
-            <div className="mt-4 text-sm text-gray-600 text-center">
+            <div className="mt-4 text-sm text-gray-400 text-center">
               Credits never expire and can be used for backtests, AI screener runs, and other premium features.
             </div>
           </CardContent>
         </Card>
       </div>
-    </>
-    </RazorpayScript>
+    </div>
+  </RazorpayScript>
   );
 }
-
-

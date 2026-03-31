@@ -208,11 +208,11 @@ export default function BacktestHistoryPage() {
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
-      case 'completed': return 'bg-green-100 text-green-800';
-      case 'running': return 'bg-blue-100 text-blue-800';
-      case 'failed': return 'bg-red-100 text-red-800';
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'completed': return 'bg-green-500/30 text-green-400 border-green-500/50';
+      case 'running': return 'bg-blue-500/30 text-blue-400 border-blue-500/50';
+      case 'failed': return 'bg-red-500/30 text-red-400 border-red-500/50';
+      case 'pending': return 'bg-yellow-500/30 text-yellow-400 border-yellow-500/50';
+      default: return 'bg-gray-500/30 text-gray-400 border-gray-500/50';
     }
   };
 
@@ -227,18 +227,18 @@ export default function BacktestHistoryPage() {
   };
 
   return (
-    <>
-      <div className="p-6 space-y-6 bg-gray-50 min-h-screen">
+    <div className="min-h-screen bg-gradient-to-br from-[#1a0f2e] via-[#2a1458] to-[#0f172a]">
+      <div className="p-6 space-y-6">
       <PageHeader 
         title="Backtest History"
         subtitle="Review and analyze your completed backtest results"
       />
 
       {/* Quick Filters */}
-      <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
+      <Card className="hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 border-white/10 bg-white/5 backdrop-blur-lg rounded-2xl">
         <CardHeader>
-          <CardTitle className="text-gray-900">Quick Filters</CardTitle>
-          <CardDescription className="text-gray-600">
+          <CardTitle className="text-white">Quick Filters</CardTitle>
+          <CardDescription className="text-gray-400">
             Filter by time period for quick analysis
           </CardDescription>
         </CardHeader>
@@ -256,8 +256,8 @@ export default function BacktestHistoryPage() {
                 onClick={() => setQuickDateFilter(filter.days)}
                 className={`px-3 py-1.5 text-sm font-medium rounded-full border transition-all ${
                   quickFilter === filter.value 
-                    ? 'bg-blue-500 text-white hover:bg-blue-600' 
-                    : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-300'
+                    ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white border-transparent shadow-lg' 
+                    : 'bg-white/10 text-gray-300 hover:bg-white/20 border-white/20'
                 }`}
               >
                 {filter.label}
@@ -269,8 +269,8 @@ export default function BacktestHistoryPage() {
               onClick={clearFilters}
               className={`px-3 py-1.5 text-sm font-medium rounded-full border transition-all ${
                 quickFilter === "" 
-                  ? 'bg-gray-500 text-white hover:bg-gray-600' 
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-300'
+                  ? 'bg-gray-600/50 text-white border-transparent' 
+                  : 'bg-white/10 text-gray-300 hover:bg-white/20 border-white/20'
               }`}
             >
               Clear All
@@ -280,20 +280,20 @@ export default function BacktestHistoryPage() {
       </Card>
 
       {/* Advanced Filters */}
-      <StandardCard className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
+      <StandardCard className="hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 border-white/10 bg-white/5 backdrop-blur-lg rounded-2xl">
         <StandardCardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <div>
-            <StandardCardTitle className="text-gray-900 flex items-center gap-2">
-              <Filter className="w-5 h-5" />
+            <StandardCardTitle className="text-white flex items-center gap-2">
+              <Filter className="w-5 h-5 text-purple-400" />
               Advanced Filters
             </StandardCardTitle>
-            <StandardCardDescription className="text-gray-600">
+            <StandardCardDescription className="text-gray-400">
               Refine your search with detailed criteria
             </StandardCardDescription>
           </div>
           <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
             <CollapsibleTrigger asChild>
-              <Button variant="ghost" size="sm">
+              <Button variant="ghost" size="sm" className="text-gray-400 hover:text-white hover:bg-white/10">
                 {filtersOpen ? (
                   <ChevronUp className="w-5 h-5" />
                 ) : (
@@ -307,14 +307,14 @@ export default function BacktestHistoryPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   {/* Strategy Filter */}
                   <div className="space-y-2">
-                    <Label htmlFor="strategy" className="text-gray-700">Strategy</Label>
+                    <Label htmlFor="strategy" className="text-gray-300">Strategy</Label>
                     <Select value={selectedStrategy} onValueChange={setSelectedStrategy}>
-                      <SelectTrigger className="bg-white border-gray-200 text-gray-900 hover:border-gray-300">
-                        <SelectValue placeholder="All strategies" className="text-gray-600" />
+                      <SelectTrigger className="bg-white/10 border-white/20 text-white hover:border-white/40">
+                        <SelectValue placeholder="All strategies" className="text-gray-500" />
                       </SelectTrigger>
-                      <SelectContent className="bg-white border-gray-200">
+                      <SelectContent className="bg-[#1e1b4b] border-white/10">
                         {strategies.map(strategy => (
-                          <SelectItem key={strategy.id} value={strategy.id} className="text-gray-900 hover:bg-gray-100">
+                          <SelectItem key={strategy.id} value={strategy.id} className="text-white hover:bg-white/10">
                             {strategy.name}
                           </SelectItem>
                         ))}
@@ -324,14 +324,14 @@ export default function BacktestHistoryPage() {
 
                   {/* Instrument Filter */}
                   <div className="space-y-2">
-                    <Label htmlFor="instrument" className="text-gray-700">Instrument</Label>
+                    <Label htmlFor="instrument" className="text-gray-300">Instrument</Label>
                     <Select value={selectedInstrument} onValueChange={setSelectedInstrument}>
-                      <SelectTrigger className="bg-white border-gray-200 text-gray-900 hover:border-gray-300">
-                        <SelectValue placeholder="All instruments" className="text-gray-600" />
+                      <SelectTrigger className="bg-white/10 border-white/20 text-white hover:border-white/40">
+                        <SelectValue placeholder="All instruments" className="text-gray-500" />
                       </SelectTrigger>
-                      <SelectContent className="bg-white border-gray-200">
+                      <SelectContent className="bg-[#1e1b4b] border-white/10">
                         {instruments.map(instrument => (
-                          <SelectItem key={instrument.id.toString()} value={instrument.id.toString()} className="text-gray-900 hover:bg-gray-100">
+                          <SelectItem key={instrument.id.toString()} value={instrument.id.toString()} className="text-white hover:bg-white/10">
                             {instrument.symbol}
                           </SelectItem>
                         ))}
@@ -341,30 +341,30 @@ export default function BacktestHistoryPage() {
 
                   {/* Timeframe Filter */}
                   <div className="space-y-2">
-                    <Label htmlFor="timeframe" className="text-gray-700">Timeframe</Label>
+                    <Label htmlFor="timeframe" className="text-gray-300">Timeframe</Label>
                     <Select value={timeframe} onValueChange={setTimeframe}>
-                      <SelectTrigger className="bg-white border-gray-200 text-gray-900 hover:border-gray-300">
-                        <SelectValue className="text-gray-600" />
+                      <SelectTrigger className="bg-white/10 border-white/20 text-white hover:border-white/40">
+                        <SelectValue className="text-gray-500" />
                       </SelectTrigger>
-                      <SelectContent className="bg-white border-gray-200">
-                        <SelectItem value="5m" className="text-gray-900 hover:bg-gray-100">5 Minutes</SelectItem>
-                        <SelectItem value="15m" className="text-gray-900 hover:bg-gray-100">15 Minutes</SelectItem>
-                        <SelectItem value="1h" className="text-gray-900 hover:bg-gray-100">1 Hour</SelectItem>
-                        <SelectItem value="1d" className="text-gray-900 hover:bg-gray-100">1 Day</SelectItem>
+                      <SelectContent className="bg-[#1e1b4b] border-white/10">
+                        <SelectItem value="5m" className="text-white hover:bg-white/10">5 Minutes</SelectItem>
+                        <SelectItem value="15m" className="text-white hover:bg-white/10">15 Minutes</SelectItem>
+                        <SelectItem value="1h" className="text-white hover:bg-white/10">1 Hour</SelectItem>
+                        <SelectItem value="1d" className="text-white hover:bg-white/10">1 Day</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
 
                   {/* Min Profit Filter */}
                   <div className="space-y-2">
-                    <Label htmlFor="minProfit" className="text-gray-700">Min Profit ($)</Label>
+                    <Label htmlFor="minProfit" className="text-gray-300">Min Profit ($)</Label>
                     <Input
                       id="minProfit"
                       type="number"
                       value={minProfit}
                       onChange={(e) => setMinProfit(e.target.value)}
                       placeholder="0"
-                      className="bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-500"
+                      className="bg-white/10 border-white/20 text-white placeholder-gray-500 focus:border-purple-500"
                     />
                   </div>
                 </div>
@@ -373,38 +373,38 @@ export default function BacktestHistoryPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   {/* Start Date From */}
                   <div className="space-y-2">
-                    <Label htmlFor="startDateFrom" className="text-gray-700">Start Date From</Label>
+                    <Label htmlFor="startDateFrom" className="text-gray-300">Start Date From</Label>
                     <Input
                       id="startDateFrom"
                       type="date"
                       value={startDateFrom}
                       onChange={(e) => setStartDateFrom(e.target.value)}
-                      className="bg-white border-gray-200 text-gray-900 focus:border-blue-500"
+                      className="bg-white/10 border-white/20 text-white focus:border-purple-500"
                     />
                   </div>
 
                   {/* Start Date To */}
                   <div className="space-y-2">
-                    <Label htmlFor="startDateTo" className="text-gray-700">Start Date To</Label>
+                    <Label htmlFor="startDateTo" className="text-gray-300">Start Date To</Label>
                     <Input
                       id="startDateTo"
                       type="date"
                       value={startDateTo}
                       onChange={(e) => setStartDateTo(e.target.value)}
-                      className="bg-white border-gray-200 text-gray-900 focus:border-blue-500"
+                      className="bg-white/10 border-white/20 text-white focus:border-purple-500"
                     />
                   </div>
 
                   {/* Max Drawdown Filter */}
                   <div className="space-y-2">
-                    <Label htmlFor="maxDrawdown" className="text-gray-700">Max Drawdown (%)</Label>
+                    <Label htmlFor="maxDrawdown" className="text-gray-300">Max Drawdown (%)</Label>
                     <Input
                       id="maxDrawdown"
                       type="number"
                       value={maxDrawdown}
                       onChange={(e) => setMaxDrawdown(e.target.value)}
                       placeholder="20"
-                      className="bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-500"
+                      className="bg-white/10 border-white/20 text-white placeholder-gray-500 focus:border-purple-500"
                     />
                   </div>
 
@@ -414,7 +414,7 @@ export default function BacktestHistoryPage() {
                       <Button 
                         onClick={applyFilters} 
                         disabled={loading}
-                        className="bg-blue-600 hover:bg-blue-700 text-white flex-1"
+                        className="bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white flex-1 shadow-lg"
                       >
                         <Search className="w-4 h-4 mr-2" />
                         Apply Filters
@@ -423,7 +423,7 @@ export default function BacktestHistoryPage() {
                         variant="outline" 
                         onClick={clearFilters} 
                         disabled={loading}
-                        className="border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300"
+                        className="border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
                       >
                         Reset
                       </Button>
@@ -437,17 +437,17 @@ export default function BacktestHistoryPage() {
       </StandardCard>
 
       {/* Results Table */}
-      <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
+      <Card className="hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 border-white/10 bg-white/5 backdrop-blur-lg rounded-2xl">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-gray-900">Backtest Results</CardTitle>
-              <CardDescription className="text-gray-600">
+              <CardTitle className="text-white">Backtest Results</CardTitle>
+              <CardDescription className="text-gray-400">
                 Comprehensive view of all your backtest executions
               </CardDescription>
             </div>
             {pagination && (
-              <div className="text-sm text-gray-600">
+              <div className="text-sm text-gray-400">
                 Showing {((pagination.page - 1) * pagination.page_size) + 1} to {Math.min(pagination.page * pagination.page_size, pagination.total_count)} of {pagination.total_count} results
               </div>
             )}
@@ -457,24 +457,24 @@ export default function BacktestHistoryPage() {
           {loading ? (
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
-                <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
-                <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
-                <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
+                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
+                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
+                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
+                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
-                <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
-                <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
-                <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
+                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
+                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
+                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
+                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
               </div>
-              <div className="h-96 bg-gray-200 rounded animate-pulse"></div>
+              <div className="h-96 bg-white/10 rounded animate-pulse"></div>
             </div>
           ) : backtests.length === 0 ? (
             <EmptyState
               title="No Backtest Results Yet"
               description="Your backtest history will appear here once you run your first backtest"
-              icon={<Play className="w-12 h-12 text-blue-500" />}
+              icon={<Play className="w-12 h-12 text-purple-500" />}
               actionLabel="Run Your First Backtest"
               onAction={() => window.location.href = '/backtest'}
               secondaryActionLabel="Browse Strategies"
@@ -482,50 +482,50 @@ export default function BacktestHistoryPage() {
             />
           ) : (
             <>
-              <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+              <div className="overflow-x-auto rounded-lg border border-white/10 bg-white/5">
                 <Table className="min-w-[1200px]">
-                  <TableHeader className="bg-gray-50">
-                    <TableRow className="hover:bg-gray-50">
-                      <TableHead className="text-gray-700 font-semibold text-sm uppercase tracking-wider">Strategy</TableHead>
-                      <TableHead className="text-gray-700 font-semibold text-sm uppercase tracking-wider">Instrument</TableHead>
-                      <TableHead className="text-gray-700 font-semibold text-sm uppercase tracking-wider">Timeframe</TableHead>
-                      <TableHead className="text-gray-700 font-semibold text-sm uppercase tracking-wider">Period</TableHead>
-                      <TableHead className="text-gray-700 font-semibold text-sm uppercase tracking-wider text-right">Net Profit</TableHead>
-                      <TableHead className="text-gray-700 font-semibold text-sm uppercase tracking-wider text-right">Win Rate</TableHead>
-                      <TableHead className="text-gray-700 font-semibold text-sm uppercase tracking-wider text-right">Max DD</TableHead>
-                      <TableHead className="text-gray-700 font-semibold text-sm uppercase tracking-wider text-right">Trades</TableHead>
-                      <TableHead className="text-gray-700 font-semibold text-sm uppercase tracking-wider">Status</TableHead>
-                      <TableHead className="text-gray-700 font-semibold text-sm uppercase tracking-wider">Date</TableHead>
-                      <TableHead className="text-gray-700 font-semibold text-sm uppercase tracking-wider">Actions</TableHead>
+                  <TableHeader>
+                    <TableRow className="border-white/10">
+                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Strategy</TableHead>
+                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Instrument</TableHead>
+                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Timeframe</TableHead>
+                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Period</TableHead>
+                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider text-right">Net Profit</TableHead>
+                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider text-right">Win Rate</TableHead>
+                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider text-right">Max DD</TableHead>
+                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider text-right">Trades</TableHead>
+                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Status</TableHead>
+                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Date</TableHead>
+                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {backtests.map((backtest) => (
                       <TableRow 
                         key={backtest.id} 
-                        className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors border-b border-gray-100"
+                        className="border-white/10 hover:bg-white/5 transition-colors"
                       >
-                        <TableCell className="font-medium text-gray-900 py-4">{backtest.strategy_name}</TableCell>
-                        <TableCell className="text-gray-600 py-4">{backtest.instrument_symbol}</TableCell>
-                        <TableCell className="text-gray-600 py-4">{backtest.timeframe}</TableCell>
-                        <TableCell className="text-gray-600 py-4">
+                        <TableCell className="font-medium text-white py-4">{backtest.strategy_name}</TableCell>
+                        <TableCell className="text-gray-400 py-4">{backtest.instrument_symbol}</TableCell>
+                        <TableCell className="text-gray-400 py-4">{backtest.timeframe}</TableCell>
+                        <TableCell className="text-gray-400 py-4">
                           <div className="flex items-center gap-1">
-                            <Calendar className="w-4 h-4 text-gray-400" />
+                            <Calendar className="w-4 h-4 text-gray-500" />
                             {formatDate(backtest.start_date)} - {formatDate(backtest.end_date)}
                           </div>
                         </TableCell>
                         <TableCell className={`text-right font-medium py-4 ${
-                          backtest.net_profit && backtest.net_profit >= 0 ? 'text-green-600' : 'text-red-600'
+                          backtest.net_profit && backtest.net_profit >= 0 ? 'text-green-400' : 'text-red-400'
                         }`}>
                           {formatCurrency(backtest.net_profit)}
                         </TableCell>
-                        <TableCell className="text-right text-gray-600 py-4">{formatPercent(backtest.win_rate)}</TableCell>
-                        <TableCell className="text-right text-red-600 py-4">{formatPercent(backtest.max_drawdown)}</TableCell>
-                        <TableCell className="text-right text-gray-600 py-4">{backtest.total_trades || 0}</TableCell>
+                        <TableCell className="text-right text-gray-400 py-4">{formatPercent(backtest.win_rate)}</TableCell>
+                        <TableCell className="text-right text-red-400 py-4">{formatPercent(backtest.max_drawdown)}</TableCell>
+                        <TableCell className="text-right text-gray-400 py-4">{backtest.total_trades || 0}</TableCell>
                         <TableCell className="py-4">
                           <Badge 
                             variant="outline" 
-                            className={`px-2 py-1 text-xs font-medium rounded-full border-0 ${
+                            className={`px-2 py-1 text-xs font-medium rounded-full border ${
                               getStatusColor(backtest.status)
                             }`}
                           >
@@ -535,14 +535,14 @@ export default function BacktestHistoryPage() {
                             </div>
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-gray-600 py-4">{formatDate(backtest.created_at)}</TableCell>
+                        <TableCell className="text-gray-400 py-4">{formatDate(backtest.created_at)}</TableCell>
                         <TableCell className="py-4">
                           <div className="flex items-center gap-2">
                             <Button
                               variant="outline"
                               size="sm"
                               onClick={() => viewBacktestReport(backtest)}
-                              className="flex items-center gap-1 border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300"
+                              className="flex items-center gap-1 border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
                             >
                               <Eye className="w-4 h-4" />
                               View
@@ -551,7 +551,7 @@ export default function BacktestHistoryPage() {
                               variant="outline"
                               size="sm"
                               onClick={() => downloadReport(backtest)}
-                              className="flex items-center gap-1 border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300"
+                              className="flex items-center gap-1 border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
                             >
                               <Download className="w-4 h-4" />
                               Download
@@ -567,7 +567,7 @@ export default function BacktestHistoryPage() {
               {/* Pagination */}
               {pagination && pagination.total_pages > 1 && (
                 <div className="flex items-center justify-between mt-6">
-                  <div className="text-sm text-gray-600">
+                  <div className="text-sm text-gray-400">
                     Page {pagination.page} of {pagination.total_pages} • {pagination.total_count} total results
                   </div>
                   <div className="flex gap-2">
@@ -576,7 +576,7 @@ export default function BacktestHistoryPage() {
                       size="sm"
                       onClick={() => loadBacktestHistory(pagination.page - 1)}
                       disabled={pagination.page <= 1 || loading}
-                      className="border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300"
+                      className="border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
                     >
                       <ChevronLeft className="w-4 h-4 mr-1" />
                       Previous
@@ -586,7 +586,7 @@ export default function BacktestHistoryPage() {
                       size="sm"
                       onClick={() => loadBacktestHistory(pagination.page + 1)}
                       disabled={pagination.page >= pagination.total_pages || loading}
-                      className="border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300"
+                      className="border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
                     >
                       Next
                       <ChevronRight className="w-4 h-4 ml-1" />
@@ -601,13 +601,13 @@ export default function BacktestHistoryPage() {
 
       {/* Selected Backtest Details Modal */}
       {selectedBacktest && (
-        <Card className="hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-gray-200">
+        <Card className="hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 border-white/10 bg-white/5 backdrop-blur-lg rounded-2xl">
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
-              <CardTitle className="text-gray-900 text-lg">
+              <CardTitle className="text-white text-lg">
                 Backtest Report: {selectedBacktest.strategy_name} - {selectedBacktest.instrument_symbol}
               </CardTitle>
-              <CardDescription className="text-gray-600">
+              <CardDescription className="text-gray-400">
                 Detailed performance metrics and analysis
               </CardDescription>
             </div>
@@ -615,19 +615,19 @@ export default function BacktestHistoryPage() {
               variant="ghost"
               size="sm"
               onClick={() => setSelectedBacktest(null)}
-              className="text-gray-500 hover:text-gray-700"
+              className="text-gray-400 hover:text-white hover:bg-white/10"
             >
               <X className="w-5 h-5" />
             </Button>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-4">
+              <div className="bg-gradient-to-r from-green-900/40 to-emerald-900/40 border border-green-500/30 rounded-xl p-4 backdrop-blur-sm">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-sm text-green-600 font-medium">Net Profit</div>
+                    <div className="text-sm text-green-400 font-medium">Net Profit</div>
                     <div className={`text-xl font-bold ${
-                      selectedBacktest.net_profit && selectedBacktest.net_profit >= 0 ? 'text-green-600' : 'text-red-600'
+                      selectedBacktest.net_profit && selectedBacktest.net_profit >= 0 ? 'text-green-400' : 'text-red-400'
                     }`}>
                       {formatCurrency(selectedBacktest.net_profit)}
                     </div>
@@ -635,33 +635,33 @@ export default function BacktestHistoryPage() {
                   <TrendingUp className="w-8 h-8 text-green-500" />
                 </div>
               </div>
-              <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-200 rounded-lg p-4">
+              <div className="bg-gradient-to-r from-blue-900/40 to-cyan-900/40 border border-blue-500/30 rounded-xl p-4 backdrop-blur-sm">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-sm text-blue-600 font-medium">Win Rate</div>
-                    <div className="text-xl font-bold text-blue-600">
+                    <div className="text-sm text-blue-400 font-medium">Win Rate</div>
+                    <div className="text-xl font-bold text-blue-400">
                       {formatPercent(selectedBacktest.win_rate)}
                     </div>
                   </div>
                   <TrendingUp className="w-8 h-8 text-blue-500" />
                 </div>
               </div>
-              <div className="bg-gradient-to-r from-orange-50 to-red-50 border border-red-200 rounded-lg p-4">
+              <div className="bg-gradient-to-r from-red-900/40 to-orange-900/40 border border-red-500/30 rounded-xl p-4 backdrop-blur-sm">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-sm text-red-600 font-medium">Max Drawdown</div>
-                    <div className="text-xl font-bold text-red-600">
+                    <div className="text-sm text-red-400 font-medium">Max Drawdown</div>
+                    <div className="text-xl font-bold text-red-400">
                       {formatPercent(selectedBacktest.max_drawdown)}
                     </div>
                   </div>
                   <TrendingDown className="w-8 h-8 text-red-500" />
                 </div>
               </div>
-              <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-lg p-4">
+              <div className="bg-gradient-to-r from-purple-900/40 to-pink-900/40 border border-purple-500/30 rounded-xl p-4 backdrop-blur-sm">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-sm text-purple-600 font-medium">Total Trades</div>
-                    <div className="text-xl font-bold text-purple-600">
+                    <div className="text-sm text-purple-400 font-medium">Total Trades</div>
+                    <div className="text-xl font-bold text-purple-400">
                       {selectedBacktest.total_trades || 0}
                     </div>
                   </div>
@@ -672,44 +672,44 @@ export default function BacktestHistoryPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-4">
-                <h4 className="font-semibold text-gray-900">Backtest Details</h4>
-                <div className="space-y-2 text-sm text-gray-600">
+                <h4 className="font-semibold text-white">Backtest Details</h4>
+                <div className="space-y-2 text-sm text-gray-400">
                   <div className="flex justify-between">
                     <span>Period:</span>
-                    <span className="font-medium">{formatDate(selectedBacktest.start_date)} - {formatDate(selectedBacktest.end_date)}</span>
+                    <span className="font-medium text-white">{formatDate(selectedBacktest.start_date)} - {formatDate(selectedBacktest.end_date)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Timeframe:</span>
-                    <span className="font-medium">{selectedBacktest.timeframe}</span>
+                    <span className="font-medium text-white">{selectedBacktest.timeframe}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Initial Capital:</span>
-                    <span className="font-medium">{formatCurrency(selectedBacktest.initial_capital)}</span>
+                    <span className="font-medium text-white">{formatCurrency(selectedBacktest.initial_capital)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Final Capital:</span>
-                    <span className="font-medium">{formatCurrency(selectedBacktest.final_capital)}</span>
+                    <span className="font-medium text-white">{formatCurrency(selectedBacktest.final_capital)}</span>
                   </div>
                 </div>
               </div>
               <div className="space-y-4">
-                <h4 className="font-semibold text-gray-900">Performance Metrics</h4>
-                <div className="space-y-2 text-sm text-gray-600">
+                <h4 className="font-semibold text-white">Performance Metrics</h4>
+                <div className="space-y-2 text-sm text-gray-400">
                   <div className="flex justify-between">
                     <span>Sharpe Ratio:</span>
-                    <span className="font-medium">{selectedBacktest.sharpe_ratio?.toFixed(2) || '-'}</span>
+                    <span className="font-medium text-white">{selectedBacktest.sharpe_ratio?.toFixed(2) || '-'}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Winning Trades:</span>
-                    <span className="font-medium">{selectedBacktest.winning_trades || 0}</span>
+                    <span className="font-medium text-white">{selectedBacktest.winning_trades || 0}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Losing Trades:</span>
-                    <span className="font-medium">{selectedBacktest.losing_trades || 0}</span>
+                    <span className="font-medium text-white">{selectedBacktest.losing_trades || 0}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Status:</span>
-                    <span className="font-medium capitalize">{selectedBacktest.status}</span>
+                    <span className="font-medium text-white capitalize">{selectedBacktest.status}</span>
                   </div>
                 </div>
               </div>
@@ -718,7 +718,7 @@ export default function BacktestHistoryPage() {
             <div className="mt-6 flex justify-end">
               <Button 
                 onClick={() => setSelectedBacktest(null)}
-                className="bg-gray-600 hover:bg-gray-700 text-white"
+                className="bg-gray-600/50 hover:bg-gray-600 text-white border-white/20"
               >
                 Close Report
               </Button>
@@ -727,6 +727,6 @@ export default function BacktestHistoryPage() {
         </Card>
       )}
       </div>
-    </>
+    </div>
   );
 }

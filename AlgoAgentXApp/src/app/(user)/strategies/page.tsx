@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { RequestStrategyModal } from "@/components/strategies/RequestStrategyModal";
 
 interface StrategyTemplate {
   id: string;
@@ -41,6 +42,7 @@ export default function StrategiesPage() {
   const [myStrategies, setMyStrategies] = useState<StrategyMy[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   
   const router = useRouter();
   
@@ -124,6 +126,19 @@ export default function StrategiesPage() {
     router.push(`/backtest?strategyId=${strategyId}`);
   };
 
+  const handleOpenModal = () => {
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+  };
+
+  const handleModalSuccess = () => {
+    // Optionally refresh data or show additional feedback
+    console.log("Strategy request submitted successfully");
+  };
+
   const renderStrategyCard = (strategy: StrategyTemplate | StrategyMy) => (
     <GlassCard key={strategy.id} className="h-full hover:scale-105 transition-transform duration-300">
       <div className="p-6">
@@ -204,7 +219,7 @@ export default function StrategiesPage() {
                    tab === "my" ? "You don't have any strategies yet" : 
                    "No strategy requests found"}
       action={tab === "request" ? (
-        <Button onClick={() => router.push("/strategies/request")} className="flex items-center gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0">
+        <Button onClick={handleOpenModal} className="flex items-center gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0">
           <Plus className="h-4 w-4" />
           Request a Strategy
         </Button>
@@ -218,7 +233,7 @@ export default function StrategiesPage() {
         title="Trading Strategies"
         subtitle="Browse templates, manage your strategies, or request custom strategies"
         actions={
-          <Button onClick={() => router.push("/strategies/request")} className="flex items-center gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0">
+          <Button onClick={handleOpenModal} className="flex items-center gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0">
             <Plus className="h-4 w-4" />
             Request Strategy
           </Button>
@@ -324,7 +339,7 @@ export default function StrategiesPage() {
                 </div>
               </div>
               <div className="mt-6 flex justify-center">
-                <Button className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0">
+                <Button onClick={handleOpenModal} className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0">
                   Request Strategy
                 </Button>
               </div>
@@ -361,6 +376,13 @@ export default function StrategiesPage() {
           </div>
         )}
       </div>
+
+      {/* Request Strategy Modal */}
+      <RequestStrategyModal
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        onSuccess={handleModalSuccess}
+      />
     </div>
   );
 }

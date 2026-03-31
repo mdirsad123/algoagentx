@@ -431,51 +431,51 @@ export default function BacktestPage() {
   };
 
   return (
-    <>
+    <div className="min-h-screen bg-gradient-to-br from-[#1a0f2e] via-[#2a1458] to-[#0f172a]">
       <PageHeader 
         title="Backtest Analysis"
         subtitle="Execute and analyze trading strategy performance"
       />
 
-      <div className="space-y-6">
+      <div className="space-y-6 p-6">
 
       {/* Credit Balance Section */}
-        <Card variant="elevated">
+        <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
           <CardHeader>
-            <CardTitle className="text-gray-900 flex items-center gap-2">
-              <CreditCard className="w-5 h-5 text-gray-700" />
+            <CardTitle className="text-white flex items-center gap-2">
+              <CreditCard className="w-5 h-5 text-purple-400" />
               Credit Balance
             </CardTitle>
-            <CardDescription className="text-gray-600">
+            <CardDescription className="text-gray-400">
               Your current credit balance and estimated backtest cost
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Current Balance */}
-              <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border border-gray-100 rounded-lg p-4">
+              <div className="bg-gradient-to-r from-blue-900/40 to-cyan-900/40 border border-blue-500/30 rounded-xl p-4 backdrop-blur-sm">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-gray-600 text-sm">Current Balance</p>
-                    <p className="text-2xl font-bold text-gray-900">
+                    <p className="text-gray-400 text-sm">Current Balance</p>
+                    <p className="text-2xl font-bold text-white">
                       {userBalance !== null ? userBalance : 'Loading...'}
                     </p>
                   </div>
-                  <div className="p-2 bg-blue-500 rounded-full">
-                    <CreditCard className="w-6 h-6 text-white" />
+                  <div className="p-2 bg-blue-500/30 rounded-full">
+                    <CreditCard className="w-6 h-6 text-blue-400" />
                   </div>
                 </div>
               </div>
 
               {/* Estimated Cost */}
-              <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-gray-100 rounded-lg p-4">
+              <div className="bg-gradient-to-r from-green-900/40 to-emerald-900/40 border border-green-500/30 rounded-xl p-4 backdrop-blur-sm">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-gray-600 text-sm">Estimated Cost</p>
-                    <p className="text-2xl font-bold text-gray-900">
+                    <p className="text-gray-400 text-sm">Estimated Cost</p>
+                    <p className="text-2xl font-bold text-white">
                       {costLoading ? (
                         <div className="flex items-center gap-2">
-                          <Loader2 className="w-5 h-5 animate-spin text-gray-600" />
+                          <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
                           Calculating...
                         </div>
                       ) : estimatedCost !== null ? (
@@ -485,21 +485,21 @@ export default function BacktestPage() {
                       )}
                     </p>
                   </div>
-                  <div className="p-2 bg-green-500 rounded-full">
-                    <DollarSign className="w-6 h-6 text-white" />
+                  <div className="p-2 bg-green-500/30 rounded-full">
+                    <DollarSign className="w-6 h-6 text-green-400" />
                   </div>
                 </div>
               </div>
 
               {/* Balance After */}
-              <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-gray-100 rounded-lg p-4">
+              <div className="bg-gradient-to-r from-purple-900/40 to-pink-900/40 border border-purple-500/30 rounded-xl p-4 backdrop-blur-sm">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-gray-600 text-sm">Balance After</p>
+                    <p className="text-gray-400 text-sm">Balance After</p>
                     <p className={`text-2xl font-bold ${
                       userBalance !== null && estimatedCost !== null && userBalance >= estimatedCost
-                        ? 'text-green-600'
-                        : 'text-red-600'
+                        ? 'text-green-400'
+                        : 'text-red-400'
                     }`}>
                       {userBalance !== null && estimatedCost !== null 
                         ? (userBalance - estimatedCost).toFixed(0)
@@ -509,8 +509,8 @@ export default function BacktestPage() {
                   </div>
                   <div className={`p-2 rounded-full ${
                     userBalance !== null && estimatedCost !== null && userBalance >= estimatedCost
-                      ? 'bg-green-500'
-                      : 'bg-red-500'
+                      ? 'bg-green-500/30'
+                      : 'bg-red-500/30'
                   }`}>
                     <Gauge className="w-6 h-6 text-white" />
                   </div>
@@ -520,20 +520,20 @@ export default function BacktestPage() {
 
             {/* Insufficient Credits Warning */}
             {insufficientCredits && (
-              <div className="bg-gradient-to-r from-red-50 to-orange-50 border border-red-200 rounded-lg p-4">
+              <div className="bg-gradient-to-r from-red-900/40 to-orange-900/40 border border-red-500/30 rounded-xl p-4 backdrop-blur-sm">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
                     <div>
-                      <p className="text-red-600 font-semibold">Insufficient Credits</p>
-                      <p className="text-red-500 text-sm">
+                      <p className="text-red-400 font-semibold">Insufficient Credits</p>
+                      <p className="text-red-300 text-sm">
                         You need {estimatedCost && userBalance ? (estimatedCost - userBalance) : 0} more credits to run this backtest.
                       </p>
                     </div>
                   </div>
                   <Button
                     variant="outline"
-                    className="border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400"
+                    className="border-red-500/50 text-red-400 hover:bg-red-900/30 hover:border-red-500"
                   >
                     Upgrade Plan
                   </Button>
@@ -544,10 +544,10 @@ export default function BacktestPage() {
         </Card>
 
         {/* Form Card - Premium Design */}
-        <Card variant="elevated">
+        <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
           <CardHeader>
-            <CardTitle className="text-gray-900">Backtest Configuration</CardTitle>
-            <CardDescription className="text-gray-600">
+            <CardTitle className="text-white">Backtest Configuration</CardTitle>
+            <CardDescription className="text-gray-400">
               Configure your backtest parameters and run analysis
             </CardDescription>
           </CardHeader>
@@ -555,14 +555,14 @@ export default function BacktestPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
               {/* Strategy */}
               <div className="lg:col-span-2 space-y-2">
-                <Label htmlFor="strategy" className="text-gray-700">Strategy</Label>
+                <Label htmlFor="strategy" className="text-gray-300">Strategy</Label>
                 <Select value={selectedStrategy} onValueChange={setSelectedStrategy}>
-                  <SelectTrigger className="bg-white border-gray-200 text-gray-900 hover:border-gray-300">
-                    <SelectValue placeholder="Select strategy" className="text-gray-600" />
+                  <SelectTrigger className="bg-white/10 border-white/20 text-white hover:border-white/40">
+                    <SelectValue placeholder="Select strategy" className="text-gray-400" />
                   </SelectTrigger>
-                  <SelectContent className="bg-white border-gray-200">
+                  <SelectContent className="bg-[#1e1b4b] border-white/10">
                     {strategies.map(strategy => (
-                      <SelectItem key={strategy.id} value={strategy.id} className="text-gray-900 hover:bg-gray-100">
+                      <SelectItem key={strategy.id} value={strategy.id} className="text-white hover:bg-white/10">
                         {strategy.name}
                       </SelectItem>
                     ))}
@@ -572,14 +572,14 @@ export default function BacktestPage() {
 
               {/* Instrument */}
               <div className="lg:col-span-2 space-y-2">
-                <Label htmlFor="instrument" className="text-gray-700">Instrument</Label>
+                <Label htmlFor="instrument" className="text-gray-300">Instrument</Label>
                 <Select value={selectedInstrument} onValueChange={setSelectedInstrument}>
-                  <SelectTrigger className="bg-white border-gray-200 text-gray-900 hover:border-gray-300">
-                    <SelectValue placeholder="Select instrument" className="text-gray-600" />
+                  <SelectTrigger className="bg-white/10 border-white/20 text-white hover:border-white/40">
+                    <SelectValue placeholder="Select instrument" className="text-gray-400" />
                   </SelectTrigger>
-                  <SelectContent className="bg-white border-gray-200">
+                  <SelectContent className="bg-[#1e1b4b] border-white/10">
                     {instruments.map(instrument => (
-                      <SelectItem key={instrument.id.toString()} value={instrument.id.toString()} className="text-gray-900 hover:bg-gray-100">
+                      <SelectItem key={instrument.id.toString()} value={instrument.id.toString()} className="text-white hover:bg-white/10">
                         {instrument.symbol}
                       </SelectItem>
                     ))}
@@ -589,30 +589,30 @@ export default function BacktestPage() {
 
               {/* Timeframe */}
               <div className="space-y-2">
-                <Label htmlFor="timeframe" className="text-gray-700">Timeframe</Label>
+                <Label htmlFor="timeframe" className="text-gray-300">Timeframe</Label>
                 <Select value={timeframe} onValueChange={setTimeframe}>
-                  <SelectTrigger className="bg-white border-gray-200 text-gray-900 hover:border-gray-300">
-                    <SelectValue className="text-gray-600" />
+                  <SelectTrigger className="bg-white/10 border-white/20 text-white hover:border-white/40">
+                    <SelectValue className="text-gray-400" />
                   </SelectTrigger>
-                  <SelectContent className="bg-white border-gray-200">
-                    <SelectItem value="5m" className="text-gray-900 hover:bg-gray-100">5 Minutes</SelectItem>
-                    <SelectItem value="15m" className="text-gray-900 hover:bg-gray-100">15 Minutes</SelectItem>
-                    <SelectItem value="1h" className="text-gray-900 hover:bg-gray-100">1 Hour</SelectItem>
-                    <SelectItem value="1d" className="text-gray-900 hover:bg-gray-100">1 Day</SelectItem>
+                  <SelectContent className="bg-[#1e1b4b] border-white/10">
+                    <SelectItem value="5m" className="text-white hover:bg-white/10">5 Minutes</SelectItem>
+                    <SelectItem value="15m" className="text-white hover:bg-white/10">15 Minutes</SelectItem>
+                    <SelectItem value="1h" className="text-white hover:bg-white/10">1 Hour</SelectItem>
+                    <SelectItem value="1d" className="text-white hover:bg-white/10">1 Day</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               {/* Capital */}
               <div className="space-y-2">
-                <Label htmlFor="capital" className="text-gray-700">Initial Capital</Label>
+                <Label htmlFor="capital" className="text-gray-300">Initial Capital</Label>
                 <Input
                   id="capital"
                   type="number"
                   value={capital}
                   onChange={(e) => setCapital(e.target.value)}
                   placeholder="100000"
-                  className="bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-500"
+                  className="bg-white/10 border-white/20 text-white placeholder-gray-500 focus:border-purple-500"
                 />
               </div>
             </div>
@@ -620,23 +620,23 @@ export default function BacktestPage() {
             {/* Date Range */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="startDate" className="text-gray-700">Start Date</Label>
+                <Label htmlFor="startDate" className="text-gray-300">Start Date</Label>
                 <Input
                   id="startDate"
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="bg-white border-gray-200 text-gray-900 focus:border-blue-500"
+                  className="bg-white/10 border-white/20 text-white focus:border-purple-500"
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="endDate" className="text-gray-700">End Date</Label>
+                <Label htmlFor="endDate" className="text-gray-300">End Date</Label>
                 <Input
                   id="endDate"
                   type="date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="bg-white border-gray-200 text-gray-900 focus:border-blue-500"
+                  className="bg-white/10 border-white/20 text-white focus:border-purple-500"
                 />
               </div>
             </div>
@@ -646,19 +646,19 @@ export default function BacktestPage() {
               <Button
                 onClick={previewData}
                 variant="outline"
-                className="flex items-center gap-2 border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300"
+                className="flex items-center gap-2 border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
               >
-                <Eye className="w-4 h-4 text-gray-600" />
+                <Eye className="w-4 h-4 text-gray-400" />
                 Preview Data
               </Button>
               
               <Button
                 onClick={runBacktest}
                 disabled={loading || !!currentJob || insufficientCredits}
-                className={`flex items-center gap-3 px-8 py-3 text-lg font-semibold ${
+                className={`flex items-center gap-3 px-8 py-3 text-lg font-semibold transition-all duration-300 ${
                   insufficientCredits 
-                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed hover:bg-gray-300' 
-                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    ? 'bg-gray-600/50 text-gray-400 cursor-not-allowed hover:bg-gray-600/50' 
+                    : 'bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white shadow-lg hover:shadow-xl hover:scale-[1.02]'
                 }`}
               >
                 {(loading || currentJob) ? (
@@ -671,12 +671,12 @@ export default function BacktestPage() {
 
               {currentJob && (
                 <div className="flex-1 max-w-md space-y-2">
-                  <div className="flex justify-between text-sm text-gray-600">
+                  <div className="flex justify-between text-sm text-gray-400">
                     <span>Progress</span>
                     <span>{currentJob.progress}%</span>
                   </div>
-                  <Progress value={currentJob.progress} className="w-full h-2 bg-gray-200" />
-                  <p className="text-sm text-gray-500">
+                  <Progress value={currentJob.progress} className="w-full h-2 bg-white/10" />
+                  <p className="text-sm text-gray-400">
                     {currentJob.message}
                   </p>
                 </div>
@@ -687,10 +687,10 @@ export default function BacktestPage() {
 
         {/* Progress Section */}
         {currentJob && (
-          <Card variant="elevated">
+          <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
             <CardHeader>
-              <CardTitle className="text-gray-900">Backtest Progress</CardTitle>
-              <CardDescription className="text-gray-600">
+              <CardTitle className="text-white">Backtest Progress</CardTitle>
+              <CardDescription className="text-gray-400">
                 Current step: {currentStep?.label || currentJob.message}
               </CardDescription>
             </CardHeader>
@@ -698,23 +698,23 @@ export default function BacktestPage() {
               <div className="space-y-6">
                 {/* Progress Bar */}
                 <div className="space-y-2">
-                  <div className="flex justify-between text-sm text-gray-600">
+                  <div className="flex justify-between text-sm text-gray-400">
                     <span>Overall Progress</span>
                     <span>{currentJob.progress}%</span>
                   </div>
-                  <Progress value={currentJob.progress} className="w-full h-3 bg-gray-200" />
-                  <p className="text-sm text-gray-500">{currentJob.message}</p>
+                  <Progress value={currentJob.progress} className="w-full h-3 bg-white/10" />
+                  <p className="text-sm text-gray-400">{currentJob.message}</p>
                 </div>
 
                 {/* Step-by-Step Progress */}
                 <div className="space-y-3">
-                  <h4 className="text-sm font-semibold text-gray-600">Execution Steps:</h4>
+                  <h4 className="text-sm font-semibold text-gray-300">Execution Steps:</h4>
                   {getProgressSteps().map((step, index) => (
                     <div key={index} className="flex items-center space-x-4">
                       <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
                         step.progress <= (currentJob.progress || 0) 
                           ? 'bg-green-500' 
-                          : 'bg-gray-300'
+                          : 'bg-white/20'
                       }`}>
                         {step.progress <= (currentJob.progress || 0) && (
                           <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20">
@@ -725,7 +725,7 @@ export default function BacktestPage() {
                       <div className="flex-1">
                         <p className={`text-sm font-medium ${
                           step.progress <= (currentJob.progress || 0) 
-                            ? 'text-green-600' 
+                            ? 'text-green-400' 
                             : 'text-gray-500'
                         }`}>
                           {step.label}
@@ -733,8 +733,8 @@ export default function BacktestPage() {
                       </div>
                       <div className={`text-xs font-semibold ${
                         step.progress <= (currentJob.progress || 0) 
-                          ? 'text-green-600' 
-                          : 'text-gray-400'
+                          ? 'text-green-400' 
+                          : 'text-gray-500'
                       }`}>
                         {step.progress}%
                       </div>
@@ -759,84 +759,84 @@ export default function BacktestPage() {
               <Button
                 onClick={runAgain}
                 variant="outline"
-                className="flex items-center gap-2 border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300"
+                className="flex items-center gap-2 border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
               >
-                <RefreshCw className="w-4 h-4 text-gray-600" />
+                <RefreshCw className="w-4 h-4 text-gray-400" />
                 Run Again
               </Button>
             </div>
 
             {/* Metrics Cards - Premium KPI Dashboard */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <Card variant="elevated">
+              <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <div>
-                    <CardDescription className="text-gray-600 text-sm font-medium">Net Profit</CardDescription>
-                    <CardTitle className="text-2xl font-bold tracking-tight text-gray-900">
+                    <CardDescription className="text-gray-400 text-sm font-medium">Net Profit</CardDescription>
+                    <CardTitle className="text-2xl font-bold tracking-tight text-white">
                       ${backtestResult.net_profit.toFixed(2)}
                     </CardTitle>
                   </div>
-                  <div className="p-3 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg">
-                    <DollarSign className="h-6 w-6 text-white" />
+                  <div className="p-3 bg-gradient-to-r from-green-500/30 to-emerald-500/30 rounded-lg">
+                    <DollarSign className="h-6 w-6 text-green-400" />
                   </div>
                 </CardHeader>
                 <CardContent>
                   <p className={`text-sm font-medium ${
-                    backtestResult.net_profit >= 0 ? 'text-green-600' : 'text-red-600'
+                    backtestResult.net_profit >= 0 ? 'text-green-400' : 'text-red-400'
                   }`}>
                     {backtestResult.net_profit >= 0 ? 'Profitable' : 'Loss'}
                   </p>
                 </CardContent>
               </Card>
 
-              <Card variant="elevated">
+              <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <div>
-                    <CardDescription className="text-gray-600 text-sm font-medium">Win Rate</CardDescription>
-                    <CardTitle className="text-2xl font-bold tracking-tight text-gray-900">
+                    <CardDescription className="text-gray-400 text-sm font-medium">Win Rate</CardDescription>
+                    <CardTitle className="text-2xl font-bold tracking-tight text-white">
                       {(backtestResult.win_rate * 100).toFixed(1)}%
                     </CardTitle>
                   </div>
-                  <div className="p-3 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg">
-                    <Gauge className="h-6 w-6 text-white" />
+                  <div className="p-3 bg-gradient-to-r from-blue-500/30 to-cyan-500/30 rounded-lg">
+                    <Gauge className="h-6 w-6 text-blue-400" />
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-sm text-gray-600">Success rate</p>
+                  <p className="text-sm text-gray-400">Success rate</p>
                 </CardContent>
               </Card>
 
-              <Card variant="elevated">
+              <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <div>
-                    <CardDescription className="text-gray-600 text-sm font-medium">Max Drawdown</CardDescription>
-                    <CardTitle className="text-2xl font-bold tracking-tight text-gray-900">
+                    <CardDescription className="text-gray-400 text-sm font-medium">Max Drawdown</CardDescription>
+                    <CardTitle className="text-2xl font-bold tracking-tight text-white">
                       {(backtestResult.max_drawdown * 100).toFixed(2)}%
                     </CardTitle>
                   </div>
-                  <div className="p-3 bg-gradient-to-r from-orange-500 to-red-500 rounded-lg">
-                    <TrendingDown className="h-6 w-6 text-white" />
+                  <div className="p-3 bg-gradient-to-r from-orange-500/30 to-red-500/30 rounded-lg">
+                    <TrendingDown className="h-6 w-6 text-orange-400" />
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-sm text-gray-600">Risk metric</p>
+                  <p className="text-sm text-gray-400">Risk metric</p>
                 </CardContent>
               </Card>
 
-              <Card variant="elevated">
+              <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <div>
-                    <CardDescription className="text-gray-600 text-sm font-medium">Sharpe Ratio</CardDescription>
-                    <CardTitle className="text-2xl font-bold tracking-tight text-gray-900">
+                    <CardDescription className="text-gray-400 text-sm font-medium">Sharpe Ratio</CardDescription>
+                    <CardTitle className="text-2xl font-bold tracking-tight text-white">
                       {backtestResult.sharpe_ratio.toFixed(2)}
                     </CardTitle>
                   </div>
-                  <div className="p-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg">
-                    <TrendingUp className="h-6 w-6 text-white" />
+                  <div className="p-3 bg-gradient-to-r from-purple-500/30 to-pink-500/30 rounded-lg">
+                    <TrendingUp className="h-6 w-6 text-purple-400" />
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-sm text-gray-600">Risk-adjusted return</p>
+                  <p className="text-sm text-gray-400">Risk-adjusted return</p>
                 </CardContent>
               </Card>
             </div>
@@ -844,10 +844,10 @@ export default function BacktestPage() {
             {/* Charts Section */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Win/Loss Pie Chart */}
-              <Card variant="elevated">
+              <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
                 <CardHeader>
-                  <CardTitle className="text-gray-900">Win/Loss Distribution</CardTitle>
-                  <CardDescription className="text-gray-600">
+                  <CardTitle className="text-white">Win/Loss Distribution</CardTitle>
+                  <CardDescription className="text-gray-400">
                     Trade outcome analysis
                   </CardDescription>
                 </CardHeader>
@@ -871,9 +871,9 @@ export default function BacktestPage() {
                       <Tooltip 
                         formatter={(value, name) => [`${value} trades`, name]}
                         contentStyle={{
-                          backgroundColor: '#ffffff',
-                          border: '1px solid #e5e7eb',
-                          color: '#1f2937'
+                          backgroundColor: '#1e1b4b',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          color: '#e2e8f0'
                         }}
                       />
                     </PieChart>
@@ -882,10 +882,10 @@ export default function BacktestPage() {
               </Card>
 
               {/* Equity Curve */}
-              <Card variant="elevated">
+              <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
                 <CardHeader>
-                  <CardTitle className="text-gray-900">Equity Curve</CardTitle>
-                  <CardDescription className="text-gray-600">
+                  <CardTitle className="text-white">Equity Curve</CardTitle>
+                  <CardDescription className="text-gray-400">
                     Portfolio value over time
                   </CardDescription>
                 </CardHeader>
@@ -894,21 +894,21 @@ export default function BacktestPage() {
                     <LineChart data={equityData}>
                       <XAxis 
                         dataKey="date" 
-                        tick={{ fontSize: 12, fill: '#6b7280' }}
-                        axisLine={{ stroke: '#e5e7eb' }}
-                        tickLine={{ stroke: '#e5e7eb' }}
+                        tick={{ fontSize: 12, fill: '#94a3b8' }}
+                        axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+                        tickLine={{ stroke: 'rgba(255,255,255,0.1)' }}
                       />
                       <YAxis 
-                        tick={{ fontSize: 12, fill: '#6b7280' }}
-                        axisLine={{ stroke: '#e5e7eb' }}
-                        tickLine={{ stroke: '#e5e7eb' }}
+                        tick={{ fontSize: 12, fill: '#94a3b8' }}
+                        axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+                        tickLine={{ stroke: 'rgba(255,255,255,0.1)' }}
                       />
                       <Tooltip 
                         formatter={(value) => [`$${Number(value).toFixed(2)}`, 'Equity']}
                         contentStyle={{
-                          backgroundColor: '#ffffff',
-                          border: '1px solid #e5e7eb',
-                          color: '#1f2937'
+                          backgroundColor: '#1e1b4b',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          color: '#e2e8f0'
                         }}
                       />
                       <Line
@@ -917,7 +917,7 @@ export default function BacktestPage() {
                         stroke="#60a5fa"
                         strokeWidth={3}
                         dot={false}
-                        activeDot={{ r: 6, stroke: '#60a5fa', strokeWidth: 2, fill: '#ffffff' }}
+                        activeDot={{ r: 6, stroke: '#60a5fa', strokeWidth: 2, fill: '#1e1b4b' }}
                       />
                     </LineChart>
                   </ResponsiveContainer>
@@ -926,10 +926,10 @@ export default function BacktestPage() {
             </div>
 
             {/* Trade History Table */}
-            <Card variant="elevated">
+            <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
               <CardHeader>
-                <CardTitle className="text-gray-900">Trade History</CardTitle>
-                <CardDescription className="text-gray-600">
+                <CardTitle className="text-white">Trade History</CardTitle>
+                <CardDescription className="text-gray-400">
                   Detailed trade execution log
                 </CardDescription>
               </CardHeader>
@@ -937,44 +937,44 @@ export default function BacktestPage() {
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
-                      <TableRow className="border-gray-100">
-                        <TableHead className="text-gray-600">Entry Time</TableHead>
-                        <TableHead className="text-gray-600">Exit Time</TableHead>
-                        <TableHead className="text-gray-600">Side</TableHead>
-                        <TableHead className="text-gray-600">Quantity</TableHead>
-                        <TableHead className="text-gray-600">Entry Price</TableHead>
-                        <TableHead className="text-gray-600">Exit Price</TableHead>
-                        <TableHead className="text-gray-600">P&L</TableHead>
-                        <TableHead className="text-gray-600">Result</TableHead>
+                      <TableRow className="border-white/10">
+                        <TableHead className="text-gray-400">Entry Time</TableHead>
+                        <TableHead className="text-gray-400">Exit Time</TableHead>
+                        <TableHead className="text-gray-400">Side</TableHead>
+                        <TableHead className="text-gray-400">Quantity</TableHead>
+                        <TableHead className="text-gray-400">Entry Price</TableHead>
+                        <TableHead className="text-gray-400">Exit Price</TableHead>
+                        <TableHead className="text-gray-400">P&L</TableHead>
+                        <TableHead className="text-gray-400">Result</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {backtestResult.trades.map((trade, index) => (
-                        <TableRow key={index} className="border-gray-100 hover:bg-gray-50">
-                          <TableCell className="text-gray-900 font-medium">{new Date(trade.entry_time).toLocaleString()}</TableCell>
-                          <TableCell className="text-gray-600">
+                        <TableRow key={index} className="border-white/10 hover:bg-white/5">
+                          <TableCell className="text-white font-medium">{new Date(trade.entry_time).toLocaleString()}</TableCell>
+                          <TableCell className="text-gray-400">
                             {trade.exit_time ? new Date(trade.exit_time).toLocaleString() : '-'}
                           </TableCell>
                           <TableCell>
                             <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                              trade.side === 'BUY' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                              trade.side === 'BUY' ? 'bg-green-500/30 text-green-400' : 'bg-red-500/30 text-red-400'
                             }`}>
                               {trade.side}
                             </span>
                           </TableCell>
-                          <TableCell className="text-gray-900">{trade.quantity}</TableCell>
-                          <TableCell className="text-gray-900 font-medium">${trade.entry_price.toFixed(2)}</TableCell>
-                          <TableCell className="text-gray-600">
+                          <TableCell className="text-white">{trade.quantity}</TableCell>
+                          <TableCell className="text-white font-medium">${trade.entry_price.toFixed(2)}</TableCell>
+                          <TableCell className="text-gray-400">
                             {trade.exit_price ? `$${trade.exit_price.toFixed(2)}` : '-'}
                           </TableCell>
-                          <TableCell className={trade.pnl && trade.pnl >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+                          <TableCell className={trade.pnl && trade.pnl >= 0 ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>
                             {trade.pnl ? `$${trade.pnl.toFixed(2)}` : '-'}
                           </TableCell>
                           <TableCell>
                             {trade.pnl && trade.pnl > 0 ? (
-                              <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-semibold">WIN</span>
+                              <span className="px-2 py-1 bg-green-500/30 text-green-400 rounded-full text-xs font-semibold">WIN</span>
                             ) : trade.pnl && trade.pnl < 0 ? (
-                              <span className="px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs font-semibold">LOSS</span>
+                              <span className="px-2 py-1 bg-red-500/30 text-red-400 rounded-full text-xs font-semibold">LOSS</span>
                             ) : (
                               <span className="text-gray-500">PENDING</span>
                             )}
@@ -996,8 +996,6 @@ export default function BacktestPage() {
           </>
         )}
       </div>
-    </>
+    </div>
   );
 }
-
-
