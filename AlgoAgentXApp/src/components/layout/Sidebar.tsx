@@ -1,30 +1,28 @@
 "use client";
 
-import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  BarChart3,
+  ChevronLeft,
+  ChevronRight,
+  CreditCard,
+  FileText,
+  Headset,
+  History,
+  Home,
+  Layers,
+  PlayCircle,
+  Settings,
+  Shield,
+  TrendingUp,
+  User,
+  Users,
+  Wallet,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-// Lazy load icons to reduce bundle size
-const Home = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.Home })));
-const BarChart3 = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.BarChart3 })));
-const Layers = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.Layers })));
-const PlayCircle = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.PlayCircle })));
-const History = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.History })));
-const FileText = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.FileText })));
-const Settings = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.Settings })));
-const User = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.User })));
-const CreditCard = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.CreditCard })));
-const ChevronRight = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.ChevronRight })));
-const ChevronLeft = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.ChevronLeft })));
-const Users = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.Users })));
-const Database = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.Database })));
-const Shield = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.Shield })));
-const DollarSign = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.DollarSign })));
-const TrendingUp = React.lazy(() => import("lucide-react").then(mod => ({ default: mod.TrendingUp })));
-
-// Define menu items with proper locale-aware URLs
 const userMenuItems = [
   { icon: Home, label: "Dashboard", href: "/dashboard" },
   { icon: Layers, label: "Brokers", href: "/brokers" },
@@ -33,26 +31,31 @@ const userMenuItems = [
   { icon: History, label: "Backtest History", href: "/backtest-history" },
   { icon: FileText, label: "Reports", href: "/reports" },
   { icon: CreditCard, label: "Pricing", href: "/pricing" },
-  { icon: DollarSign, label: "Credits", href: "/credits" },
-  { icon: User, label: "My Profile", href: "/myprofile" },
-  { icon: Settings, label: "Settings", href: "/settings" },
+  { icon: Wallet, label: "Credits", href: "/credits" },
+  { icon: Headset, label: "Support Tickets", href: "/support-tickets" },
+  // { icon: User, label: "My Profile", href: "/profile" },
+  // { icon: Settings, label: "Settings", href: "/settings" },
 ];
 
 const adminMenuItems = [
   { icon: Home, label: "Dashboard", href: "/admin/dashboard" },
   { icon: Users, label: "Users", href: "/admin/users" },
   { icon: CreditCard, label: "Subscriptions", href: "/admin/subscriptions" },
-  { icon: DollarSign, label: "Payments", href: "/admin/payments" },
-  { icon: Database, label: "Credits", href: "/admin/credits" },
+  { icon: Wallet, label: "Payments", href: "/admin/payments" },
   { icon: FileText, label: "Orders", href: "/admin/orders" },
+  { icon: BarChart3, label: "Credits", href: "/admin/credits" },
+  { icon: Layers, label: "Strategies", href: "/admin/strategy-requests" },
   { icon: TrendingUp, label: "Backtests", href: "/admin/backtests" },
   { icon: Shield, label: "Support Tickets", href: "/admin/support-tickets" },
-  { icon: Layers, label: "Strategy Requests", href: "/admin/strategy-requests" },
-  { icon: BarChart3, label: "AI Jobs", href: "/admin/ai-jobs" },
 ];
 
-// Memoize SidebarItem to prevent unnecessary re-renders
-const SidebarItem = React.memo(function SidebarItem({
+function getCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function SidebarItem({
   icon: Icon,
   label,
   href,
@@ -68,170 +71,134 @@ const SidebarItem = React.memo(function SidebarItem({
   return (
     <Link
       href={href}
-      prefetch={true}
-      className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-300 ease-in-out group
-        ${isActive 
-          ? "bg-primary/10 border-l-3 border-primary text-primary" 
-          : "text-foreground hover:bg-primary/10 hover:border-l-3 hover:border-primary hover:text-primary"
-        }
-        ${isCollapsed ? "justify-center" : ""}
-      `}
+      className={[
+        "group flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-medium transition-all duration-200",
+        isCollapsed ? "justify-center" : "justify-start",
+        isActive
+          ? "bg-white/16 text-white shadow-lg shadow-purple-900/30 ring-1 ring-white/10"
+          : "text-purple-100/90 hover:bg-white/8 hover:text-white",
+      ].join(" ")}
     >
-      <div className={`p-2 rounded-lg transition-all duration-300 ease-in-out
-        ${isActive 
-          ? "bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-lg shadow-blue-500/30" 
-          : "bg-muted text-muted-foreground group-hover:bg-gradient-to-r group-hover:from-blue-500 group-hover:to-cyan-500 group-hover:text-white group-hover:shadow-lg group-hover:shadow-blue-500/20"
-        }`}>
-        <Icon className={`w-5 h-5 ${isCollapsed ? "mx-auto" : ""} transition-colors duration-200`} />
-      </div>
-      {!isCollapsed && (
-        <span className="text-sm font-medium tracking-wide transition-colors duration-200">{label}</span>
-      )}
+      <span
+        className={[
+          "flex h-10 w-10 items-center justify-center rounded-xl border transition-all duration-200",
+          isActive
+            ? "border-white/10 bg-gradient-to-br from-fuchsia-500 to-violet-500 text-white shadow-lg"
+            : "border-white/5 bg-white/5 text-purple-100 group-hover:border-white/10 group-hover:bg-white/10",
+        ].join(" ")}
+      >
+        <Icon className="h-5 w-5" />
+      </span>
+      {!isCollapsed && <span className="truncate">{label}</span>}
     </Link>
   );
-});
+}
 
-SidebarItem.displayName = "SidebarItem";
-
-export default React.memo(function Sidebar() {
+export default function Sidebar() {
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [role, setRole] = useState<string>("");
 
-  // Check screen size on mount and resize to set initial collapsed state
   useEffect(() => {
-    const checkScreenSize = () => {
-      setIsCollapsed(window.innerWidth < 1024);
+    const syncRole = () => {
+      const cookieRole = getCookie("loggedinuserroleid") || getCookie("loggedinuserrole") || "";
+      const storedUser = typeof window !== "undefined" ? localStorage.getItem("currentUser") : null;
+      let nextRole = cookieRole;
+      if (!nextRole && storedUser) {
+        try {
+          nextRole = JSON.parse(storedUser)?.role || "";
+        } catch {}
+      }
+      setRole(String(nextRole || "").toLowerCase());
     };
-    checkScreenSize();
-    window.addEventListener('resize', checkScreenSize);
-    return () => window.removeEventListener('resize', checkScreenSize);
+
+    syncRole();
+    const onResize = () => setIsCollapsed(window.innerWidth < 1280);
+    onResize();
+    window.addEventListener("resize", onResize);
+    window.addEventListener("storage", syncRole);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("storage", syncRole);
+    };
   }, []);
 
-  // Determine active menu item based on current pathname
-  const getIsActive = React.useCallback((href: string) => {
-    // Remove locale prefix from pathname for comparison
-    const pathWithoutLocale = pathname.replace(/^\/[a-z]{2}/, '') || '/';
-    const normalizedHref = href.startsWith('/') ? href : '/' + href;
-    return pathWithoutLocale === normalizedHref || pathWithoutLocale.startsWith(normalizedHref + '/');
-  }, [pathname]);
+  const isAdminSection = pathname.startsWith("/admin");
+  const isAdminUser = role === "admin" || role === "1";
+  const menuItems = isAdminSection || isAdminUser ? adminMenuItems : userMenuItems;
+  const brandSubtitle = isAdminSection || isAdminUser ? "Admin Console" : "Trading Workspace";
 
-  // Get menu items based on user role
-  const getMenuItems = React.useCallback(() => {
-    // For now, always show user menu items
-    // In the future, this can be enhanced with user context
-    return userMenuItems;
-  }, []);
+  const getIsActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
-  // Memoize the sidebar content to prevent unnecessary re-renders
-  const sidebarContent = React.useMemo(() => {
-    const menuItems = getMenuItems();
-    return (
-      <aside 
-        className={`min-h-screen border-r border-white/20 bg-gradient-to-b from-purple-900/50 to-indigo-900/50 backdrop-blur-xl transition-all duration-300 ease-in-out
-          ${isCollapsed ? "w-16" : "w-64"}
-          fixed left-0 top-0 z-40 shadow-lg shadow-purple-500/20
-        `}
-      >
-        {/* LOGO HEADER */}
-        <div className={`flex items-center justify-between h-16 px-4 border-b border-border ${isCollapsed ? "justify-center" : ""}`}>
-          {!isCollapsed ? (
-            <div className="flex items-center gap-4">
-              {/* Logo Container */}
-              <div className="relative">
-                <div className="p-3 rounded-xl">
-                  <img 
-                    src="/images/algoagentx_icon.jpeg" 
-                    alt="AlgoAgentX Logo"
-                    className="w-8 h-8 object-contain"
-                  />
-                </div>
-              </div>
+  const footerLinks = useMemo(() => {
+    if (isAdminSection || isAdminUser) {
+      return [
+        { icon: User, label: "Profile", href: "/admin/profile" },
+        { icon: Settings, label: "Settings", href: "/admin/settings" },
+      ];
+    }
+    return [
+      { icon: User, label: "Profile", href: "/profile" },
+      { icon: Settings, label: "Settings", href: "/settings" },
+    ];
+  }, [isAdminSection, isAdminUser]);
 
-              <div className="flex flex-col">
-                <span className="text-lg font-bold bg-gradient-to-r from-blue-600 via-blue-700 to-cyan-600 bg-clip-text text-transparent">
-                  AlgoAgentX
-                </span>
-                <span className="text-xs font-medium text-foreground tracking-wider">
-                  AI TRADING
-                </span>
-              </div>
+  return (
+    <aside
+      className={[
+        "fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-white/10 bg-gradient-to-b from-[#4f1d95] via-[#341672] to-[#1f2647] text-white shadow-2xl shadow-purple-950/35 backdrop-blur-2xl transition-all duration-300",
+        isCollapsed ? "w-[88px]" : "w-64",
+      ].join(" ")}
+    >
+      <div className={[
+        "flex h-20 items-center border-b border-white/10 px-4",
+        isCollapsed ? "justify-center" : "justify-between",
+      ].join(" ") }>
+        {!isCollapsed && (
+          <div className="flex items-center gap-3 overflow-hidden">
+            <img src="/images/algoagentx_icon.jpeg" alt="AlgoAgentX" className="h-10 w-10 rounded-xl object-cover ring-1 ring-white/10" />
+            <div className="min-w-0">
+              <div className="truncate text-xl font-bold text-white">AlgoAgentX</div>
+              <div className="truncate text-sm text-purple-100/80">{brandSubtitle}</div>
             </div>
-          ) : (
-            <div className="relative">
-              <div className="p-2.5 rounded-lg">
-                <img 
-                  src="/images/algoagentx_icon.jpeg" 
-                  alt="AlgoAgentX Logo"
-                  className="w-8 h-8 object-contain"
-                />
-              </div>
-            </div>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="ml-2 p-2 hover:bg-accent transition-colors"
-            onClick={() => setIsCollapsed(!isCollapsed)}
-            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {isCollapsed ? (
-              <ChevronRight className="w-4 h-4 text-foreground" />
-            ) : (
-              <ChevronLeft className="w-4 h-4 text-foreground" />
-            )}
-          </Button>
-        </div>
+          </div>
+        )}
+        {isCollapsed && <img src="/images/algoagentx_icon.jpeg" alt="AlgoAgentX" className="h-10 w-10 rounded-xl object-cover ring-1 ring-white/10" />}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="rounded-xl border border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white"
+          onClick={() => setIsCollapsed((v) => !v)}
+        >
+          {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+        </Button>
+      </div>
 
-        {/* MENU NAVIGATION */}
-        <nav className="flex-1 px-2 py-4 space-y-1">
-          {menuItems.map((item) => (
-            <SidebarItem
-              key={item.href}
-              icon={item.icon}
-              label={item.label}
-              href={item.href}
-              isActive={getIsActive(item.href)}
-              isCollapsed={isCollapsed}
-            />
-          ))}
-        </nav>
+      <nav className="flex-1 space-y-2 overflow-y-auto px-3 py-5">
+        {menuItems.map((item) => (
+          <SidebarItem
+            key={item.href}
+            icon={item.icon}
+            label={item.label}
+            href={item.href}
+            isActive={getIsActive(item.href)}
+            isCollapsed={isCollapsed}
+          />
+        ))}
+      </nav>
 
-        {/* USER SECTION */}
-        <div className="p-4 border-t border-border space-y-2">
-          <Link
-            href="/profile"
-            prefetch={true}
-            className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-200 group
-              ${isCollapsed ? "justify-center" : ""}
-              text-foreground hover:bg-accent hover:text-foreground
-            `}
-          >
-            <div className="p-2 rounded-lg bg-muted text-muted-foreground group-hover:bg-gradient-to-r group-hover:from-blue-500 group-hover:to-cyan-500 group-hover:text-white group-hover:shadow-lg group-hover:shadow-blue-500/20 transition-colors">
-              <User className="w-5 h-5" />
-            </div>
-            {!isCollapsed && (
-              <span className="text-sm font-medium tracking-wide">Profile</span>
-            )}
-          </Link>
-          <Link
-            href="/settings"
-            prefetch={true}
-            className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-200 group
-              ${isCollapsed ? "justify-center" : ""}
-              text-foreground hover:bg-accent hover:text-foreground
-            `}
-          >
-            <div className="p-2 rounded-lg bg-muted text-muted-foreground group-hover:bg-gradient-to-r group-hover:from-blue-500 group-hover:to-cyan-500 group-hover:text-white group-hover:shadow-lg group-hover:shadow-blue-500/20 transition-colors">
-              <Settings className="w-5 h-5" />
-            </div>
-            {!isCollapsed && (
-              <span className="text-sm font-medium tracking-wide">Settings</span>
-            )}
-          </Link>
-        </div>
-      </aside>
-    );
-  }, [getIsActive, isCollapsed, getMenuItems]);
-
-  return sidebarContent;
-});
+      <div className="space-y-2 border-t border-white/10 px-3 py-4">
+        {footerLinks.map((item) => (
+          <SidebarItem
+            key={item.href}
+            icon={item.icon}
+            label={item.label}
+            href={item.href}
+            isActive={getIsActive(item.href)}
+            isCollapsed={isCollapsed}
+          />
+        ))}
+      </div>
+    </aside>
+  );
+}

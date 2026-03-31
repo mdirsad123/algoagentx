@@ -42,11 +42,16 @@ export default function AdminLoginPage() {
       }
 
       localStorage.setItem('access_token', access_token)
+      localStorage.setItem('currentUser', JSON.stringify(user))
       axiosInstance.defaults.headers['Authorization'] = `Bearer ${access_token}`
 
       document.cookie = `accessToken=${access_token}; path=/; max-age=86400; samesite=strict`
       document.cookie = `loggedinuserroleid=${user.role}; path=/; max-age=86400; samesite=strict`
       document.cookie = `loggedinuserid=${user.id}; path=/; max-age=86400; samesite=strict`
+      document.cookie = `loggedinusername=${user.email}; path=/; max-age=86400; samesite=strict`
+      document.cookie = `loggedinuseremail=${user.email}; path=/; max-age=86400; samesite=strict`
+      document.cookie = `loggedinuserfullname=${encodeURIComponent(user.full_name || user.fullname || '')}; path=/; max-age=86400; samesite=strict`
+      document.cookie = `loggedinuserrole=${user.role}; path=/; max-age=86400; samesite=strict`
 
       showToast('Welcome Admin!', 'success')
       router.push('/admin/dashboard')

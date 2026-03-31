@@ -4,7 +4,7 @@
 
 /**
  * Extract locale from pathname
- * @param pathname - The current pathname (e.g., "/en/dashboard", "/dashboard")
+ * @param pathname - The current pathname (e.g., "/dashboard", "/dashboard")
  * @returns The locale code (e.g., "en", "hi", "ar", "fr") or null if not found
  */
 export function getLocaleFromPathname(pathname: string): string | null {
@@ -21,7 +21,7 @@ export function getLocaleFromPathname(pathname: string): string | null {
  * Add locale prefix to href if not already present
  * @param pathname - The current pathname to extract locale from
  * @param href - The target href (e.g., "/dashboard", "/notifications")
- * @returns The href with locale prefix (e.g., "/en/dashboard")
+ * @returns The href with locale prefix (e.g., "/dashboard")
  */
 export function withLocale(pathname: string, href: string): string {
   // If href already has a locale prefix, return as-is

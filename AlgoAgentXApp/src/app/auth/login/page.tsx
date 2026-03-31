@@ -49,6 +49,7 @@ export default function LoginPage() {
       // Store tokens
       const { access_token, user } = response.data
       localStorage.setItem('access_token', access_token)
+      localStorage.setItem('currentUser', JSON.stringify(user))
       axiosInstance.defaults.headers['Authorization'] = `Bearer ${access_token}`
 
       // Set cookies for middleware authentication check and user context
@@ -57,10 +58,12 @@ export default function LoginPage() {
       document.cookie = `loggedinuserid=${user.id}; path=/; max-age=86400; samesite=strict`
       document.cookie = `loggedinusername=${user.email}; path=/; max-age=86400; samesite=strict`
       document.cookie = `loggedinuseremail=${user.email}; path=/; max-age=86400; samesite=strict`
+      document.cookie = `loggedinuserfullname=${encodeURIComponent(user.full_name || user.fullname || '')}; path=/; max-age=86400; samesite=strict`
+      document.cookie = `loggedinuserrole=${user.role}; path=/; max-age=86400; samesite=strict`
 
       // Redirect based on user role
       if (user.role === 'admin') {
-        router.push('/en/admin/dashboard')
+        router.push('/admin/dashboard')
       } else {
         router.push('/dashboard')
       }

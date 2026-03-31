@@ -1,0 +1,219 @@
+# ============================================
+# AlgoAgentX - Comprehensive .gitignore
+# ============================================
+
+# ============================================
+# DEPENDENCIES
+# ============================================
+
+# Node.js dependencies (AlgoAgentXApp)
+**/node_modules/
+**/node_modules/**/*
+.npm
+.yarn-integrity
+package-lock.json
+
+# Python dependencies (AlgoAgentXAPI)
+**/venv/
+**/.venv/
+**/env/
+**/.env/
+__pycache__/
+**/__pycache__/**/*
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ============================================
+# ENVIRONMENT VARIABLES
+# ============================================
+
+# Environment files (keep .env.example, ignore actual .env files)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.prod
+.env.production
+*.env
+!*.env.example
+
+# ============================================
+# DATABASE FILES
+# ============================================
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Database backups
+**/backup_db/
+**/*.sql.gz
+**/*.dump
+
+# ============================================
+# IDE AND EDITOR FILES
+# ============================================
+
+# VS Code
+.vscode/
+*.code-workspace
+*.code-profile
+
+# JetBrains IDEs (PyCharm, WebStorm, etc.)
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Other editors
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ============================================
+# BUILD ARTIFACTS AND OUTPUT
+# ============================================
+
+# Next.js build
+**/.next/
+**/out/
+**/build/
+
+# Python build
+build/
+dist/
+*.egg-info/
+
+# ============================================
+# LOGS AND CACHE
+# ============================================
+
+# Log files
+*.log
+logs/
+**/*.log
+
+# Cache files
+.cache/
+**/.cache/
+*.cache
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+.coveragerc
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# ============================================
+# TESTING
+# ============================================
+
+# Test artifacts
+.tox/
+.nox/
+htmlcov/
+
+# ============================================
+# DOCKER AND CONTAINERS
+# ============================================
+
+# Docker volumes
+**/docker-volumes/
+
+# Docker compose overrides
+docker-compose.override.yml
+
+# ============================================
+# MISCELLANEOUS
+# ============================================
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+[Tt]humbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Redis dump
+dump.rdb
+
+# ============================================
+# SENSITIVE FILES
+# ============================================
+
+# Private keys
+*.pem
+*.key
+*.cert
+
+# Credentials
+credentials
+*.credentials
+
+# ============================================
+# PROJECT SPECIFIC
+# ============================================
+
+# Migration logs
+migration.log
+
+# Test scripts output
+**/test_*.py
+!test_*.py
+
+# Scripts output directory
+**/scripts/output/

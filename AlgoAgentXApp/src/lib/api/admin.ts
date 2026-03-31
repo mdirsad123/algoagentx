@@ -74,6 +74,14 @@ export interface CreditTransaction {
   created_at: string;
 }
 
+export interface SupportTicketReply {
+  id: string;
+  ticket_id: string;
+  user_id?: string | null;
+  message: string;
+  created_at: string;
+}
+
 export interface SupportTicket {
   id: string;
   user_id: string;
@@ -81,8 +89,10 @@ export interface SupportTicket {
   title: string;
   message: string;
   status: string;
+  priority?: string;
   created_at: string;
   updated_at: string;
+  replies?: SupportTicketReply[];
 }
 
 export interface Order {

@@ -1,244 +1,122 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
+import { useEffect, useState } from "react"
+import { adminApi, Subscription } from "@/lib/api/admin"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { CreditCard, Search, RefreshCw, Eye, Filter } from "lucide-react"
-import { adminApi, Subscription } from "@/lib/api/admin"
-import { AdminTable } from "@/components/admin/admin-table"
+import { Badge } from "@/components/ui/badge"
+import { RefreshCw } from "lucide-react"
 import { toast } from "sonner"
-import { parseApiError, formatErrorMessage } from "@/lib/api/error"
 
 export default function AdminSubscriptionsPage() {
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([])
+  const [items, setItems] = useState<Subscription[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
-  const [statusFilter, setStatusFilter] = useState<string>("")
+  const [status, setStatus] = useState("")
   const [skip, setSkip] = useState(0)
-  const [limit] = useState(20)
   const [total, setTotal] = useState(0)
 
-  const fetchSubscriptions = async (newSkip?: number) => {
+  const load = async (nextSkip = skip) => {
     try {
       setLoading(true)
       setError(null)
-      const skipValue = newSkip !== undefined ? newSkip : skip
-      const result = await adminApi.getSubscriptions(skipValue, limit, statusFilter || undefined)
-      setSubscriptions(result.items)
-      setTotal(result.total)
-      if (newSkip !== undefined) setSkip(newSkip)
-    } catch (err) {
-      console.error("Error fetching subscriptions:", err)
-      const errorInfo = parseApiError(err);
-      const errorMessage = formatErrorMessage(errorInfo);
-      setError(errorMessage)
-      toast.error(errorMessage)
+      const data = await adminApi.getSubscriptions(nextSkip, 20, status || undefined, search || undefined)
+      setItems(data.items)
+      setTotal(data.total)
+      setSkip(nextSkip)
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || "Failed to load subscriptions"
+      setError(msg)
+      toast.error(msg)
     } finally {
       setLoading(false)
     }
   }
 
-  const handleSearch = (searchValue: string) => {
-    setSearch(searchValue)
-    setSkip(0)
-    setTimeout(() => {
-      fetchSubscriptions(0)
-    }, 300)
-  }
+  useEffect(() => { load(0) }, [])
 
-  const handleStatusFilter = (status: string) => {
-    setStatusFilter(status)
-    setSkip(0)
-    fetchSubscriptions(0)
-  }
-
-  const handleRefresh = () => {
-    fetchSubscriptions()
-  }
-
-  useEffect(() => {
-    fetchSubscriptions()
-  }, [])
-
-  const columns = [
-    {
-      key: 'user_id' as const,
-      label: 'User ID',
-      render: (userId: string) => (
-        <div className="font-mono text-sm">{userId.substring(0, 8)}...</div>
-      )
-    },
-    {
-      key: 'plan_code' as const,
-      label: 'Plan',
-      render: (planCode: string) => (
-        <Badge variant="default">{planCode}</Badge>
-      )
-    },
-    {
-      key: 'billing_period' as const,
-      label: 'Period',
-      render: (period: string) => (
-        <Badge variant="outline">{period}</Badge>
-      )
-    },
-    {
-      key: 'price_inr' as const,
-      label: 'Price',
-      render: (price: number) => (
-        <div className="font-medium">₹{price.toLocaleString()}</div>
-      )
-    },
-    {
-      key: 'included_credits' as const,
-      label: 'Credits',
-      render: (credits: number) => (
-        <div className="text-sm">{credits}</div>
-      )
-    },
-    {
-      key: 'status' as const,
-      label: 'Status',
-      render: (status: string) => (
-        <Badge 
-          variant={status === 'ACTIVE' ? "default" : status === 'PENDING' ? "secondary" : "destructive"}
-        >
-          {status}
-        </Badge>
-      )
-    },
-    {
-      key: 'start_at' as const,
-      label: 'Start Date',
-      render: (date: string) => (
-        <div className="text-sm text-gray-500">
-          {new Date(date).toLocaleDateString()}
-        </div>
-      )
-    },
-    {
-      key: 'end_at' as const,
-      label: 'End Date',
-      render: (date: string) => (
-        <div className="text-sm text-gray-500">
-          {new Date(date).toLocaleDateString()}
-        </div>
-      )
+  const updateStatus = async (id: string, nextStatus: string) => {
+    try {
+      await adminApi.updateSubscription(id, { status: nextStatus })
+      toast.success("Subscription updated")
+      load(skip)
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Unable to update subscription")
     }
-  ]
-
-  const actions = [
-    {
-      label: 'View Details',
-      onClick: (subscription: Subscription) => {
-        toast.info(`Subscription ID: ${subscription.id}`)
-      },
-      variant: "outline" as const,
-      icon: <Eye className="h-4 w-4" />
-    }
-  ]
-
-  const statusOptions = [
-    { value: "", label: "All Statuses" },
-    { value: "ACTIVE", label: "Active" },
-    { value: "PENDING", label: "Pending" },
-    { value: "EXPIRED", label: "Expired" },
-    { value: "CANCELLED", label: "Cancelled" }
-  ]
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Subscription Management</h1>
-          <p className="text-muted-foreground">View and manage user subscriptions</p>
+          <h1 className="text-3xl font-semibold text-white">Subscriptions</h1>
+          <p className="text-sm text-purple-200">Review and manage user subscriptions.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={handleRefresh} disabled={loading}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
-        </div>
+        <Button onClick={() => load(skip)} variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10"><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>
       </div>
 
-      {/* Filters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Filter className="h-5 w-5" />
-            Filters
-          </CardTitle>
-          <CardDescription>Filter subscriptions by status</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-4">
-            <div className="flex items-center gap-2">
-              <Search className="h-4 w-4 text-gray-500" />
-              <Input
-                placeholder="Search by user ID..."
-                value={search}
-                onChange={(e) => handleSearch(e.target.value)}
-                className="w-64"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-gray-500" />
-              <select
-                value={statusFilter}
-                onChange={(e) => handleStatusFilter(e.target.value)}
-                className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {statusOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
+      <div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl shadow-xl">
+        <div className="mb-4 flex flex-wrap gap-3">
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by user or plan" className="max-w-sm border-white/10 bg-white/5 text-white placeholder:text-purple-200/70" />
+          <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-white">
+            <option value="">All statuses</option>
+            <option value="ACTIVE">ACTIVE</option>
+            <option value="TRIALING">TRIALING</option>
+            <option value="CANCELED">CANCELED</option>
+            <option value="EXPIRED">EXPIRED</option>
+          </select>
+          <Button onClick={() => load(0)} className="bg-gradient-to-r from-fuchsia-500 to-blue-500 text-white">Apply</Button>
+        </div>
+
+        {error ? <div className="rounded-2xl border border-rose-400/20 bg-rose-500/10 p-5 text-rose-200">{error}</div> : (
+          <div className="overflow-auto rounded-2xl border border-white/10 bg-slate-950/30">
+            <table className="w-full min-w-[980px] text-sm text-white">
+              <thead>
+                <tr className="border-b border-white/10 text-left text-purple-200">
+                  <th className="px-3 py-3">User</th>
+                  <th className="px-3 py-3">Plan</th>
+                  <th className="px-3 py-3">Period</th>
+                  <th className="px-3 py-3">Amount</th>
+                  <th className="px-3 py-3">Credits</th>
+                  <th className="px-3 py-3">Status</th>
+                  <th className="px-3 py-3">Start</th>
+                  <th className="px-3 py-3">End</th>
+                  <th className="px-3 py-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? <tr><td className="px-3 py-8 text-purple-200" colSpan={9}>Loading subscriptions...</td></tr> : items.length === 0 ? <tr><td className="px-3 py-8 text-center text-purple-200" colSpan={9}>No subscriptions found</td></tr> : items.map((item) => (
+                  <tr key={item.id} className="border-b border-white/5">
+                    <td className="px-3 py-3"><div>{item.user_name || item.user_email || '—'}</div><div className="text-xs text-purple-200">{item.user_email || ''}</div></td>
+                    <td className="px-3 py-3"><span className="rounded-full bg-purple-500/20 px-3 py-1 text-xs uppercase text-purple-200">{item.plan_code || item.plan || 'free'}</span></td>
+                    <td className="px-3 py-3">{item.billing_period}</td>
+                    <td className="px-3 py-3">₹{item.price_inr || item.amount || 0}</td>
+                    <td className="px-3 py-3">{item.included_credits}</td>
+                    <td className="px-3 py-3"><Badge className="bg-white/10 text-white">{item.status}</Badge></td>
+                    <td className="px-3 py-3">{new Date(item.start_at || item.start_date || '').toLocaleDateString()}</td>
+                    <td className="px-3 py-3">{new Date(item.end_at || item.end_date || '').toLocaleDateString()}</td>
+                    <td className="px-3 py-3">
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => updateStatus(item.id, "CANCELED")}>Cancel</Button>
+                        <Button size="sm" className="bg-gradient-to-r from-fuchsia-500 to-blue-500 text-white" onClick={() => updateStatus(item.id, "ACTIVE")}>Activate</Button>
+                      </div>
+                    </td>
+                  </tr>
                 ))}
-              </select>
-            </div>
+              </tbody>
+            </table>
           </div>
-        </CardContent>
-      </Card>
+        )}
 
-      <AdminTable<Subscription>
-        title="Subscriptions"
-        columns={columns}
-        data={subscriptions}
-        loading={loading}
-        error={error}
-        onRefresh={handleRefresh}
-        onSearch={handleSearch}
-        searchPlaceholder="Search subscriptions..."
-        emptyMessage="No subscriptions found"
-        actions={actions}
-      />
-
-      {/* Pagination */}
-      {total > 0 && (
-        <div className="flex items-center justify-between">
-          <div className="text-sm text-gray-500">
-            Showing {skip + 1} - {Math.min(skip + limit, total)} of {total} subscriptions
-          </div>
+        <div className="mt-4 flex items-center justify-between text-sm text-purple-200">
+          <div>Showing {items.length} of {total}</div>
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => fetchSubscriptions(Math.max(0, skip - limit))}
-              disabled={skip === 0}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => fetchSubscriptions(skip + limit)}
-              disabled={skip + limit >= total}
-            >
-              Next
-            </Button>
+            <Button disabled={skip === 0} onClick={() => load(Math.max(0, skip - 20))} variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10">Previous</Button>
+            <Button disabled={skip + 20 >= total} onClick={() => load(skip + 20)} variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10">Next</Button>
           </div>
         </div>
-      )}
+      </div>
     </div>
   )
 }

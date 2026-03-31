@@ -1,196 +1,145 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import { Bell, ChevronDown, LogOut, Settings, User as UserIcon } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-
-// Import icons directly from lucide-react
-import { 
-  Bell, 
-  User, 
-  ChevronDown, 
-  Settings, 
-  X, 
-  Users, 
-  Database, 
-  Shield, 
-  DollarSign, 
-  TrendingUp 
-} from "lucide-react";
 
 interface TopbarProps {
   pageTitle?: string;
 }
 
-export default React.memo(function Topbar({ pageTitle }: TopbarProps) {
+function getCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+export default function Topbar({ pageTitle }: TopbarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isUserOpen, setIsUserOpen] = useState(false);
-  
-  // Refs for dropdowns to handle outside clicks
-  const notificationRef = useRef<HTMLDivElement>(null);
+  const [profile, setProfile] = useState({
+    name: "User",
+    email: "",
+    role: pathname.startsWith("/admin") ? "admin" : "user",
+  });
   const userRef = useRef<HTMLDivElement>(null);
 
-  // Handle outside clicks to close dropdowns
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
-        setIsNotificationOpen(false);
+    const syncProfile = () => {
+      const storedUser = typeof window !== "undefined" ? localStorage.getItem("currentUser") : null;
+      let nextProfile: any = null;
+      if (storedUser) {
+        try {
+          nextProfile = JSON.parse(storedUser);
+        } catch {}
       }
+
+      const email = nextProfile?.email || getCookie("loggedinuseremail") || getCookie("loggedinusername") || "";
+      const name =
+        nextProfile?.full_name ||
+        nextProfile?.fullname ||
+        getCookie("loggedinuserfullname") ||
+        email?.split("@")[0] ||
+        (pathname.startsWith("/admin") ? "Admin User" : "User");
+      const role = String(nextProfile?.role || getCookie("loggedinuserroleid") || getCookie("loggedinuserrole") || (pathname.startsWith("/admin") ? "admin" : "user")).toLowerCase();
+      setProfile({ name, email, role });
+    };
+
+    syncProfile();
+    window.addEventListener("storage", syncProfile);
+    const handleClickOutside = (event: MouseEvent) => {
       if (userRef.current && !userRef.current.contains(event.target as Node)) {
         setIsUserOpen(false);
       }
-    }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      window.removeEventListener("storage", syncProfile);
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [pathname]);
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  // Extract page title from pathname if not provided
-  const getPageTitle = () => {
+  const title = useMemo(() => {
     if (pageTitle) return pageTitle;
-    
-    const pathSegments = pathname.split('/').filter(Boolean);
-    const lastSegment = pathSegments[pathSegments.length - 1];
-    
-    if (!lastSegment) return "Dashboard";
-    
-    return lastSegment
-      .split('-')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ');
-  };
+    const segment = pathname.split("/").filter(Boolean).pop() || "dashboard";
+    return segment
+      .split("-")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
+  }, [pageTitle, pathname]);
 
-  const title = getPageTitle();
-
-  // Calculate display values from user context
-  const displayName = "User";
-  const userEmail = "";
-  const userRole = "User";
-  const avatarLetter = displayName.charAt(0).toUpperCase();
-
-  const handleProfileClick = () => {
-    setIsUserOpen(false);
-    router.push("/profile");
-  };
+  const isAdmin = pathname.startsWith("/admin") || profile.role === "admin" || profile.role === "1";
+  const profileHref = isAdmin ? "/admin/profile" : "/profile";
+  const settingsHref = isAdmin ? "/admin/settings" : "/settings";
+  const avatar = profile.name.charAt(0).toUpperCase();
 
   const handleLogout = () => {
-    // Remove all authentication cookies
-    document.cookie = 'accessToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
-    document.cookie = 'loggedinuserid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
-    document.cookie = 'loggedinusername=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
-    document.cookie = 'loggedinuserfullname=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
-    document.cookie = 'loggedinuserroleid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
-    document.cookie = 'loggedinuseremail=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
-    document.cookie = 'loggedinuserrole=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict';
-
-    // Remove localStorage token
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('currentUser');
-
-    // Navigate to login
-    router.push('/auth/login');
+    [
+      "accessToken",
+      "loggedinuserid",
+      "loggedinusername",
+      "loggedinuserfullname",
+      "loggedinuserroleid",
+      "loggedinuseremail",
+      "loggedinuserrole",
+    ].forEach((cookieName) => {
+      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict`;
+    });
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("currentUser");
+    router.push("/auth/login");
   };
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border/60 bg-card/40 backdrop-blur-xl shadow-lg shadow-purple-500/20">
-      <div className="flex items-center justify-between px-6 py-4">
-        {/* Left side: Page title */}
-        <div className="flex items-center gap-6">
-          <h1 className="text-2xl font-bold text-foreground tracking-tight">
-            {title}
-          </h1>
+    <header className="sticky top-0 z-30 border-b border-white/10 bg-[#1f123f]/80 backdrop-blur-xl">
+      <div className="flex items-center justify-between px-6 py-5">
+        <div>
+          <h1 className="text-3xl font-bold text-white">{title}</h1>
+          <p className="mt-1 text-sm text-purple-100/80">
+            {isAdmin ? "System management and business controls" : "Manage your trading workspace"}
+          </p>
         </div>
 
-        {/* Right side: Actions and user menu */}
-        <div className="flex items-center gap-4">
-          {/* Notifications */}
-          <div className="relative">
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-              className="relative border-border/60 text-foreground hover:bg-card/60 hover:border-border/80 transition-all duration-200"
-            >
-              <Bell className="w-5 h-5 text-foreground" />
-              <span className="absolute -top-1 -right-1 h-6 w-6 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-medium shadow-lg">
-                0
-              </span>
-            </Button>
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" className="relative rounded-2xl border border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white">
+            <Bell className="h-5 w-5" />
+            <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-fuchsia-400" />
+          </Button>
 
-            {isNotificationOpen && (
-              <div className="absolute right-0 mt-2 w-80 bg-card/80 backdrop-blur-xl border border-border/60 rounded-lg shadow-xl z-50">
-                <div className="p-3 border-b border-border/60 flex items-center justify-between">
-                  <h3 className="font-semibold text-foreground">Notifications</h3>
-                  <button
-                    onClick={() => setIsNotificationOpen(false)}
-                    className="text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                
-                <div className="max-h-64 overflow-y-auto">
-                  <div className="p-4 text-center text-muted-foreground">
-                    No notifications
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* User Menu */}
-          <div className="relative">
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => setIsUserOpen(!isUserOpen)}
-              className="gap-3 text-foreground hover:bg-card/60 transition-all duration-200"
+          <div className="relative" ref={userRef}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsUserOpen((v) => !v)}
+              className="h-auto gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white hover:bg-white/10 hover:text-white"
             >
-              <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full flex items-center justify-center shadow-lg border-2 border-white/20">
-                <span className="text-white font-semibold text-sm">{avatarLetter}</span>
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-fuchsia-500 to-blue-500 font-semibold text-white shadow-lg">
+                {avatar}
               </div>
-              <div className="hidden md:block text-left">
-                <div className="text-foreground font-medium text-sm">{displayName}</div>
-                <div className="text-xs text-muted-foreground">{userRole}</div>
+              <div className="hidden text-left md:block">
+                <div className="max-w-[160px] truncate text-sm font-semibold text-white">{profile.name}</div>
+                <div className="text-xs uppercase tracking-wide text-purple-100/70">{isAdmin ? "Admin" : "User"}</div>
               </div>
-              <ChevronDown className="w-4 h-4 text-muted-foreground" />
+              <ChevronDown className="h-4 w-4 text-purple-100/80" />
             </Button>
 
             {isUserOpen && (
-              <div className="absolute right-0 mt-2 w-64 bg-card/80 backdrop-blur-xl border border-border/60 rounded-lg shadow-xl z-50">
-                <div className="p-4 border-b border-border/60">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full flex items-center justify-center shadow-lg border-2 border-white/20">
-                      <span className="text-white font-semibold text-base">{avatarLetter}</span>
-                    </div>
-                    <div>
-                      <p className="font-semibold text-foreground text-sm">{displayName}</p>
-                      <p className="text-xs text-muted-foreground">{userEmail}</p>
-                      <span className="inline-block mt-1 px-2 py-1 bg-primary/10 text-primary text-xs rounded-md font-medium">{userRole}</span>
-                    </div>
-                  </div>
+              <div className="absolute right-0 mt-3 w-72 overflow-hidden rounded-2xl border border-white/10 bg-[#08031f]/95 shadow-2xl shadow-purple-950/50 backdrop-blur-2xl">
+                <div className="border-b border-white/10 p-4">
+                  <div className="text-sm font-semibold text-white">{profile.name}</div>
+                  <div className="truncate text-xs text-purple-100/70">{profile.email || "No email available"}</div>
                 </div>
-                <div className="p-2 space-y-1">
-                  <button 
-                    onClick={handleProfileClick}
-                    className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-primary/10 hover:text-foreground rounded-md transition-colors flex items-center gap-2"
-                  >
-                    <User className="w-4 h-4" />
-                    My Profile
+                <div className="p-2">
+                  <button onClick={() => { setIsUserOpen(false); router.push(profileHref); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-white hover:bg-white/10">
+                    <UserIcon className="h-4 w-4" /> Profile
                   </button>
-                  <button className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-primary/10 hover:text-foreground rounded-md transition-colors flex items-center gap-2">
-                    <Settings className="w-4 h-4" />
-                    Settings
+                  <button onClick={() => { setIsUserOpen(false); router.push(settingsHref); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-white hover:bg-white/10">
+                    <Settings className="h-4 w-4" /> Settings
                   </button>
-                  <hr className="border-border/60 my-1" />
-                  <button 
-                    onClick={handleLogout}
-                    className="w-full text-left px-3 py-2 text-sm text-destructive hover:bg-destructive/10 hover:text-destructive rounded-md transition-colors flex items-center gap-2"
-                  >
-                    <span className="w-4 h-4" />
-                    Sign Out
+                  <button onClick={handleLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-rose-300 hover:bg-rose-500/10">
+                    <LogOut className="h-4 w-4" /> Sign out
                   </button>
                 </div>
               </div>
@@ -200,4 +149,4 @@ export default React.memo(function Topbar({ pageTitle }: TopbarProps) {
       </div>
     </header>
   );
-});
+}

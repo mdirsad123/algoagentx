@@ -5,13 +5,11 @@ import AuthGate from '@/components/guards/AuthGate'
 export default function UserLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthGate>
-      <div className="flex min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900">
+      <div className="min-h-screen bg-gradient-to-br from-[#120826] via-[#4a178f] to-[#1a2448]">
         <Sidebar />
-        <div className="flex-1 flex flex-col ml-64">
+        <div className="ml-[88px] flex min-h-screen flex-1 flex-col xl:ml-64">
           <Topbar />
-          <main className="flex-1 p-6 overflow-y-auto">
-            {children}
-          </main>
+          <main className="flex-1 px-4 py-6 md:px-6">{children}</main>
         </div>
       </div>
     </AuthGate>

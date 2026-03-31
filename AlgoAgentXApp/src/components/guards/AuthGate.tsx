@@ -11,8 +11,8 @@ type Props = {
 
 function getCookie(name: string): string | null {
   if (typeof document === 'undefined') return null
-  const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'))
-  return m ? decodeURIComponent(m[2]) : null
+  const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]+)'))
+  return m ? decodeURIComponent(m[1]) : null
 }
 
 export default function AuthGate({ children, requireAdmin = false }: Props) {
@@ -27,10 +27,16 @@ export default function AuthGate({ children, requireAdmin = false }: Props) {
       return
     }
 
+    const storedUser = typeof window !== 'undefined' ? localStorage.getItem('currentUser') : null
+    let storedRole = ''
+    if (storedUser) {
+      try {
+        storedRole = JSON.parse(storedUser)?.role || ''
+      } catch {}
+    }
+
     if (requireAdmin) {
-      const role = getCookie('loggedinuserroleid') || ''
-      // backend seems to return role string (e.g., 'admin') in user.role cookie in some flows.
-      // accept either 'admin' or '1' as admin.
+      const role = (getCookie('loggedinuserroleid') || getCookie('loggedinuserrole') || storedRole || '').toLowerCase()
       const isAdmin = role === 'admin' || role === '1'
       if (!isAdmin) {
         router.replace('/dashboard')
@@ -43,10 +49,10 @@ export default function AuthGate({ children, requireAdmin = false }: Props) {
 
   if (!ready) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <LoadingSkeleton className="h-12 w-48 mx-auto rounded" />
-          <LoadingSkeleton className="h-4 w-64 mx-auto rounded" />
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#120826] via-[#4a178f] to-[#1a2448]">
+        <div className="space-y-4 text-center">
+          <LoadingSkeleton className="mx-auto h-12 w-48 rounded" />
+          <LoadingSkeleton className="mx-auto h-4 w-64 rounded" />
           <div className="flex justify-center">
             <LoadingSkeleton className="h-8 w-8 rounded-full animate-spin border-2 border-gray-300 border-t-purple-600" />
           </div>

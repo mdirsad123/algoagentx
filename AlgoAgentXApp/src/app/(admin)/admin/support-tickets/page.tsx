@@ -72,23 +72,28 @@ export default function AdminSupportTicketsPage() {
   const fetchTicketDetails = async (ticketId: string) => {
     try {
       setMessagesLoading(true)
-      // For now, we'll use the ticket data directly since the API doesn't have a separate endpoint for messages
-      // In a real implementation, you would fetch messages from: /api/v1/admin/support-tickets/{id}/messages
       const ticket = tickets.find(t => t.id === ticketId)
       if (ticket) {
         setSelectedTicket(ticket)
-        // Create mock messages for demonstration
-        const mockMessages: TicketMessage[] = [
+        const mappedMessages: TicketMessage[] = [
           {
-            id: "1",
+            id: `${ticket.id}-root`,
             ticket_id: ticket.id,
             sender_type: "user",
             sender_name: ticket.user_email,
             message: ticket.message,
             created_at: ticket.created_at
-          }
+          },
+          ...((ticket as any).replies || []).map((reply: any) => ({
+            id: reply.id,
+            ticket_id: ticket.id,
+            sender_type: reply.user_id ? "user" : "admin",
+            sender_name: reply.user_id ? ticket.user_email : "Support Team",
+            message: reply.message,
+            created_at: reply.created_at
+          }))
         ]
-        setMessages(mockMessages)
+        setMessages(mappedMessages)
       }
     } catch (err) {
       console.error("Error fetching ticket details:", err)
