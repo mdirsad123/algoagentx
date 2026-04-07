@@ -80,7 +80,7 @@ export default function CreditsWalletPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const router = useRouter();
-
+  
   useEffect(() => {
     fetchInitialData();
   }, []);
@@ -160,7 +160,7 @@ export default function CreditsWalletPage() {
 
             if (verifyData.success) {
               // Refresh balance and transactions
-              await fetchInitialData();
+          await fetchInitialData();
               
               // Show success message
               alert(`Success! ${verifyData.credits_granted} credits added to your wallet.`);
@@ -188,8 +188,8 @@ export default function CreditsWalletPage() {
       const rzp = new (window as any).Razorpay(options);
       rzp.open();
     } catch (err: any) {
-      console.error('Error creating order:', err);
-      setError('Failed to create payment order. Please try again.');
+      console.error('Error processing payment:', err);
+      setError('Failed to process payment. Please try again.');
     } finally {
       setIsProcessing(false);
     }
@@ -254,8 +254,8 @@ export default function CreditsWalletPage() {
     return (
       <>
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          <span className="ml-2 text-gray-600">Loading wallet...</span>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+          <span className="ml-2 text-purple-100/60">Loading wallet...</span>
         </div>
       </>
     );
@@ -265,119 +265,119 @@ export default function CreditsWalletPage() {
     <RazorpayScript>
       <>
         <div className="space-y-6">
-          {/* Header Section */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Current Balance Card */}
-            <Card className="lg:col-span-2 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 border-blue-500/30">
-              <CardHeader className="bg-gradient-to-br from-blue-900/50 to-blue-800/50 border-b border-blue-500/30">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-white text-2xl">Current Balance</CardTitle>
-                    <CardDescription className="text-blue-200">
-                      Your AlgoAgentX credits
-                    </CardDescription>
-                  </div>
-                  <Wallet className="h-12 w-12 text-blue-300" />
+        {/* Header Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Current Balance Card */}
+          <Card className="lg:col-span-2 hover:shadow-xl hover:shadow-purple-500/20 transition-all duration-300 border-white/20 bg-gradient-to-br from-white/10 to-purple-500/10 backdrop-blur-lg rounded-2xl">
+            <CardHeader className="bg-gradient-to-br from-white/10 to-white/5 border-b border-white/20">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-white text-2xl">Current Balance</CardTitle>
+                  <CardDescription className="text-purple-100/60">
+                    Your AlgoAgentX credits
+                  </CardDescription>
                 </div>
-              </CardHeader>
-              <CardContent className="pt-6">
-                <div className="flex items-end justify-between">
-                  <div>
-                    <div className="text-4xl font-bold text-white">
-                      {balance ? balance.current_balance.toLocaleString() : '0'}
-                    </div>
-                    <div className="text-gray-400 text-sm mt-1">
-                      Credits available
-                    </div>
+                <Wallet className="h-12 w-12 text-purple-300" />
+              </div>
+            </CardHeader>
+            <CardContent className="pt-6">
+              <div className="flex items-end justify-between">
+                <div>
+                  <div className="text-4xl font-bold text-white">
+                    {balance ? balance.current_balance.toLocaleString() : '0'}
                   </div>
-                  <div className="text-right">
-                    <div className="text-sm text-gray-400">Last updated</div>
-                    <div className="text-white font-medium">
-                      {lastUpdated ? lastUpdated.toLocaleTimeString() : 'Never'}
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={fetchBalance}
-                      className="mt-2 border-blue-500/50 text-blue-200 hover:bg-blue-900/20"
-                    >
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                      Refresh
-                    </Button>
+                  <div className="text-purple-100/60 text-sm mt-1">
+                    Credits available
                   </div>
                 </div>
-              </CardContent>
-            </Card>
+                <div className="text-right">
+                  <div className="text-sm text-purple-100/60">Last updated</div>
+                  <div className="text-white font-medium">
+                    {lastUpdated ? lastUpdated.toLocaleTimeString() : 'Never'}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchBalance}
+                    className="mt-2 border-white/20 text-purple-100 hover:bg-white/10 hover:border-purple-400/50"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Refresh
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-            {/* Quick Actions Card */}
-            <Card className="hover:shadow-xl hover:shadow-green-500/10 transition-all duration-300 border-green-500/30">
-              <CardHeader className="bg-gradient-to-br from-green-900/50 to-green-800/50 border-b border-green-500/30">
-                <CardTitle className="text-white">Quick Actions</CardTitle>
-                <CardDescription className="text-green-200">
-                  Top up your credits
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="pt-6 space-y-4">
-                <div className="space-y-2">
-                  <Label className="text-gray-300">Select Top-up Pack</Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {TOP_UP_PACKS.map((pack) => (
-                      <Button
-                        key={pack.credits}
-                        variant={selectedPack?.credits === pack.credits ? "default" : "outline"}
-                        onClick={() => setSelectedPack(pack)}
-                        className={`h-12 ${
-                          selectedPack?.credits === pack.credits 
-                            ? 'bg-green-600 hover:bg-green-700' 
-                            : 'border-green-500/50 text-green-200 hover:bg-green-900/20'
-                        }`}
-                      >
-                        <Plus className="h-4 w-4 mr-2" />
-                        {pack.label}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="custom-amount" className="text-gray-300">
-                    Custom Amount (Credits)
-                  </Label>
-                  <div className="flex space-x-2">
-                    <Input
-                      id="custom-amount"
-                      type="number"
-                      placeholder="Enter custom amount"
-                      value={customAmount}
-                      onChange={(e) => setCustomAmount(e.target.value)}
-                      className="bg-gray-900 border-gray-700 text-white"
-                    />
+          {/* Quick Actions Card */}
+          <Card className="hover:shadow-xl hover:shadow-green-500/20 transition-all duration-300 border-green-500/30 bg-gradient-to-br from-white/10 to-green-500/10 backdrop-blur-lg rounded-2xl">
+            <CardHeader className="bg-gradient-to-br from-green-900/30 to-emerald-900/30 border-b border-green-500/30">
+              <CardTitle className="text-white">Quick Actions</CardTitle>
+              <CardDescription className="text-green-300">
+                Top up your credits
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-4">
+              <div className="space-y-2">
+                <Label className="text-purple-100/60">Select Top-up Pack</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {TOP_UP_PACKS.map((pack) => (
                     <Button
-                      onClick={handleCustomTopUp}
-                      disabled={isProcessing || !customAmount}
-                      className="bg-purple-600 hover:bg-purple-700"
+                      key={pack.credits}
+                      variant={selectedPack?.credits === pack.credits ? "default" : "outline"}
+                      onClick={() => setSelectedPack(pack)}
+                      className={`h-12 ${
+                        selectedPack?.credits === pack.credits 
+                          ? 'bg-gradient-to-r from-green-500 to-emerald-500 shadow-lg' 
+                          : 'border-white/20 text-purple-100 hover:bg-white/10 hover:border-purple-400/50'
+                      }`}
                     >
                       <Plus className="h-4 w-4 mr-2" />
-                      Top Up
+                      {pack.label}
                     </Button>
-                  </div>
+                  ))}
                 </div>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="custom-amount" className="text-purple-100/60">
+                  Custom Amount (Credits)
+                </Label>
+                <div className="flex space-x-2">
+                  <Input
+                    id="custom-amount"
+                    type="number"
+                    placeholder="Enter custom amount"
+                    value={customAmount}
+                    onChange={(e) => setCustomAmount(e.target.value)}
+                    className="bg-white/10 border-white/20 text-white placeholder:text-purple-100/50 focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30"
+                  />
+                  <Button
+                    onClick={handleCustomTopUp}
+                    disabled={isProcessing || !customAmount}
+                    className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Top Up
+                  </Button>
+                </div>
+              </div>
 
-                {selectedPack && (
-                  <div className="flex justify-between items-center p-3 bg-gray-900/50 rounded-lg border border-gray-700">
-                    <span className="text-gray-300">Selected: {selectedPack.credits} credits</span>
-                    <span className="text-green-400 font-bold">{formatCurrency(selectedPack.price)}</span>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+              {selectedPack && (
+                <div className="flex justify-between items-center p-3 bg-gradient-to-br from-white/10 to-purple-500/10 rounded-lg border border-white/20">
+                  <span className="text-purple-100/60">Selected: {selectedPack.credits} credits</span>
+                  <span className="text-green-400 font-bold">{formatCurrency(selectedPack.price)}</span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
           {/* Top-up Section */}
-          <Card className="border-gray-800">
+          <Card className="border-white/20 bg-gradient-to-br from-white/10 to-purple-500/10 backdrop-blur-lg rounded-2xl">
             <CardHeader>
               <CardTitle className="text-white">Top Up Credits</CardTitle>
-              <CardDescription className="text-gray-400">
+              <CardDescription className="text-purple-100/60">
                 Choose a pack or enter custom amount to add credits to your wallet
               </CardDescription>
             </CardHeader>
@@ -388,53 +388,71 @@ export default function CreditsWalletPage() {
                     key={pack.credits}
                     className={`p-4 border-2 rounded-lg cursor-pointer transition-all duration-200 hover:shadow-lg ${
                       selectedPack?.credits === pack.credits
-                        ? 'border-green-500 bg-green-900/20'
-                        : 'border-gray-700 hover:border-gray-600'
+                        ? 'border-purple-400 bg-purple-500/10'
+                        : 'border-white/20 hover:border-purple-400/50'
                     }`}
                     onClick={() => setSelectedPack(pack)}
                   >
                     {pack.popular && (
-                      <span className="inline-block mb-2 px-2 py-1 bg-green-600 text-white text-xs rounded">Popular</span>
+                      <span className="inline-block mb-2 px-2 py-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs rounded shadow-lg">Popular</span>
                     )}
                     <div className="text-2xl font-bold text-white">{pack.credits} Credits</div>
-                    <div className="text-green-400 font-bold text-lg mt-1">{formatCurrency(pack.price)}</div>
-                    <div className="text-gray-400 text-sm mt-1">One-time purchase</div>
+                    <div className="text-purple-400 font-bold text-lg mt-1">{formatCurrency(pack.price)}</div>
+                    <div className="text-purple-100/60 text-sm mt-1">One-time purchase</div>
                   </div>
                 ))}
               </div>
               
-              <div className="mt-6 flex justify-center">
+              <div className="mt-6 flex justify-center space-x-4">
                 <Button
                   onClick={() => selectedPack ? handleTopUp(selectedPack.credits) : null}
                   disabled={isProcessing || !selectedPack}
-                  className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-8 py-3 text-lg"
+                  className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-8 py-3 text-lg shadow-lg shadow-purple-500/30"
                 >
                   <CreditCard className="h-5 w-5 mr-3" />
                   {isProcessing ? 'Processing...' : `Top Up ${selectedPack ? selectedPack.credits : ''} Credits`}
+                </Button>
+                <Button
+                  onClick={async () => {
+                    // Use demo-only mode for testing
+                    const demoProcessor = createPaymentProcessor(true);
+                    await demoProcessor.processCreditPurchase(
+                      10,
+                      (result) => {
+                        alert(result.message);
+                        fetchInitialData();
+                      },
+                      (error) => setError(error)
+                    );
+                  }}
+                  variant="outline"
+                  className="border-white/20 text-purple-100 hover:bg-white/10 hover:border-purple-400/50"
+                >
+                  💫 Test Demo Payment
                 </Button>
               </div>
             </CardContent>
           </Card>
 
           {/* Transaction History */}
-          <Card className="border-gray-800">
+          <Card className="border-white/20 bg-gradient-to-br from-white/10 to-purple-500/10 backdrop-blur-lg rounded-2xl">
             <CardHeader>
               <CardTitle className="text-white">Transaction History</CardTitle>
-              <CardDescription className="text-gray-400">
+              <CardDescription className="text-purple-100/60">
                 Recent credit transactions
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
                 {transactions.length === 0 ? (
-                  <div className="text-center py-8 text-gray-400">
+                  <div className="text-center py-8 text-purple-100/60">
                     No transactions yet. Top up your credits to get started!
                   </div>
                 ) : (
                   transactions.map((transaction) => (
                     <div
                       key={transaction.id}
-                      className="flex items-center justify-between p-4 bg-gray-900/50 rounded-lg border border-gray-700 hover:border-gray-600 transition-colors"
+                      className="flex items-center justify-between p-4 bg-gradient-to-br from-white/10 to-purple-500/10 rounded-lg border border-white/20 hover:border-purple-400/50 transition-all duration-200 hover:shadow-lg hover:shadow-purple-500/20"
                     >
                       <div className="flex items-center space-x-4">
                         {getTransactionIcon(transaction.transaction_type)}
@@ -442,7 +460,7 @@ export default function CreditsWalletPage() {
                           <div className="font-medium text-white">
                             {getTransactionDescription(transaction)}
                           </div>
-                          <div className="text-sm text-gray-400 flex items-center space-x-4">
+                          <div className="text-sm text-purple-100/60 flex items-center space-x-4">
                             <span className="flex items-center">
                               <Calendar className="h-3 w-3 mr-1" />
                               {formatDate(transaction.created_at)}
@@ -467,7 +485,7 @@ export default function CreditsWalletPage() {
                         }`}>
                           {transaction.transaction_type === 'debit' ? '-' : '+'}{transaction.amount}
                         </div>
-                        <div className="text-sm text-gray-400">Balance: {transaction.balance_after}</div>
+                        <div className="text-sm text-purple-100/60">Balance: {transaction.balance_after}</div>
                       </div>
                     </div>
                   ))
@@ -478,7 +496,7 @@ export default function CreditsWalletPage() {
                 <Button
                   variant="outline"
                   onClick={fetchTransactions}
-                  className="border-gray-600 text-gray-300 hover:bg-gray-800"
+                  className="border-white/20 text-purple-100 hover:bg-white/10 hover:border-purple-400/50"
                 >
                   <RefreshCw className="h-4 w-4 mr-2" />
                   Refresh History
@@ -489,7 +507,7 @@ export default function CreditsWalletPage() {
 
           {/* Error Display */}
           {error && (
-            <div className="fixed bottom-4 right-4 bg-red-900/90 border border-red-500 text-red-100 p-4 rounded-lg shadow-lg">
+            <div className="fixed bottom-4 right-4 bg-red-900/90 border border-red-500 text-red-100 p-4 rounded-lg shadow-lg backdrop-blur-lg">
               <div className="flex items-center space-x-2">
                 <AlertCircle className="h-5 w-5" />
                 <span>{error}</span>

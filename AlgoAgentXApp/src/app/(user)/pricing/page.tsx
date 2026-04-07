@@ -49,7 +49,7 @@ export default function PricingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
-
+  
   useEffect(() => {
     fetchPlans();
   }, []);
@@ -100,10 +100,10 @@ export default function PricingPage() {
           description: `${planCode} Plan - ${billingPeriod}`,
           image: '/images/algoagentx_icon.jpeg',
           handler: function (response: any) {
-            // Success callback
+          // Success callback
             console.log('Payment successful:', response);
-            router.push('/profile');
-          },
+          router.push('/profile');
+        },
           prefill: {
             name: '', // Will be filled by Razorpay
             email: '', // Will be filled by Razorpay
@@ -120,7 +120,7 @@ export default function PricingPage() {
 
         const rzp = new (window as any).Razorpay(options);
         rzp.open();
-      }
+        }
     } catch (err: any) {
       console.error('Error creating subscription:', err);
       setError('Failed to create subscription. Please try again.');
@@ -240,10 +240,10 @@ export default function PricingPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-[#1a0f2e] via-[#2a1458] to-[#0f172a] flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-[#4f1d95] via-[#341672] to-[#1f2647] flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500 mx-auto mb-4"></div>
-          <span className="text-gray-400">Loading pricing plans...</span>
+          <span className="text-purple-100/60">Loading pricing plans...</span>
         </div>
       </div>
     );
@@ -251,10 +251,10 @@ export default function PricingPage() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-[#1a0f2e] via-[#2a1458] to-[#0f172a] flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-[#4f1d95] via-[#341672] to-[#1f2647] flex items-center justify-center">
         <div className="text-center">
           <div className="text-red-400 mb-4">{error}</div>
-          <Button onClick={fetchPlans} className="bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600">
+          <Button onClick={fetchPlans} className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 border-0 text-white">
             Try Again
           </Button>
         </div>
@@ -264,12 +264,12 @@ export default function PricingPage() {
 
   return (
     <RazorpayScript>
-      <div className="min-h-screen bg-gradient-to-br from-[#1a0f2e] via-[#2a1458] to-[#0f172a]">
+      <div className="min-h-screen bg-gradient-to-br from-[#4f1d95] via-[#341672] to-[#1f2647]">
         <div className="space-y-8 p-6">
         {/* Header Section */}
         <div className="text-center">
-          <h1 className="text-4xl font-bold text-white mb-4">Choose Your Plan</h1>
-          <p className="text-gray-400 text-lg mb-8">
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-white via-purple-200 to-purple-300 bg-clip-text text-transparent mb-4">Choose Your Plan</h1>
+          <p className="text-purple-100/80 text-lg mb-8">
             Start with our free plan or upgrade to unlock premium features and unlimited trading potential
           </p>
           
@@ -280,8 +280,8 @@ export default function PricingPage() {
               onClick={() => setBillingPeriod('monthly')}
               className={`px-6 ${
                 billingPeriod === 'monthly' 
-                  ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white' 
-                  : 'border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40'
+                  ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg' 
+                  : 'border-white/20 text-purple-100 hover:bg-white/10 hover:border-purple-400/50'
               }`}
             >
               Monthly
@@ -291,8 +291,8 @@ export default function PricingPage() {
               onClick={() => setBillingPeriod('yearly')}
               className={`px-6 ${
                 billingPeriod === 'yearly' 
-                  ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white' 
-                  : 'border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40'
+                  ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg' 
+                  : 'border-white/20 text-purple-100 hover:bg-white/10 hover:border-purple-400/50'
               }`}
             >
               Yearly <span className="text-green-400 ml-2">(Save 20%)</span>
@@ -303,35 +303,35 @@ export default function PricingPage() {
         {/* Pricing Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {/* Free Plan */}
-          <Card className="hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 border-white/10 bg-white/5 backdrop-blur-lg rounded-2xl">
-            <CardHeader className="bg-gradient-to-br from-white/10 to-white/5 border-b border-white/10">
+          <Card className="hover:shadow-xl hover:shadow-purple-500/20 transition-all duration-300 border-white/20 bg-gradient-to-br from-white/10 to-purple-500/10 backdrop-blur-lg rounded-2xl">
+            <CardHeader className="bg-gradient-to-br from-white/10 to-white/5 border-b border-white/20">
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="text-white text-2xl">Free</CardTitle>
-                  <CardDescription className="text-gray-400">Get started</CardDescription>
+                  <CardDescription className="text-purple-100/60">Get started</CardDescription>
                 </div>
-                <Badge variant="secondary" className="bg-white/10 text-gray-300">Basic</Badge>
+                <Badge variant="secondary" className="bg-white/10 text-purple-100 border-white/20">Basic</Badge>
               </div>
             </CardHeader>
             <CardContent className="pt-6">
               <div className="text-4xl font-bold text-white mb-2">
                 {formatPrice(0)}
               </div>
-              <p className="text-gray-400 text-sm mb-6">No credit card required</p>
+              <p className="text-purple-100/60 text-sm mb-6">No credit card required</p>
               
               <div className="space-y-3 mb-6">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Trial Period</span>
+                  <span className="text-purple-100/60">Trial Period</span>
                   <span className="text-green-400 font-medium">7 days</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Included Credits</span>
+                  <span className="text-purple-100/60">Included Credits</span>
                   <span className="text-white font-medium">{formatCredits(100)}</span>
                 </div>
               </div>
 
               <Button 
-                className="w-full bg-gray-600/50 hover:bg-gray-600 text-white mb-4 border-white/20"
+                className="w-full bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white mb-4 border-white/20 shadow-lg shadow-gray-900/30"
                 onClick={() => handleSubscribe('FREE', billingPeriod.toUpperCase())}
               >
                 <Sparkles className="h-4 w-4 mr-2" />
@@ -340,7 +340,7 @@ export default function PricingPage() {
               
               <Button 
                 variant="outline" 
-                className="w-full border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
+                className="w-full border-white/20 text-purple-100 hover:bg-white/10 hover:border-purple-400/50"
                 onClick={() => router.push('/dashboard')}
               >
                 Continue with Credits
@@ -349,37 +349,37 @@ export default function PricingPage() {
           </Card>
 
           {/* Pro Plan */}
-          <Card className="hover:shadow-xl hover:shadow-blue-500/20 transition-all duration-300 border-blue-500/30 relative overflow-hidden bg-white/5 backdrop-blur-lg rounded-2xl">
+          <Card className="hover:shadow-xl hover:shadow-blue-500/30 transition-all duration-300 border-blue-500/30 relative overflow-hidden bg-gradient-to-br from-white/10 to-blue-500/10 backdrop-blur-lg rounded-2xl">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-500"></div>
-            <CardHeader className="bg-gradient-to-br from-blue-900/30 to-purple-900/30 border-b border-blue-500/20">
+            <CardHeader className="bg-gradient-to-br from-blue-900/30 to-purple-900/30 border-b border-blue-500/30">
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="text-white text-2xl">Pro</CardTitle>
                   <CardDescription className="text-blue-300">For serious traders</CardDescription>
                 </div>
-                <Badge className="bg-blue-500 text-white">Popular</Badge>
+                <Badge className="bg-gradient-to-r from-blue-500 to-purple-500 text-white shadow-lg">Popular</Badge>
               </div>
             </CardHeader>
             <CardContent className="pt-6">
               <div className="text-4xl font-bold text-white mb-2">
                 {formatPrice(2999)}
               </div>
-              <p className="text-gray-400 text-sm mb-6">per month</p>
+              <p className="text-purple-100/60 text-sm mb-6">per month</p>
               
               <div className="space-y-3 mb-6">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Included Credits</span>
+                  <span className="text-purple-100/60">Included Credits</span>
                   <span className="text-white font-medium">{formatCredits(5000)}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Best Value</span>
+                  <span className="text-purple-100/60">Best Value</span>
                   <span className="text-green-400 font-medium">Save 20%</span>
                 </div>
               </div>
 
               <Button 
-                className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white mb-4 shadow-lg"
-                onClick={() => handleSubscribe('PRO', billingPeriod.toUpperCase())}
+                className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white mb-4 shadow-lg shadow-purple-500/30"
+                onClick={() => handleSubscribe('PRO', billingPeriod)}
               >
                 <CreditCard className="h-4 w-4 mr-2" />
                 Buy {billingPeriod === 'monthly' ? 'Monthly' : 'Yearly'}
@@ -396,37 +396,37 @@ export default function PricingPage() {
           </Card>
 
           {/* Premium Plan */}
-          <Card className="hover:shadow-xl hover:shadow-green-500/20 transition-all duration-300 border-green-500/30 relative overflow-hidden bg-white/5 backdrop-blur-lg rounded-2xl">
+          <Card className="hover:shadow-xl hover:shadow-green-500/30 transition-all duration-300 border-green-500/30 relative overflow-hidden bg-gradient-to-br from-white/10 to-green-500/10 backdrop-blur-lg rounded-2xl">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-green-500 to-emerald-500"></div>
-            <CardHeader className="bg-gradient-to-br from-green-900/30 to-emerald-900/30 border-b border-green-500/20">
+            <CardHeader className="bg-gradient-to-br from-green-900/30 to-emerald-900/30 border-b border-green-500/30">
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="text-white text-2xl">Premium</CardTitle>
                   <CardDescription className="text-green-300">For professionals</CardDescription>
                 </div>
-                <Badge className="bg-green-500 text-white">Advanced</Badge>
+                <Badge className="bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg">Advanced</Badge>
               </div>
             </CardHeader>
             <CardContent className="pt-6">
               <div className="text-4xl font-bold text-white mb-2">
                 {formatPrice(7999)}
               </div>
-              <p className="text-gray-400 text-sm mb-6">per month</p>
+              <p className="text-purple-100/60 text-sm mb-6">per month</p>
               
               <div className="space-y-3 mb-6">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Included Credits</span>
+                  <span className="text-purple-100/60">Included Credits</span>
                   <span className="text-white font-medium">{formatCredits(15000)}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Priority Support</span>
+                  <span className="text-purple-100/60">Priority Support</span>
                   <span className="text-green-400 font-medium">Included</span>
                 </div>
               </div>
 
               <Button 
-                className="w-full bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white mb-4 shadow-lg"
-                onClick={() => handleSubscribe('PREMIUM', billingPeriod.toUpperCase())}
+                className="w-full bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white mb-4 shadow-lg shadow-green-500/30"
+                onClick={() => handleSubscribe('PREMIUM', billingPeriod)}
               >
                 <Shield className="h-4 w-4 mr-2" />
                 Buy {billingPeriod === 'monthly' ? 'Monthly' : 'Yearly'}
@@ -443,37 +443,37 @@ export default function PricingPage() {
           </Card>
 
           {/* Ultimate Plan */}
-          <Card className="hover:shadow-xl hover:shadow-purple-500/20 transition-all duration-300 border-purple-500/30 relative overflow-hidden bg-white/5 backdrop-blur-lg rounded-2xl">
+          <Card className="hover:shadow-xl hover:shadow-purple-500/30 transition-all duration-300 border-purple-500/30 relative overflow-hidden bg-gradient-to-br from-white/10 to-purple-500/10 backdrop-blur-lg rounded-2xl">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-pink-500"></div>
-            <CardHeader className="bg-gradient-to-br from-purple-900/30 to-pink-900/30 border-b border-purple-500/20">
+            <CardHeader className="bg-gradient-to-br from-purple-900/30 to-pink-900/30 border-b border-purple-500/30">
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="text-white text-2xl">Ultimate</CardTitle>
                   <CardDescription className="text-purple-300">For institutions</CardDescription>
                 </div>
-                <Badge className="bg-purple-500 text-white">Enterprise</Badge>
+                <Badge className="bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg">Enterprise</Badge>
               </div>
             </CardHeader>
             <CardContent className="pt-6">
               <div className="text-4xl font-bold text-white mb-2">
                 {formatPrice(19999)}
               </div>
-              <p className="text-gray-400 text-sm mb-6">per month</p>
+              <p className="text-purple-100/60 text-sm mb-6">per month</p>
               
               <div className="space-y-3 mb-6">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Included Credits</span>
+                  <span className="text-purple-100/60">Included Credits</span>
                   <span className="text-white font-medium">{formatCredits(50000)}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Dedicated Manager</span>
+                  <span className="text-purple-100/60">Dedicated Manager</span>
                   <span className="text-purple-400 font-medium">Included</span>
                 </div>
               </div>
 
               <Button 
-                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white mb-4 shadow-lg"
-                onClick={() => handleSubscribe('ULTIMATE', billingPeriod.toUpperCase())}
+                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white mb-4 shadow-lg shadow-purple-500/40"
+                onClick={() => handleSubscribe('ULTIMATE', billingPeriod)}
               >
                 <Crown className="h-4 w-4 mr-2" />
                 Buy {billingPeriod === 'monthly' ? 'Monthly' : 'Yearly'}
@@ -491,10 +491,10 @@ export default function PricingPage() {
         </div>
 
         {/* Feature Comparison Table */}
-        <Card className="border-white/10 bg-white/5 backdrop-blur-lg rounded-2xl">
+        <Card className="border-white/20 bg-gradient-to-br from-white/10 to-purple-500/10 backdrop-blur-lg rounded-2xl">
           <CardHeader>
             <CardTitle className="text-white">Feature Comparison</CardTitle>
-            <CardDescription className="text-gray-400">
+            <CardDescription className="text-purple-100/60">
               Compare all features across our plans
             </CardDescription>
           </CardHeader>
@@ -502,17 +502,17 @@ export default function PricingPage() {
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-white/10">
-                    <th className="text-left text-gray-400 py-3 px-4">Features</th>
-                    <th className="text-center text-gray-400 py-3 px-4">Free</th>
-                    <th className="text-center text-gray-400 py-3 px-4">Pro</th>
-                    <th className="text-center text-gray-400 py-3 px-4">Premium</th>
-                    <th className="text-center text-gray-400 py-3 px-4">Ultimate</th>
+                  <tr className="border-b border-white/20">
+                    <th className="text-left text-purple-100/60 py-3 px-4">Features</th>
+                    <th className="text-center text-purple-100/60 py-3 px-4">Free</th>
+                    <th className="text-center text-purple-100/60 py-3 px-4">Pro</th>
+                    <th className="text-center text-purple-100/60 py-3 px-4">Premium</th>
+                    <th className="text-center text-purple-100/60 py-3 px-4">Ultimate</th>
                   </tr>
                 </thead>
                 <tbody>
                   {features.map((feature, index) => (
-                    <tr key={index} className="border-b border-white/5">
+                    <tr key={index} className="border-b border-white/10">
                       <td className="py-4 px-4 text-white font-medium">{feature.name}</td>
                       <td className="py-4 px-4 text-center">
                         {renderFeatureValue(getFeatureValue(feature, 'FREE'))}
@@ -535,40 +535,40 @@ export default function PricingPage() {
         </Card>
 
         {/* Credit-Only Section */}
-        <Card className="border-white/10 bg-gradient-to-r from-blue-900/30 to-purple-900/30 backdrop-blur-lg rounded-2xl">
+        <Card className="border-white/20 bg-gradient-to-br from-white/10 to-purple-500/10 backdrop-blur-lg rounded-2xl">
           <CardHeader>
             <CardTitle className="text-white flex items-center">
               <CreditCard className="h-6 w-6 mr-2 text-purple-400" />
               Credit-Only Option
             </CardTitle>
-            <CardDescription className="text-gray-400">
+            <CardDescription className="text-purple-100/60">
               Prefer to pay per usage? Buy credits and pay only for what you use.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="text-center p-6 bg-white/5 rounded-xl border border-white/10 hover:border-purple-500/30 transition-all duration-300">
+              <div className="text-center p-6 bg-gradient-to-br from-white/10 to-blue-500/10 rounded-xl border border-white/20 hover:border-purple-400/50 transition-all duration-300 hover:shadow-lg hover:shadow-purple-500/20">
                 <div className="text-3xl font-bold text-blue-400 mb-2">₹100</div>
                 <div className="text-gray-400 mb-4">100 Credits</div>
                 <Button variant="outline" className="border-blue-500/30 text-blue-300 hover:bg-blue-900/30 hover:border-blue-500/50">
                   Buy Now
-                </Button>
-              </div>
+                  </Button>
+                </div>
               <div className="text-center p-6 bg-white/5 rounded-xl border border-white/10 hover:border-green-500/30 transition-all duration-300">
                 <div className="text-3xl font-bold text-green-400 mb-2">₹500</div>
                 <div className="text-gray-400 mb-4">600 Credits</div>
                 <Button variant="outline" className="border-green-500/30 text-green-300 hover:bg-green-900/30 hover:border-green-500/50">
                   Buy Now
-                </Button>
-              </div>
+                  </Button>
+                </div>
               <div className="text-center p-6 bg-white/5 rounded-xl border border-white/10 hover:border-purple-500/30 transition-all duration-300">
                 <div className="text-3xl font-bold text-purple-400 mb-2">₹2000</div>
                 <div className="text-gray-400 mb-4">2500 Credits</div>
                 <Button variant="outline" className="border-purple-500/30 text-purple-300 hover:bg-purple-900/30 hover:border-purple-500/50">
                   Buy Now
-                </Button>
+                  </Button>
+                </div>
               </div>
-            </div>
             <div className="mt-4 text-sm text-gray-400 text-center">
               Credits never expire and can be used for backtests, AI screener runs, and other premium features.
             </div>

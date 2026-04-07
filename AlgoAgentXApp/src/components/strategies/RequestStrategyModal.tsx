@@ -296,14 +296,22 @@ export function RequestStrategyModal({
 
   return (
     <Modal open={isOpen} onOpenChange={handleModalClose}>
-      <ModalContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-card/95 backdrop-blur-xl border border-border/50">
-        <ModalHeader className="border-b border-border/50 pb-4">
-          <ModalTitle className="text-xl font-semibold bg-gradient-to-r from-white via-purple-200 to-purple-300 bg-clip-text text-transparent">
-            Request Custom Strategy
-          </ModalTitle>
-          <p className="text-sm text-muted-foreground mt-1">
-            Fill out the form below to request a custom trading strategy
-          </p>
+        <ModalContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-gradient-to-br from-[#4f1d95]/95 via-[#341672]/95 to-[#1f2647]/95 backdrop-blur-xl border border-white/20 shadow-2xl shadow-purple-950/50">
+        <ModalHeader className="border-b border-white/20 pb-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <ModalTitle className="text-xl font-semibold bg-gradient-to-r from-white via-purple-200 to-purple-300 bg-clip-text text-transparent">
+                Request Custom Strategy
+              </ModalTitle>
+              <p className="text-sm text-purple-100/80 mt-1">
+                Fill out the form below to request a custom trading strategy
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="h-3 w-3 rounded-full bg-green-400/80 shadow-lg shadow-green-400/30"></div>
+              <span className="text-xs text-purple-100/60">Live Support</span>
+            </div>
+          </div>
         </ModalHeader>
 
         <form onSubmit={handleSubmit}>
@@ -323,8 +331,8 @@ export function RequestStrategyModal({
                   value={formData.strategy_name}
                   onChange={handleInputChange}
                   placeholder="e.g., My Awesome Momentum Strategy"
-                  className={`bg-card/50 border-border/50 ${
-                    formErrors.strategy_name ? "border-red-500" : ""
+                  className={`bg-white/10 border-white/20 text-white placeholder:text-purple-100/50 focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30 ${
+                    formErrors.strategy_name ? "border-red-400" : ""
                   }`}
                 />
                 {formErrors.strategy_name && (
@@ -344,8 +352,8 @@ export function RequestStrategyModal({
                     }
                   >
                     <SelectTrigger
-                      className={`bg-card/50 border-border/50 ${
-                        formErrors.trading_style ? "border-red-500" : ""
+                      className={`bg-white/10 border-white/20 text-white focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30 ${
+                        formErrors.trading_style ? "border-red-400" : ""
                       }`}
                     >
                       <SelectValue placeholder="Select style" />
@@ -376,8 +384,8 @@ export function RequestStrategyModal({
                     }
                   >
                     <SelectTrigger
-                      className={`bg-card/50 border-border/50 ${
-                        formErrors.risk_level ? "border-red-500" : ""
+                      className={`bg-white/10 border-white/20 text-white focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30 ${
+                        formErrors.risk_level ? "border-red-400" : ""
                       }`}
                     >
                       <SelectValue placeholder="Select risk" />
@@ -413,8 +421,8 @@ export function RequestStrategyModal({
                   onChange={handleInputChange}
                   placeholder="Describe your entry conditions (e.g., RSI crosses above 30, price above EMA 50, etc.)"
                   rows={4}
-                  className={`bg-card/50 border-border/50 ${
-                    formErrors.entry_logic ? "border-red-500" : ""
+                  className={`bg-white/10 border-white/20 text-white placeholder:text-purple-100/50 focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30 ${
+                    formErrors.entry_logic ? "border-red-400" : ""
                   }`}
                 />
                 {formErrors.entry_logic && (
@@ -432,8 +440,8 @@ export function RequestStrategyModal({
                   onChange={handleInputChange}
                   placeholder="Describe your exit conditions (e.g., RSI crosses below 70, trailing stop loss, etc.)"
                   rows={4}
-                  className={`bg-card/50 border-border/50 ${
-                    formErrors.exit_logic ? "border-red-500" : ""
+                  className={`bg-white/10 border-white/20 text-white placeholder:text-purple-100/50 focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30 ${
+                    formErrors.exit_logic ? "border-red-400" : ""
                   }`}
                 />
                 {formErrors.exit_logic && (
@@ -453,8 +461,8 @@ export function RequestStrategyModal({
                     }
                   >
                     <SelectTrigger
-                      className={`bg-card/50 border-border/50 ${
-                        formErrors.timeframe ? "border-red-500" : ""
+                      className={`bg-white/10 border-white/20 text-white focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30 ${
+                        formErrors.timeframe ? "border-red-400" : ""
                       }`}
                     >
                       <SelectValue placeholder="Select timeframe" />
@@ -483,8 +491,8 @@ export function RequestStrategyModal({
                     }
                   >
                     <SelectTrigger
-                      className={`bg-card/50 border-border/50 ${
-                        formErrors.instrument ? "border-red-500" : ""
+                      className={`bg-white/10 border-white/20 text-white focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30 ${
+                        formErrors.instrument ? "border-red-400" : ""
                       }`}
                     >
                       <SelectValue placeholder="Select instrument" />
@@ -513,7 +521,7 @@ export function RequestStrategyModal({
                 {APPROACHES.map((approach) => (
                   <div
                     key={approach.value}
-                    className="flex items-center space-x-3 p-3 rounded-lg bg-card/30 border border-border/30 hover:border-border/50 transition-colors cursor-pointer"
+                    className="flex items-center space-x-3 p-3 rounded-lg bg-gradient-to-r from-white/10 to-purple-500/10 border border-white/20 hover:border-purple-400/50 transition-all duration-200 cursor-pointer hover:shadow-lg hover:shadow-purple-500/20"
                     onClick={() => handleApproachToggle(approach.value)}
                   >
                     <Checkbox
@@ -544,10 +552,10 @@ export function RequestStrategyModal({
                       key={indicator.value}
                       type="button"
                       onClick={() => handleIndicatorToggle(indicator.value)}
-                      className={`px-3 py-1.5 rounded-full text-sm transition-all duration-200 ${
+                    className={`px-3 py-1.5 rounded-full text-sm transition-all duration-200 ${
                         formData.indicators.includes(indicator.value)
-                          ? "bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-md"
-                          : "bg-card/30 text-purple-200 border border-border/30 hover:border-border/50"
+                          ? "bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/30"
+                          : "bg-white/10 text-purple-100 border border-white/20 hover:border-purple-400/50 hover:bg-white/20"
                       }`}
                     >
                       {indicator.label}
@@ -568,7 +576,7 @@ export function RequestStrategyModal({
                   value={formData.custom_indicators}
                   onChange={handleInputChange}
                   placeholder="e.g., Supertrend, ADX (comma separated)"
-                  className="bg-card/50 border-border/50"
+                  className="bg-white/10 border-white/20 text-white placeholder:text-purple-100/50 focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30"
                 />
               </div>
             </div>
@@ -578,24 +586,24 @@ export function RequestStrategyModal({
               <label className="text-sm text-purple-200">
                 Additional Notes / Special Requirements
               </label>
-              <Textarea
-                name="notes"
-                value={formData.notes}
-                onChange={handleInputChange}
-                placeholder="Any additional details, special requirements, or specific preferences..."
-                rows={3}
-                className="bg-card/50 border-border/50"
-              />
+                <Textarea
+                  name="notes"
+                  value={formData.notes}
+                  onChange={handleInputChange}
+                  placeholder="Any additional details, special requirements, or specific preferences..."
+                  rows={3}
+                  className="bg-white/10 border-white/20 text-white placeholder:text-purple-100/50 focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30"
+                />
             </div>
           </div>
 
-          <ModalFooter className="border-t border-border/50 pt-4 gap-3">
+          <ModalFooter className="border-t border-white/20 pt-4 gap-3">
             <ModalClose asChild>
               <Button
                 type="button"
                 variant="outline"
                 onClick={handleModalClose}
-                className="border-border/50 text-purple-200 hover:bg-card/50"
+                className="border-white/20 text-purple-100 hover:bg-white/10 hover:border-purple-400/50 transition-all duration-200"
               >
                 Cancel
               </Button>
@@ -603,7 +611,7 @@ export function RequestStrategyModal({
             <Button
               type="submit"
               disabled={isSubmitting}
-              className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0 min-w-[140px]"
+              className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0 min-w-[140px] shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/40"
             >
               {isSubmitting ? (
                 <span className="flex items-center gap-2">
