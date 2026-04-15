@@ -123,7 +123,7 @@ async def _get_subscription_map(db: AsyncSession, user_ids: list[str]) -> dict[s
     stmt = (
         select(UserSubscription, Plan)
         .outerjoin(Plan, Plan.id == UserSubscription.plan_id)
-        .where(UserSubscription.user_id.in_(user_ids))
+        .where(cast(UserSubscription.user_id, String).in_([str(uid) for uid in user_ids]))
         .order_by(UserSubscription.created_at.desc())
     )
     result = await db.execute(stmt)
