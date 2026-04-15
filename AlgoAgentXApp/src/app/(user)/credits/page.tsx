@@ -62,6 +62,8 @@ interface TopUpPack {
   popular?: boolean;
 }
 
+const unwrapApiData = (payload: any) => payload?.success ? payload.data : payload;
+
 const TOP_UP_PACKS: TopUpPack[] = [
   { credits: 5, price: 500, label: "₹5", popular: false },
   { credits: 10, price: 1000, label: "₹10", popular: false },
@@ -103,7 +105,7 @@ export default function CreditsWalletPage() {
   const fetchBalance = async () => {
     try {
       const response = await axiosInstance.get('/api/v1/credits/balance');
-      setBalance(response.data);
+      setBalance(unwrapApiData(response.data));
       setLastUpdated(new Date());
     } catch (err: any) {
       console.error('Error fetching balance:', err);
@@ -113,7 +115,7 @@ export default function CreditsWalletPage() {
   const fetchTransactions = async () => {
     try {
       const response = await axiosInstance.get('/api/v1/credits/transactions?limit=50');
-      setTransactions(response.data);
+      setTransactions(unwrapApiData(response.data));
     } catch (err: any) {
       console.error('Error fetching transactions:', err);
     }
@@ -136,7 +138,7 @@ export default function CreditsWalletPage() {
         credits_to_buy: creditsToBuy
       });
 
-      const orderData: CreateOrderResponse = orderResponse.data;
+      const orderData: CreateOrderResponse = unwrapApiData(orderResponse.data);
 
       // Open Razorpay checkout
       const options = {
@@ -156,7 +158,7 @@ export default function CreditsWalletPage() {
               razorpay_signature: response.razorpay_signature
             });
 
-            const verifyData: VerifyPaymentResponse = verifyResponse.data;
+            const verifyData: VerifyPaymentResponse = unwrapApiData(verifyResponse.data);
 
             if (verifyData.success) {
               // Refresh balance and transactions

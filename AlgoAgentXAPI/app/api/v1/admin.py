@@ -13,6 +13,7 @@ from sqlalchemy import String, cast, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_admin_user, get_current_user, get_db
+from ...utils.api_response import success_response
 from ...db.models import (
     CreditTransaction,
     CreditTransactionType,
@@ -24,7 +25,10 @@ from ...db.models import (
     User,
     UserCredit,
     UserSubscription,
+    SupportTicket,
+    SupportTicketReply,
 )
+from ...db.compat import as_uuid_or_str, column_text, table_has_column
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -36,7 +40,6 @@ class UserCreateRequest(BaseModel):
     fullname: Optional[str] = None
     mobile: Optional[str] = None
     role: str = "user"
-
 
 class UserUpdateRequest(BaseModel):
     email: Optional[EmailStr] = None
@@ -89,32 +92,8 @@ def _serialize(value: Any) -> Any:
     return value
 
 
-async def _table_has_column(db: AsyncSession, table_name: str, column_name: str) -> bool:
-    try:
-        bind = db.get_bind()
-        dialect = bind.dialect.name if bind is not None else ""
-        if dialect == "sqlite":
-            result = await db.execute(text(f"PRAGMA table_info({table_name})"))
-            return any(row[1] == column_name for row in result.fetchall())
-        result = await db.execute(
-            text(
-                """
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_name = :table_name AND column_name = :column_name
-                LIMIT 1
-                """
-            ),
-            {"table_name": table_name, "column_name": column_name},
-        )
-        return result.scalar() is not None
-    except Exception as exc:
-        logger.warning("Column lookup failed for %s.%s: %s", table_name, column_name, exc)
-        return False
-
-
 async def _user_is_active_value(db: AsyncSession, user: User) -> bool:
-    if await _table_has_column(db, "users", "is_active"):
+    if await table_has_column(db, "users", "is_active"):
         result = await db.execute(text("SELECT is_active FROM users WHERE id = :user_id"), {"user_id": str(user.id)})
         value = result.scalar()
         return True if value is None else bool(value)
@@ -122,10 +101,10 @@ async def _user_is_active_value(db: AsyncSession, user: User) -> bool:
 
 
 async def _ensure_user_credit_row(db: AsyncSession, user_id: str) -> UserCredit:
-    row = await db.get(UserCredit, user_id)
+    row = (await db.execute(select(UserCredit).where(column_text(UserCredit.user_id) == str(user_id)))).scalar_one_or_none()
     if row:
         return row
-    row = UserCredit(user_id=user_id, balance=0)
+    row = UserCredit(user_id=as_uuid_or_str(user_id), balance=0)
     db.add(row)
     await db.flush()
     return row
@@ -134,7 +113,7 @@ async def _ensure_user_credit_row(db: AsyncSession, user_id: str) -> UserCredit:
 async def _get_credit_balance_map(db: AsyncSession, user_ids: list[str]) -> dict[str, int]:
     if not user_ids:
         return {}
-    result = await db.execute(select(UserCredit).where(UserCredit.user_id.in_(user_ids)))
+    result = await db.execute(select(UserCredit).where(column_text(UserCredit.user_id).in_([str(uid) for uid in user_ids])))
     return {str(row.user_id): int(row.balance or 0) for row in result.scalars().all()}
 
 
@@ -168,7 +147,7 @@ async def _adjust_credits(
     reason: str,
     transaction_type: CreditTransactionType,
 ) -> dict[str, Any]:
-    user = await db.get(User, user_id)
+    user = (await db.execute(select(User).where(column_text(User.id) == str(user_id)))).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -212,7 +191,7 @@ async def get_admin_metrics(
     current_user: dict = Depends(get_admin_user),
 ):
     total_users = (await db.execute(select(func.count()).select_from(User))).scalar() or 0
-    has_is_active = await _table_has_column(db, "users", "is_active")
+    has_is_active = await table_has_column(db, "users", "is_active")
     if has_is_active:
         active_users = (await db.execute(text("SELECT COUNT(*) FROM users WHERE is_active = true"))).scalar() or 0
     else:
@@ -225,7 +204,10 @@ async def get_admin_metrics(
     total_credits_issued = (
         await db.execute(
             select(func.coalesce(func.sum(CreditTransaction.amount), 0)).where(
-                CreditTransaction.transaction_type.in_([CreditTransactionType.CREDIT, CreditTransactionType.REFUND])
+                CreditTransaction.transaction_type.in_([
+                    CreditTransactionType.CREDIT.value, 
+                    CreditTransactionType.REFUND.value
+                ])
             )
         )
     ).scalar() or 0
@@ -302,14 +284,14 @@ async def get_admin_metrics(
             }
         )
 
-    return {
+    return success_response({
         "users": {"total": total_users, "active": active_users, "recent": recent_users},
         "payments": {"total": total_orders, "revenue": float(total_revenue), "recent": recent_payments},
         "credits": {"total": int(total_credits_issued), "active_subscriptions": total_subscriptions},
         "strategies": {"pending": pending_strategy_requests},
         "backtests": {"total": total_backtests},
         "orders": {"total": total_orders, "recent": recent_orders},
-    }
+    })
 
 
 @router.get("/users")
@@ -354,7 +336,7 @@ async def get_admin_users(
                 "created_at": _serialize(user.created_at),
             }
         )
-    return {"items": items, "total": total, "skip": skip, "limit": limit}
+    return success_response({"items": items, "total": total, "skip": skip, "limit": limit}, "No data found" if not items else None)
 
 
 @router.post("/users", status_code=201)
@@ -380,7 +362,7 @@ async def create_admin_user(
     await _ensure_user_credit_row(db, str(user.id))
     await db.commit()
     await db.refresh(user)
-    return {"message": "User created successfully", "user": {"id": str(user.id), "email": user.email}}
+    return success_response({"user": {"id": str(user.id), "email": user.email}}, "User created successfully")
 
 
 @router.put("/users/{user_id}")
@@ -390,14 +372,14 @@ async def update_admin_user(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_admin_user),
 ):
-    user = await db.get(User, user_id)
+    user = (await db.execute(select(User).where(column_text(User.id) == str(user_id)))).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(user, key, value)
     await db.commit()
     await db.refresh(user)
-    return {"message": "User updated successfully"}
+    return success_response({}, "User updated successfully")
 
 
 @router.delete("/users/{user_id}")
@@ -407,20 +389,20 @@ async def delete_admin_user(
     current_user: dict = Depends(get_current_user),
     admin_user: dict = Depends(get_admin_user),
 ):
-    user = await db.get(User, user_id)
+    user = (await db.execute(select(User).where(column_text(User.id) == str(user_id)))).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if str(user.id) == str(current_user.get("user_id")):
         raise HTTPException(status_code=400, detail="You cannot delete your own admin account")
 
-    await db.execute(delete(UserCredit).where(UserCredit.user_id == str(user.id)))
-    await db.execute(delete(UserSubscription).where(UserSubscription.user_id == str(user.id)))
+    await db.execute(delete(UserCredit).where(column_text(UserCredit.user_id) == str(user.id)))
+    await db.execute(delete(UserSubscription).where(column_text(UserSubscription.user_id) == str(user.id)))
     await db.execute(delete(Payment).where(cast(Payment.user_id, String) == str(user.id)))
     await db.execute(delete(CreditTransaction).where(CreditTransaction.user_id == user.id))
     await db.execute(delete(StrategyRequest).where(StrategyRequest.user_id == user.id))
     await db.execute(delete(User).where(User.id == user.id))
     await db.commit()
-    return {"message": "User deleted successfully"}
+    return success_response({}, "User deleted successfully")
 
 
 @router.patch("/users/{user_id}/status")
@@ -430,14 +412,14 @@ async def patch_admin_user_status(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_admin_user),
 ):
-    user = await db.get(User, user_id)
+    user = (await db.execute(select(User).where(column_text(User.id) == str(user_id)))).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    if not await _table_has_column(db, "users", "is_active"):
+    if not await table_has_column(db, "users", "is_active"):
         raise HTTPException(status_code=400, detail="users.is_active column is missing in database")
     await db.execute(text("UPDATE users SET is_active = :is_active WHERE id = :user_id"), {"user_id": user_id, "is_active": payload.is_active})
     await db.commit()
-    return {"message": f"User {'activated' if payload.is_active else 'deactivated'} successfully"}
+    return success_response({}, f"User {'activated' if payload.is_active else 'deactivated'} successfully")
 
 
 @router.patch("/users/{user_id}/role")
@@ -452,7 +434,7 @@ async def patch_admin_user_role(
         raise HTTPException(status_code=404, detail="User not found")
     user.role = payload.role
     await db.commit()
-    return {"message": "User role updated successfully"}
+    return success_response({}, "User role updated successfully")
 
 
 @router.post("/credits/add")
@@ -512,7 +494,7 @@ async def get_credit_ledger(
                 "created_at": _serialize(txn.created_at),
             }
         )
-    return {"items": items, "total": total, "skip": skip, "limit": limit}
+    return success_response({"items": items, "total": total, "skip": skip, "limit": limit}, "No data found" if not items else None)
 
 
 @router.get("/payments")
@@ -573,20 +555,20 @@ async def get_payments(
                 "updated_at": _serialize(getattr(payment, "updated_at", None)),
             }
         )
-    return {"items": items, "total": total, "skip": skip, "limit": limit}
+    return success_response({"items": items, "total": total, "skip": skip, "limit": limit}, "No data found" if not items else None)
 
 
 @router.get("/payments/{payment_id}")
 async def get_payment_detail(payment_id: str, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     row = (
         await db.execute(
-            select(Payment, User.email, User.fullname).outerjoin(User, cast(User.id, String) == cast(Payment.user_id, String)).where(Payment.id == payment_id)
+            select(Payment, User.email, User.fullname).outerjoin(User, cast(User.id, String) == cast(Payment.user_id, String)).where(cast(Payment.id, String) == str(payment_id))
         )
     ).first()
     if not row:
         raise HTTPException(status_code=404, detail="Payment not found")
     payment, email, fullname = row
-    return {
+    return success_response({
         "id": str(payment.id),
         "user_id": str(payment.user_id),
         "user_email": email or "—",
@@ -601,17 +583,17 @@ async def get_payment_detail(payment_id: str, db: AsyncSession = Depends(get_db)
         "razorpay_payment_id": payment.razorpay_payment_id,
         "created_at": _serialize(payment.created_at),
         "updated_at": _serialize(getattr(payment, "updated_at", None)),
-    }
+    })
 
 
 @router.post("/payments/{payment_id}/refund")
 async def refund_payment(payment_id: str, payload: PaymentRefundRequest | None = None, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
-    payment = await db.get(Payment, payment_id)
+    payment = (await db.execute(select(Payment).where(cast(Payment.id, String) == str(payment_id)))).scalar_one_or_none()
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
     payment.status = "REFUNDED"
     await db.commit()
-    return {"message": "Payment marked as refunded"}
+    return success_response({}, "Payment marked as refunded")
 
 
 @router.get("/subscriptions")
@@ -667,18 +649,18 @@ async def get_subscriptions(
                 "created_at": _serialize(sub.created_at),
             }
         )
-    return {"items": items, "total": total, "skip": skip, "limit": limit}
+    return success_response({"items": items, "total": total, "skip": skip, "limit": limit}, "No data found" if not items else None)
 
 
 @router.patch("/subscriptions/{subscription_id}")
 async def update_subscription(subscription_id: str, payload: SubscriptionUpdateRequest, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
-    subscription = await db.get(UserSubscription, subscription_id)
+    subscription = (await db.execute(select(UserSubscription).where(cast(UserSubscription.id, String) == str(subscription_id)))).scalar_one_or_none()
     if not subscription:
         raise HTTPException(status_code=404, detail="Subscription not found")
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(subscription, key, value)
     await db.commit()
-    return {"message": "Subscription updated successfully"}
+    return success_response({}, "Subscription updated successfully")
 
 
 @router.get("/orders")
@@ -736,13 +718,13 @@ async def get_orders(
 async def get_order_detail(order_id: str, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     row = (
         await db.execute(
-            select(Payment, User.email, User.fullname).outerjoin(User, cast(User.id, String) == cast(Payment.user_id, String)).where(Payment.id == order_id)
+            select(Payment, User.email, User.fullname).outerjoin(User, cast(User.id, String) == cast(Payment.user_id, String)).where(cast(Payment.id, String) == str(order_id))
         )
     ).first()
     if not row:
         raise HTTPException(status_code=404, detail="Order not found")
     payment, email, fullname = row
-    return {
+    return success_response({
         "id": str(payment.id),
         "user_id": str(payment.user_id),
         "user_email": email or "—",
@@ -757,7 +739,7 @@ async def get_order_detail(order_id: str, db: AsyncSession = Depends(get_db), cu
         "created_at": _serialize(payment.created_at),
         "updated_at": _serialize(getattr(payment, "updated_at", None)),
         "items": [],
-    }
+    })
 
 
 @router.patch("/orders/{order_id}/status")
@@ -767,7 +749,7 @@ async def update_order_status(order_id: str, payload: OrderStatusRequest, db: As
         raise HTTPException(status_code=404, detail="Order not found")
     payment.status = payload.status
     await db.commit()
-    return {"message": "Order status updated successfully"}
+    return success_response({}, "Order status updated successfully")
 
 
 @router.get("/strategies")
@@ -831,7 +813,7 @@ async def get_admin_strategies(
         }
         for item in implemented
     ]
-    return {"items": items, "implemented": implemented_items, "total": total, "skip": skip, "limit": limit}
+    return success_response({"items": items, "implemented": implemented_items, "total": total, "skip": skip, "limit": limit}, "No data found" if not items and not implemented_items else None)
 
 
 @router.patch("/strategies/{request_id}")
@@ -843,4 +825,50 @@ async def update_admin_strategy(request_id: str, payload: StrategyDecisionReques
     if payload.admin_notes is not None:
         req.admin_notes = payload.admin_notes
     await db.commit()
-    return {"message": "Strategy request updated successfully"}
+    return success_response({}, "Strategy request updated successfully")
+
+
+class TicketStatusUpdateRequest(BaseModel):
+    status: str
+
+
+class TicketReplyRequest(BaseModel):
+    message: str
+
+
+@router.get('/support-tickets')
+async def get_admin_support_tickets(skip: int = 0, limit: int = Query(20, ge=1, le=100), status: Optional[str] = None, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
+    stmt = select(SupportTicket, User.email, User.fullname).join(User, User.id == SupportTicket.user_id).order_by(SupportTicket.created_at.desc()).offset(skip).limit(limit)
+    count_stmt = select(func.count()).select_from(SupportTicket)
+    if status:
+        stmt = stmt.where(SupportTicket.status == status)
+        count_stmt = count_stmt.where(SupportTicket.status == status)
+    rows = (await db.execute(stmt)).all()
+    total = (await db.execute(count_stmt)).scalar() or 0
+    items = [{
+        'id': str(ticket.id), 'user_id': str(ticket.user_id), 'user_email': email, 'user_name': fullname or email, 'subject': ticket.subject,
+        'message': ticket.message, 'status': ticket.status, 'priority': ticket.priority, 'created_at': _serialize(ticket.created_at), 'updated_at': _serialize(ticket.updated_at)
+    } for ticket, email, fullname in rows]
+    return success_response({'items': items, 'total': total, 'skip': skip, 'limit': limit}, 'No data found' if not items else None)
+
+
+@router.patch('/support-tickets/{ticket_id}')
+async def update_admin_support_ticket(ticket_id: str, payload: TicketStatusUpdateRequest, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
+    ticket = (await db.execute(select(SupportTicket).where(cast(SupportTicket.id, String) == str(ticket_id)))).scalar_one_or_none()
+    if not ticket:
+        raise HTTPException(status_code=404, detail='Ticket not found')
+    ticket.status = payload.status
+    await db.commit()
+    return success_response({}, 'Ticket updated successfully')
+
+
+@router.post('/support-tickets/{ticket_id}/reply')
+async def reply_admin_support_ticket(ticket_id: str, payload: TicketReplyRequest, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
+    ticket = (await db.execute(select(SupportTicket).where(cast(SupportTicket.id, String) == str(ticket_id)))).scalar_one_or_none()
+    if not ticket:
+        raise HTTPException(status_code=404, detail='Ticket not found')
+    reply = SupportTicketReply(ticket_id=as_uuid_or_str(ticket_id), user_id=as_uuid_or_str(current_user['user_id']), message=payload.message)
+    db.add(reply)
+    ticket.status = 'in_progress'
+    await db.commit()
+    return success_response({'id': str(reply.id)}, 'Reply sent successfully')

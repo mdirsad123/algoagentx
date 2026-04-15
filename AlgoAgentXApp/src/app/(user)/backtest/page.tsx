@@ -105,6 +105,8 @@ interface MarketDataRange {
   candle_count: number;
 }
 
+const unwrapApiData = (payload: any) => payload?.success ? payload.data : payload;
+
 export default function BacktestPage() {
   // Form state
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -142,9 +144,9 @@ export default function BacktestPage() {
           axios.get("/api/v1/instruments"),
           axios.get("/api/v1/credits/balance")
         ]);
-        setStrategies(strategiesRes.data);
-        setInstruments(instrumentsRes.data);
-        setUserBalance(balanceRes.data.balance);
+        setStrategies(unwrapApiData(strategiesRes.data));
+        setInstruments(unwrapApiData(instrumentsRes.data));
+        setUserBalance(unwrapApiData(balanceRes.data)?.balance ?? 0);
     } catch (error: any) {
       const errorInfo = parseApiError(error);
       Toast.fire({
@@ -181,7 +183,7 @@ export default function BacktestPage() {
   const pollJobStatus = async (jobId: string) => {
     try {
       const response = await axios.get(`/api/v1/jobs/${jobId}`);
-      const jobStatus: JobStatus = response.data;
+      const jobStatus: JobStatus = unwrapApiData(response.data);
 
       setCurrentJob(jobStatus);
 
@@ -197,7 +199,7 @@ export default function BacktestPage() {
         // Update balance after successful backtest
         try {
           const balanceRes = await axios.get("/api/v1/credits/balance");
-          setUserBalance(balanceRes.data.balance);
+          setUserBalance(unwrapApiData(balanceRes.data)?.balance ?? 0);
         } catch (error) {
           console.error('Failed to update balance after backtest:', error);
         }
@@ -305,7 +307,7 @@ export default function BacktestPage() {
         timeframe: tfValue
       });
       
-      const cost = response.data.total_cost;
+      const cost = unwrapApiData(response.data).total_cost;
       setEstimatedCost(cost);
       setInsufficientCredits(userBalance !== null && cost > userBalance);
     } catch (error: any) {
@@ -349,7 +351,7 @@ export default function BacktestPage() {
       };
 
       const response = await axios.post("/api/v1/backtests/run", payload);
-      const jobResponse = response.data;
+      const jobResponse = unwrapApiData(response.data);
 
       // Start polling job status
       const jobId = jobResponse.job_id;

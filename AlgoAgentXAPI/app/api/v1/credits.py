@@ -1,334 +1,114 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Optional
-from datetime import date, datetime
+from __future__ import annotations
 
-from ...core.dependencies import get_current_user, get_db, get_user_entitlements
-from ...services.credits.calculation import CreditCalculationService
-from ...services.credits.management import CreditManagementService
-from ...schemas.credits import CreditCostPreview, CreditBalance, CreditSummary, CreditTransaction, InsufficientCreditsError
+from decimal import Decimal
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ...core.dependencies import get_admin_user, get_current_user, get_db
+from ...db.compat import as_uuid_or_str, column_text
+from ...db.models import CreditTransaction, CreditTransactionType, User, UserCredit
+from ...utils.api_response import success_response
 
 router = APIRouter()
 
-@router.post("/preview-cost", response_model=CreditCostPreview)
-async def preview_backtest_cost(
-    start_date: date,
-    end_date: date,
-    timeframe: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Preview credit cost for a backtest run.
-    
-    Args:
-        start_date: Backtest start date
-        end_date: Backtest end date
-        timeframe: Optional timeframe (e.g., '1m', '5m', '1h', '1d')
-        db: Database session
-        current_user: Current user
-        
-    Returns:
-        Cost breakdown with detailed information
-    """
-    try:
-        cost_breakdown = CreditCalculationService.format_cost_breakdown(
-            start_date=start_date,
-            end_date=end_date,
-            timeframe=timeframe
-        )
-        
-        return CreditCostPreview(**cost_breakdown)
-        
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
 
-@router.get("/balance", response_model=CreditBalance)
-async def get_credit_balance(
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Get current credit balance for the user.
-    
-    Args:
-        db: Database session
-        current_user: Current user
-        
-    Returns:
-        Current credit balance
-    """
-    try:
-        balance = await CreditManagementService.get_user_balance(db, current_user["user_id"])
-        
-        return CreditBalance(
-            user_id=current_user["user_id"],
-            current_balance=float(balance),
-            last_updated=date.today().isoformat()
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get credit balance: {str(e)}"
-        )
+class CreditAdjustRequest(BaseModel):
+    user_id: str
+    amount: int = Field(..., gt=0)
+    reason: str
 
-@router.get("/summary", response_model=CreditSummary)
-async def get_credit_summary(
-    db: AsyncSession = Depends(get_db),
+
+def _as_int(value) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, Decimal):
+        return int(value)
+    return int(value)
+
+
+async def _ensure_credit_row(db: AsyncSession, user_id: str) -> UserCredit:
+    row = (await db.execute(select(UserCredit).where(column_text(UserCredit.user_id) == str(user_id)))).scalar_one_or_none()
+    if row:
+        return row
+    row = UserCredit(user_id=as_uuid_or_str(user_id), balance=0)
+    db.add(row)
+    await db.flush()
+    return row
+
+
+@router.get('/balance')
+async def get_credit_balance(current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    row = await _ensure_credit_row(db, str(current_user['user_id']))
+    return success_response({'balance': _as_int(row.balance), 'current_balance': _as_int(row.balance), 'user_id': str(current_user['user_id']), 'last_updated': row.updated_at.isoformat() if getattr(row, 'updated_at', None) else None})
+
+
+@router.get('/ledger')
+@router.get('/transactions')
+async def get_credit_ledger(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: dict = Depends(get_current_user),
-    entitlements: dict = Depends(get_user_entitlements)
-):
-    """
-    Get credit summary for the user including balance, included credits, plan info, and next reset date.
-    
-    Args:
-        db: Database session
-        current_user: Current user
-        entitlements: User entitlements and plan info
-        
-    Returns:
-        Credit summary with balance, included credits, plan name, and next reset date
-    """
-    try:
-        # Get current credit balance
-        current_balance = await CreditManagementService.get_user_balance(db, current_user["user_id"])
-        
-        # Get plan information from entitlements
-        plan_code = entitlements.get("plan_code", "FREE")
-        included_credits = entitlements.get("included_credits", 0)
-        billing_period = entitlements.get("billing_period", "NONE")
-        
-        # Calculate next reset date based on billing period
-        next_reset_date = None
-        if billing_period in ["MONTHLY", "ANNUAL"]:
-            from datetime import datetime, timedelta
-            import calendar
-            
-            now = datetime.utcnow()
-            if billing_period == "MONTHLY":
-                # Next month's 1st day
-                if now.month == 12:
-                    next_reset_date = datetime(now.year + 1, 1, 1)
-                else:
-                    next_reset_date = datetime(now.year, now.month + 1, 1)
-            elif billing_period == "ANNUAL":
-                # Next year's same month and day
-                next_reset_date = datetime(now.year + 1, now.month, now.day)
-            
-            if next_reset_date:
-                next_reset_date = next_reset_date.isoformat()
-        
-        # Get transaction summary
-        transaction_summary = await CreditManagementService.get_user_credit_summary(db, current_user["user_id"])
-        
-        # Build enhanced summary
-        summary = {
-            "user_id": current_user["user_id"],
-            "credit_balance": float(current_balance),
-            "included_remaining": included_credits,
-            "plan_name": plan_code,
-            "next_reset_date": next_reset_date,
-            "total_transactions": transaction_summary.get("total_transactions", 0),
-            "transaction_counts": transaction_summary.get("transaction_counts", {}),
-            "last_updated": datetime.utcnow().isoformat()
-        }
-        
-        return CreditSummary(**summary)
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get credit summary: {str(e)}"
-        )
-
-@router.get("/transactions", response_model=List[CreditTransaction])
-async def get_credit_transactions(
-    limit: int = 50,
-    offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
 ):
-    """
-    Get credit transaction history for the user.
-    
-    Args:
-        limit: Number of transactions to return (max 100)
-        offset: Offset for pagination
-        db: Database session
-        current_user: Current user
-        
-    Returns:
-        List of credit transactions
-    """
-    try:
-        # Limit maximum limit to prevent large responses
-        limit = min(limit, 100)
-        
-        transactions = await CreditManagementService.get_transaction_history(
-            db=db,
-            user_id=current_user["user_id"],
-            limit=limit,
-            offset=offset
-        )
-        
-        return transactions
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get credit transactions: {str(e)}"
-        )
-
-@router.post("/check-credits")
-async def check_credits_for_backtest(
-    start_date: date,
-    end_date: date,
-    timeframe: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Check if user has sufficient credits for a backtest and return cost.
-    This endpoint is used by the backtest service to validate credits before running.
-    
-    Args:
-        start_date: Backtest start date
-        end_date: Backtest end date
-        timeframe: Optional timeframe
-        db: Database session
-        current_user: Current user
-        
-    Returns:
-        Cost information or error if insufficient credits
-    """
-    try:
-        # Calculate cost
-        cost = CreditCalculationService.calculate_backtest_cost(start_date, end_date, timeframe)
-        
-        # Get current balance
-        balance = await CreditManagementService.get_user_balance(db, current_user["user_id"])
-        
-        if balance < cost:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail=InsufficientCreditsError(
-                    needed=cost,
-                    balance=float(balance)
-                ).dict()
-            )
-        
-        return {
-            "cost": cost,
-            "balance": float(balance),
-            "sufficient": True,
-            "message": f"User has sufficient credits. Cost: {cost}, Balance: {float(balance)}"
+    stmt = (
+        select(CreditTransaction)
+        .where(column_text(CreditTransaction.user_id) == str(current_user['user_id']))
+        .order_by(CreditTransaction.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    data = [
+        {
+            'id': str(row.id),
+            'type': row.transaction_type.value if hasattr(row.transaction_type, 'value') else str(row.transaction_type),
+            'transaction_type': row.transaction_type.value if hasattr(row.transaction_type, 'value') else str(row.transaction_type),
+            'amount': _as_int(row.amount),
+            'balance_after': _as_int(row.balance_after),
+            'description': row.description,
+            'reason': row.description,
+            'backtest_id': str(row.backtest_id) if getattr(row, 'backtest_id', None) else None,
+            'job_id': str(row.job_id) if getattr(row, 'job_id', None) else None,
+            'created_at': row.created_at.isoformat() if row.created_at else None,
         }
-        
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        for row in rows
+    ]
+    return success_response(data, 'No data found' if not data else None)
 
 
-@router.post("/grant")
-async def grant_credits(
-    user_id: str,
-    amount: float,
-    description: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Grant credits to a user (admin function).
-    
-    Args:
-        user_id: Target user ID
-        amount: Amount to grant
-        description: Reason for granting credits
-        db: Database session
-        current_user: Current user (must be admin)
-        
-    Returns:
-        Transaction details
-    """
-    try:
-        # TODO: Add admin role check
-        # For now, allow any authenticated user to grant credits
-        
-        transaction = await CreditManagementService.credit_credits(
-            db=db,
-            user_id=user_id,
-            amount=Decimal(str(amount)),
-            description=description,
-            metadata={"granted_by": current_user["user_id"]}
-        )
-        
-        return {
-            "transaction_id": transaction.id,
-            "user_id": transaction.user_id,
-            "amount": float(transaction.amount),
-            "balance_after": float(transaction.balance_after),
-            "description": transaction.description,
-            "created_at": transaction.created_at.isoformat()
-        }
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to grant credits: {str(e)}"
-        )
+async def _adjust(db: AsyncSession, payload: CreditAdjustRequest, tx_type: CreditTransactionType):
+    user = (await db.execute(select(User).where(column_text(User.id) == str(payload.user_id)))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail='User not found')
+    row = await _ensure_credit_row(db, payload.user_id)
+    current = _as_int(row.balance)
+    signed = payload.amount if tx_type != CreditTransactionType.DEBIT else -payload.amount
+    new_balance = current + signed
+    if new_balance < 0:
+        raise HTTPException(status_code=400, detail='Insufficient credit balance')
+    row.balance = new_balance
+    tx = CreditTransaction(
+        id=str(uuid4()),
+        user_id=as_uuid_or_str(payload.user_id),
+        transaction_type=tx_type,
+        amount=payload.amount,
+        balance_after=new_balance,
+        description=payload.reason,
+    )
+    db.add(tx)
+    await db.commit()
+    return success_response({'balance': new_balance, 'transaction_id': str(tx.id)}, 'Credits updated successfully')
 
 
-@router.post("/refund/{transaction_id}")
-async def refund_transaction(
-    transaction_id: str,
-    description: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Refund a specific transaction.
-    
-    Args:
-        transaction_id: ID of the transaction to refund
-        description: Reason for refund
-        db: Database session
-        current_user: Current user (must be admin)
-        
-    Returns:
-        Refund transaction details
-    """
-    try:
-        # TODO: Add admin role check
-        # For now, allow any authenticated user to refund
-        
-        refund_transaction = await CreditManagementService.refund_transaction(
-            db=db,
-            transaction_id=transaction_id
-        )
-        
-        return {
-            "refund_transaction_id": refund_transaction.id,
-            "original_transaction_id": transaction_id,
-            "user_id": refund_transaction.user_id,
-            "amount": float(refund_transaction.amount),
-            "balance_after": float(refund_transaction.balance_after),
-            "description": refund_transaction.description,
-            "created_at": refund_transaction.created_at.isoformat()
-        }
-        
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to refund transaction: {str(e)}"
-        )
+@router.post('/admin/add')
+async def add_credits_admin(payload: CreditAdjustRequest, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
+    return await _adjust(db, payload, CreditTransactionType.CREDIT)
+
+
+@router.post('/admin/deduct')
+async def deduct_credits_admin(payload: CreditAdjustRequest, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
+    return await _adjust(db, payload, CreditTransactionType.DEBIT)

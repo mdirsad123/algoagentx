@@ -70,6 +70,8 @@ interface PaginationInfo {
   total_pages: number;
 }
 
+const unwrapApiData = (payload: any) => payload?.success ? payload.data : payload;
+
 export default function BacktestHistoryPage() {
   // Filter state
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -100,8 +102,8 @@ export default function BacktestHistoryPage() {
           axios.get("/api/v1/strategies"),
           axios.get("/api/v1/instruments")
         ]);
-        setStrategies(strategiesRes.data);
-        setInstruments(instrumentsRes.data);
+        setStrategies(unwrapApiData(strategiesRes.data));
+        setInstruments(unwrapApiData(instrumentsRes.data));
       } catch (error: any) {
         Toast.fire({
           icon: 'error',
@@ -129,7 +131,7 @@ export default function BacktestHistoryPage() {
       params.append('page_size', '20');
 
       const response = await axios.get(`/api/v1/backtests/history?${params}`);
-      const data = response.data;
+      const data = unwrapApiData(response.data);
 
       setBacktests(data.backtests);
       setPagination(data.pagination);

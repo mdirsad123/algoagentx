@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, DateTime, Integer
+from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.sql import func
 from ..base import Base
@@ -16,3 +17,8 @@ class User(Base):
     fullname = Column(String, nullable=True)
     mobile = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+    # Relationships
+    support_tickets = relationship("SupportTicket", back_populates="user", cascade="all, delete-orphan")
+    support_replies = relationship("SupportTicketReply", back_populates="user")

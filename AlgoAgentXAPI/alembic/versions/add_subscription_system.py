@@ -1,7 +1,7 @@
 """Add subscription system tables
 
-Revision ID: 0002_add_subscription_system
-Revises: 0001_add_credit_system
+Revision ID: add_subscription_system
+Revises: add_credit_system
 Create Date: 2026-02-06 18:09:00.000000
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = '0002_add_subscription_system'
-down_revision = '0001_add_credit_system'
+revision = 'add_subscription_system'
+down_revision = 'add_credit_system'
 branch_labels = None
 depends_on = None
 

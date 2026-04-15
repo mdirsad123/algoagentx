@@ -1,16 +1,24 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
+
 from ...core.dependencies import get_db
-from ...services.read_only import ReadOnlyService
-from ...schemas import Instrument
+from ...db.models import Instrument
+from ...utils.api_response import success_response
 
 router = APIRouter()
 
 
-@router.get("/", response_model=List[Instrument])
+@router.get("/")
 async def get_instruments(db: AsyncSession = Depends(get_db)):
-    """
-    Get all instruments (read-only)
-    """
-    return await ReadOnlyService.get_all_instruments(db)
+    rows = (await db.execute(select(Instrument).order_by(Instrument.symbol.asc()))).scalars().all()
+    data = [{
+        "id": row.id,
+        "symbol": row.symbol,
+        "exchange": row.exchange,
+        "market": row.market,
+        "instrument_type": row.instrument_type,
+        "tick_size": float(row.tick_size) if row.tick_size is not None else None,
+        "lot_size": row.lot_size,
+    } for row in rows]
+    return success_response(data, "No data found" if not data else None)

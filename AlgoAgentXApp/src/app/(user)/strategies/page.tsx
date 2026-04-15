@@ -36,6 +36,8 @@ interface StrategyMy {
   lastUpdated: string;
 }
 
+const unwrapApiData = (payload: any) => payload?.success ? payload.data : payload;
+
 export default function StrategiesPage() {
   const [activeTab, setActiveTab] = useState("templates");
   const [templates, setTemplates] = useState<StrategyTemplate[]>([]);
@@ -76,8 +78,9 @@ export default function StrategiesPage() {
         if (!response.ok) {
           throw new Error("Failed to fetch templates");
         }
-        const data = await response.json();
-        setTemplates(data);
+        const raw = await response.json();
+        const data = unwrapApiData(raw);
+        setTemplates(unwrapApiData(data));
       } catch (err) {
         console.error("Error fetching templates:", err);
         setError("Failed to load strategy templates");
@@ -104,8 +107,9 @@ export default function StrategiesPage() {
         if (!response.ok) {
           throw new Error("Failed to fetch user strategies");
         }
-        const data = await response.json();
-        setMyStrategies(data);
+        const raw = await response.json();
+        const data = unwrapApiData(raw);
+        setMyStrategies(unwrapApiData(data));
       } catch (err) {
         console.error("Error fetching user strategies:", err);
         // Don't show error for user strategies as they might not have any

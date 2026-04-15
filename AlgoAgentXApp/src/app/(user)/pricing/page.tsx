@@ -43,6 +43,8 @@ interface PlanData {
   yearly: Plan[];
 }
 
+const unwrapApiData = (payload: any) => payload?.success ? payload.data : payload;
+
 export default function PricingPage() {
   const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'yearly'>('monthly');
   const [plans, setPlans] = useState<PlanData | null>(null);
@@ -60,7 +62,7 @@ export default function PricingPage() {
       const response = await axiosInstance.get('/api/v1/billing/plans');
       
       // Transform the API response to our expected format
-      const allPlans = response.data;
+      const allPlans = unwrapApiData(response.data);
       const monthlyPlans = allPlans.filter((plan: Plan) => plan.billing_period === 'MONTHLY');
       const yearlyPlans = allPlans.filter((plan: Plan) => plan.billing_period === 'YEARLY');
       
@@ -91,11 +93,12 @@ export default function PricingPage() {
         billing_period: billingPeriod
       });
 
-      if (response.data && response.data.subscription_id) {
+      const subscriptionData = unwrapApiData(response.data);
+      if (subscriptionData && subscriptionData.subscription_id) {
         // Open Razorpay checkout
         const options = {
-          key: response.data.key_id,
-          subscription_id: response.data.subscription_id,
+          key: subscriptionData.key_id,
+          subscription_id: subscriptionData.subscription_id,
           name: 'AlgoAgentX',
           description: `${planCode} Plan - ${billingPeriod}`,
           image: '/images/algoagentx_icon.jpeg',

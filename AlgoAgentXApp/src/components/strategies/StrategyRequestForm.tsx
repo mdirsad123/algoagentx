@@ -34,6 +34,8 @@ interface StrategyRequestFormProps {
   onSuccess?: () => void
 }
 
+const unwrapApiData = (payload: any) => payload?.success ? payload.data : payload;
+
 export function StrategyRequestForm({ onSuccess }: StrategyRequestFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const router = useRouter()

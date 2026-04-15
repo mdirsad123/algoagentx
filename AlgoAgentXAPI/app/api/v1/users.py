@@ -6,10 +6,7 @@ from app.core.dependencies import get_current_user, get_db
 from app.schemas.users import UserResponse, UserUpdate
 from app.services.user_service import UserService
 
-router = APIRouter(
-    prefix="/users",
-    tags=["users"]
-)
+router = APIRouter(tags=["users"])
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_profile(

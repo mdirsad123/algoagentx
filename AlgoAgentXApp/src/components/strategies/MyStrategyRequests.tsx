@@ -46,6 +46,8 @@ const statusConfig = {
   },
 }
 
+const unwrapApiData = (payload: any) => payload?.success ? payload.data : payload;
+
 export function MyStrategyRequests() {
   const [requests, setRequests] = useState<StrategyRequest[]>([])
   const [loading, setLoading] = useState(true)
@@ -60,7 +62,8 @@ export function MyStrategyRequests() {
         throw new Error("Failed to fetch strategy requests")
       }
 
-      const data = await response.json()
+      const raw = await response.json()
+      const data = unwrapApiData(raw)
       setRequests(data)
     } catch (error) {
       console.error("Error fetching strategy requests:", error)
