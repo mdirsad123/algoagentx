@@ -22,16 +22,15 @@ from .screener import (
     ScreenerRunsBase, ScreenerRunsCreate, ScreenerRunsResponse
 )
 
-# Alias for backward compatibility
 Backtest = PerformanceMetric
 BacktestCreate = PerformanceMetricCreate
 
 __all__ = [
     "User", "UserCreate", "UserLogin", "UserUpdate",
-    "Strategy", "StrategyCreate",
+    "Strategy", "StrategyCreate", "StrategyTemplateResponse", "StrategyMyResponse",
     "PerformanceMetric", "PerformanceMetricCreate", "PerformanceMetricBase",
     "BacktestRunRequest", "BacktestRunResponse", "TradeData", "EquityPoint",
-    "Backtest", "BacktestCreate",  # Aliases for backward compatibility
+    "Backtest", "BacktestCreate",
     "Signal", "SignalCreate",
     "Metric", "MetricCreate",
     "Instrument",

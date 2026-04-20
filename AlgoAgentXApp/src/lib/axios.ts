@@ -1,84 +1,89 @@
-// lib/axios.ts
-import axios from "axios";
+import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from "axios";
 
-const apiURL = process.env.NEXT_PUBLIC_API_SERVER;
+type ApiEnvelope<T> = {
+  success?: boolean;
+  data?: T;
+  message?: string;
+};
 
-// Validate API URL configuration
-if (!apiURL) {
-  if (process.env.NODE_ENV === "development") {
-    console.error(
-      "[AXIOS CONFIG ERROR] NEXT_PUBLIC_API_SERVER is not defined!\n" +
-      "Please add NEXT_PUBLIC_API_SERVER to your .env.local file.\n" +
-      "Example: NEXT_PUBLIC_API_SERVER=http://localhost:8000"
-    );
-  }
-}
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_SERVER?.replace(/\/+$/, "") || "http://localhost:8000";
 
-const axiosInstance = axios.create({
-  baseURL: apiURL || "http://localhost:8000", // Fallback for build time
-  timeout: 10000,
+export const getStoredAccessToken = (): string | null => {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("access_token");
+};
+
+const apiClient: AxiosInstance = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 15000,
+  withCredentials: false,
   headers: {
     "Content-Type": "application/json",
-    accept: "application/json",
+    Accept: "application/json",
   },
 });
 
-// 🔹 Request interceptor: attach token (except for auth endpoints)
-axiosInstance.interceptors.request.use(
-  (config) => {
-    // Check if this is an auth endpoint that should NOT have Authorization header
-    const authEndpoints = [
-      "/api/v1/auth/login",
-      "/api/v1/auth/signup", 
-      "/api/v1/auth/refresh"
-    ];
-    
-    const isAuthEndpoint = authEndpoints.some(endpoint => config.url?.includes(endpoint));
-    
-    if (isAuthEndpoint) {
-      // Skip token attachment for auth endpoints
-      if (process.env.NODE_ENV === "development") {
-        console.log("[AXIOS] auth request - skipping token", config.url);
-      }
-      return config;
-    }
-    
-    // For non-auth endpoints, attach token if available
-    const token = localStorage.getItem("access_token");
-    if (token) {
-      config.headers["Authorization"] = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
+apiClient.interceptors.request.use((config) => {
+  const token = getStoredAccessToken();
+  const shouldAttachAuth = (config as AxiosRequestConfig & { auth?: boolean }).auth !== false;
 
-// 🔹 Response interceptor: handle errors
-axiosInstance.interceptors.response.use(
+  if (token && shouldAttachAuth) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+
+  return config;
+});
+
+apiClient.interceptors.response.use(
   (response) => response,
-  async (error) => {
-    const originalRequest = error.config;
+  (error: AxiosError<any>) => {
+    const message =
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      error.message ||
+      "Request failed";
 
-    // No response (CORS / network issue)
-    if (!error.response) {
-      console.error("[NETWORK ERROR]", error.message);
-      return Promise.reject(error);
-    }
-
-    // If 401 and detail contains backend message
-    if (error.response.status === 401) {
-      const detail = error.response.data?.detail;
-      console.error("[AUTH ERROR]", detail || "Invalid credentials");
-      
-      // Pass the backend detail through for UI to display
-      error.response.data = {
-        ...error.response.data,
-        backend_detail: detail
-      };
-    }
-
-    return Promise.reject(error);
+    return Promise.reject(new Error(message));
   }
 );
 
-export default axiosInstance;
+const unwrapResponse = <T>(payload: ApiEnvelope<T> | T): T => {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "success" in (payload as Record<string, unknown>)
+  ) {
+    return ((payload as ApiEnvelope<T>).data ?? null) as T;
+  }
+  return payload as T;
+};
+
+export const apiGet = async <T>(
+  url: string,
+  config?: AxiosRequestConfig & { auth?: boolean }
+): Promise<T> => {
+  const response = await apiClient.get<ApiEnvelope<T> | T>(url, config);
+  return unwrapResponse<T>(response.data);
+};
+
+export const apiPost = async <T>(
+  url: string,
+  body?: unknown,
+  config?: AxiosRequestConfig & { auth?: boolean }
+): Promise<T> => {
+  const response = await apiClient.post<ApiEnvelope<T> | T>(url, body, config);
+  return unwrapResponse<T>(response.data);
+};
+
+export const apiPatch = async <T>(
+  url: string,
+  body?: unknown,
+  config?: AxiosRequestConfig & { auth?: boolean }
+): Promise<T> => {
+  const response = await apiClient.patch<ApiEnvelope<T> | T>(url, body, config);
+  return unwrapResponse<T>(response.data);
+};
+
+export default apiClient;

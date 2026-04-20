@@ -34,6 +34,7 @@ FastAPI backend for the AlgoAgentX trading platform.
 4. **Start the API**
    ```bash
    cd AlgoAgentXAPI
+   
    uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
    start app

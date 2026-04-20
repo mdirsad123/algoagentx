@@ -4,6 +4,7 @@ from sqlalchemy.sql import func
 from ..base import Base
 import uuid
 
+
 class PerformanceMetric(Base):
     __tablename__ = "performance_metrics"
 
@@ -25,13 +26,13 @@ class PerformanceMetric(Base):
     total_trades = Column(Integer)
     winning_trades = Column(Integer)
     losing_trades = Column(Integer)
+    profit_factor = Column(Numeric, nullable=True)
     status = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    # Indexes for analytics
     __table_args__ = (
-        Index('idx_performance_metrics_user_strategy', 'user_id', 'strategy_id'),
-        Index('idx_performance_metrics_instrument', 'instrument_id'),
-        Index('idx_performance_metrics_dates', 'start_date', 'end_date'),
+        Index("idx_performance_metrics_user_strategy", "user_id", "strategy_id"),
+        Index("idx_performance_metrics_instrument", "instrument_id"),
+        Index("idx_performance_metrics_dates", "start_date", "end_date"),
     )

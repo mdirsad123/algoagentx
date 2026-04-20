@@ -19,6 +19,13 @@ async def test_user_creation():
         async with async_session() as db:
             print("Testing user creation...")
             
+            # First check if test user already exists and delete it
+            existing_user = (await db.execute(select(User).where(User.email == "test@example.com"))).scalar_one_or_none()
+            if existing_user:
+                print("ℹ️  Test user already exists, removing first...")
+                await db.delete(existing_user)
+                await db.commit()
+            
             # Test creating a user
             password_hash = bcrypt.hashpw("testpassword123".encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
             user = User(

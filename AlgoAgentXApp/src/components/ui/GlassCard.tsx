@@ -17,7 +17,7 @@ export const GlassCard: React.FC<GlassCardProps> = ({
 }) => {
   const baseClasses = `
     glass-card
-    ${hoverEffect ? 'hover:shadow-xl hover:border-white/40 hover:scale-105' : ''}
+    ${hoverEffect ? 'hover:shadow-2xl hover:border-border/70' : ''}
     ${floating ? 'float-glass' : ''}
     depth-${depth}
   `;
