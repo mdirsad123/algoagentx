@@ -25,6 +25,10 @@ class CreditTransaction(Base):
     # Reference to related entities
     backtest_id = Column(String, ForeignKey("performance_metrics.id"), nullable=True)
     job_id = Column(String, ForeignKey("job_status.id"), nullable=True)
+
+    # Admin/audit metadata (legacy-safe additive columns)
+    actor_user_id = Column(String(36), nullable=True)
+    source = Column(String(64), nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

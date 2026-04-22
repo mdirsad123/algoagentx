@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { adminApi, CreditTransaction } from "@/lib/api/admin"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -20,12 +20,18 @@ export default function AdminCreditsPage() {
   const [userId, setUserId] = useState("")
   const [amount, setAmount] = useState(100)
   const [reason, setReason] = useState("")
+  const [transactionType, setTransactionType] = useState("")
+
+  const pageSize = 20
+  const canSubmit = useMemo(() => {
+    return userId.trim().length > 0 && Number.isFinite(amount) && amount > 0 && reason.trim().length > 0
+  }, [userId, amount, reason])
 
   const load = async (nextSkip = skip) => {
     try {
       setLoading(true)
       setError(null)
-      const data = await adminApi.getCredits(nextSkip, 20, search || undefined)
+      const data = await adminApi.getCredits(nextSkip, pageSize, search || undefined, transactionType || undefined)
       setItems(data.items)
       setTotal(data.total)
       setSkip(nextSkip)
@@ -67,8 +73,14 @@ export default function AdminCreditsPage() {
       </div>
 
       <div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl shadow-xl">
-        <div className="mb-4 flex gap-3">
+        <div className="mb-4 flex flex-wrap gap-3">
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by user email or reason" className="max-w-sm border-white/10 bg-white/5 text-white placeholder:text-purple-200/70" />
+          <select value={transactionType} onChange={(e) => setTransactionType(e.target.value)} className="rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-white">
+            <option value="">All types</option>
+            <option value="credit">credit</option>
+            <option value="debit">debit</option>
+            <option value="refund">refund</option>
+          </select>
           <Button onClick={() => load(0)} className="bg-gradient-to-r from-fuchsia-500 to-blue-500 text-white">Search</Button>
         </div>
 
@@ -86,13 +98,16 @@ export default function AdminCreditsPage() {
                 </tr>
               </thead>
               <tbody>
-                {loading ? <tr><td className="px-3 py-8 text-purple-200" colSpan={6}>Loading credits...</td></tr> : items.length === 0 ? <tr><td className="px-3 py-8 text-center text-purple-200" colSpan={6}>No credit transactions found</td></tr> : items.map((item) => (
+                 {loading ? <tr><td className="px-3 py-8 text-purple-200" colSpan={6}>Loading credits...</td></tr> : items.length === 0 ? <tr><td className="px-3 py-8 text-center text-purple-200" colSpan={6}>No data found</td></tr> : items.map((item) => (
                   <tr key={item.id} className="border-b border-white/5">
                     <td className="px-3 py-3"><div>{item.user_name || item.user_email || '—'}</div><div className="text-xs text-purple-200">{item.user_email}</div></td>
-                    <td className="px-3 py-3 text-emerald-300">{item.credits_added ?? (item.credits > 0 ? item.credits : 0)}</td>
-                    <td className="px-3 py-3 text-rose-300">{item.credits_used ?? (item.credits < 0 ? Math.abs(item.credits) : 0)}</td>
+                    <td className="px-3 py-3 text-emerald-300">{item.credits_added ?? ((item.credits ?? 0) > 0 ? item.credits : 0)}</td>
+                    <td className="px-3 py-3 text-rose-300">{item.credits_used ?? ((item.credits ?? 0) < 0 ? Math.abs(item.credits || 0) : 0)}</td>
                     <td className="px-3 py-3">{item.remaining_credits ?? item.balance_after ?? 0}</td>
-                    <td className="px-3 py-3">{item.source || item.reason || item.type}</td>
+                    <td className="px-3 py-3">
+                      <div>{item.source || item.source_type || item.type}</div>
+                      <div className="text-xs text-purple-200">actor: {item.actor_user_id || '—'}{item.reason ? ` | ${item.reason}` : ''}</div>
+                    </td>
                     <td className="px-3 py-3">{new Date(item.created_at).toLocaleString()}</td>
                   </tr>
                 ))}
@@ -104,8 +119,8 @@ export default function AdminCreditsPage() {
         <div className="mt-4 flex items-center justify-between text-sm text-purple-200">
           <div>Showing {items.length} of {total}</div>
           <div className="flex gap-2">
-            <Button disabled={skip === 0} onClick={() => load(Math.max(0, skip - 20))} variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10">Previous</Button>
-            <Button disabled={skip + 20 >= total} onClick={() => load(skip + 20)} variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10">Next</Button>
+            <Button disabled={skip === 0} onClick={() => load(Math.max(0, skip - pageSize))} variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10">Previous</Button>
+            <Button disabled={skip + pageSize >= total} onClick={() => load(skip + pageSize)} variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10">Next</Button>
           </div>
         </div>
       </div>
@@ -115,13 +130,13 @@ export default function AdminCreditsPage() {
           <DialogHeader><DialogTitle>Adjust credits</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <select value={mode} onChange={(e) => setMode(e.target.value as any)} className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-white"><option value="add">Add credits</option><option value="deduct">Deduct credits</option></select>
-            <Input placeholder="User ID" value={userId} onChange={(e) => setUserId(e.target.value)} className="border-white/20 bg-white/10 text-white" />
+            <Input placeholder="User ID or user email" value={userId} onChange={(e) => setUserId(e.target.value)} className="border-white/20 bg-white/10 text-white" />
             <Input type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} className="border-white/20 bg-white/10 text-white" />
             <Input placeholder="Reason" value={reason} onChange={(e) => setReason(e.target.value)} className="border-white/20 bg-white/10 text-white placeholder:text-purple-200/70" />
           </div>
           <DialogFooter>
             <Button variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => setModalOpen(false)}>Cancel</Button>
-            <Button onClick={submit} className="bg-gradient-to-r from-fuchsia-500 to-blue-500 text-white">Save</Button>
+            <Button onClick={submit} disabled={!canSubmit} className="bg-gradient-to-r from-fuchsia-500 to-blue-500 text-white disabled:opacity-50">Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

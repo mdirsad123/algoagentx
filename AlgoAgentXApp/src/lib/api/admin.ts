@@ -6,12 +6,70 @@ const unwrap = <T>(response: any): T => {
 };
 
 export interface AdminMetrics {
-  users: { total: number; active: number; recent: any[] };
-  payments: { total: number; revenue: number; recent: any[] };
-  credits: { total: number; active_subscriptions: number };
+  users?: { total: number; active: number; recent: any[] };
+  payments?: { total: number; revenue: number; recent: any[] };
+  credits?: { total: number; active_subscriptions: number; used?: number; available?: number };
+  subscriptions?: { total: number; active: number };
   strategies?: { pending: number };
   backtests?: { total: number };
   orders?: { total: number; recent: any[] };
+}
+
+export interface BacktestPricingDateRangeBucket {
+  max_days: number | null;
+  multiplier: number;
+}
+
+export interface BacktestPricingTimeframeBucket {
+  max_minutes: number | null;
+  multiplier: number;
+}
+
+export interface BacktestPricingRuleSetSummary {
+  id: string;
+  name: string;
+  version: string;
+  description?: string | null;
+  is_active: boolean;
+  is_locked: boolean;
+  base_cost: number;
+  min_credit_charge: number;
+  max_credit_charge?: number | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+}
+
+export interface BacktestPricingActiveRuleSet extends BacktestPricingRuleSetSummary {
+  range_days_step: number;
+  date_range_buckets: BacktestPricingDateRangeBucket[];
+  timeframe_multipliers: BacktestPricingTimeframeBucket[];
+  strategy_complexity_enabled: boolean;
+  strategy_complexity_step: number;
+  strategy_complexity_cap: number;
+  plan_discounts: Record<string, number>;
+  is_db_configured?: boolean;
+}
+
+export interface BacktestPricingConfigResponse {
+  active: BacktestPricingActiveRuleSet;
+  items: BacktestPricingRuleSetSummary[];
+  notes?: string;
+}
+
+export interface BacktestPricingUpdatePayload {
+  name?: string;
+  version?: string;
+  description?: string;
+  base_cost?: number;
+  range_days_step?: number;
+  min_credit_charge?: number;
+  max_credit_charge?: number | null;
+  date_range_buckets?: BacktestPricingDateRangeBucket[];
+  timeframe_multipliers?: BacktestPricingTimeframeBucket[];
+  strategy_complexity_enabled?: boolean;
+  strategy_complexity_step?: number;
+  strategy_complexity_cap?: number;
+  plan_discounts?: Record<string, number>;
 }
 
 export interface PaginatedResponse<T> {
@@ -33,18 +91,34 @@ export interface User {
   fullname?: string;
   mobile?: string;
   plan?: string;
+  billing_period?: string;
+  subscription_status?: string;
   credits?: number;
 }
 
 export interface Payment {
   id: string;
   user_id: string;
+  user_email?: string;
+  user_name?: string;
   amount: number;
   currency: string;
   status: string;
   payment_method: string;
+  purpose?: string;
+  transaction_id?: string;
+  billing_order_id?: string;
   razorpay_order_id?: string;
   razorpay_payment_id?: string;
+  verified_at?: string;
+  failure_reason?: string;
+  is_reconciled?: boolean;
+  reconciliation?: {
+    is_reconciled?: boolean;
+    status?: string;
+    provider?: string;
+    purpose?: string;
+  };
   created_at: string;
   updated_at?: string;
 }
@@ -57,10 +131,25 @@ export interface Subscription {
   billing_period: string;
   price_inr: number;
   included_credits: number;
+  included_credits_total?: number;
+  included_credits_remaining?: number;
   status: string;
   start_at: string;
   end_at: string;
+  next_credit_refill_at?: string;
+  last_credit_refill_at?: string;
+  user_email?: string;
+  user_name?: string;
+  renews?: boolean;
   created_at: string;
+  updated_at?: string;
+}
+
+export interface CreditBalance {
+  user_id: string;
+  user_email?: string;
+  user_name?: string;
+  balance: number;
   updated_at?: string;
 }
 
@@ -68,9 +157,17 @@ export interface CreditTransaction {
   id: string;
   user_id: string;
   user_email?: string;
+  user_name?: string;
   credits?: number;
   type: string;
+  source?: string;
+  source_type?: string;
+  actor_user_id?: string;
   reason?: string;
+  balance_after?: number;
+  credits_added?: number;
+  credits_used?: number;
+  remaining_credits?: number;
   created_at: string;
 }
 
@@ -78,14 +175,57 @@ export interface Order {
   id: string;
   user_id: string;
   order_number: string;
+  order_type?: string;
+  source_type?: string;
   status: string;
+  linked_payment_id?: string;
+  linked_payment_status?: string;
+  reconciliation_status?: string;
   total_amount: number;
   currency: string;
   payment_method: string;
+  transaction_id?: string;
   created_at: string;
   updated_at?: string;
   user_email: string;
   user_name: string;
+}
+
+export interface AdminBacktest {
+  id: string;
+  strategy_id?: string;
+  strategy_name?: string;
+  instrument_symbol?: string;
+  user_id: string;
+  user_email?: string;
+  user_name?: string;
+  timeframe?: string;
+  total_return?: number;
+  net_profit?: number;
+  sharpe_ratio?: number;
+  max_drawdown?: number;
+  win_rate?: number;
+  total_trades?: number;
+  credit_cost?: number;
+  effective_credit_cost?: number;
+  included_debited?: number;
+  wallet_debited?: number;
+  included_refunded?: number;
+  wallet_refunded?: number;
+  refund_total?: number;
+  charge_status?: "not_charged" | "charged" | "partially_refunded" | "refunded" | string;
+  debit_transaction_id?: string | null;
+  refund_transaction_ids?: string[];
+  status?: string;
+  created_at: string;
+}
+
+export interface AdminBacktestListResponse {
+  items: AdminBacktest[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 }
 
 export interface OrderItem {
@@ -187,6 +327,114 @@ export interface StrategyListResponse {
   limit: number;
 }
 
+export type MarketDataFreshnessStatus = "fresh" | "warning" | "stale" | "no_data";
+
+export interface AdminMarketDataInstrument {
+  id: number;
+  symbol: string;
+  exchange: string;
+  market: string;
+  instrument_type?: string | null;
+}
+
+export interface AdminMarketDataCatalog {
+  instruments: AdminMarketDataInstrument[];
+  timeframes: string[];
+}
+
+export interface AdminMarketDataDatasetSummary {
+  total_datasets: number;
+  total_records: number;
+  fresh_count: number;
+  warning_count: number;
+  stale_count: number;
+  no_data_count: number;
+}
+
+export interface AdminMarketDataDataset {
+  instrument_id: number;
+  instrument_symbol: string;
+  exchange: string;
+  market: string;
+  timeframe: string;
+  first_candle_at?: string | null;
+  last_candle_at?: string | null;
+  latest_candle_date?: string | null;
+  total_records: number;
+  freshness_status: MarketDataFreshnessStatus;
+  freshness_age_hours?: number | null;
+  expected_fresh_hours: number;
+  is_stale: boolean;
+}
+
+export interface AdminMarketDataDatasetListResponse {
+  items: AdminMarketDataDataset[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  summary: AdminMarketDataDatasetSummary;
+}
+
+export interface AdminMarketDataJobRecord {
+  job_id: string;
+  job_type: "market_data_import" | "market_data_upload" | "market_data_refresh" | string;
+  status: string;
+  progress: number;
+  message?: string | null;
+  retry_count: number;
+  max_retries: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  instrument_id?: number | null;
+  timeframe?: string | null;
+  source?: string | null;
+  dataset_uri?: string | null;
+  imported_rows?: number | null;
+  invalid_rows?: number | null;
+  has_invalid_data: boolean;
+  error_message?: string | null;
+}
+
+export interface AdminMarketDataJobListResponse {
+  items: AdminMarketDataJobRecord[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface AdminMarketDataImportPayload {
+  instrument_id?: number;
+  timeframe?: string;
+  source?: string;
+  dataset_uri?: string;
+  note?: string;
+  dry_run?: boolean;
+  force?: boolean;
+  metadata?: Record<string, any>;
+}
+
+export interface AdminMarketDataRefreshPayload {
+  instrument_id?: number;
+  timeframe?: string;
+  source?: string;
+  note?: string;
+  force?: boolean;
+  metadata?: Record<string, any>;
+}
+
+export interface AdminMarketDataJobEnqueueResponse {
+  job_id: string;
+  status: string;
+  job_type: string;
+  pipeline_ready: boolean;
+  message: string;
+  payload: Record<string, any>;
+}
+
 export interface AdminStrategyCreatePayload {
   name: string;
   description?: string | null;
@@ -247,6 +495,44 @@ export interface DeployStrategyRequestPayload {
   admin_notes?: string;
 }
 
+// Add these interfaces near the other admin interfaces
+export interface AdminPricingPlan {
+  id: string;
+  code: string;
+  billing_period: "NONE" | "MONTHLY" | "YEARLY";
+  price_inr: number;
+  included_credits: number;
+  summary: string;
+  daily_backtests: number;
+  daily_ai_screener_runs: number;
+  max_date_range_days: number;
+  export_results: boolean;
+  advanced_strategies: boolean;
+  ai_screener_access: boolean;
+  priority_support: boolean;
+  dedicated_account_manager: boolean;
+  features: Record<string, any>;
+  is_active: boolean;
+  created_at?: string;
+}
+
+export interface AdminPricingPlanPayload {
+  code: string;
+  billing_period: "NONE" | "MONTHLY" | "YEARLY";
+  price_inr: number;
+  included_credits: number;
+  summary: string;
+  daily_backtests: number;
+  daily_ai_screener_runs: number;
+  max_date_range_days: number;
+  export_results: boolean;
+  advanced_strategies: boolean;
+  ai_screener_access: boolean;
+  priority_support: boolean;
+  dedicated_account_manager: boolean;
+  is_active: boolean;
+}
+
 export const adminApi = {
   getMetrics: async (): Promise<AdminMetrics> =>
     unwrap(await axiosInstance.get("/api/v1/admin/metrics")),
@@ -269,14 +555,39 @@ export const adminApi = {
   updateUserRole: async (userId: string, role: string) =>
     unwrap(await axiosInstance.patch(`/api/v1/admin/users/${userId}/role`, { role })),
 
-  getPayments: async (skip = 0, limit = 20, status?: string) =>
-    unwrap(await axiosInstance.get("/api/v1/admin/payments", { params: { skip, limit, ...(status && { status }) } })),
+  getPayments: async (
+    skip = 0,
+    limit = 20,
+    status?: string,
+    search?: string,
+    method?: string,
+    purpose?: string,
+    from_date?: string,
+    to_date?: string,
+  ): Promise<PaginatedResponse<Payment>> =>
+    unwrap(
+      await axiosInstance.get("/api/v1/admin/payments", {
+        params: {
+          skip,
+          limit,
+          ...(status && { status }),
+          ...(search && { search }),
+          ...(method && { method }),
+          ...(purpose && { purpose }),
+          ...(from_date && { from_date }),
+          ...(to_date && { to_date }),
+        },
+      }),
+    ),
 
-  getSubscriptions: async (skip = 0, limit = 20, status?: string) =>
-    unwrap(await axiosInstance.get("/api/v1/admin/subscriptions", { params: { skip, limit, ...(status && { status }) } })),
+  getSubscriptions: async (skip = 0, limit = 20, status?: string, search?: string): Promise<PaginatedResponse<Subscription>> =>
+    unwrap(await axiosInstance.get("/api/v1/admin/subscriptions", { params: { skip, limit, ...(status && { status }), ...(search && { search }) } })),
 
-  getCredits: async (skip = 0, limit = 20, search?: string) =>
-    unwrap(await axiosInstance.get("/api/v1/admin/credits/ledger", { params: { skip, limit, ...(search && { search }) } })),
+  getCreditBalances: async (skip = 0, limit = 20, search?: string): Promise<PaginatedResponse<CreditBalance>> =>
+    unwrap(await axiosInstance.get("/api/v1/admin/credits/balances", { params: { skip, limit, ...(search && { search }) } })),
+
+  getCredits: async (skip = 0, limit = 20, search?: string, transaction_type?: string): Promise<PaginatedResponse<CreditTransaction>> =>
+    unwrap(await axiosInstance.get("/api/v1/admin/credits/ledger", { params: { skip, limit, ...(search && { search }), ...(transaction_type && { transaction_type }) } })),
 
   getSupportTickets: async (skip = 0, limit = 20, status?: string) =>
     unwrap(await axiosInstance.get("/api/v1/admin/support-tickets", { params: { skip, limit, ...(status && { status }) } })),
@@ -292,12 +603,44 @@ export const adminApi = {
     page_size = 20,
     status?: string,
     search?: string,
+    source_type?: string,
+    method?: string,
     from_date?: string,
     to_date?: string,
   ) =>
     unwrap(
       await axiosInstance.get("/api/v1/admin/orders", {
-        params: { page, page_size, ...(status && { status }), ...(search && { search }), ...(from_date && { from_date }), ...(to_date && { to_date }) },
+        params: {
+          page,
+          page_size,
+          ...(status && { status }),
+          ...(search && { search }),
+          ...(source_type && { source_type }),
+          ...(method && { method }),
+          ...(from_date && { from_date }),
+          ...(to_date && { to_date }),
+        },
+      }),
+    ),
+
+  getBacktests: async (params?: {
+    page?: number;
+    page_size?: number;
+    search?: string;
+    status?: string;
+    from_date?: string;
+    to_date?: string;
+  }): Promise<AdminBacktestListResponse> =>
+    unwrap(
+      await axiosInstance.get("/api/v1/admin/backtests", {
+        params: {
+          page: params?.page ?? 1,
+          page_size: params?.page_size ?? 20,
+          ...(params?.search && { search: params.search }),
+          ...(params?.status && { status: params.status }),
+          ...(params?.from_date && { from_date: params.from_date }),
+          ...(params?.to_date && { to_date: params.to_date }),
+        },
       }),
     ),
 
@@ -307,11 +650,23 @@ export const adminApi = {
   updateOrderStatus: async (orderId: string, status: string) =>
     unwrap(await axiosInstance.patch(`/api/v1/admin/orders/${orderId}/status`, { status })),
 
+  getBacktestPricingConfig: async (): Promise<BacktestPricingConfigResponse> =>
+    unwrap(await axiosInstance.get("/api/v1/admin/backtests/pricing-config")),
+
+  updateBacktestPricingConfig: async (payload: BacktestPricingUpdatePayload): Promise<BacktestPricingActiveRuleSet> =>
+    unwrap(await axiosInstance.put("/api/v1/admin/backtests/pricing-config", payload)),
+
+  activateBacktestPricingRuleSet: async (ruleSetId: string): Promise<{ id: string; name: string; version: string; is_active: boolean }> =>
+    unwrap(await axiosInstance.post("/api/v1/admin/backtests/pricing-config/activate", { rule_set_id: ruleSetId })),
+
+  updateSubscription: async (subscriptionId: string, payload: { status?: string; renews?: boolean; end_at?: string }) =>
+    unwrap(await axiosInstance.patch(`/api/v1/admin/subscriptions/${subscriptionId}`, payload)),
+
   getPayment: async (paymentId: string) =>
     unwrap(await axiosInstance.get(`/api/v1/admin/payments/${paymentId}`)),
 
-  refundPayment: async (paymentId: string) =>
-    unwrap(await axiosInstance.post(`/api/v1/admin/payments/${paymentId}/refund`)),
+  refundPayment: async (paymentId: string, note?: string) =>
+    unwrap(await axiosInstance.post(`/api/v1/admin/payments/${paymentId}/refund`, note ? { note } : {})),
 
   addCredits: async (userId: string, amount: number, reason: string) =>
     unwrap(await axiosInstance.post(`/api/v1/admin/credits/add`, { user_id: userId, amount, reason })),
@@ -400,4 +755,80 @@ export const adminApi = {
 
   unpublishAdminStrategyById: async (strategyId: string): Promise<ImplementedStrategy> =>
     unwrap(await axiosInstance.post(`/api/v1/admin/strategy-requests/strategies/${strategyId}/unpublish`)),
+
+  getMarketDataCatalog: async (): Promise<AdminMarketDataCatalog> =>
+    unwrap(await axiosInstance.get("/api/v1/admin/market-data/catalog")),
+
+  getMarketDataDatasets: async (params?: {
+    page?: number;
+    page_size?: number;
+    search?: string;
+    instrument_id?: number;
+    timeframe?: string;
+    freshness_status?: MarketDataFreshnessStatus;
+    stale_after_hours?: number;
+  }): Promise<AdminMarketDataDatasetListResponse> =>
+    unwrap(
+      await axiosInstance.get("/api/v1/admin/market-data/datasets", {
+        params: {
+          page: params?.page ?? 1,
+          page_size: params?.page_size ?? 20,
+          ...(params?.search ? { search: params.search } : {}),
+          ...(params?.instrument_id ? { instrument_id: params.instrument_id } : {}),
+          ...(params?.timeframe ? { timeframe: params.timeframe } : {}),
+          ...(params?.freshness_status ? { freshness_status: params.freshness_status } : {}),
+          ...(params?.stale_after_hours ? { stale_after_hours: params.stale_after_hours } : {}),
+        },
+      }),
+    ),
+
+  getMarketDataJobs: async (params?: {
+    page?: number;
+    page_size?: number;
+    status?: string;
+    failed_only?: boolean;
+    has_invalid?: boolean;
+    search?: string;
+    job_type?: "market_data_import" | "market_data_upload" | "market_data_refresh";
+  }): Promise<AdminMarketDataJobListResponse> =>
+    unwrap(
+      await axiosInstance.get("/api/v1/admin/market-data/jobs", {
+        params: {
+          page: params?.page ?? 1,
+          page_size: params?.page_size ?? 20,
+          ...(params?.status ? { status: params.status } : {}),
+          ...(params?.failed_only !== undefined ? { failed_only: params.failed_only } : {}),
+          ...(params?.has_invalid !== undefined ? { has_invalid: params.has_invalid } : {}),
+          ...(params?.search ? { search: params.search } : {}),
+          ...(params?.job_type ? { job_type: params.job_type } : {}),
+        },
+      }),
+    ),
+
+  triggerMarketDataImport: async (payload: AdminMarketDataImportPayload): Promise<AdminMarketDataJobEnqueueResponse> =>
+    unwrap(await axiosInstance.post("/api/v1/admin/market-data/hooks/import", payload)),
+
+  triggerMarketDataUpload: async (payload: AdminMarketDataImportPayload): Promise<AdminMarketDataJobEnqueueResponse> =>
+    unwrap(await axiosInstance.post("/api/v1/admin/market-data/hooks/upload", payload)),
+
+  triggerMarketDataRefresh: async (payload: AdminMarketDataRefreshPayload): Promise<AdminMarketDataJobEnqueueResponse> =>
+    unwrap(await axiosInstance.post("/api/v1/admin/market-data/hooks/refresh", payload)),
+
+  getPricingPlans: async (): Promise<AdminPricingPlan[]> =>
+    unwrap(await axiosInstance.get("/api/v1/admin/pricing/plans")),
+
+  createPricingPlan: async (payload: AdminPricingPlanPayload): Promise<AdminPricingPlan> =>
+    unwrap(await axiosInstance.post("/api/v1/admin/pricing/plans", payload)),
+
+  updatePricingPlan: async (
+    planId: string,
+    payload: Partial<AdminPricingPlanPayload>,
+  ): Promise<AdminPricingPlan> =>
+    unwrap(await axiosInstance.patch(`/api/v1/admin/pricing/plans/${planId}`, payload)),
+
+  togglePricingPlan: async (planId: string, is_active: boolean): Promise<AdminPricingPlan> =>
+    unwrap(await axiosInstance.patch(`/api/v1/admin/pricing/plans/${planId}`, { is_active })),
+
+
 };
+

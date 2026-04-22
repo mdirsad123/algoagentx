@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     razorpay_key_secret: Optional[str] = None
     razorpay_webhook_secret: Optional[str] = None
 
+    # Credit top-up configuration
+    credits_allow_custom_topup: bool = True
+    credits_min_custom_topup: int = 1
+    credits_max_custom_topup: int = 100000
+    credits_topup_packs_json: Optional[str] = None
+
     # CORS Configuration
     web_origin: str = Field(default="http://localhost:3000", description="Allowed web origin for CORS")
 
@@ -209,6 +215,7 @@ if settings.is_development:
 
 # Validate production requirements on import
 settings.validate_production_requirements()
+
 
 
 

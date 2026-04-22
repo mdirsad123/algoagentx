@@ -1,5 +1,6 @@
 from fastapi import APIRouter
-from . import auth, users, strategies, backtests, signals, metrics, instruments, jobs, market_data, credits, billing, payments, subscriptions, ai_screener, notifications, strategy_requests, admin_strategy_requests, ai_screener_jobs, admin, support_tickets
+from . import auth, users, strategies, backtests, signals, metrics, instruments, jobs, market_data, credits, billing, payments, subscriptions, ai_screener, notifications, strategy_requests, admin_strategy_requests, ai_screener_jobs, admin, admin_market_data, support_tickets
+from . import admin_pricing
 
 api_router = APIRouter()
 
@@ -23,5 +24,6 @@ api_router.include_router(strategy_requests.router, prefix="/strategy-requests",
 api_router.include_router(admin_strategy_requests.router, prefix="/admin/strategy-requests", tags=["admin-strategy-requests"])
 api_router.include_router(ai_screener_jobs.router, prefix="/ai-screener-jobs", tags=["ai-screener-jobs"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
-
+api_router.include_router(admin_market_data.router, prefix="/admin/market-data", tags=["admin-market-data"])
+api_router.include_router(admin_pricing.router, prefix="/admin/pricing", tags=["admin-pricing"])
 api_router.include_router(support_tickets.router, prefix="/support-tickets", tags=["support-tickets"])

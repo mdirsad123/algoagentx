@@ -29,8 +29,8 @@ apiClient.interceptors.request.use((config) => {
   const shouldAttachAuth = (config as AxiosRequestConfig & { auth?: boolean }).auth !== false;
 
   if (token && shouldAttachAuth) {
-    config.headers = config.headers || {};
-    config.headers.Authorization = `Bearer ${token}`;
+    config.headers = config.headers || ({} as any);
+    (config.headers as any).Authorization = `Bearer ${token}`;
   }
 
   return config;
@@ -39,13 +39,31 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError<any>) => {
-    const message =
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      "Request failed";
+    const detail = error.response?.data?.detail;
 
-    return Promise.reject(new Error(message));
+    let message = "Request failed";
+    if (typeof detail === "string" && detail.trim()) {
+      message = detail;
+    } else if (Array.isArray(detail) && detail.length > 0) {
+      const issues = detail
+        .map((item: any) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object") return item.msg || item.message || JSON.stringify(item);
+          return String(item);
+        })
+        .filter(Boolean)
+        .join("; ");
+      message = issues || error.message || "Request failed";
+    } else if (detail && typeof detail === "object") {
+      message = detail.message || detail.error || error.response?.data?.message || error.message || "Request failed";
+    } else if (typeof error.response?.data?.message === "string" && error.response?.data?.message.trim()) {
+      message = error.response.data.message;
+    } else if (error.message) {
+      message = error.message;
+    }
+
+    error.message = message;
+    return Promise.reject(error);
   }
 );
 

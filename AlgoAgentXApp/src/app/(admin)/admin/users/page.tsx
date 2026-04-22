@@ -15,6 +15,7 @@ export default function AdminUsersPage() {
   const [total, setTotal] = useState(0)
   const [skip, setSkip] = useState(0)
   const [search, setSearch] = useState("")
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
   const [creditModalOpen, setCreditModalOpen] = useState(false)
@@ -28,12 +29,15 @@ export default function AdminUsersPage() {
   const fetchUsers = async (nextSkip = skip) => {
     setLoading(true)
     try {
+      setError(null)
       const data = await adminApi.getUsers(nextSkip, 20, search)
-      setUsers(data.items)
-      setTotal(data.total)
+      setUsers(data.items || [])
+      setTotal(data.total || 0)
       setSkip(nextSkip)
     } catch (e: any) {
-      toast.error(e?.response?.data?.detail || "Failed to load users")
+      const msg = e?.response?.data?.detail || "Failed to load users"
+      setError(msg)
+      toast.error(msg)
     } finally {
       setLoading(false)
     }
@@ -94,6 +98,8 @@ export default function AdminUsersPage() {
           <Button onClick={() => fetchUsers(0)} variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10">Search</Button>
         </div>
 
+        {error && <div className="mb-4 rounded-2xl border border-rose-400/20 bg-rose-500/10 p-4 text-rose-200">{error}</div>}
+
         <div className="overflow-auto">
           <table className="w-full min-w-[1080px] text-sm text-white">
             <thead>
@@ -109,7 +115,7 @@ export default function AdminUsersPage() {
               </tr>
             </thead>
             <tbody>
-              {loading ? <tr><td className="px-3 py-8 text-purple-200" colSpan={8}>Loading users...</td></tr> : users.length === 0 ? <tr><td className="px-3 py-8 text-center text-purple-200" colSpan={8}>No users found</td></tr> : users.map((user) => (
+              {loading ? <tr><td className="px-3 py-8 text-purple-200" colSpan={8}>Loading users...</td></tr> : users.length === 0 ? <tr><td className="px-3 py-8 text-center text-purple-200" colSpan={8}>No data found</td></tr> : users.map((user) => (
                 <tr key={user.id} className="border-b border-white/5">
                   <td className="px-3 py-3"><div>{user.fullname || '—'}</div><div className="text-xs text-purple-200">{user.email}</div></td>
                   <td className="px-3 py-3">
@@ -118,7 +124,10 @@ export default function AdminUsersPage() {
                       <option value="admin">admin</option>
                     </select>
                   </td>
-                  <td className="px-3 py-3"><span className="rounded-full bg-purple-500/20 px-3 py-1 text-xs text-purple-200 uppercase">{user.plan || 'free'}</span></td>
+                  <td className="px-3 py-3">
+                    <div className="rounded-full bg-purple-500/20 px-3 py-1 text-xs text-purple-200 uppercase inline-flex">{user.plan || 'free'}</div>
+                    <div className="text-xs text-purple-200 mt-1">{user.billing_period || 'NONE'} • {user.subscription_status || 'NONE'}</div>
+                  </td>
                   <td className="px-3 py-3">{user.credits ?? 0}</td>
                   <td className="px-3 py-3">
                     <button className={`rounded-full px-3 py-1 text-xs ${user.is_active ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'}`} onClick={async () => { try { await adminApi.updateUserStatus(user.id, !user.is_active); toast.success("Status updated"); fetchUsers(skip) } catch (err: any) { toast.error(err?.response?.data?.detail || "Unable to update status") } }}>{user.is_active ? 'Active' : 'Inactive'}</button>

@@ -8,6 +8,18 @@ from .signals import Signal, SignalCreate
 from .metrics import Metric, MetricCreate
 from .instruments import Instrument
 from .market_data import TimeframeResponse, MarketDataRangeResponse
+from .admin_market_data import (
+    MarketDataCatalogInstrument,
+    MarketDataCatalogResponse,
+    MarketDataDatasetSummary,
+    MarketDataDataset,
+    MarketDataDatasetListResponse,
+    MarketDataImportRequest,
+    MarketDataRefreshRequest,
+    MarketDataJobRecord,
+    MarketDataJobListResponse,
+    MarketDataJobEnqueueResponse,
+)
 from .notifications import NotificationCreate, NotificationResponse, NotificationUpdate, MarkReadRequest, MarkAllReadRequest
 from .strategy_requests import (
     StrategyRequestCreate,
@@ -35,6 +47,16 @@ __all__ = [
     "Metric", "MetricCreate",
     "Instrument",
     "TimeframeResponse", "MarketDataRangeResponse",
+    "MarketDataCatalogInstrument",
+    "MarketDataCatalogResponse",
+    "MarketDataDatasetSummary",
+    "MarketDataDataset",
+    "MarketDataDatasetListResponse",
+    "MarketDataImportRequest",
+    "MarketDataRefreshRequest",
+    "MarketDataJobRecord",
+    "MarketDataJobListResponse",
+    "MarketDataJobEnqueueResponse",
     "NotificationCreate", "NotificationResponse", "NotificationUpdate", "MarkReadRequest", "MarkAllReadRequest",
     "StrategyRequestCreate",
     "StrategyRequestUpdate",

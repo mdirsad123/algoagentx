@@ -1,1003 +1,1104 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import {
+  AlertTriangle,
+  BarChart3,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Clock3,
+  Database,
+  DollarSign,
+  Loader2,
+  Play,
+  RefreshCcw,
+  Wallet,
+} from "lucide-react";
+import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+
+import { EmptyState } from "@/components/shared/EmptyState";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/enhanced-card";
-import { Progress } from "@/components/ui/progress";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import axios from "@/lib/axios";
-import Toast from "@/components/shared/swal-toast";
-import { Play, Loader2, TrendingUp, TrendingDown, DollarSign, Gauge, Eye, RefreshCw, CreditCard } from "lucide-react";
-import { PageHeader } from "@/components/ui/page-header";
-import { StandardCard, StandardCardHeader, StandardCardTitle, StandardCardDescription, StandardCardContent } from "@/components/ui/standard-card";
-import { CardSkeleton, TableSkeleton, StatsSkeleton } from "@/components/ui/loading-skeleton";
 import { parseApiError, formatErrorMessage } from "@/lib/api/error";
-import { toast } from "@/components/ui/use-toast";
-
 import {
-  PieChart,
-  Pie,
-  Cell,
-  ResponsiveContainer,
-  LineChart,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Line,
-} from "recharts";
+  backtestsApi,
+  type BacktestDetailResponse,
+  type BacktestRunResponse,
+  type CostPreviewResponse,
+  type DataAvailabilityResponse,
+  type InstrumentOption,
+  type StrategyOption,
+} from "@/lib/api/backtests";
 
-interface Strategy {
-  id: string;
-  name: string;
-}
+type ParameterField = {
+  key: string;
+  label: string;
+  valueType: "string" | "number" | "boolean";
+  value: string;
+};
 
-interface Instrument {
-  id: number;
-  symbol: string;
-}
+const META_PARAMETER_KEYS = new Set([
+  "performance_metrics",
+  "metrics",
+  "performance",
+  "stats",
+  "metricSummary",
+  "metric_summary",
+  "strategy_type",
+  "market",
+  "timeframe",
+]);
 
-interface BacktestResponse {
-  backtest_id?: string;
-  strategy_name: string;
-  instrument_symbol: string;
-  timeframe: string;
-  start_date: string;
-  end_date: string;
-  initial_capital: number;
-  final_capital: number;
-  net_profit: number;
-  max_drawdown: number;
-  sharpe_ratio: number;
-  win_rate: number;
-  total_trades: number;
-  trades: Array<{
-    entry_time: string;
-    exit_time: string | null;
-    side: string;
-    quantity: number;
-    entry_price: number;
-    exit_price: number | null;
-    pnl: number | null;
-    exit_type: string | null;
-  }>;
-  equity_curve: Array<{
-    timestamp: string;
-    equity: number;
-  }>;
-  saved: boolean;
-}
+const toDateInput = (value: Date) => value.toISOString().slice(0, 10);
 
-interface JobStatus {
-  id: string;
-  job_type: string;
-  status: string;
-  progress: number;
-  message: string;
-  retry_count: number;
-  max_retries: number;
-  created_at: string;
-  started_at?: string;
-  completed_at?: string;
-  job_data?: any;
-  result_data?: BacktestResponse;
-}
+const safeNumber = (value: unknown, fallback = 0): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
 
-interface MarketDataRange {
-  min_timestamp: string;
-  max_timestamp: string;
-  candle_count: number;
-}
+const formatNumber = (value: number | null | undefined, fractionDigits = 2): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return new Intl.NumberFormat("en-IN", {
+    maximumFractionDigits: fractionDigits,
+    minimumFractionDigits: fractionDigits,
+  }).format(value);
+};
 
-const unwrapApiData = (payload: any) => payload?.success ? payload.data : payload;
+const formatCurrency = (value: number | null | undefined): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 2,
+  }).format(value);
+};
+
+const formatPercent = (value: number | null | undefined, multiplyBy100 = false): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  const display = multiplyBy100 ? value * 100 : value;
+  return `${formatNumber(display, 2)}%`;
+};
+
+const humanLabel = (key: string): string =>
+  key
+    .replace(/_/g, " ")
+    .replace(/\./g, " · ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+
+const extractStrategyParameterFields = (strategy: StrategyOption | null): ParameterField[] => {
+  const params = strategy?.parameters;
+  if (!params || typeof params !== "object") return [];
+
+  const fields: ParameterField[] = [];
+
+  const pushField = (key: string, raw: unknown) => {
+    if (raw === null || raw === undefined) return;
+    if (META_PARAMETER_KEYS.has(key)) return;
+
+    const primitiveType = typeof raw;
+    if (primitiveType === "string" || primitiveType === "number" || primitiveType === "boolean") {
+      fields.push({
+        key,
+        label: humanLabel(key),
+        valueType: primitiveType === "number" ? "number" : primitiveType === "boolean" ? "boolean" : "string",
+        value: String(raw),
+      });
+      return;
+    }
+
+    if (raw && typeof raw === "object") {
+      Object.entries(raw as Record<string, unknown>).forEach(([nestedKey, nestedValue]) => {
+        const composedKey = `${key}.${nestedKey}`;
+        if (nestedValue === null || nestedValue === undefined) return;
+        const nestedType = typeof nestedValue;
+        if (nestedType === "string" || nestedType === "number" || nestedType === "boolean") {
+          fields.push({
+            key: composedKey,
+            label: humanLabel(composedKey),
+            valueType:
+              nestedType === "number"
+                ? "number"
+                : nestedType === "boolean"
+                  ? "boolean"
+                  : "string",
+            value: String(nestedValue),
+          });
+        }
+      });
+    }
+  };
+
+  Object.entries(params).forEach(([key, value]) => pushField(key, value));
+  return fields.slice(0, 16);
+};
+
+const resultStatusTone = (status: string | undefined) => {
+  const normalized = (status || "").toLowerCase();
+  if (normalized === "completed") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
+  if (normalized === "running" || normalized === "pending") return "border-sky-500/40 bg-sky-500/10 text-sky-200";
+  if (normalized === "failed") return "border-rose-500/40 bg-rose-500/10 text-rose-200";
+  return "border-border/50 bg-card/40 text-muted-foreground";
+};
 
 export default function BacktestPage() {
-  // Form state
-  const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [instruments, setInstruments] = useState<Instrument[]>([]);
-  const [selectedStrategy, setSelectedStrategy] = useState<string>("");
-  const [selectedInstrument, setSelectedInstrument] = useState<string>("");
-  const [timeframe, setTimeframe] = useState<string>("1d");
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setEndDate] = useState<string>("");
-  const [capital, setCapital] = useState<string>("100000");
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
-  // Job state
-  const [currentJob, setCurrentJob] = useState<JobStatus | null>(null);
-  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [initialError, setInitialError] = useState<string | null>(null);
 
-  // UI state
-  const [loading, setLoading] = useState(false);
-  const [backtestResult, setBacktestResult] = useState<BacktestResponse | null>(null);
+  const [strategies, setStrategies] = useState<StrategyOption[]>([]);
+  const [instruments, setInstruments] = useState<InstrumentOption[]>([]);
+  const [timeframes, setTimeframes] = useState<string[]>([]);
 
-  // Progress tracking
-  const [showProgress, setShowProgress] = useState(false);
+  const [limits, setLimits] = useState<{ max_backtests_per_day?: number; max_date_range_days?: number } | null>(null);
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
 
-  // Credit system state
-  const [userBalance, setUserBalance] = useState<number | null>(null);
-  const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
-  const [costLoading, setCostLoading] = useState(false);
-  const [insufficientCredits, setInsufficientCredits] = useState(false);
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string>("");
+  const [selectedInstrumentId, setSelectedInstrumentId] = useState<string>("");
+  const [selectedTimeframe, setSelectedTimeframe] = useState<string>("");
+  const [initialCapital, setInitialCapital] = useState<string>("100000");
 
-  // Load strategies, instruments, and credit balance on mount
+  const [startDate, setStartDate] = useState<string>(() => {
+    const now = new Date();
+    const start = new Date(now);
+    start.setDate(now.getDate() - 90);
+    return toDateInput(start);
+  });
+  const [endDate, setEndDate] = useState<string>(() => toDateInput(new Date()));
+
+  const [parameterValues, setParameterValues] = useState<Record<string, string>>({});
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [availability, setAvailability] = useState<DataAvailabilityResponse | null>(null);
+  const [costPreview, setCostPreview] = useState<CostPreviewResponse | null>(null);
+  const [previewWarnings, setPreviewWarnings] = useState<string[]>([]);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [lastPreviewSignature, setLastPreviewSignature] = useState<string>("");
+
+  const [isRunning, setIsRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  const [insufficientCreditsHint, setInsufficientCreditsHint] = useState<
+    { needed?: number; walletBalance?: number; includedBalance?: number } | null
+  >(null);
+  const [runResponse, setRunResponse] = useState<BacktestRunResponse | null>(null);
+  const [resultDetail, setResultDetail] = useState<BacktestDetailResponse | null>(null);
+
+  const selectedStrategy = useMemo(
+    () => strategies.find((strategy) => strategy.id === selectedStrategyId) || null,
+    [strategies, selectedStrategyId],
+  );
+
+  const parameterFields = useMemo(() => extractStrategyParameterFields(selectedStrategy), [selectedStrategy]);
+
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [strategiesRes, instrumentsRes, balanceRes] = await Promise.all([
-          axios.get("/api/v1/strategies"),
-          axios.get("/api/v1/instruments"),
-          axios.get("/api/v1/credits/balance")
-        ]);
-        setStrategies(unwrapApiData(strategiesRes.data));
-        setInstruments(unwrapApiData(instrumentsRes.data));
-        setUserBalance(unwrapApiData(balanceRes.data)?.balance ?? 0);
-    } catch (error: any) {
-      const errorInfo = parseApiError(error);
-      Toast.fire({
-        icon: 'error',
-        title: 'Failed to load data',
-        text: formatErrorMessage(errorInfo)
-      });
+    const nextValues: Record<string, string> = {};
+    parameterFields.forEach((field) => {
+      nextValues[field.key] = field.value;
+    });
+    setParameterValues(nextValues);
+  }, [parameterFields]);
+
+  const requestSignature = useMemo(
+    () =>
+      [selectedStrategyId, selectedInstrumentId, selectedTimeframe, startDate, endDate, initialCapital]
+        .map((item) => (item ?? "").toString().trim())
+        .join("|"),
+    [selectedStrategyId, selectedInstrumentId, selectedTimeframe, startDate, endDate, initialCapital],
+  );
+
+  const validationErrors = useMemo(() => {
+    const messages: string[] = [];
+    if (!selectedStrategyId) messages.push("Select a strategy.");
+    if (!selectedInstrumentId) messages.push("Select an instrument.");
+    if (!selectedTimeframe) messages.push("Select a timeframe.");
+    if (!startDate || !endDate) messages.push("Select a valid date range.");
+
+    const capitalValue = safeNumber(initialCapital, 0);
+    if (capitalValue <= 0) messages.push("Initial capital must be greater than 0.");
+
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) && start >= end) {
+        messages.push("End date must be after start date.");
+      }
+
+      if (limits?.max_date_range_days) {
+        const diffDays = Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+        if (Number.isFinite(diffDays) && diffDays > limits.max_date_range_days) {
+          messages.push(`Date range exceeds your plan limit (${limits.max_date_range_days} days).`);
+        }
+      }
     }
+
+    return messages;
+  }, [selectedStrategyId, selectedInstrumentId, selectedTimeframe, startDate, endDate, initialCapital, limits]);
+
+  const isReadyForRun = validationErrors.length === 0;
+
+  const loadInitialData = useCallback(async () => {
+    setInitialLoading(true);
+    setInitialError(null);
+
+    try {
+      const [configResult, strategyResult] = await Promise.allSettled([
+        backtestsApi.getConfig(),
+        backtestsApi.getStrategiesCatalog(),
+      ]);
+
+      let nextStrategies: StrategyOption[] = [];
+      let nextInstruments: InstrumentOption[] = [];
+      let nextTimeframes: string[] = [];
+
+      if (configResult.status === "fulfilled") {
+        const configData = configResult.value;
+        nextInstruments = configData.instruments || [];
+        nextTimeframes = configData.timeframes || [];
+        setLimits(configData.limits || null);
+
+        if (typeof configData.credits?.balance === "number") {
+          setCreditBalance(configData.credits.balance);
+        }
+
+        nextStrategies = (configData.strategies || []).map((item) => ({
+          id: item.id,
+          name: item.name,
+        }));
+      }
+
+      if (strategyResult.status === "fulfilled") {
+        const catalog = strategyResult.value;
+        const byId = new Map<string, StrategyOption>();
+
+        catalog.forEach((item) => byId.set(item.id, item));
+        nextStrategies.forEach((item) => {
+          byId.set(item.id, {
+            ...byId.get(item.id),
+            ...item,
+          });
+        });
+
+        nextStrategies = Array.from(byId.values());
+      }
+
+      if (!nextStrategies.length) {
+        throw new Error("Unable to load strategy catalog. Please refresh and try again.");
+      }
+
+      if (!nextInstruments.length) {
+        try {
+          nextInstruments = await backtestsApi.getInstruments();
+        } catch {
+          nextInstruments = [];
+        }
+      }
+
+      if (!nextTimeframes.length) {
+        try {
+          nextTimeframes = await backtestsApi.getTimeframes();
+        } catch {
+          nextTimeframes = ["1d"];
+        }
+      }
+
+      setStrategies(nextStrategies);
+      setInstruments(nextInstruments);
+      setTimeframes(nextTimeframes);
+
+      const queryStrategyId = searchParams.get("strategyId");
+      const queryInstrumentId = searchParams.get("instrumentId");
+      const querySymbol = searchParams.get("symbol");
+
+      if (queryStrategyId && nextStrategies.some((item) => item.id === queryStrategyId)) {
+        setSelectedStrategyId(queryStrategyId);
+      } else if (nextStrategies.length === 1) {
+        setSelectedStrategyId(nextStrategies[0].id);
+      }
+
+      if (queryInstrumentId && nextInstruments.some((item) => String(item.id) === queryInstrumentId)) {
+        setSelectedInstrumentId(queryInstrumentId);
+      } else if (querySymbol) {
+        const bySymbol = nextInstruments.find((item) => item.symbol.toLowerCase() === querySymbol.toLowerCase());
+        if (bySymbol) setSelectedInstrumentId(String(bySymbol.id));
+      }
+
+      if (nextTimeframes.length && !selectedTimeframe) {
+        setSelectedTimeframe(nextTimeframes.includes("1d") ? "1d" : nextTimeframes[0]);
+      }
+    } catch (error) {
+      const parsed = parseApiError(error);
+      setInitialError(formatErrorMessage(parsed));
+    } finally {
+      setInitialLoading(false);
+    }
+  }, [searchParams, selectedTimeframe]);
+
+  useEffect(() => {
+    void loadInitialData();
+  }, [loadInitialData]);
+
+  useEffect(() => {
+    if (!selectedInstrumentId) return;
+
+    let active = true;
+    const loadInstrumentTimeframes = async () => {
+      try {
+        const list = await backtestsApi.getTimeframes(Number(selectedInstrumentId));
+        if (!active || !list.length) return;
+        setTimeframes(list);
+        if (!list.includes(selectedTimeframe)) {
+          setSelectedTimeframe(list[0]);
+        }
+      } catch {
+        // Silently keep current timeframes to avoid interrupting UX.
+      }
     };
-    loadData();
+
+    void loadInstrumentTimeframes();
+    return () => {
+      active = false;
+    };
+  }, [selectedInstrumentId, selectedTimeframe]);
+
+  useEffect(() => {
+    setPreviewError(null);
+    setPreviewWarnings([]);
+    setAvailability(null);
+    setCostPreview(null);
+    setLastPreviewSignature("");
+  }, [requestSignature]);
+
+  const runPreview = useCallback(async (): Promise<{ availability: DataAvailabilityResponse; cost: CostPreviewResponse } | null> => {
+    if (!isReadyForRun) {
+      setPreviewError(validationErrors[0] || "Please complete all required fields.");
+      return null;
+    }
+
+    setIsPreviewing(true);
+    setPreviewError(null);
+    setRunError(null);
+
+    try {
+      const instrumentId = Number(selectedInstrumentId);
+      const [availabilityData, costData] = await Promise.all([
+        backtestsApi.getDataAvailability({
+          instrument_id: instrumentId,
+          timeframe: selectedTimeframe,
+          start_date: startDate,
+          end_date: endDate,
+        }),
+        backtestsApi.previewCost({
+          strategy_id: selectedStrategyId,
+          instrument_id: instrumentId,
+          timeframe: selectedTimeframe,
+          start_date: startDate,
+          end_date: endDate,
+          capital: safeNumber(initialCapital, 0),
+        }),
+      ]);
+
+      setAvailability(availabilityData);
+      setCostPreview(costData);
+      setLastPreviewSignature(requestSignature);
+
+      const warnings: string[] = [];
+      if (!availabilityData.available || (availabilityData.requested_candle_count || 0) <= 0) {
+        warnings.push("No candles are available for the selected date range. Please adjust filters.");
+      }
+      if (availabilityData.requested_candle_count > 100000) {
+        warnings.push("Large candle scope detected. Execution may be slower and cost more credits.");
+      }
+      if (!costData.can_run) {
+        warnings.push("Insufficient credits for this run. Reduce scope or add credits.");
+      }
+      setPreviewWarnings(warnings);
+
+      return { availability: availabilityData, cost: costData };
+    } catch (error) {
+      const parsed = parseApiError(error);
+      setPreviewError(formatErrorMessage(parsed));
+      return null;
+    } finally {
+      setIsPreviewing(false);
+    }
+  }, [
+    initialCapital,
+    isReadyForRun,
+    requestSignature,
+    selectedInstrumentId,
+    selectedStrategyId,
+    selectedTimeframe,
+    startDate,
+    endDate,
+    validationErrors,
+  ]);
+
+  const loadResultDetail = useCallback(async (backtestId: string) => {
+    try {
+      const detail = await backtestsApi.getDetail(backtestId);
+      setResultDetail(detail);
+    } catch {
+      // Keep UX stable even if detail endpoint fails.
+      setResultDetail(null);
+    }
   }, []);
 
-  // Handle query parameters to prefill symbol
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const symbol = urlParams.get('symbol');
-    
-    if (symbol && instruments.length > 0) {
-      const matchingInstrument = instruments.find(instr => instr.symbol === symbol);
-      if (matchingInstrument) {
-        setSelectedInstrument(matchingInstrument.id.toString());
-      }
+  const runBacktest = useCallback(async () => {
+    setRunError(null);
+    setRunResponse(null);
+    setResultDetail(null);
+
+    if (!isReadyForRun) {
+      setRunError(validationErrors[0] || "Please complete all required fields.");
+      return;
     }
-  }, [instruments]);
 
-  // Watch for changes in form fields to update cost preview
-  useEffect(() => {
-    if (startDate && endDate && timeframe) {
-      calculateCostPreview();
+    let previewData = { availability, cost: costPreview } as {
+      availability: DataAvailabilityResponse | null;
+      cost: CostPreviewResponse | null;
+    };
+
+    if (lastPreviewSignature !== requestSignature || !previewData.availability || !previewData.cost) {
+      const freshPreview = await runPreview();
+      if (!freshPreview) return;
+      previewData = freshPreview;
     }
-  }, [startDate, endDate, timeframe, userBalance]);
 
-  // Poll job status
-  const pollJobStatus = async (jobId: string) => {
-    try {
-      const response = await axios.get(`/api/v1/jobs/${jobId}`);
-      const jobStatus: JobStatus = unwrapApiData(response.data);
-
-      setCurrentJob(jobStatus);
-
-      if (jobStatus.status === 'completed' && jobStatus.result_data) {
-        // Job completed successfully
-        setBacktestResult(jobStatus.result_data);
-        setCurrentJob(null);
-        if (pollingInterval) {
-          clearInterval(pollingInterval);
-          setPollingInterval(null);
-        }
-
-        // Update balance after successful backtest
-        try {
-          const balanceRes = await axios.get("/api/v1/credits/balance");
-          setUserBalance(unwrapApiData(balanceRes.data)?.balance ?? 0);
-        } catch (error) {
-          console.error('Failed to update balance after backtest:', error);
-        }
-
-        Toast.fire({
-          icon: 'success',
-          title: 'Backtest completed',
-          text: `Strategy: ${jobStatus.result_data.strategy_name} | Net P&L: $${jobStatus.result_data.net_profit.toFixed(2)}`
-        });
-
-      } else if (jobStatus.status === 'failed') {
-        // Job failed
-        setCurrentJob(null);
-        if (pollingInterval) {
-          clearInterval(pollingInterval);
-          setPollingInterval(null);
-        }
-
-        Toast.fire({
-          icon: 'error',
-          title: 'Backtest failed',
-          text: jobStatus.message || 'An error occurred during backtesting'
-        });
-      }
-      // Continue polling for 'pending', 'running', 'retry' statuses
-
-    } catch (error: any) {
-      console.error('Error polling job status:', error);
-      // Stop polling on error
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-        setPollingInterval(null);
-      }
-      
-      Toast.fire({
-        icon: 'error',
-        title: 'Polling failed',
-        text: 'Unable to fetch job status. Please check your connection.'
-      });
+    if (!previewData.availability?.available || (previewData.availability.requested_candle_count || 0) <= 0) {
+      setRunError("Cannot run backtest without data coverage in the selected range.");
+      return;
     }
-  };
 
-  const previewData = async () => {
-    if (!selectedInstrument || !timeframe) {
-      Toast.fire({
-        icon: 'warning',
-        title: 'Missing fields',
-        text: 'Please select an instrument and timeframe to preview data'
+    if (!previewData.cost?.can_run) {
+      setRunError("Insufficient credit balance for this run. Adjust scope or add credits.");
+      setInsufficientCreditsHint({
+        needed: safeNumber(previewData.cost?.total_cost, 0),
+        walletBalance: safeNumber(previewData.cost?.balances?.wallet_balance, 0),
+        includedBalance: safeNumber(previewData.cost?.balances?.included_balance, 0),
       });
       return;
     }
 
+    setIsRunning(true);
     try {
-      const response = await axios.get("/api/v1/market-data/range", {
-        params: {
-          instrument_id: selectedInstrument,
-          timeframe: timeframe
-        }
-      });
-      
-      const dataRange: MarketDataRange = response.data;
-      
-      // Auto-fill date range
-      const minDate = new Date(dataRange.min_timestamp).toISOString().split('T')[0];
-      const maxDate = new Date(dataRange.max_timestamp).toISOString().split('T')[0];
-      
-      setStartDate(minDate);
-      setEndDate(maxDate);
-
-      Toast.fire({
-        icon: 'success',
-        title: 'Data preview loaded',
-        text: `Available data: ${dataRange.candle_count} candles from ${minDate} to ${maxDate}`
-      });
-
-      // Calculate cost preview after setting dates
-      await calculateCostPreview(minDate, maxDate, timeframe);
-
-    } catch (error: any) {
-      const errorInfo = parseApiError(error);
-      Toast.fire({
-        icon: 'error',
-        title: 'Failed to preview data',
-        text: formatErrorMessage(errorInfo)
-      });
-    }
-  };
-
-  const calculateCostPreview = async (start?: string, end?: string, tf?: string) => {
-    const sDate = start || startDate;
-    const eDate = end || endDate;
-    const tfValue = tf || timeframe;
-
-    if (!sDate || !eDate || !tfValue) {
-      setEstimatedCost(null);
-      setInsufficientCredits(false);
-      return;
-    }
-
-    setCostLoading(true);
-    try {
-      const response = await axios.post("/api/v1/credits/preview-cost", {
-        start_date: sDate,
-        end_date: eDate,
-        timeframe: tfValue
-      });
-      
-      const cost = unwrapApiData(response.data).total_cost;
-      setEstimatedCost(cost);
-      setInsufficientCredits(userBalance !== null && cost > userBalance);
-    } catch (error: any) {
-      console.error('Error calculating cost preview:', error);
-      const errorInfo = parseApiError(error);
-      toast({
-        title: "Cost Calculation Failed",
-        description: formatErrorMessage(errorInfo),
-        variant: "destructive"
-      });
-      setEstimatedCost(null);
-      setInsufficientCredits(false);
-    } finally {
-      setCostLoading(false);
-    }
-  };
-
-  const runBacktest = async () => {
-    if (!selectedStrategy || !selectedInstrument || !timeframe || !startDate || !endDate || !capital) {
-      Toast.fire({
-        icon: 'warning',
-        title: 'Missing fields',
-        text: 'Please fill in all required fields'
-      });
-      return;
-    }
-
-    setLoading(true);
-    setCurrentJob(null);
-    setBacktestResult(null);
-
-    try {
-      const payload = {
-        strategy_id: selectedStrategy,
-        instrument_id: parseInt(selectedInstrument),
-        timeframe,
+      const response = await backtestsApi.run({
+        strategy_id: selectedStrategyId,
+        instrument_id: Number(selectedInstrumentId),
+        timeframe: selectedTimeframe,
         start_date: startDate,
         end_date: endDate,
-        capital: parseFloat(capital),
-        save_result: true
-      };
-
-      const response = await axios.post("/api/v1/backtests/run", payload);
-      const jobResponse = unwrapApiData(response.data);
-
-      // Start polling job status
-      const jobId = jobResponse.job_id;
-      const interval = setInterval(() => pollJobStatus(jobId), 2000); // Poll every 2 seconds
-      setPollingInterval(interval);
-
-      // Initial poll
-      await pollJobStatus(jobId);
-
-      Toast.fire({
-        icon: 'info',
-        title: 'Backtest started',
-        text: 'Processing in background...'
+        capital: safeNumber(initialCapital, 0),
+        save_result: true,
       });
 
-    } catch (error: any) {
-      setLoading(false);
-      const errorInfo = parseApiError(error);
-      Toast.fire({
-        icon: 'error',
-        title: 'Failed to start backtest',
-        text: formatErrorMessage(errorInfo)
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
+      setRunResponse(response);
+      if (typeof response.credits?.balance_after === "number") {
+        setCreditBalance(response.credits.balance_after);
+      } else if (creditBalance !== null && typeof response.credits?.debited === "number") {
+        setCreditBalance(Math.max(creditBalance - response.credits.debited, 0));
       }
-    };
-  }, [pollingInterval]);
 
-  // Prepare chart data
-  const winLossData = backtestResult ? [
-    { name: "Wins", value: Math.round(backtestResult.total_trades * backtestResult.win_rate) },
-    { name: "Losses", value: Math.round(backtestResult.total_trades * (1 - backtestResult.win_rate)) },
-  ] : [];
-
-  const equityData = backtestResult?.equity_curve.map(point => ({
-    date: new Date(point.timestamp).toLocaleDateString(),
-    equity: Number(point.equity)
-  })) || [];
-
-  const COLORS = ["#22c55e", "#ef4444"]; // Green for wins, red for losses
-
-  // Progress step labels
-  const getProgressSteps = () => {
-    if (!currentJob) return [];
-    
-    const steps = [
-      { label: "Initializing backtest", progress: 10 },
-      { label: "Fetching market data", progress: 20 },
-      { label: "Generating trading signals", progress: 50 },
-      { label: "Building trade history", progress: 70 },
-      { label: "Calculating performance metrics", progress: 90 },
-      { label: "Saving results", progress: 100 }
-    ];
-
-    return steps;
-  };
-
-  const currentStep = getProgressSteps().find(step => step.progress <= (currentJob?.progress || 0));
-  const nextStep = getProgressSteps().find(step => step.progress > (currentJob?.progress || 0));
-
-  const runAgain = () => {
-    setBacktestResult(null);
-    setCurrentJob(null);
-    if (pollingInterval) {
-      clearInterval(pollingInterval);
-      setPollingInterval(null);
+      const backtestId = response.backtest_id || response.result?.backtest_id;
+      if (backtestId) {
+        await loadResultDetail(backtestId);
+      }
+    } catch (error) {
+      const parsed = parseApiError(error);
+      const detail = parsed.raw?.detail;
+      if (detail && typeof detail === "object" && detail.code === "INSUFFICIENT_CREDITS") {
+        setInsufficientCreditsHint({
+          needed: safeNumber(detail.needed, 0),
+          walletBalance: safeNumber(detail.wallet_balance, 0),
+          includedBalance: safeNumber(detail.included_balance, 0),
+        });
+      }
+      setRunError(formatErrorMessage(parsed));
+    } finally {
+      setIsRunning(false);
     }
-    // Re-run with same parameters
-    runBacktest();
-  };
+  }, [
+    availability,
+    costPreview,
+    creditBalance,
+    initialCapital,
+    isReadyForRun,
+    lastPreviewSignature,
+    loadResultDetail,
+    requestSignature,
+    runPreview,
+    selectedInstrumentId,
+    selectedStrategyId,
+    selectedTimeframe,
+    startDate,
+    endDate,
+    validationErrors,
+  ]);
+
+  const resultSummary = useMemo(() => {
+    if (resultDetail?.summary) return resultDetail.summary;
+    return runResponse?.result || null;
+  }, [resultDetail, runResponse]);
+
+  const requestedCandleCount = availability?.requested_candle_count || 0;
+  const estimatedCost = costPreview?.total_cost ?? null;
+  const postRunBalance =
+    creditBalance !== null && estimatedCost !== null ? Math.max(creditBalance - estimatedCost, 0) : null;
+  const isCreditInsufficient = Boolean(costPreview && !costPreview.can_run);
+
+  const equityChartRows = useMemo(
+    () =>
+      (resultDetail?.equity_curve || []).slice(-240).map((point) => ({
+        label: point.timestamp ? new Date(point.timestamp).toLocaleDateString() : "",
+        equity: safeNumber(point.equity, 0),
+      })),
+    [resultDetail?.equity_curve],
+  );
+
+  if (initialLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <div className="h-8 w-56 animate-pulse rounded-xl bg-card/40" />
+          <div className="h-5 w-80 animate-pulse rounded-xl bg-card/40" />
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="h-28 animate-pulse rounded-xl border border-border/50 bg-card/30 backdrop-blur-xl" />
+          ))}
+        </div>
+        <div className="h-80 animate-pulse rounded-xl border border-border/50 bg-card/30 backdrop-blur-xl" />
+      </div>
+    );
+  }
+
+  if (initialError) {
+    return (
+      <EmptyState
+        title="Unable to load Backtest workspace"
+        description={initialError}
+        action={
+          <Button onClick={() => void loadInitialData()} className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90">
+            <RefreshCcw className="mr-2 h-4 w-4" />
+            Retry
+          </Button>
+        }
+      />
+    );
+  }
+
+  const netProfit = safeNumber(resultSummary?.net_profit, 0);
+  const initialCap = safeNumber(resultSummary?.initial_capital, safeNumber(initialCapital, 0));
+  const finalCap = safeNumber(resultSummary?.final_capital, initialCap + netProfit);
+  const returnPct = initialCap > 0 ? ((finalCap - initialCap) / initialCap) * 100 : 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#1a0f2e] via-[#2a1458] to-[#0f172a]">
-      <PageHeader 
-        title="Backtest Analysis"
-        subtitle="Execute and analyze trading strategy performance"
-      />
+    <div className="space-y-6">
+      <header className="space-y-2">
+        <h1 className="text-3xl font-semibold tracking-tight text-foreground">Backtest Studio</h1>
+        <p className="text-sm text-muted-foreground">
+          Configure strategy, validate data and credits, then run a stable backtest with production market data.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Tip: run preview before execution to validate coverage, candle scope, and credit impact.
+        </p>
+      </header>
 
-      <div className="space-y-6 p-6">
-
-      {/* Credit Balance Section */}
-        <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
-          <CardHeader>
-            <CardTitle className="text-white flex items-center gap-2">
-              <CreditCard className="w-5 h-5 text-purple-400" />
-              Credit Balance
-            </CardTitle>
-            <CardDescription className="text-gray-400">
-              Your current credit balance and estimated backtest cost
-            </CardDescription>
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader className="pb-2">
+            <CardDescription className="text-muted-foreground">Credit Balance</CardDescription>
+            <CardTitle className="text-2xl text-foreground">{formatNumber(creditBalance, 0)}</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Current Balance */}
-              <div className="bg-gradient-to-r from-blue-900/40 to-cyan-900/40 border border-blue-500/30 rounded-xl p-4 backdrop-blur-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-gray-400 text-sm">Current Balance</p>
-                    <p className="text-2xl font-bold text-white">
-                      {userBalance !== null ? userBalance : 'Loading...'}
-                    </p>
-                  </div>
-                  <div className="p-2 bg-blue-500/30 rounded-full">
-                    <CreditCard className="w-6 h-6 text-blue-400" />
-                  </div>
-                </div>
-              </div>
+          <CardContent className="pt-0 text-xs text-muted-foreground">
+            <div className="inline-flex items-center gap-2">
+              <Wallet className="h-4 w-4" />
+              Available for backtest execution
+            </div>
+          </CardContent>
+        </Card>
 
-              {/* Estimated Cost */}
-              <div className="bg-gradient-to-r from-green-900/40 to-emerald-900/40 border border-green-500/30 rounded-xl p-4 backdrop-blur-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-gray-400 text-sm">Estimated Cost</p>
-                    <p className="text-2xl font-bold text-white">
-                      {costLoading ? (
-                        <div className="flex items-center gap-2">
-                          <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
-                          Calculating...
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader className="pb-2">
+            <CardDescription className="text-muted-foreground">Estimated Run Cost</CardDescription>
+            <CardTitle className="text-2xl text-foreground">{estimatedCost !== null ? formatNumber(estimatedCost, 0) : "—"}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 text-xs text-muted-foreground">
+            <div className="inline-flex items-center gap-2">
+              <DollarSign className="h-4 w-4" />
+              Based on timeframe, range, and candle volume
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader className="pb-2">
+            <CardDescription className="text-muted-foreground">Balance After Run</CardDescription>
+            <CardTitle className={`text-2xl ${postRunBalance !== null && postRunBalance > 0 ? "text-foreground" : "text-rose-300"}`}>
+              {postRunBalance !== null ? formatNumber(postRunBalance, 0) : "—"}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 text-xs text-muted-foreground">
+            {isCreditInsufficient ? "Insufficient credits for current scope" : "Projected post-run balance"}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader className="pb-2">
+            <CardDescription className="text-muted-foreground">Candles in Scope</CardDescription>
+            <CardTitle className="text-2xl text-foreground">{requestedCandleCount > 0 ? formatNumber(requestedCandleCount, 0) : "—"}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 text-xs text-muted-foreground">
+            <div className="inline-flex items-center gap-2">
+              <Database className="h-4 w-4" />
+              Requested candles for selected range
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <CardHeader>
+          <CardTitle className="text-xl text-foreground">Backtest Configuration</CardTitle>
+          <CardDescription className="text-muted-foreground">
+            Select strategy, market scope, and execution settings before preview.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">Strategy</Label>
+              <Select value={selectedStrategyId} onValueChange={setSelectedStrategyId}>
+                <SelectTrigger className="rounded-xl border-border/50 bg-card/20 text-foreground">
+                  <SelectValue placeholder="Select strategy" />
+                </SelectTrigger>
+                <SelectContent>
+                  {strategies.map((strategy) => (
+                    <SelectItem key={strategy.id} value={strategy.id}>
+                      {strategy.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">Instrument</Label>
+              <Select value={selectedInstrumentId} onValueChange={setSelectedInstrumentId}>
+                <SelectTrigger className="rounded-xl border-border/50 bg-card/20 text-foreground">
+                  <SelectValue placeholder="Select instrument" />
+                </SelectTrigger>
+                <SelectContent>
+                  {instruments.map((instrument) => (
+                    <SelectItem key={instrument.id} value={String(instrument.id)}>
+                      {instrument.symbol}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">Timeframe</Label>
+              <Select value={selectedTimeframe} onValueChange={setSelectedTimeframe}>
+                <SelectTrigger className="rounded-xl border-border/50 bg-card/20 text-foreground">
+                  <SelectValue placeholder="Select timeframe" />
+                </SelectTrigger>
+                <SelectContent>
+                  {timeframes.map((timeframe) => (
+                    <SelectItem key={timeframe} value={timeframe}>
+                      {timeframe}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">Initial Capital</Label>
+              <Input
+                type="number"
+                min={1}
+                step={1000}
+                value={initialCapital}
+                onChange={(event) => setInitialCapital(event.target.value)}
+                className="rounded-xl border-border/50 bg-card/20 text-foreground placeholder:text-muted-foreground"
+                placeholder="100000"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">Start Date</Label>
+              <Input
+                type="date"
+                value={startDate}
+                max={endDate || undefined}
+                onChange={(event) => setStartDate(event.target.value)}
+                className="rounded-xl border-border/50 bg-card/20 text-foreground"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">End Date</Label>
+              <Input
+                type="date"
+                value={endDate}
+                min={startDate || undefined}
+                max={toDateInput(new Date())}
+                onChange={(event) => setEndDate(event.target.value)}
+                className="rounded-xl border-border/50 bg-card/20 text-foreground"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border/50 bg-card/20">
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((prev) => !prev)}
+              className="flex w-full items-center justify-between px-4 py-3 text-left"
+            >
+              <div>
+                <p className="text-sm font-medium text-foreground">Strategy Parameters</p>
+                <p className="text-xs text-muted-foreground">
+                  Dynamic fields detected from selected strategy configuration.
+                </p>
+              </div>
+              {advancedOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+            </button>
+
+            {advancedOpen && (
+              <div className="border-t border-border/50 px-4 pb-4 pt-3">
+                {!parameterFields.length ? (
+                  <p className="text-sm text-muted-foreground">No dynamic parameters available for this strategy.</p>
+                ) : (
+                  <>
+                    <p className="mb-3 text-xs text-muted-foreground">
+                      Preview-only view of strategy parameters. Execution uses the strategy stored on server.
+                    </p>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {parameterFields.map((field) => (
+                        <div key={field.key} className="space-y-1">
+                          <Label className="text-xs text-muted-foreground">{field.label}</Label>
+                          <Input
+                            value={parameterValues[field.key] || ""}
+                            onChange={(event) =>
+                              setParameterValues((prev) => ({
+                                ...prev,
+                                [field.key]: event.target.value,
+                              }))
+                            }
+                            className="h-9 rounded-xl border-border/50 bg-card/20 text-foreground"
+                          />
                         </div>
-                      ) : estimatedCost !== null ? (
-                        estimatedCost
-                      ) : (
-                        'Select parameters'
-                      )}
-                    </p>
-                  </div>
-                  <div className="p-2 bg-green-500/30 rounded-full">
-                    <DollarSign className="w-6 h-6 text-green-400" />
-                  </div>
-                </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
+            )}
+          </div>
 
-              {/* Balance After */}
-              <div className="bg-gradient-to-r from-purple-900/40 to-pink-900/40 border border-purple-500/30 rounded-xl p-4 backdrop-blur-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-gray-400 text-sm">Balance After</p>
-                    <p className={`text-2xl font-bold ${
-                      userBalance !== null && estimatedCost !== null && userBalance >= estimatedCost
-                        ? 'text-green-400'
-                        : 'text-red-400'
-                    }`}>
-                      {userBalance !== null && estimatedCost !== null 
-                        ? (userBalance - estimatedCost).toFixed(0)
-                        : 'Select parameters'
-                      }
-                    </p>
-                  </div>
-                  <div className={`p-2 rounded-full ${
-                    userBalance !== null && estimatedCost !== null && userBalance >= estimatedCost
-                      ? 'bg-green-500/30'
-                      : 'bg-red-500/30'
-                  }`}>
-                    <Gauge className="w-6 h-6 text-white" />
-                  </div>
+          {validationErrors.length > 0 && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4" />
+                <ul className="list-disc space-y-1 pl-4">
+                  {validationErrors.map((error) => (
+                    <li key={error}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <CardHeader>
+          <CardTitle className="text-xl text-foreground">Validation & Preview</CardTitle>
+          <CardDescription className="text-muted-foreground">
+            Confirm DB coverage, candle scope and credit cost before execution.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Data Coverage</p>
+              <p className="mt-2 text-lg font-semibold text-foreground">
+                {availability ? (availability.available ? "Available" : "Missing") : "—"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Range: {availability?.min_timestamp ? new Date(availability.min_timestamp).toLocaleDateString() : "—"} →{" "}
+                {availability?.max_timestamp ? new Date(availability.max_timestamp).toLocaleDateString() : "—"}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Requested Candles</p>
+              <p className="mt-2 text-lg font-semibold text-foreground">{requestedCandleCount ? formatNumber(requestedCandleCount, 0) : "—"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Larger scopes increase runtime and credit usage.</p>
+            </div>
+
+            <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Cost Feasibility</p>
+              <p className="mt-2 text-lg font-semibold text-foreground">
+                {costPreview ? (costPreview.can_run ? "Ready" : "Insufficient") : "—"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Cost {estimatedCost !== null ? formatNumber(estimatedCost, 0) : "—"} / Balance {formatNumber(creditBalance, 0)}
+              </p>
+            </div>
+          </div>
+
+          {previewError && (
+            <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+              <div>{previewError}</div>
+              {insufficientCreditsHint && (
+                <div className="mt-2 text-xs text-rose-100/90">
+                  Needed: {formatNumber(insufficientCreditsHint.needed || 0, 0)} credits · Included: {formatNumber(insufficientCreditsHint.includedBalance || 0, 0)} · Wallet: {formatNumber(insufficientCreditsHint.walletBalance || 0, 0)}
                 </div>
+              )}
+            </div>
+          )}
+
+          {!!previewWarnings.length && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              <ul className="list-disc space-y-1 pl-4">
+                {previewWarnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <CardContent className="flex flex-col gap-3 p-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-foreground">Execution Actions</p>
+            <p className="text-xs text-muted-foreground">
+              Preview validates data/cost. Run executes and stores the result in history.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void runPreview()}
+              disabled={isPreviewing || isRunning}
+              className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+            >
+              {isPreviewing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Clock3 className="mr-2 h-4 w-4" />}
+              Preview Data
+            </Button>
+
+            <Button
+              type="button"
+              onClick={() => void runBacktest()}
+              disabled={isRunning || isPreviewing || !isReadyForRun || isCreditInsufficient}
+              className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+              {isRunning ? "Running Backtest..." : isCreditInsufficient ? "Insufficient Credits" : "Run Backtest"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {runError && (
+        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          <div>{runError}</div>
+          {insufficientCreditsHint && (
+            <div className="mt-2 text-xs text-rose-100/90">
+              Needed: {formatNumber(insufficientCreditsHint.needed || 0, 0)} credits · Included: {formatNumber(insufficientCreditsHint.includedBalance || 0, 0)} · Wallet: {formatNumber(insufficientCreditsHint.walletBalance || 0, 0)}
+            </div>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button asChild variant="outline" size="sm" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">
+              <Link href="/pricing">Upgrade Plan</Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">
+              <Link href="/credits">Top-up Credits</Link>
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {runResponse && (
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <CardTitle className="text-xl text-foreground">Backtest Result</CardTitle>
+                <CardDescription className="text-muted-foreground">
+                  Execution output and quick analytics. Full details are available in history.
+                </CardDescription>
+              </div>
+              <Badge className={resultStatusTone(runResponse.status)}>{(runResponse.status || "completed").toUpperCase()}</Badge>
+            </div>
+          </CardHeader>
+
+          <CardContent className="space-y-6">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">PnL</p>
+                <p className={`mt-2 text-xl font-semibold ${netProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                  {formatCurrency(netProfit)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Return %</p>
+                <p className={`mt-2 text-xl font-semibold ${returnPct >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                  {formatPercent(returnPct)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Win Rate</p>
+                <p className="mt-2 text-xl font-semibold text-foreground">
+                  {formatPercent(safeNumber(resultSummary?.win_rate, 0), safeNumber(resultSummary?.win_rate, 0) <= 1)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Sharpe</p>
+                <p className="mt-2 text-xl font-semibold text-foreground">{formatNumber(safeNumber(resultSummary?.sharpe_ratio, 0), 2)}</p>
+              </div>
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Drawdown</p>
+                <p className="mt-2 text-xl font-semibold text-foreground">
+                  {formatPercent(safeNumber(resultSummary?.max_drawdown, 0), safeNumber(resultSummary?.max_drawdown, 0) <= 1)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Trades</p>
+                <p className="mt-2 text-xl font-semibold text-foreground">{formatNumber(safeNumber(resultSummary?.total_trades, 0), 0)}</p>
               </div>
             </div>
 
-            {/* Insufficient Credits Warning */}
-            {insufficientCredits && (
-              <div className="bg-gradient-to-r from-red-900/40 to-orange-900/40 border border-red-500/30 rounded-xl p-4 backdrop-blur-sm">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                    <div>
-                      <p className="text-red-400 font-semibold">Insufficient Credits</p>
-                      <p className="text-red-300 text-sm">
-                        You need {estimatedCost && userBalance ? (estimatedCost - userBalance) : 0} more credits to run this backtest.
-                      </p>
-                    </div>
-                  </div>
-                  <Button
-                    variant="outline"
-                    className="border-red-500/50 text-red-400 hover:bg-red-900/30 hover:border-red-500"
-                  >
-                    Upgrade Plan
-                  </Button>
+            {equityChartRows.length > 1 && (
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-medium text-foreground">Equity Curve Preview</p>
+                  <p className="text-xs text-muted-foreground">Latest {equityChartRows.length} points</p>
                 </div>
+                <div className="h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={equityChartRows}>
+                      <XAxis dataKey="label" hide />
+                      <YAxis hide domain={["dataMin", "dataMax"]} />
+                      <Tooltip
+                        formatter={(value: number) => [formatCurrency(value), "Equity"]}
+                        labelFormatter={(label) => `Date: ${label}`}
+                        contentStyle={{
+                          borderRadius: 12,
+                          borderColor: "rgba(148, 163, 184, 0.4)",
+                          background: "rgba(15, 23, 42, 0.9)",
+                        }}
+                      />
+                      <Line type="monotone" dataKey="equity" stroke="hsl(var(--primary))" strokeWidth={2.5} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
+            {!!resultDetail?.trades?.length && (
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <p className="mb-3 text-sm font-medium text-foreground">Recent Trades</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[760px] text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-border/50 text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="py-2 pr-3">Entry</th>
+                        <th className="py-2 pr-3">Exit</th>
+                        <th className="py-2 pr-3">Side</th>
+                        <th className="py-2 pr-3">Qty</th>
+                        <th className="py-2 pr-3">Entry Px</th>
+                        <th className="py-2 pr-3">Exit Px</th>
+                        <th className="py-2 pr-0 text-right">PnL</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {resultDetail.trades.slice(0, 8).map((trade, index) => {
+                        const pnl = safeNumber(trade.pnl, 0);
+                        return (
+                          <tr key={`${trade.id || "trade"}-${index}`} className="border-b border-border/30 text-foreground last:border-none">
+                            <td className="py-2 pr-3">{trade.entry_time ? new Date(trade.entry_time).toLocaleString() : "—"}</td>
+                            <td className="py-2 pr-3">{trade.exit_time ? new Date(trade.exit_time).toLocaleString() : "—"}</td>
+                            <td className="py-2 pr-3">{trade.side || "—"}</td>
+                            <td className="py-2 pr-3">{formatNumber(safeNumber(trade.quantity, 0), 0)}</td>
+                            <td className="py-2 pr-3">{formatNumber(safeNumber(trade.entry_price, 0), 2)}</td>
+                            <td className="py-2 pr-3">{formatNumber(safeNumber(trade.exit_price, 0), 2)}</td>
+                            <td className={`py-2 pr-0 text-right font-medium ${pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                              {formatCurrency(pnl)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                onClick={() => router.push("/backtest-history")}
+                className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                <BarChart3 className="mr-2 h-4 w-4" />
+                Open Backtest History
+              </Button>
+
+              {(runResponse.backtest_id || runResponse.result?.backtest_id) && (
+                <Button
+                  asChild
+                  variant="outline"
+                  className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+                >
+                  <Link href="/backtest-history">View Full Detailed Report</Link>
+                </Button>
+              )}
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setRunResponse(null);
+                  setResultDetail(null);
+                }}
+                className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+              >
+                Run Another Configuration
+              </Button>
+            </div>
+
+            {runResponse.backtest_id && (
+              <div className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                <CheckCircle2 className="h-4 w-4" />
+                Result stored successfully with ID: {runResponse.backtest_id}
               </div>
             )}
           </CardContent>
         </Card>
-
-        {/* Form Card - Premium Design */}
-        <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
-          <CardHeader>
-            <CardTitle className="text-white">Backtest Configuration</CardTitle>
-            <CardDescription className="text-gray-400">
-              Configure your backtest parameters and run analysis
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
-              {/* Strategy */}
-              <div className="lg:col-span-2 space-y-2">
-                <Label htmlFor="strategy" className="text-gray-300">Strategy</Label>
-                <Select value={selectedStrategy} onValueChange={setSelectedStrategy}>
-                  <SelectTrigger className="bg-white/10 border-white/20 text-white hover:border-white/40">
-                    <SelectValue placeholder="Select strategy" className="text-gray-400" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#1e1b4b] border-white/10">
-                    {strategies.map(strategy => (
-                      <SelectItem key={strategy.id} value={strategy.id} className="text-white hover:bg-white/10">
-                        {strategy.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Instrument */}
-              <div className="lg:col-span-2 space-y-2">
-                <Label htmlFor="instrument" className="text-gray-300">Instrument</Label>
-                <Select value={selectedInstrument} onValueChange={setSelectedInstrument}>
-                  <SelectTrigger className="bg-white/10 border-white/20 text-white hover:border-white/40">
-                    <SelectValue placeholder="Select instrument" className="text-gray-400" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#1e1b4b] border-white/10">
-                    {instruments.map(instrument => (
-                      <SelectItem key={instrument.id.toString()} value={instrument.id.toString()} className="text-white hover:bg-white/10">
-                        {instrument.symbol}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Timeframe */}
-              <div className="space-y-2">
-                <Label htmlFor="timeframe" className="text-gray-300">Timeframe</Label>
-                <Select value={timeframe} onValueChange={setTimeframe}>
-                  <SelectTrigger className="bg-white/10 border-white/20 text-white hover:border-white/40">
-                    <SelectValue className="text-gray-400" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#1e1b4b] border-white/10">
-                    <SelectItem value="5m" className="text-white hover:bg-white/10">5 Minutes</SelectItem>
-                    <SelectItem value="15m" className="text-white hover:bg-white/10">15 Minutes</SelectItem>
-                    <SelectItem value="1h" className="text-white hover:bg-white/10">1 Hour</SelectItem>
-                    <SelectItem value="1d" className="text-white hover:bg-white/10">1 Day</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Capital */}
-              <div className="space-y-2">
-                <Label htmlFor="capital" className="text-gray-300">Initial Capital</Label>
-                <Input
-                  id="capital"
-                  type="number"
-                  value={capital}
-                  onChange={(e) => setCapital(e.target.value)}
-                  placeholder="100000"
-                  className="bg-white/10 border-white/20 text-white placeholder-gray-500 focus:border-purple-500"
-                />
-              </div>
-            </div>
-
-            {/* Date Range */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="startDate" className="text-gray-300">Start Date</Label>
-                <Input
-                  id="startDate"
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="bg-white/10 border-white/20 text-white focus:border-purple-500"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="endDate" className="text-gray-300">End Date</Label>
-                <Input
-                  id="endDate"
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="bg-white/10 border-white/20 text-white focus:border-purple-500"
-                />
-              </div>
-            </div>
-
-            {/* Preview and Run Buttons */}
-            <div className="flex items-center gap-4">
-              <Button
-                onClick={previewData}
-                variant="outline"
-                className="flex items-center gap-2 border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
-              >
-                <Eye className="w-4 h-4 text-gray-400" />
-                Preview Data
-              </Button>
-              
-              <Button
-                onClick={runBacktest}
-                disabled={loading || !!currentJob || insufficientCredits}
-                className={`flex items-center gap-3 px-8 py-3 text-lg font-semibold transition-all duration-300 ${
-                  insufficientCredits 
-                    ? 'bg-gray-600/50 text-gray-400 cursor-not-allowed hover:bg-gray-600/50' 
-                    : 'bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white shadow-lg hover:shadow-xl hover:scale-[1.02]'
-                }`}
-              >
-                {(loading || currentJob) ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Play className="w-5 h-5" />
-                )}
-                {currentJob ? 'Processing...' : loading ? 'Starting...' : insufficientCredits ? 'Insufficient Credits' : 'Run Backtest'}
-              </Button>
-
-              {currentJob && (
-                <div className="flex-1 max-w-md space-y-2">
-                  <div className="flex justify-between text-sm text-gray-400">
-                    <span>Progress</span>
-                    <span>{currentJob.progress}%</span>
-                  </div>
-                  <Progress value={currentJob.progress} className="w-full h-2 bg-white/10" />
-                  <p className="text-sm text-gray-400">
-                    {currentJob.message}
-                  </p>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Progress Section */}
-        {currentJob && (
-          <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
-            <CardHeader>
-              <CardTitle className="text-white">Backtest Progress</CardTitle>
-              <CardDescription className="text-gray-400">
-                Current step: {currentStep?.label || currentJob.message}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-6">
-                {/* Progress Bar */}
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm text-gray-400">
-                    <span>Overall Progress</span>
-                    <span>{currentJob.progress}%</span>
-                  </div>
-                  <Progress value={currentJob.progress} className="w-full h-3 bg-white/10" />
-                  <p className="text-sm text-gray-400">{currentJob.message}</p>
-                </div>
-
-                {/* Step-by-Step Progress */}
-                <div className="space-y-3">
-                  <h4 className="text-sm font-semibold text-gray-300">Execution Steps:</h4>
-                  {getProgressSteps().map((step, index) => (
-                    <div key={index} className="flex items-center space-x-4">
-                      <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
-                        step.progress <= (currentJob.progress || 0) 
-                          ? 'bg-green-500' 
-                          : 'bg-white/20'
-                      }`}>
-                        {step.progress <= (currentJob.progress || 0) && (
-                          <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <p className={`text-sm font-medium ${
-                          step.progress <= (currentJob.progress || 0) 
-                            ? 'text-green-400' 
-                            : 'text-gray-500'
-                        }`}>
-                          {step.label}
-                        </p>
-                      </div>
-                      <div className={`text-xs font-semibold ${
-                        step.progress <= (currentJob.progress || 0) 
-                          ? 'text-green-400' 
-                          : 'text-gray-500'
-                      }`}>
-                        {step.progress}%
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Estimated Time */}
-                <div className="text-xs text-gray-500">
-                  Estimated time: 30 seconds to 2 minutes depending on data range
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Results Section */}
-        {backtestResult && (
-          <>
-            {/* Run Again Button */}
-            <div className="flex justify-end">
-              <Button
-                onClick={runAgain}
-                variant="outline"
-                className="flex items-center gap-2 border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
-              >
-                <RefreshCw className="w-4 h-4 text-gray-400" />
-                Run Again
-              </Button>
-            </div>
-
-            {/* Metrics Cards - Premium KPI Dashboard */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div>
-                    <CardDescription className="text-gray-400 text-sm font-medium">Net Profit</CardDescription>
-                    <CardTitle className="text-2xl font-bold tracking-tight text-white">
-                      ${backtestResult.net_profit.toFixed(2)}
-                    </CardTitle>
-                  </div>
-                  <div className="p-3 bg-gradient-to-r from-green-500/30 to-emerald-500/30 rounded-lg">
-                    <DollarSign className="h-6 w-6 text-green-400" />
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className={`text-sm font-medium ${
-                    backtestResult.net_profit >= 0 ? 'text-green-400' : 'text-red-400'
-                  }`}>
-                    {backtestResult.net_profit >= 0 ? 'Profitable' : 'Loss'}
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div>
-                    <CardDescription className="text-gray-400 text-sm font-medium">Win Rate</CardDescription>
-                    <CardTitle className="text-2xl font-bold tracking-tight text-white">
-                      {(backtestResult.win_rate * 100).toFixed(1)}%
-                    </CardTitle>
-                  </div>
-                  <div className="p-3 bg-gradient-to-r from-blue-500/30 to-cyan-500/30 rounded-lg">
-                    <Gauge className="h-6 w-6 text-blue-400" />
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-gray-400">Success rate</p>
-                </CardContent>
-              </Card>
-
-              <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div>
-                    <CardDescription className="text-gray-400 text-sm font-medium">Max Drawdown</CardDescription>
-                    <CardTitle className="text-2xl font-bold tracking-tight text-white">
-                      {(backtestResult.max_drawdown * 100).toFixed(2)}%
-                    </CardTitle>
-                  </div>
-                  <div className="p-3 bg-gradient-to-r from-orange-500/30 to-red-500/30 rounded-lg">
-                    <TrendingDown className="h-6 w-6 text-orange-400" />
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-gray-400">Risk metric</p>
-                </CardContent>
-              </Card>
-
-              <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div>
-                    <CardDescription className="text-gray-400 text-sm font-medium">Sharpe Ratio</CardDescription>
-                    <CardTitle className="text-2xl font-bold tracking-tight text-white">
-                      {backtestResult.sharpe_ratio.toFixed(2)}
-                    </CardTitle>
-                  </div>
-                  <div className="p-3 bg-gradient-to-r from-purple-500/30 to-pink-500/30 rounded-lg">
-                    <TrendingUp className="h-6 w-6 text-purple-400" />
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-gray-400">Risk-adjusted return</p>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Charts Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Win/Loss Pie Chart */}
-              <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
-                <CardHeader>
-                  <CardTitle className="text-white">Win/Loss Distribution</CardTitle>
-                  <CardDescription className="text-gray-400">
-                    Trade outcome analysis
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={350}>
-                    <PieChart>
-                      <Pie
-                        data={winLossData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={70}
-                        outerRadius={110}
-                        dataKey="value"
-                        label={({ name, value, percent }) => `${name}: ${value} (${(percent * 100).toFixed(1)}%)`}
-                        labelLine={false}
-                      >
-                        {winLossData.map((_, index) => (
-                          <Cell key={index} fill={COLORS[index]} />
-                        ))}
-                      </Pie>
-                      <Tooltip 
-                        formatter={(value, name) => [`${value} trades`, name]}
-                        contentStyle={{
-                          backgroundColor: '#1e1b4b',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          color: '#e2e8f0'
-                        }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-
-              {/* Equity Curve */}
-              <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
-                <CardHeader>
-                  <CardTitle className="text-white">Equity Curve</CardTitle>
-                  <CardDescription className="text-gray-400">
-                    Portfolio value over time
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={350}>
-                    <LineChart data={equityData}>
-                      <XAxis 
-                        dataKey="date" 
-                        tick={{ fontSize: 12, fill: '#94a3b8' }}
-                        axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
-                        tickLine={{ stroke: 'rgba(255,255,255,0.1)' }}
-                      />
-                      <YAxis 
-                        tick={{ fontSize: 12, fill: '#94a3b8' }}
-                        axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
-                        tickLine={{ stroke: 'rgba(255,255,255,0.1)' }}
-                      />
-                      <Tooltip 
-                        formatter={(value) => [`$${Number(value).toFixed(2)}`, 'Equity']}
-                        contentStyle={{
-                          backgroundColor: '#1e1b4b',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          color: '#e2e8f0'
-                        }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="equity"
-                        stroke="#60a5fa"
-                        strokeWidth={3}
-                        dot={false}
-                        activeDot={{ r: 6, stroke: '#60a5fa', strokeWidth: 2, fill: '#1e1b4b' }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Trade History Table */}
-            <Card variant="elevated" className="bg-white/5 backdrop-blur-lg border-white/10 rounded-2xl">
-              <CardHeader>
-                <CardTitle className="text-white">Trade History</CardTitle>
-                <CardDescription className="text-gray-400">
-                  Detailed trade execution log
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="border-white/10">
-                        <TableHead className="text-gray-400">Entry Time</TableHead>
-                        <TableHead className="text-gray-400">Exit Time</TableHead>
-                        <TableHead className="text-gray-400">Side</TableHead>
-                        <TableHead className="text-gray-400">Quantity</TableHead>
-                        <TableHead className="text-gray-400">Entry Price</TableHead>
-                        <TableHead className="text-gray-400">Exit Price</TableHead>
-                        <TableHead className="text-gray-400">P&L</TableHead>
-                        <TableHead className="text-gray-400">Result</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {backtestResult.trades.map((trade, index) => (
-                        <TableRow key={index} className="border-white/10 hover:bg-white/5">
-                          <TableCell className="text-white font-medium">{new Date(trade.entry_time).toLocaleString()}</TableCell>
-                          <TableCell className="text-gray-400">
-                            {trade.exit_time ? new Date(trade.exit_time).toLocaleString() : '-'}
-                          </TableCell>
-                          <TableCell>
-                            <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                              trade.side === 'BUY' ? 'bg-green-500/30 text-green-400' : 'bg-red-500/30 text-red-400'
-                            }`}>
-                              {trade.side}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-white">{trade.quantity}</TableCell>
-                          <TableCell className="text-white font-medium">${trade.entry_price.toFixed(2)}</TableCell>
-                          <TableCell className="text-gray-400">
-                            {trade.exit_price ? `$${trade.exit_price.toFixed(2)}` : '-'}
-                          </TableCell>
-                          <TableCell className={trade.pnl && trade.pnl >= 0 ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>
-                            {trade.pnl ? `$${trade.pnl.toFixed(2)}` : '-'}
-                          </TableCell>
-                          <TableCell>
-                            {trade.pnl && trade.pnl > 0 ? (
-                              <span className="px-2 py-1 bg-green-500/30 text-green-400 rounded-full text-xs font-semibold">WIN</span>
-                            ) : trade.pnl && trade.pnl < 0 ? (
-                              <span className="px-2 py-1 bg-red-500/30 text-red-400 rounded-full text-xs font-semibold">LOSS</span>
-                            ) : (
-                              <span className="text-gray-500">PENDING</span>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                      {backtestResult.trades.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={8} className="text-center text-gray-500 py-8">
-                            No trades found for this strategy
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
-          </>
-        )}
-      </div>
+      )}
     </div>
   );
 }

@@ -1,65 +1,36 @@
 export default function Loading() {
   return (
-    <div className="p-6 space-y-6 bg-gray-50 min-h-screen">
-      {/* Header Skeleton */}
-      <div className="flex items-center justify-between">
-        <div className="h-8 bg-gray-300 rounded w-48 animate-pulse"></div>
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <div className="h-8 w-56 animate-pulse rounded-xl bg-card/40" />
+        <div className="h-5 w-96 max-w-full animate-pulse rounded-xl bg-card/40" />
       </div>
 
-      {/* Filters Skeleton */}
-      <div className="bg-white p-6 rounded-lg shadow-sm space-y-4">
-        <div className="h-6 bg-gray-300 rounded w-32 animate-pulse"></div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="space-y-2">
-              <div className="h-4 bg-gray-300 rounded w-20 animate-pulse"></div>
-              <div className="h-10 bg-gray-300 rounded animate-pulse"></div>
-            </div>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(3)].map((_, i) => (
-            <div key={i} className="space-y-2">
-              <div className="h-4 bg-gray-300 rounded w-24 animate-pulse"></div>
-              <div className="h-10 bg-gray-300 rounded animate-pulse"></div>
-            </div>
-          ))}
-          <div className="flex gap-2 pt-6">
-            <div className="h-10 bg-gray-300 rounded w-24 animate-pulse"></div>
-            <div className="h-10 bg-gray-300 rounded w-16 animate-pulse"></div>
-          </div>
-        </div>
-      </div>
-
-      {/* Table Skeleton */}
-      <div className="bg-white p-6 rounded-lg shadow-sm">
-        <div className="h-6 bg-gray-300 rounded w-40 mb-4 animate-pulse"></div>
-
-        {/* Table Header */}
-        <div className="grid grid-cols-11 gap-4 mb-4">
-          {[...Array(11)].map((_, i) => (
-            <div key={i} className="h-4 bg-gray-300 rounded animate-pulse"></div>
-          ))}
-        </div>
-
-        {/* Table Rows */}
-        {[...Array(10)].map((_, rowIndex) => (
-          <div key={rowIndex} className="grid grid-cols-11 gap-4 mb-3">
-            {[...Array(11)].map((_, colIndex) => (
-              <div key={colIndex} className="h-4 bg-gray-300 rounded animate-pulse"></div>
-            ))}
-          </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, index) => (
+          <div
+            key={index}
+            className="h-28 animate-pulse rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl"
+          />
         ))}
+      </div>
 
-        {/* Pagination */}
-        <div className="flex items-center justify-between mt-6">
-          <div className="h-4 bg-gray-300 rounded w-32 animate-pulse"></div>
-          <div className="flex gap-2">
-            <div className="h-8 bg-gray-300 rounded w-20 animate-pulse"></div>
-            <div className="h-8 bg-gray-300 rounded w-20 animate-pulse"></div>
-          </div>
+      <div className="rounded-xl border border-border/50 bg-card/30 p-6 shadow-xl backdrop-blur-xl">
+        <div className="flex flex-wrap gap-2">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="h-9 w-28 animate-pulse rounded-xl bg-card/40" />
+          ))}
+        </div>
+        <div className="mt-4 h-56 animate-pulse rounded-xl border border-border/50 bg-card/20" />
+      </div>
+
+      <div className="rounded-xl border border-border/50 bg-card/30 p-6 shadow-xl backdrop-blur-xl">
+        <div className="mb-4 h-6 w-48 animate-pulse rounded-xl bg-card/40" />
+        <div className="overflow-hidden rounded-xl border border-border/50">
+          <div className="h-11 animate-pulse border-b border-border/50 bg-card/20" />
+          {Array.from({ length: 8 }).map((_, index) => (
+            <div key={index} className="h-14 animate-pulse border-b border-border/30 bg-card/10 last:border-b-0" />
+          ))}
         </div>
       </div>
     </div>

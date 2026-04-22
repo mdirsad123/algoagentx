@@ -1,597 +1,1068 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  Calendar,
+  Clock3,
+  Download,
+  Eye,
+  Filter,
+  Play,
+  RefreshCcw,
+  RotateCcw,
+  Search,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
+
+import { EmptyState } from "@/components/shared/EmptyState";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PageHeader } from "@/components/ui/PageHeader";
 import {
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { parseApiError, formatErrorMessage } from "@/lib/api/error";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ChevronDown, ChevronUp, Eye, Download, Filter, Calendar, TrendingUp, TrendingDown, Clock, Play, X, Search, ChevronLeft, ChevronRight } from "lucide-react";
-import EmptyState from "@/components/shared/empty-state";
-import axios from "@/lib/axios";
-import Toast from "@/components/shared/swal-toast";
-import { PageHeader } from "@/components/ui/page-header";
-import { StandardCard, StandardCardHeader, StandardCardTitle, StandardCardDescription, StandardCardContent } from "@/components/ui/standard-card";
-import { CardSkeleton, TableSkeleton } from "@/components/ui/loading-skeleton";
+  backtestsApi,
+  type BacktestDetailResponse,
+  type BacktestHistoryItem,
+  type BacktestHistoryPagination,
+  type InstrumentOption,
+  type StrategyOption,
+} from "@/lib/api/backtests";
 
-interface BacktestHistoryItem {
-  id: string;
+type FilterState = {
   strategy_id: string;
-  strategy_name: string;
-  instrument_id: number;
-  instrument_symbol: string;
+  instrument_id: string;
   timeframe: string;
-  start_date: string;
-  end_date: string;
-  initial_capital: number;
-  final_capital: number | null;
-  net_profit: number | null;
-  max_drawdown: number | null;
-  sharpe_ratio: number | null;
-  win_rate: number | null;
-  total_trades: number | null;
-  winning_trades: number | null;
-  losing_trades: number | null;
   status: string;
-  created_at: string;
-  updated_at: string;
-}
+  start_date_from: string;
+  start_date_to: string;
+  min_profit: string;
+  max_drawdown: string;
+};
 
-interface Strategy {
-  id: string;
-  name: string;
-}
+type QuickRange = "today" | "last7" | "last30" | null;
 
-interface Instrument {
-  id: number;
-  symbol: string;
-}
+const PAGE_SIZE = 20;
+const DEFAULT_STATUSES = ["completed", "running", "pending", "failed"];
 
-interface PaginationInfo {
-  page: number;
-  page_size: number;
-  total_count: number;
-  total_pages: number;
-}
+const EMPTY_FILTERS: FilterState = {
+  strategy_id: "",
+  instrument_id: "",
+  timeframe: "",
+  status: "",
+  start_date_from: "",
+  start_date_to: "",
+  min_profit: "",
+  max_drawdown: "",
+};
 
-const unwrapApiData = (payload: any) => payload?.success ? payload.data : payload;
+const toDateInput = (date: Date) => date.toISOString().slice(0, 10);
+
+const safeNumber = (value: unknown, fallback = 0): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const formatNumber = (value: number | null | undefined, digits = 2): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return new Intl.NumberFormat("en-IN", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+};
+
+const formatCurrency = (value: number | null | undefined): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 2,
+  }).format(value);
+};
+
+const toDisplayPercent = (value: number): number => (Math.abs(value) <= 1 ? value * 100 : value);
+
+const formatPercentAuto = (value: number | null | undefined): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return `${formatNumber(toDisplayPercent(value), 2)}%`;
+};
+
+const formatDateTime = (value?: string | null): string => {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return parsed.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+const statusTone = (status?: string | null): string => {
+  const normalized = (status || "").toLowerCase();
+  if (normalized === "completed") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
+  if (normalized === "running") return "border-sky-500/40 bg-sky-500/10 text-sky-200";
+  if (normalized === "pending") return "border-amber-500/40 bg-amber-500/10 text-amber-200";
+  if (normalized === "failed") return "border-rose-500/40 bg-rose-500/10 text-rose-200";
+  return "border-border/50 bg-card/40 text-muted-foreground";
+};
+
+const humanize = (value: string) =>
+  value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase())
+    .trim();
+
+const computeReturnPercent = (item: BacktestHistoryItem): number | null => {
+  const initial = safeNumber(item.initial_capital, NaN);
+  const final = safeNumber(item.final_capital, NaN);
+  const pnl = safeNumber(item.net_profit, NaN);
+
+  if (Number.isFinite(initial) && initial > 0 && Number.isFinite(final)) {
+    return ((final - initial) / initial) * 100;
+  }
+
+  if (Number.isFinite(initial) && initial > 0 && Number.isFinite(pnl)) {
+    return (pnl / initial) * 100;
+  }
+
+  return null;
+};
+
+const normalizeDrawdownForApi = (value: string): number | undefined => {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  const absolute = Math.abs(parsed);
+  return absolute > 1 ? absolute / 100 : absolute;
+};
+
+const toCsvSafe = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  const text = String(value);
+  if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+};
+
+const downloadCsv = (filename: string, headers: string[], rows: Array<Array<unknown>>) => {
+  if (typeof window === "undefined") return;
+  const csv = [headers.map(toCsvSafe).join(","), ...rows.map((row) => row.map(toCsvSafe).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+};
 
 export default function BacktestHistoryPage() {
-  // Filter state
-  const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [instruments, setInstruments] = useState<Instrument[]>([]);
-  const [selectedStrategy, setSelectedStrategy] = useState<string>("");
-  const [selectedInstrument, setSelectedInstrument] = useState<string>("");
-  const [timeframe, setTimeframe] = useState<string>("");
-  const [startDateFrom, setStartDateFrom] = useState<string>("");
-  const [startDateTo, setStartDateTo] = useState<string>("");
-  const [minProfit, setMinProfit] = useState<string>("");
-  const [maxDrawdown, setMaxDrawdown] = useState<string>("");
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  const router = useRouter();
 
-  // Quick filters
-  const [quickFilter, setQuickFilter] = useState<string>("");
+  const [strategies, setStrategies] = useState<StrategyOption[]>([]);
+  const [instruments, setInstruments] = useState<InstrumentOption[]>([]);
+  const [timeframes, setTimeframes] = useState<string[]>([]);
 
-  // Data state
-  const [backtests, setBacktests] = useState<BacktestHistoryItem[]>([]);
-  const [pagination, setPagination] = useState<PaginationInfo | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [selectedBacktest, setSelectedBacktest] = useState<BacktestHistoryItem | null>(null);
+  const [draftFilters, setDraftFilters] = useState<FilterState>(EMPTY_FILTERS);
+  const [appliedFilters, setAppliedFilters] = useState<FilterState>(EMPTY_FILTERS);
+  const [quickRange, setQuickRange] = useState<QuickRange>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(true);
 
-  // Load strategies and instruments on mount
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [strategiesRes, instrumentsRes] = await Promise.all([
-          axios.get("/api/v1/strategies"),
-          axios.get("/api/v1/instruments")
-        ]);
-        setStrategies(unwrapApiData(strategiesRes.data));
-        setInstruments(unwrapApiData(instrumentsRes.data));
-      } catch (error: any) {
-        Toast.fire({
-          icon: 'error',
-          title: 'Failed to load data',
-          text: error.response?.data?.detail || 'Unable to load strategies and instruments'
+  const [rows, setRows] = useState<BacktestHistoryItem[]>([]);
+  const [pagination, setPagination] = useState<BacktestHistoryPagination | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [selectedRun, setSelectedRun] = useState<BacktestHistoryItem | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detail, setDetail] = useState<BacktestDetailResponse | null>(null);
+
+  const activeFilterCount = useMemo(
+    () =>
+      Object.values(appliedFilters).filter((item) => typeof item === "string" && item.trim().length > 0)
+        .length,
+    [appliedFilters],
+  );
+
+  const statusOptions = useMemo(() => {
+    const discovered = rows
+      .map((item) => (item.status || "").trim().toLowerCase())
+      .filter(Boolean);
+    return Array.from(new Set([...DEFAULT_STATUSES, ...discovered]));
+  }, [rows]);
+
+  const loadReferenceData = useCallback(async () => {
+    try {
+      const [configResult, catalogResult, instrumentsResult, timeframesResult] = await Promise.allSettled([
+        backtestsApi.getConfig(),
+        backtestsApi.getStrategiesCatalog(),
+        backtestsApi.getInstruments(),
+        backtestsApi.getTimeframes(),
+      ]);
+
+      const strategyMap = new Map<string, StrategyOption>();
+      const instrumentMap = new Map<number, InstrumentOption>();
+      const timeframeSet = new Set<string>();
+
+      if (configResult.status === "fulfilled") {
+        const config = configResult.value;
+        (config.strategies || []).forEach((item) => {
+          strategyMap.set(item.id, {
+            id: item.id,
+            name: item.name,
+          });
+        });
+
+        (config.instruments || []).forEach((item) => instrumentMap.set(item.id, item));
+        (config.timeframes || []).forEach((item) => item && timeframeSet.add(item));
+      }
+
+      if (catalogResult.status === "fulfilled") {
+        catalogResult.value.forEach((item) => {
+          strategyMap.set(item.id, {
+            ...strategyMap.get(item.id),
+            ...item,
+          });
         });
       }
-    };
-    loadData();
+
+      if (instrumentsResult.status === "fulfilled") {
+        instrumentsResult.value.forEach((item) => instrumentMap.set(item.id, item));
+      }
+
+      if (timeframesResult.status === "fulfilled") {
+        timeframesResult.value.forEach((item) => item && timeframeSet.add(item));
+      }
+
+      setStrategies(Array.from(strategyMap.values()));
+      setInstruments(Array.from(instrumentMap.values()));
+      setTimeframes(Array.from(timeframeSet.values()));
+    } catch {
+      // Soft-fail: history list still loads independently.
+    }
   }, []);
 
-  // Load backtest history
-  const loadBacktestHistory = async (page: number = 1) => {
+  const loadHistory = useCallback(async (page: number, filters: FilterState) => {
     setLoading(true);
+    setError(null);
+
     try {
-      const params = new URLSearchParams();
-      if (selectedStrategy) params.append('strategy_id', selectedStrategy);
-      if (selectedInstrument) params.append('instrument_id', selectedInstrument);
-      if (timeframe) params.append('timeframe', timeframe);
-      if (startDateFrom) params.append('start_date_from', startDateFrom);
-      if (startDateTo) params.append('start_date_to', startDateTo);
-      if (minProfit) params.append('min_profit', minProfit);
-      if (maxDrawdown) params.append('max_drawdown', maxDrawdown);
-      params.append('page', page.toString());
-      params.append('page_size', '20');
+      const minProfit = filters.min_profit.trim().length ? Number(filters.min_profit) : NaN;
+      const query = {
+        page,
+        page_size: PAGE_SIZE,
+        strategy_id: filters.strategy_id || undefined,
+        instrument_id: filters.instrument_id ? Number(filters.instrument_id) : undefined,
+        timeframe: filters.timeframe || undefined,
+        status: filters.status || undefined,
+        start_date_from: filters.start_date_from || undefined,
+        start_date_to: filters.start_date_to || undefined,
+        min_profit: Number.isFinite(minProfit) ? minProfit : undefined,
+        max_drawdown: normalizeDrawdownForApi(filters.max_drawdown),
+      };
 
-      const response = await axios.get(`/api/v1/backtests/history?${params}`);
-      const data = unwrapApiData(response.data);
-
-      setBacktests(data.backtests);
-      setPagination(data.pagination);
-    } catch (error: any) {
-      Toast.fire({
-        icon: 'error',
-        title: 'Failed to load history',
-        text: error.response?.data?.detail || 'Unable to load backtest history'
-      });
+      const response = await backtestsApi.getHistory(query);
+      setRows(Array.isArray(response.backtests) ? response.backtests : []);
+      setPagination(
+        response.pagination || {
+          page,
+          page_size: PAGE_SIZE,
+          total_count: 0,
+          total_pages: 1,
+        },
+      );
+    } catch (err) {
+      const parsed = parseApiError(err);
+      setRows([]);
+      setPagination(null);
+      setError(formatErrorMessage(parsed));
     } finally {
       setLoading(false);
+      setInitialLoading(false);
     }
-  };
-
-  // Load initial data
-  useEffect(() => {
-    loadBacktestHistory();
   }, []);
 
+  useEffect(() => {
+    void loadReferenceData();
+  }, [loadReferenceData]);
+
+  useEffect(() => {
+    void loadHistory(currentPage, appliedFilters);
+  }, [appliedFilters, currentPage, loadHistory]);
+
   const applyFilters = () => {
-    loadBacktestHistory(1);
+    setAppliedFilters({ ...draftFilters });
+    setQuickRange(null);
+    setCurrentPage(1);
   };
 
-  const clearFilters = () => {
-    setSelectedStrategy("");
-    setSelectedInstrument("");
-    setTimeframe("");
-    setStartDateFrom("");
-    setStartDateTo("");
-    setMinProfit("");
-    setMaxDrawdown("");
-    setQuickFilter("");
-    loadBacktestHistory(1);
+  const clearAllFilters = () => {
+    setDraftFilters({ ...EMPTY_FILTERS });
+    setAppliedFilters({ ...EMPTY_FILTERS });
+    setQuickRange(null);
+    setCurrentPage(1);
   };
 
-  const setQuickDateFilter = (days: number) => {
-    setQuickFilter(`${days}D`);
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(endDate.getDate() - days);
-    
-    setStartDateFrom(startDate.toISOString().split('T')[0]);
-    setStartDateTo(endDate.toISOString().split('T')[0]);
-    loadBacktestHistory(1);
+  const applyQuickRange = (range: Exclude<QuickRange, null>) => {
+    const today = new Date();
+    const start = new Date(today);
+
+    if (range === "last7") {
+      start.setDate(today.getDate() - 6);
+    } else if (range === "last30") {
+      start.setDate(today.getDate() - 29);
+    }
+
+    const next = {
+      ...draftFilters,
+      start_date_from: toDateInput(start),
+      start_date_to: toDateInput(today),
+    };
+
+    setQuickRange(range);
+    setDraftFilters(next);
+    setAppliedFilters(next);
+    setCurrentPage(1);
   };
 
-  const viewBacktestReport = (backtest: BacktestHistoryItem) => {
-    setSelectedBacktest(backtest);
+  const rerunBacktest = (item: BacktestHistoryItem) => {
+    const params = new URLSearchParams();
+    if (item.strategy_id) params.set("strategyId", item.strategy_id);
+    if (item.instrument_id !== null && item.instrument_id !== undefined) {
+      params.set("instrumentId", String(item.instrument_id));
+    }
+    router.push(`/backtest?${params.toString()}`);
   };
 
-  const downloadReport = (backtest: BacktestHistoryItem) => {
-    // In a real implementation, this would download the actual report
-    Toast.fire({
-      icon: 'info',
-      title: 'Download',
-      text: `Downloading report for ${backtest.strategy_name} - ${backtest.instrument_symbol}`
-    });
+  const exportRunSummary = (item: BacktestHistoryItem) => {
+    const returns = computeReturnPercent(item);
+    downloadCsv(
+      `backtest-summary-${item.id}.csv`,
+      [
+        "Backtest ID",
+        "Strategy",
+        "Instrument",
+        "Timeframe",
+        "Initial Capital",
+        "Net PnL",
+        "Return %",
+        "Win Rate",
+        "Sharpe",
+        "Drawdown",
+        "Total Trades",
+        "Status",
+        "Created At",
+      ],
+      [
+        [
+          item.id,
+          item.strategy_name || "",
+          item.instrument_symbol || "",
+          item.timeframe || "",
+          item.initial_capital ?? "",
+          item.net_profit ?? "",
+          returns ?? "",
+          item.win_rate ?? "",
+          item.sharpe_ratio ?? "",
+          item.max_drawdown ?? "",
+          item.total_trades ?? "",
+          item.status || "",
+          item.created_at || "",
+        ],
+      ],
+    );
   };
 
-  const formatCurrency = (value: number | null) => {
-    if (value === null) return "-";
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(value);
-  };
+  const openDetail = async (item: BacktestHistoryItem) => {
+    setSelectedRun(item);
+    setDetailOpen(true);
+    setDetailLoading(true);
+    setDetailError(null);
+    setDetail(null);
 
-  const formatPercent = (value: number | null) => {
-    if (value === null) return "-";
-    return `${(value * 100).toFixed(2)}%`;
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'completed': return 'bg-green-500/30 text-green-400 border-green-500/50';
-      case 'running': return 'bg-blue-500/30 text-blue-400 border-blue-500/50';
-      case 'failed': return 'bg-red-500/30 text-red-400 border-red-500/50';
-      case 'pending': return 'bg-yellow-500/30 text-yellow-400 border-yellow-500/50';
-      default: return 'bg-gray-500/30 text-gray-400 border-gray-500/50';
+    try {
+      const data = await backtestsApi.getDetail(item.id);
+      setDetail(data);
+    } catch (err) {
+      const parsed = parseApiError(err);
+      setDetailError(formatErrorMessage(parsed));
+    } finally {
+      setDetailLoading(false);
     }
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'completed': return <TrendingUp className="w-4 h-4" />;
-      case 'running': return <Play className="w-4 h-4" />;
-      case 'failed': return <TrendingDown className="w-4 h-4" />;
-      case 'pending': return <Clock className="w-4 h-4" />;
-      default: return <Clock className="w-4 h-4" />;
-    }
+  const exportDetailTrades = () => {
+    if (!selectedRun || !detail?.trades?.length) return;
+
+    downloadCsv(
+      `backtest-trades-${selectedRun.id}.csv`,
+      ["Entry Time", "Exit Time", "Side", "Quantity", "Entry Price", "Exit Price", "PnL", "Exit Type"],
+      detail.trades.map((trade) => [
+        trade.entry_time || "",
+        trade.exit_time || "",
+        trade.side || "",
+        trade.quantity ?? "",
+        trade.entry_price ?? "",
+        trade.exit_price ?? "",
+        trade.pnl ?? "",
+        trade.exit_type || "",
+      ]),
+    );
   };
+
+  const summaryStats = useMemo(() => {
+    const profitableRuns = rows.filter((item) => safeNumber(item.net_profit, 0) > 0).length;
+    const returnSeries = rows
+      .map((item) => computeReturnPercent(item))
+      .filter((value): value is number => value !== null && Number.isFinite(value));
+    const drawdownSeries = rows
+      .map((item) => item.max_drawdown)
+      .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(Number(value)));
+
+    const avgReturn =
+      returnSeries.length > 0
+        ? returnSeries.reduce((sum, value) => sum + value, 0) / returnSeries.length
+        : null;
+
+    const avgDrawdown =
+      drawdownSeries.length > 0
+        ? drawdownSeries.reduce((sum, value) => sum + value, 0) / drawdownSeries.length
+        : null;
+
+    const totalProfit = rows.reduce((sum, item) => sum + safeNumber(item.net_profit, 0), 0);
+
+    return {
+      totalRuns: pagination?.total_count ?? rows.length,
+      profitableRuns,
+      avgReturn,
+      avgDrawdown,
+      totalProfit,
+    };
+  }, [pagination?.total_count, rows]);
+
+  const detailSummary = detail?.summary;
+  const detailReturn = detailSummary
+    ? computeReturnPercent({
+        id: detailSummary.id,
+        initial_capital: detailSummary.initial_capital,
+        final_capital: detailSummary.final_capital,
+        net_profit: detailSummary.net_profit,
+      })
+    : null;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#1a0f2e] via-[#2a1458] to-[#0f172a]">
-      <div className="p-6 space-y-6">
-      <PageHeader 
+    <div className="space-y-6">
+      <PageHeader
         title="Backtest History"
-        subtitle="Review and analyze your completed backtest results"
+        subtitle="Premium analytics archive for every run with fast filtering, deep metrics, and export-ready results."
+        actions={
+          <Button
+            onClick={() => router.push("/backtest")}
+            className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <Play className="mr-2 h-4 w-4" />
+            New Backtest
+          </Button>
+        }
       />
 
-      {/* Quick Filters */}
-      <Card className="hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 border-white/10 bg-white/5 backdrop-blur-lg rounded-2xl">
-        <CardHeader>
-          <CardTitle className="text-white">Quick Filters</CardTitle>
-          <CardDescription className="text-gray-400">
-            Filter by time period for quick analysis
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-2">
-            {[
-              { label: 'Today', value: '1D', days: 1 },
-              { label: 'Last 7 Days', value: '7D', days: 7 },
-              { label: 'Last 30 Days', value: '30D', days: 30 }
-            ].map((filter) => (
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader className="pb-2">
+            <CardDescription>Total Runs</CardDescription>
+            <CardTitle className="text-2xl text-foreground">{formatNumber(summaryStats.totalRuns, 0)}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 text-xs text-muted-foreground">Across current filter scope</CardContent>
+        </Card>
+
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader className="pb-2">
+            <CardDescription>Profitable Runs</CardDescription>
+            <CardTitle className="text-2xl text-emerald-300">{formatNumber(summaryStats.profitableRuns, 0)}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 text-xs text-muted-foreground">Calculated on visible results</CardContent>
+        </Card>
+
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader className="pb-2">
+            <CardDescription>Avg Return</CardDescription>
+            <CardTitle className="text-2xl text-foreground">{formatPercentAuto(summaryStats.avgReturn)}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 text-xs text-muted-foreground">Visible result set average</CardContent>
+        </Card>
+
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader className="pb-2">
+            <CardDescription>Avg Drawdown</CardDescription>
+            <CardTitle className="text-2xl text-foreground">{formatPercentAuto(summaryStats.avgDrawdown)}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 text-xs text-muted-foreground">Lower is better</CardContent>
+        </Card>
+
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader className="pb-2">
+            <CardDescription>Total PnL</CardDescription>
+            <CardTitle className={`text-2xl ${summaryStats.totalProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+              {formatCurrency(summaryStats.totalProfit)}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 text-xs text-muted-foreground">Sum of visible runs</CardContent>
+        </Card>
+      </section>
+
+      <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <CardHeader className="space-y-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-foreground">
+                <Filter className="h-5 w-5 text-primary" />
+                Quick Filters
+              </CardTitle>
+              <CardDescription>Instant date presets for faster analysis.</CardDescription>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
               <Button
-                key={filter.value}
-                variant={quickFilter === filter.value ? "default" : "outline"}
-                size="sm"
-                onClick={() => setQuickDateFilter(filter.days)}
-                className={`px-3 py-1.5 text-sm font-medium rounded-full border transition-all ${
-                  quickFilter === filter.value 
-                    ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white border-transparent shadow-lg' 
-                    : 'bg-white/10 text-gray-300 hover:bg-white/20 border-white/20'
+                variant="outline"
+                onClick={() => applyQuickRange("today")}
+                className={`rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40 ${
+                  quickRange === "today" ? "border-primary/50 bg-primary/15 text-primary" : ""
                 }`}
               >
-                {filter.label}
+                Today
               </Button>
-            ))}
-            <Button
-              variant={quickFilter === "" ? "default" : "outline"}
-              size="sm"
-              onClick={clearFilters}
-              className={`px-3 py-1.5 text-sm font-medium rounded-full border transition-all ${
-                quickFilter === "" 
-                  ? 'bg-gray-600/50 text-white border-transparent' 
-                  : 'bg-white/10 text-gray-300 hover:bg-white/20 border-white/20'
-              }`}
-            >
-              Clear All
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Advanced Filters */}
-      <StandardCard className="hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 border-white/10 bg-white/5 backdrop-blur-lg rounded-2xl">
-        <StandardCardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <div>
-            <StandardCardTitle className="text-white flex items-center gap-2">
-              <Filter className="w-5 h-5 text-purple-400" />
-              Advanced Filters
-            </StandardCardTitle>
-            <StandardCardDescription className="text-gray-400">
-              Refine your search with detailed criteria
-            </StandardCardDescription>
-          </div>
-          <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" size="sm" className="text-gray-400 hover:text-white hover:bg-white/10">
-                {filtersOpen ? (
-                  <ChevronUp className="w-5 h-5" />
-                ) : (
-                  <ChevronDown className="w-5 h-5" />
-                )}
+              <Button
+                variant="outline"
+                onClick={() => applyQuickRange("last7")}
+                className={`rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40 ${
+                  quickRange === "last7" ? "border-primary/50 bg-primary/15 text-primary" : ""
+                }`}
+              >
+                Last 7 Days
               </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <StandardCardContent className="space-y-4 pt-4">
-                {/* First Row: Strategy, Instrument, Timeframe, Min Profit */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {/* Strategy Filter */}
-                  <div className="space-y-2">
-                    <Label htmlFor="strategy" className="text-gray-300">Strategy</Label>
-                    <Select value={selectedStrategy} onValueChange={setSelectedStrategy}>
-                      <SelectTrigger className="bg-white/10 border-white/20 text-white hover:border-white/40">
-                        <SelectValue placeholder="All strategies" className="text-gray-500" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-[#1e1b4b] border-white/10">
-                        {strategies.map(strategy => (
-                          <SelectItem key={strategy.id} value={strategy.id} className="text-white hover:bg-white/10">
-                            {strategy.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Instrument Filter */}
-                  <div className="space-y-2">
-                    <Label htmlFor="instrument" className="text-gray-300">Instrument</Label>
-                    <Select value={selectedInstrument} onValueChange={setSelectedInstrument}>
-                      <SelectTrigger className="bg-white/10 border-white/20 text-white hover:border-white/40">
-                        <SelectValue placeholder="All instruments" className="text-gray-500" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-[#1e1b4b] border-white/10">
-                        {instruments.map(instrument => (
-                          <SelectItem key={instrument.id.toString()} value={instrument.id.toString()} className="text-white hover:bg-white/10">
-                            {instrument.symbol}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Timeframe Filter */}
-                  <div className="space-y-2">
-                    <Label htmlFor="timeframe" className="text-gray-300">Timeframe</Label>
-                    <Select value={timeframe} onValueChange={setTimeframe}>
-                      <SelectTrigger className="bg-white/10 border-white/20 text-white hover:border-white/40">
-                        <SelectValue className="text-gray-500" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-[#1e1b4b] border-white/10">
-                        <SelectItem value="5m" className="text-white hover:bg-white/10">5 Minutes</SelectItem>
-                        <SelectItem value="15m" className="text-white hover:bg-white/10">15 Minutes</SelectItem>
-                        <SelectItem value="1h" className="text-white hover:bg-white/10">1 Hour</SelectItem>
-                        <SelectItem value="1d" className="text-white hover:bg-white/10">1 Day</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Min Profit Filter */}
-                  <div className="space-y-2">
-                    <Label htmlFor="minProfit" className="text-gray-300">Min Profit ($)</Label>
-                    <Input
-                      id="minProfit"
-                      type="number"
-                      value={minProfit}
-                      onChange={(e) => setMinProfit(e.target.value)}
-                      placeholder="0"
-                      className="bg-white/10 border-white/20 text-white placeholder-gray-500 focus:border-purple-500"
-                    />
-                  </div>
-                </div>
-
-                {/* Second Row: Date Range, Max Drawdown, Actions */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {/* Start Date From */}
-                  <div className="space-y-2">
-                    <Label htmlFor="startDateFrom" className="text-gray-300">Start Date From</Label>
-                    <Input
-                      id="startDateFrom"
-                      type="date"
-                      value={startDateFrom}
-                      onChange={(e) => setStartDateFrom(e.target.value)}
-                      className="bg-white/10 border-white/20 text-white focus:border-purple-500"
-                    />
-                  </div>
-
-                  {/* Start Date To */}
-                  <div className="space-y-2">
-                    <Label htmlFor="startDateTo" className="text-gray-300">Start Date To</Label>
-                    <Input
-                      id="startDateTo"
-                      type="date"
-                      value={startDateTo}
-                      onChange={(e) => setStartDateTo(e.target.value)}
-                      className="bg-white/10 border-white/20 text-white focus:border-purple-500"
-                    />
-                  </div>
-
-                  {/* Max Drawdown Filter */}
-                  <div className="space-y-2">
-                    <Label htmlFor="maxDrawdown" className="text-gray-300">Max Drawdown (%)</Label>
-                    <Input
-                      id="maxDrawdown"
-                      type="number"
-                      value={maxDrawdown}
-                      onChange={(e) => setMaxDrawdown(e.target.value)}
-                      placeholder="20"
-                      className="bg-white/10 border-white/20 text-white placeholder-gray-500 focus:border-purple-500"
-                    />
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex flex-col gap-2 pt-6">
-                    <div className="flex gap-2">
-                      <Button 
-                        onClick={applyFilters} 
-                        disabled={loading}
-                        className="bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white flex-1 shadow-lg"
-                      >
-                        <Search className="w-4 h-4 mr-2" />
-                        Apply Filters
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        onClick={clearFilters} 
-                        disabled={loading}
-                        className="border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
-                      >
-                        Reset
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </StandardCardContent>
-            </CollapsibleContent>
-          </Collapsible>
-        </StandardCardHeader>
-      </StandardCard>
-
-      {/* Results Table */}
-      <Card className="hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 border-white/10 bg-white/5 backdrop-blur-lg rounded-2xl">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-white">Backtest Results</CardTitle>
-              <CardDescription className="text-gray-400">
-                Comprehensive view of all your backtest executions
-              </CardDescription>
+              <Button
+                variant="outline"
+                onClick={() => applyQuickRange("last30")}
+                className={`rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40 ${
+                  quickRange === "last30" ? "border-primary/50 bg-primary/15 text-primary" : ""
+                }`}
+              >
+                Last 30 Days
+              </Button>
+              <Button
+                variant="outline"
+                onClick={clearAllFilters}
+                className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Clear Filters
+              </Button>
             </div>
-            {pagination && (
-              <div className="text-sm text-gray-400">
-                Showing {((pagination.page - 1) * pagination.page_size) + 1} to {Math.min(pagination.page * pagination.page_size, pagination.total_count)} of {pagination.total_count} results
+          </div>
+
+          <div className="rounded-xl border border-border/50 bg-card/20">
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((prev) => !prev)}
+              className="flex w-full items-center justify-between px-4 py-3 text-left"
+            >
+              <div>
+                <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <SlidersHorizontal className="h-4 w-4 text-primary" />
+                  Advanced Filters
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Strategy, instrument, timeframe, date, profitability, drawdown, and status.
+                </p>
+              </div>
+              <span className="text-xs text-muted-foreground">
+                {activeFilterCount > 0 ? `${activeFilterCount} active` : "No active filters"}
+              </span>
+            </button>
+
+            {advancedOpen && (
+              <div className="space-y-4 border-t border-border/50 p-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">Strategy</Label>
+                    <Select
+                      value={draftFilters.strategy_id || "all"}
+                      onValueChange={(value) =>
+                        setDraftFilters((prev) => ({
+                          ...prev,
+                          strategy_id: value === "all" ? "" : value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="rounded-xl border-border/50 bg-card/20 text-foreground">
+                        <SelectValue placeholder="All strategies" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All strategies</SelectItem>
+                        {strategies.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">Instrument</Label>
+                    <Select
+                      value={draftFilters.instrument_id || "all"}
+                      onValueChange={(value) =>
+                        setDraftFilters((prev) => ({
+                          ...prev,
+                          instrument_id: value === "all" ? "" : value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="rounded-xl border-border/50 bg-card/20 text-foreground">
+                        <SelectValue placeholder="All instruments" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All instruments</SelectItem>
+                        {instruments.map((item) => (
+                          <SelectItem key={item.id} value={String(item.id)}>
+                            {item.symbol}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">Timeframe</Label>
+                    <Select
+                      value={draftFilters.timeframe || "all"}
+                      onValueChange={(value) =>
+                        setDraftFilters((prev) => ({
+                          ...prev,
+                          timeframe: value === "all" ? "" : value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="rounded-xl border-border/50 bg-card/20 text-foreground">
+                        <SelectValue placeholder="All timeframes" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All timeframes</SelectItem>
+                        {timeframes.map((item) => (
+                          <SelectItem key={item} value={item}>
+                            {item}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">Status</Label>
+                    <Select
+                      value={draftFilters.status || "all"}
+                      onValueChange={(value) =>
+                        setDraftFilters((prev) => ({
+                          ...prev,
+                          status: value === "all" ? "" : value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="rounded-xl border-border/50 bg-card/20 text-foreground">
+                        <SelectValue placeholder="All statuses" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        {statusOptions.map((item) => (
+                          <SelectItem key={item} value={item}>
+                            {humanize(item)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">Date From</Label>
+                    <Input
+                      type="date"
+                      value={draftFilters.start_date_from}
+                      onChange={(event) =>
+                        setDraftFilters((prev) => ({
+                          ...prev,
+                          start_date_from: event.target.value,
+                        }))
+                      }
+                      className="rounded-xl border-border/50 bg-card/20 text-foreground"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">Date To</Label>
+                    <Input
+                      type="date"
+                      value={draftFilters.start_date_to}
+                      onChange={(event) =>
+                        setDraftFilters((prev) => ({
+                          ...prev,
+                          start_date_to: event.target.value,
+                        }))
+                      }
+                      className="rounded-xl border-border/50 bg-card/20 text-foreground"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">Min Profit (₹)</Label>
+                    <Input
+                      type="number"
+                      value={draftFilters.min_profit}
+                      onChange={(event) =>
+                        setDraftFilters((prev) => ({
+                          ...prev,
+                          min_profit: event.target.value,
+                        }))
+                      }
+                      placeholder="e.g. 5000"
+                      className="rounded-xl border-border/50 bg-card/20 text-foreground placeholder:text-muted-foreground"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">Max Drawdown (%)</Label>
+                    <Input
+                      type="number"
+                      value={draftFilters.max_drawdown}
+                      onChange={(event) =>
+                        setDraftFilters((prev) => ({
+                          ...prev,
+                          max_drawdown: event.target.value,
+                        }))
+                      }
+                      placeholder="e.g. 20"
+                      className="rounded-xl border-border/50 bg-card/20 text-foreground placeholder:text-muted-foreground"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setDraftFilters(appliedFilters)}
+                    className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+                  >
+                    <X className="mr-2 h-4 w-4" />
+                    Revert Changes
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={clearAllFilters}
+                    className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+                  >
+                    Clear All
+                  </Button>
+                  <Button
+                    onClick={applyFilters}
+                    className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+                  >
+                    <Search className="mr-2 h-4 w-4" />
+                    Apply Filters
+                  </Button>
+                </div>
               </div>
             )}
           </div>
         </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
-                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
-                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
-                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
-                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
-                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
-                <div className="h-10 bg-white/10 rounded animate-pulse"></div>
-              </div>
-              <div className="h-96 bg-white/10 rounded animate-pulse"></div>
+      </Card>
+
+      <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <CardHeader>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <CardTitle className="text-foreground">Backtest Archive</CardTitle>
+              <CardDescription>Performance archive with filter-aware listing and actionable controls.</CardDescription>
             </div>
-          ) : backtests.length === 0 ? (
+
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Calendar className="h-4 w-4" />
+              {pagination
+                ? `Showing ${rows.length} of ${formatNumber(pagination.total_count, 0)} runs`
+                : `${rows.length} runs`}
+            </div>
+          </div>
+        </CardHeader>
+
+        <CardContent>
+          {error && !loading && (
+            <div className="mb-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+              <div className="flex items-start justify-between gap-3">
+                <p>{error}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void loadHistory(currentPage, appliedFilters)}
+                  className="rounded-lg border-rose-400/50 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20"
+                >
+                  <RefreshCcw className="mr-1 h-3.5 w-3.5" />
+                  Retry
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {loading && initialLoading ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {Array.from({ length: 4 }).map((_, idx) => (
+                  <div key={idx} className="h-20 animate-pulse rounded-xl border border-border/50 bg-card/30" />
+                ))}
+              </div>
+              <div className="h-[320px] animate-pulse rounded-xl border border-border/50 bg-card/30" />
+            </div>
+          ) : !loading && !rows.length ? (
             <EmptyState
-              title="No Backtest Results Yet"
-              description="Your backtest history will appear here once you run your first backtest"
-              icon={<Play className="w-12 h-12 text-purple-500" />}
-              actionLabel="Run Your First Backtest"
-              onAction={() => window.location.href = '/backtest'}
-              secondaryActionLabel="Browse Strategies"
-              secondaryActionHref="/strategies"
+              title="No backtest runs found"
+              description="Try widening filters or run a new backtest to build your analytics archive."
+              action={
+                <Button
+                  onClick={() => router.push("/backtest")}
+                  className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  <Play className="mr-2 h-4 w-4" />
+                  Run Backtest
+                </Button>
+              }
             />
           ) : (
             <>
-              <div className="overflow-x-auto rounded-lg border border-white/10 bg-white/5">
-                <Table className="min-w-[1200px]">
+              <div className="hidden overflow-x-auto rounded-xl border border-border/50 md:block">
+                <Table className="min-w-[1280px]">
                   <TableHeader>
-                    <TableRow className="border-white/10">
-                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Strategy</TableHead>
-                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Instrument</TableHead>
-                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Timeframe</TableHead>
-                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Period</TableHead>
-                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider text-right">Net Profit</TableHead>
-                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider text-right">Win Rate</TableHead>
-                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider text-right">Max DD</TableHead>
-                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider text-right">Trades</TableHead>
-                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Status</TableHead>
-                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Date</TableHead>
-                      <TableHead className="text-gray-400 font-semibold text-sm uppercase tracking-wider">Actions</TableHead>
+                    <TableRow className="border-border/50 hover:bg-transparent">
+                      <TableHead>Strategy</TableHead>
+                      <TableHead>Instrument</TableHead>
+                      <TableHead>Timeframe</TableHead>
+                      <TableHead className="text-right">Capital</TableHead>
+                      <TableHead className="text-right">PnL</TableHead>
+                      <TableHead className="text-right">Return %</TableHead>
+                      <TableHead className="text-right">Win Rate</TableHead>
+                      <TableHead className="text-right">Sharpe</TableHead>
+                      <TableHead className="text-right">Drawdown</TableHead>
+                      <TableHead className="text-right">Trades</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
+
                   <TableBody>
-                    {backtests.map((backtest) => (
-                      <TableRow 
-                        key={backtest.id} 
-                        className="border-white/10 hover:bg-white/5 transition-colors"
-                      >
-                        <TableCell className="font-medium text-white py-4">{backtest.strategy_name}</TableCell>
-                        <TableCell className="text-gray-400 py-4">{backtest.instrument_symbol}</TableCell>
-                        <TableCell className="text-gray-400 py-4">{backtest.timeframe}</TableCell>
-                        <TableCell className="text-gray-400 py-4">
-                          <div className="flex items-center gap-1">
-                            <Calendar className="w-4 h-4 text-gray-500" />
-                            {formatDate(backtest.start_date)} - {formatDate(backtest.end_date)}
-                          </div>
-                        </TableCell>
-                        <TableCell className={`text-right font-medium py-4 ${
-                          backtest.net_profit && backtest.net_profit >= 0 ? 'text-green-400' : 'text-red-400'
-                        }`}>
-                          {formatCurrency(backtest.net_profit)}
-                        </TableCell>
-                        <TableCell className="text-right text-gray-400 py-4">{formatPercent(backtest.win_rate)}</TableCell>
-                        <TableCell className="text-right text-red-400 py-4">{formatPercent(backtest.max_drawdown)}</TableCell>
-                        <TableCell className="text-right text-gray-400 py-4">{backtest.total_trades || 0}</TableCell>
-                        <TableCell className="py-4">
-                          <Badge 
-                            variant="outline" 
-                            className={`px-2 py-1 text-xs font-medium rounded-full border ${
-                              getStatusColor(backtest.status)
-                            }`}
-                          >
-                            <div className="flex items-center gap-1">
-                              {getStatusIcon(backtest.status)}
-                              <span className="capitalize">{backtest.status}</span>
-                            </div>
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-gray-400 py-4">{formatDate(backtest.created_at)}</TableCell>
-                        <TableCell className="py-4">
-                          <div className="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => viewBacktestReport(backtest)}
-                              className="flex items-center gap-1 border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
+                    {loading
+                      ? Array.from({ length: 6 }).map((_, idx) => (
+                          <TableRow key={`skeleton-${idx}`} className="border-border/30 hover:bg-transparent">
+                            <TableCell colSpan={13} className="py-4">
+                              <div className="h-6 animate-pulse rounded-lg bg-card/40" />
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      : rows.map((item) => {
+                          const pnl = safeNumber(item.net_profit, 0);
+                          const returnPct = computeReturnPercent(item);
+
+                          return (
+                            <TableRow
+                              key={item.id}
+                              className="border-border/30 text-foreground transition-colors hover:bg-card/30"
                             >
-                              <Eye className="w-4 h-4" />
-                              View
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => downloadReport(backtest)}
-                              className="flex items-center gap-1 border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
-                            >
-                              <Download className="w-4 h-4" />
-                              Download
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                              <TableCell className="font-medium">{item.strategy_name || "—"}</TableCell>
+                              <TableCell>{item.instrument_symbol || "—"}</TableCell>
+                              <TableCell>{item.timeframe || "—"}</TableCell>
+                              <TableCell className="text-right">{formatCurrency(item.initial_capital)}</TableCell>
+                              <TableCell className={`text-right font-medium ${pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                                {formatCurrency(item.net_profit)}
+                              </TableCell>
+                              <TableCell className={`text-right ${safeNumber(returnPct, 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                                {formatPercentAuto(returnPct)}
+                              </TableCell>
+                              <TableCell className="text-right">{formatPercentAuto(item.win_rate)}</TableCell>
+                              <TableCell className="text-right">{formatNumber(item.sharpe_ratio, 2)}</TableCell>
+                              <TableCell className="text-right">{formatPercentAuto(item.max_drawdown)}</TableCell>
+                              <TableCell className="text-right">{formatNumber(item.total_trades, 0)}</TableCell>
+                              <TableCell>{formatDateTime(item.created_at)}</TableCell>
+                              <TableCell>
+                                <span className={`inline-flex rounded-full border px-2 py-1 text-xs ${statusTone(item.status)}`}>
+                                  {humanize(item.status || "unknown")}
+                                </span>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex justify-end gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => void openDetail(item)}
+                                    className="rounded-lg border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+                                  >
+                                    <Eye className="h-3.5 w-3.5" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => rerunBacktest(item)}
+                                    className="rounded-lg border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+                                  >
+                                    <Play className="h-3.5 w-3.5" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => exportRunSummary(item)}
+                                    className="rounded-lg border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+                                  >
+                                    <Download className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                   </TableBody>
                 </Table>
               </div>
 
-              {/* Pagination */}
-              {pagination && pagination.total_pages > 1 && (
-                <div className="flex items-center justify-between mt-6">
-                  <div className="text-sm text-gray-400">
-                    Page {pagination.page} of {pagination.total_pages} • {pagination.total_count} total results
-                  </div>
+              <div className="space-y-3 md:hidden">
+                {rows.map((item) => {
+                  const pnl = safeNumber(item.net_profit, 0);
+                  const returnPct = computeReturnPercent(item);
+
+                  return (
+                    <div key={item.id} className="rounded-xl border border-border/50 bg-card/20 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">{item.strategy_name || "—"}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {item.instrument_symbol || "—"} • {item.timeframe || "—"}
+                          </p>
+                        </div>
+                        <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] ${statusTone(item.status)}`}>
+                          {humanize(item.status || "unknown")}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-lg border border-border/40 bg-card/20 p-2">
+                          <p className="text-muted-foreground">Capital</p>
+                          <p className="font-medium text-foreground">{formatCurrency(item.initial_capital)}</p>
+                        </div>
+                        <div className="rounded-lg border border-border/40 bg-card/20 p-2">
+                          <p className="text-muted-foreground">PnL</p>
+                          <p className={`font-medium ${pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                            {formatCurrency(item.net_profit)}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-border/40 bg-card/20 p-2">
+                          <p className="text-muted-foreground">Return</p>
+                          <p className={`font-medium ${safeNumber(returnPct, 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                            {formatPercentAuto(returnPct)}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-border/40 bg-card/20 p-2">
+                          <p className="text-muted-foreground">Win Rate</p>
+                          <p className="font-medium text-foreground">{formatPercentAuto(item.win_rate)}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                        <span className="inline-flex items-center gap-1">
+                          <Clock3 className="h-3.5 w-3.5" />
+                          {formatDateTime(item.created_at)}
+                        </span>
+                        <span>{formatNumber(item.total_trades, 0)} trades</span>
+                      </div>
+
+                      <div className="mt-3 flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void openDetail(item)}
+                          className="flex-1 rounded-lg border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+                        >
+                          <Eye className="mr-1.5 h-3.5 w-3.5" />
+                          View
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => rerunBacktest(item)}
+                          className="flex-1 rounded-lg border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+                        >
+                          <Play className="mr-1.5 h-3.5 w-3.5" />
+                          Rerun
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => exportRunSummary(item)}
+                          className="rounded-lg border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {!!pagination && pagination.total_pages > 1 && (
+                <div className="mt-4 flex flex-col gap-3 rounded-xl border border-border/50 bg-card/20 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Page {pagination.page} of {pagination.total_pages} • {formatNumber(pagination.total_count, 0)} total runs
+                  </p>
                   <div className="flex gap-2">
                     <Button
-                      variant="outline"
                       size="sm"
-                      onClick={() => loadBacktestHistory(pagination.page - 1)}
-                      disabled={pagination.page <= 1 || loading}
-                      className="border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
+                      variant="outline"
+                      disabled={loading || pagination.page <= 1}
+                      onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                      className="rounded-lg border-border/60 bg-card/20 text-foreground hover:bg-card/40"
                     >
-                      <ChevronLeft className="w-4 h-4 mr-1" />
                       Previous
                     </Button>
                     <Button
-                      variant="outline"
                       size="sm"
-                      onClick={() => loadBacktestHistory(pagination.page + 1)}
-                      disabled={pagination.page >= pagination.total_pages || loading}
-                      className="border-white/20 text-gray-300 hover:bg-white/10 hover:border-white/40"
+                      variant="outline"
+                      disabled={loading || pagination.page >= pagination.total_pages}
+                      onClick={() => setCurrentPage((prev) => prev + 1)}
+                      className="rounded-lg border-border/60 bg-card/20 text-foreground hover:bg-card/40"
                     >
                       Next
-                      <ChevronRight className="w-4 h-4 ml-1" />
                     </Button>
                   </div>
                 </div>
@@ -601,134 +1072,154 @@ export default function BacktestHistoryPage() {
         </CardContent>
       </Card>
 
-      {/* Selected Backtest Details Modal */}
-      {selectedBacktest && (
-        <Card className="hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 border-white/10 bg-white/5 backdrop-blur-lg rounded-2xl">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-white text-lg">
-                Backtest Report: {selectedBacktest.strategy_name} - {selectedBacktest.instrument_symbol}
-              </CardTitle>
-              <CardDescription className="text-gray-400">
-                Detailed performance metrics and analysis
-              </CardDescription>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSelectedBacktest(null)}
-              className="text-gray-400 hover:text-white hover:bg-white/10"
-            >
-              <X className="w-5 h-5" />
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              <div className="bg-gradient-to-r from-green-900/40 to-emerald-900/40 border border-green-500/30 rounded-xl p-4 backdrop-blur-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm text-green-400 font-medium">Net Profit</div>
-                    <div className={`text-xl font-bold ${
-                      selectedBacktest.net_profit && selectedBacktest.net_profit >= 0 ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      {formatCurrency(selectedBacktest.net_profit)}
-                    </div>
-                  </div>
-                  <TrendingUp className="w-8 h-8 text-green-500" />
-                </div>
-              </div>
-              <div className="bg-gradient-to-r from-blue-900/40 to-cyan-900/40 border border-blue-500/30 rounded-xl p-4 backdrop-blur-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm text-blue-400 font-medium">Win Rate</div>
-                    <div className="text-xl font-bold text-blue-400">
-                      {formatPercent(selectedBacktest.win_rate)}
-                    </div>
-                  </div>
-                  <TrendingUp className="w-8 h-8 text-blue-500" />
-                </div>
-              </div>
-              <div className="bg-gradient-to-r from-red-900/40 to-orange-900/40 border border-red-500/30 rounded-xl p-4 backdrop-blur-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm text-red-400 font-medium">Max Drawdown</div>
-                    <div className="text-xl font-bold text-red-400">
-                      {formatPercent(selectedBacktest.max_drawdown)}
-                    </div>
-                  </div>
-                  <TrendingDown className="w-8 h-8 text-red-500" />
-                </div>
-              </div>
-              <div className="bg-gradient-to-r from-purple-900/40 to-pink-900/40 border border-purple-500/30 rounded-xl p-4 backdrop-blur-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm text-purple-400 font-medium">Total Trades</div>
-                    <div className="text-xl font-bold text-purple-400">
-                      {selectedBacktest.total_trades || 0}
-                    </div>
-                  </div>
-                  <Play className="w-8 h-8 text-purple-500" />
-                </div>
-              </div>
-            </div>
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto rounded-xl border border-border/50 bg-card/90 backdrop-blur-xl sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">
+              Backtest Detail • {selectedRun?.strategy_name || "Strategy"} / {selectedRun?.instrument_symbol || "Instrument"}
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              View key metrics, recent trades, and export structured detail.
+            </DialogDescription>
+          </DialogHeader>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-4">
-                <h4 className="font-semibold text-white">Backtest Details</h4>
-                <div className="space-y-2 text-sm text-gray-400">
-                  <div className="flex justify-between">
-                    <span>Period:</span>
-                    <span className="font-medium text-white">{formatDate(selectedBacktest.start_date)} - {formatDate(selectedBacktest.end_date)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Timeframe:</span>
-                    <span className="font-medium text-white">{selectedBacktest.timeframe}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Initial Capital:</span>
-                    <span className="font-medium text-white">{formatCurrency(selectedBacktest.initial_capital)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Final Capital:</span>
-                    <span className="font-medium text-white">{formatCurrency(selectedBacktest.final_capital)}</span>
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-4">
-                <h4 className="font-semibold text-white">Performance Metrics</h4>
-                <div className="space-y-2 text-sm text-gray-400">
-                  <div className="flex justify-between">
-                    <span>Sharpe Ratio:</span>
-                    <span className="font-medium text-white">{selectedBacktest.sharpe_ratio?.toFixed(2) || '-'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Winning Trades:</span>
-                    <span className="font-medium text-white">{selectedBacktest.winning_trades || 0}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Losing Trades:</span>
-                    <span className="font-medium text-white">{selectedBacktest.losing_trades || 0}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Status:</span>
-                    <span className="font-medium text-white capitalize">{selectedBacktest.status}</span>
-                  </div>
-                </div>
-              </div>
+          {detailLoading ? (
+            <div className="space-y-3">
+              <div className="h-20 animate-pulse rounded-xl border border-border/50 bg-card/30" />
+              <div className="h-20 animate-pulse rounded-xl border border-border/50 bg-card/30" />
+              <div className="h-52 animate-pulse rounded-xl border border-border/50 bg-card/30" />
             </div>
+          ) : detailError ? (
+            <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+              {detailError}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">PnL</p>
+                  <p className={`mt-1 text-lg font-semibold ${safeNumber(detailSummary?.net_profit, 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                    {formatCurrency(detailSummary?.net_profit)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Return %</p>
+                  <p className={`mt-1 text-lg font-semibold ${safeNumber(detailReturn, 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                    {formatPercentAuto(detailReturn)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Win Rate</p>
+                  <p className="mt-1 text-lg font-semibold text-foreground">{formatPercentAuto(detailSummary?.win_rate)}</p>
+                </div>
+                <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Sharpe</p>
+                  <p className="mt-1 text-lg font-semibold text-foreground">{formatNumber(detailSummary?.sharpe_ratio, 2)}</p>
+                </div>
+                <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Drawdown</p>
+                  <p className="mt-1 text-lg font-semibold text-foreground">{formatPercentAuto(detailSummary?.max_drawdown)}</p>
+                </div>
+              </div>
 
-            <div className="mt-6 flex justify-end">
-              <Button 
-                onClick={() => setSelectedBacktest(null)}
-                className="bg-gray-600/50 hover:bg-gray-600 text-white border-white/20"
-              >
-                Close Report
-              </Button>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="rounded-xl border border-border/50 bg-card/20 p-4 text-sm">
+                  <p className="mb-2 font-medium text-foreground">Run Metadata</p>
+                  <div className="space-y-1.5 text-muted-foreground">
+                    <p>Backtest ID: <span className="text-foreground">{selectedRun?.id || detailSummary?.id || "—"}</span></p>
+                    <p>Timeframe: <span className="text-foreground">{selectedRun?.timeframe || detailSummary?.timeframe || "—"}</span></p>
+                    <p>Created: <span className="text-foreground">{formatDateTime(detailSummary?.created_at || selectedRun?.created_at)}</span></p>
+                    <p>Status: <span className="text-foreground">{humanize(selectedRun?.status || "completed")}</span></p>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-border/50 bg-card/20 p-4 text-sm">
+                  <p className="mb-2 font-medium text-foreground">Capital</p>
+                  <div className="space-y-1.5 text-muted-foreground">
+                    <p>Initial Capital: <span className="text-foreground">{formatCurrency(detailSummary?.initial_capital)}</span></p>
+                    <p>Final Capital: <span className="text-foreground">{formatCurrency(detailSummary?.final_capital)}</span></p>
+                    <p>Total Trades: <span className="text-foreground">{formatNumber(detailSummary?.total_trades, 0)}</span></p>
+                    <p>Instrument: <span className="text-foreground">{selectedRun?.instrument_symbol || detailSummary?.instrument_symbol || "—"}</span></p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-medium text-foreground">Recent Trades</p>
+                  <p className="text-xs text-muted-foreground">{detail?.trades?.length || 0} trades available</p>
+                </div>
+
+                {!!detail?.trades?.length ? (
+                  <div className="overflow-x-auto">
+                    <Table className="min-w-[760px]">
+                      <TableHeader>
+                        <TableRow className="border-border/40 hover:bg-transparent">
+                          <TableHead>Entry</TableHead>
+                          <TableHead>Exit</TableHead>
+                          <TableHead>Side</TableHead>
+                          <TableHead className="text-right">Qty</TableHead>
+                          <TableHead className="text-right">Entry Px</TableHead>
+                          <TableHead className="text-right">Exit Px</TableHead>
+                          <TableHead className="text-right">PnL</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {detail.trades.slice(0, 15).map((trade, idx) => {
+                          const pnl = safeNumber(trade.pnl, 0);
+                          return (
+                            <TableRow key={`${trade.id || "trade"}-${idx}`} className="border-border/30">
+                              <TableCell>{formatDateTime(trade.entry_time)}</TableCell>
+                              <TableCell>{formatDateTime(trade.exit_time)}</TableCell>
+                              <TableCell>{trade.side || "—"}</TableCell>
+                              <TableCell className="text-right">{formatNumber(trade.quantity, 0)}</TableCell>
+                              <TableCell className="text-right">{formatNumber(trade.entry_price, 2)}</TableCell>
+                              <TableCell className="text-right">{formatNumber(trade.exit_price, 2)}</TableCell>
+                              <TableCell className={`text-right font-medium ${pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                                {formatCurrency(trade.pnl)}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Trade-level detail not available for this run.</p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => selectedRun && rerunBacktest(selectedRun)}
+                  className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+                >
+                  <Play className="mr-2 h-4 w-4" />
+                  Rerun
+                </Button>
+
+                <Button
+                  variant="outline"
+                  disabled={!detail?.trades?.length}
+                  onClick={exportDetailTrades}
+                  className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40 disabled:opacity-50"
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Export Trades CSV
+                </Button>
+
+                <Button
+                  onClick={() => setDetailOpen(false)}
+                  className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  Close
+                </Button>
+              </div>
             </div>
-          </CardContent>
-        </Card>
-      )}
-      </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

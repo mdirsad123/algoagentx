@@ -3,11 +3,12 @@ from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
+from sqlalchemy import String, cast, select, text
 
 from .security import get_user_from_token
 from ..db.session import async_session
-from ..billing.plan_catalog import PlanCatalog, PlanCode, BillingPeriod
+from ..db.models import Plan
+from ..services.subscriptions import SubscriptionLifecycleService, SubscriptionLifecycleState
 
 security = HTTPBearer()
 
@@ -31,69 +32,68 @@ async def get_db() -> AsyncSession:
     finally:
         await session.close()
 
-async def get_user_entitlements(current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
-    user_id = current_user["user_id"]
-    try:
-        subscription_query = text("""
-            SELECT us.*, p.code, p.billing_period, p.price_inr, p.included_credits, p.features
-            FROM user_subscriptions us
-            JOIN plans p ON us.plan_id = p.id
-            WHERE CAST(us.user_id AS TEXT) = :user_id
-              AND us.status = 'ACTIVE'
-              AND us.end_at > CURRENT_TIMESTAMP
-            ORDER BY us.created_at DESC
-            LIMIT 1
-        """)
-        result = await db.execute(subscription_query, {"user_id": str(user_id)})
-        subscription = result.fetchone()
-        if subscription:
-            plan_features = PlanCatalog.get_plan_features(subscription.code, subscription.billing_period)
-            return {
-                "plan_code": subscription.code,
-                "billing_period": subscription.billing_period,
-                "price_inr": subscription.price_inr,
-                "included_credits": subscription.included_credits,
-                "features": plan_features,
-                "subscription_id": str(subscription.id),
-                "subscription_status": "ACTIVE",
-                "trial_remaining_days": 0,
-                "is_trial": False,
-                "is_premium": subscription.code != PlanCode.FREE,
-            }
 
-        user_query = text("SELECT created_at FROM users WHERE CAST(id AS TEXT) = :user_id")
-        user_result = await db.execute(user_query, {"user_id": str(user_id)})
-        user_row = user_result.fetchone()
-        if user_row and user_row.created_at:
-            user_created_at = user_row.created_at
-            now = datetime.now(user_created_at.tzinfo) if getattr(user_created_at, "tzinfo", None) else datetime.utcnow()
-            trial_end_date = user_created_at + timedelta(days=7)
-            if now <= trial_end_date:
-                plan_features = PlanCatalog.get_plan_features(PlanCode.FREE, BillingPeriod.NONE)
-                return {
-                    "plan_code": PlanCode.FREE,
-                    "billing_period": BillingPeriod.NONE,
-                    "price_inr": 0,
-                    "included_credits": 50,
-                    "features": plan_features,
-                    "subscription_id": None,
-                    "subscription_status": "TRIAL",
-                    "trial_remaining_days": max(0, (trial_end_date - now).days),
-                    "is_trial": True,
-                    "is_premium": False,
-                }
+async def get_user_entitlements(current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    user_id = str(current_user["user_id"])
+    try:
+        cycle = await SubscriptionLifecycleService.ensure_user_subscription_cycle(
+            db,
+            user_id,
+            for_update=False,
+            auto_commit=False,
+        )
+        subscription = cycle.get("subscription")
+        plan: Plan | None = cycle.get("plan")
+        lifecycle_state = str(cycle.get("lifecycle_state") or SubscriptionLifecycleState.NONE.value)
+
+        if subscription and lifecycle_state in {
+            SubscriptionLifecycleState.ACTIVE.value,
+            SubscriptionLifecycleState.TRIAL.value,
+        }:
+            plan_code = str(getattr(subscription, "plan_code_snapshot", None) or getattr(plan, "code", None) or "FREE").upper()
+            billing_period = str(getattr(subscription, "billing_period_snapshot", None) or getattr(plan, "billing_period", None) or "NONE").upper()
+            features = getattr(plan, "features", None) or {}
+            subscription_state = "TRIAL" if lifecycle_state == SubscriptionLifecycleState.TRIAL.value else "ACTIVE"
+            return {
+                "plan_code": plan_code,
+                "billing_period": billing_period,
+                "price_inr": int(getattr(subscription, "plan_price_inr", None) or getattr(plan, "price_inr", 0) or 0),
+                "included_credits": int(cycle.get("included_remaining") or 0),
+                "included_credits_total": int(cycle.get("included_total") or 0),
+                "next_credit_refill_at": cycle.get("next_refill_at"),
+                "last_credit_refill_at": cycle.get("last_refill_at"),
+                "features": features,
+                "subscription_id": str(subscription.id),
+                "subscription_status": subscription_state,
+                "subscription_state": subscription_state,
+                "trial_remaining_days": 0,
+                "is_trial": lifecycle_state == SubscriptionLifecycleState.TRIAL.value,
+                "is_premium": plan_code != "FREE",
+            }
     except Exception:
         pass
 
-    plan_features = PlanCatalog.get_plan_features(PlanCode.FREE, BillingPeriod.NONE)
+    free_plan = (
+        await db.execute(
+            select(Plan)
+            .where(cast(Plan.code, String).ilike("FREE"), Plan.is_active == True)
+            .order_by(Plan.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    free_features = getattr(free_plan, "features", None) or {}
     return {
-        "plan_code": PlanCode.FREE,
-        "billing_period": BillingPeriod.NONE,
+        "plan_code": "FREE",
+        "billing_period": "NONE",
         "price_inr": 0,
         "included_credits": 0,
-        "features": plan_features,
+        "included_credits_total": int(getattr(free_plan, "included_credits", 0) or 0),
+        "next_credit_refill_at": None,
+        "last_credit_refill_at": None,
+        "features": free_features,
         "subscription_id": None,
         "subscription_status": "EXPIRED",
+        "subscription_state": "EXPIRED",
         "trial_remaining_days": 0,
         "is_trial": False,
         "is_premium": False,
@@ -152,7 +152,7 @@ async def check_ai_screener_limits(
     """Backward-compatible AI screener limit helper for existing routers."""
     plan_features = entitlements.get("features", {})
     max_ai_runs_per_day = int(plan_features.get("ai_runs_per_day", 3) or 3)
-    plan_code = entitlements.get("plan_code", PlanCode.FREE)
+    plan_code = str(entitlements.get("plan_code") or "FREE").upper()
 
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
@@ -182,7 +182,7 @@ async def check_ai_screener_limits(
 
     is_trial = bool(entitlements.get("is_trial", False))
     if mode and depth:
-        if plan_code == PlanCode.FREE and (mode != "basic" or depth != "light"):
+        if plan_code == "FREE" and (mode != "basic" or depth != "light"):
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
@@ -207,8 +207,8 @@ async def check_ai_screener_limits(
         "can_run_ai_screener": True,
         "plan_code": plan_code,
         "is_trial": is_trial,
-        "allowed_modes": ["basic"] if plan_code == PlanCode.FREE else (["basic", "advanced"] if is_trial else ["basic", "advanced", "premium"]),
-        "allowed_depths": ["light"] if plan_code == PlanCode.FREE else (["light", "medium"] if is_trial else ["light", "medium", "deep"]),
+        "allowed_modes": ["basic"] if plan_code == "FREE" else (["basic", "advanced"] if is_trial else ["basic", "advanced", "premium"]),
+        "allowed_depths": ["light"] if plan_code == "FREE" else (["light", "medium"] if is_trial else ["light", "medium", "deep"]),
     }
 
 

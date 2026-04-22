@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CreditCard,
+  Database,
   FileText,
   Headset,
   History,
@@ -20,6 +21,7 @@ import {
   User,
   Users,
   Wallet,
+  BadgeDollarSign,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -41,10 +43,12 @@ const adminMenuItems = [
   { icon: Home, label: "Dashboard", href: "/admin/dashboard" },
   { icon: Users, label: "Users", href: "/admin/users" },
   { icon: CreditCard, label: "Subscriptions", href: "/admin/subscriptions" },
+  { icon: BadgeDollarSign, label: "Pricing", href: "/admin/pricing" },
   { icon: Wallet, label: "Payments", href: "/admin/payments" },
   { icon: FileText, label: "Orders", href: "/admin/orders" },
   { icon: BarChart3, label: "Credits", href: "/admin/credits" },
   { icon: Layers, label: "Strategies", href: "/admin/strategy-requests" },
+  { icon: Database, label: "Market Data", href: "/admin/market-data" },
   { icon: TrendingUp, label: "Backtests", href: "/admin/backtests" },
   { icon: Shield, label: "Support Tickets", href: "/admin/support-tickets" },
 ];

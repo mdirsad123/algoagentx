@@ -30,6 +30,25 @@ export function parseApiError(err: unknown): ApiErrorInfo {
                      headers['x-trace-id'] ||
                      headers['trace-id'];
 
+    // Handle FastAPI structured detail object and keep machine-readable code.
+    if (response?.data?.detail && typeof response.data.detail === 'object' && !Array.isArray(response.data.detail)) {
+      const detailObj = response.data.detail;
+      const structuredMessage =
+        (typeof detailObj.message === 'string' && detailObj.message) ||
+        (typeof detailObj.detail === 'string' && detailObj.detail) ||
+        (typeof response?.data?.message === 'string' && response.data.message) ||
+        (typeof axiosError.message === 'string' && axiosError.message) ||
+        'Something went wrong';
+
+      return {
+        message: structuredMessage,
+        code: detailObj.code,
+        status: response?.status,
+        requestId,
+        raw: response?.data
+      };
+    }
+
     // Determine error message with priority
     let message = "Something went wrong";
     
