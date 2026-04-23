@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
 import razorpay
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +16,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.config import settings
 from ...core.dependencies import get_current_user, get_db
 from ...db.compat import as_uuid_or_str, column_text, table_has_column
-from ...db.models import BillingOrder, CreditTransaction, CreditTransactionType, Payment, UserCredit
+from ...db.models import (
+    BillingDocument,
+    BillingOrder,
+    BillingWebhookEvent,
+    CreditTransaction,
+    CreditTransactionType,
+    Payment,
+    UserCredit,
+)
 from ...schemas.payments import (
     CreateOrderRequest,
     PaymentFailureRequest,
@@ -24,6 +34,23 @@ from ...utils.api_response import success_response
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+TOPUP_PURPOSE = "CREDIT_TOPUP"
+LEGACY_TOPUP_PURPOSE = "CREDITS_TOPUP"
+
+
+def _topup_purposes() -> tuple[str, str]:
+    return (TOPUP_PURPOSE, LEGACY_TOPUP_PURPOSE)
+
+
+def _is_topup_purpose(value: str | None) -> bool:
+    return str(value or "").strip().upper() in _topup_purposes()
+
+
+def _normalize_purpose(value: str | None) -> str:
+    if _is_topup_purpose(value):
+        return TOPUP_PURPOSE
+    return str(value or "").strip().upper()
 
 
 DEFAULT_TOPUP_PACKS = [
@@ -129,7 +156,7 @@ async def _ensure_credit_row(db: AsyncSession, user_id: str) -> UserCredit:
     ).scalar_one_or_none()
     if row:
         return row
-    row = UserCredit(user_id=str(user_id), balance=0)
+    row = UserCredit(user_id=as_uuid_or_str(user_id), balance=0)
     db.add(row)
     await db.flush()
     return row
@@ -179,6 +206,101 @@ async def _sync_billing_order(db: AsyncSession, payment: Payment, *, metadata: d
     await db.flush()
 
 
+async def _ensure_billing_documents(
+    db: AsyncSession,
+    *,
+    payment: Payment,
+    credits_delta: int,
+    source: str,
+) -> None:
+    if not await table_has_column(db, "billing_documents", "id"):
+        return
+
+    payment_id = getattr(payment, "id", None)
+    if not payment_id:
+        return
+
+    normalized_purpose = _normalize_purpose(getattr(payment, "purpose", None))
+    now = datetime.now(timezone.utc)
+
+    for document_type, prefix in (("INVOICE", "INV"), ("RECEIPT", "RCPT")):
+        existing = (
+            await db.execute(
+                select(BillingDocument).where(
+                    BillingDocument.payment_id == payment_id,
+                    BillingDocument.document_type == document_type,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing:
+            continue
+
+        doc_number = f"{prefix}-{now.strftime('%Y%m%d')}-{str(payment_id).replace('-', '')[:12].upper()}"
+        db.add(
+            BillingDocument(
+                user_id=as_uuid_or_str(str(payment.user_id)),
+                payment_id=payment_id,
+                billing_order_id=str(payment.billing_order_id or ""),
+                document_type=document_type,
+                document_number=doc_number,
+                provider="RAZORPAY",
+                purpose=normalized_purpose,
+                amount_inr=int(payment.amount_inr or 0),
+                currency=str(payment.currency or "INR"),
+                credits_delta=int(credits_delta or 0),
+                metadata_json=json.dumps(
+                    {
+                        "source": source,
+                        "razorpay_order_id": payment.razorpay_order_id,
+                        "razorpay_payment_id": payment.razorpay_payment_id,
+                    }
+                ),
+            )
+        )
+
+
+def _verify_webhook_signature(raw_body: bytes, signature: str | None) -> bool:
+    secret = settings.razorpay_webhook_secret
+    if not secret or not signature:
+        return False
+    expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+async def _record_webhook_event(
+    db: AsyncSession,
+    *,
+    event_type: str,
+    payload_json: str,
+    signature: str | None,
+    status: str,
+    event_key: str | None = None,
+    payload_hash: str | None = None,
+    payment: Payment | None = None,
+    processing_error: str | None = None,
+) -> BillingWebhookEvent | None:
+    if not await table_has_column(db, "billing_webhook_events", "id"):
+        return None
+
+    row = BillingWebhookEvent(
+        provider="RAZORPAY",
+        event_type=event_type,
+        event_key=event_key,
+        payload_hash=payload_hash,
+        signature=signature,
+        payload_json=payload_json,
+        status=status,
+        processing_error=processing_error,
+        payment_id=getattr(payment, "id", None),
+        billing_order_id=str(getattr(payment, "billing_order_id", None) or "") or None,
+        purpose=_normalize_purpose(getattr(payment, "purpose", None)) if payment else None,
+        processed_at=datetime.now(timezone.utc) if status in {"PROCESSED", "FAILED", "IGNORED"} else None,
+    )
+    db.add(row)
+    await db.flush()
+    return row
+
+
 async def _rollback_safely(db: AsyncSession) -> None:
     try:
         await db.rollback()
@@ -221,7 +343,7 @@ async def create_order(payload: CreateOrderRequest, db: AsyncSession = Depends(g
                 "payment_capture": 1,
                 "notes": {
                     "user_id": user_id,
-                    "purpose": "CREDITS_TOPUP",
+                    "purpose": TOPUP_PURPOSE,
                     "credits": str(int(resolved["credits"])),
                     "pack_code": str(resolved["pack_code"] or "CUSTOM"),
                 },
@@ -233,9 +355,9 @@ async def create_order(payload: CreateOrderRequest, db: AsyncSession = Depends(g
 
     try:
         payment = Payment(
-            user_id=user_id,
+            user_id=as_uuid_or_str(user_id),
             provider='RAZORPAY',
-            purpose='CREDITS_TOPUP',
+            purpose=TOPUP_PURPOSE,
             amount_inr=int(resolved["amount_inr"]),
             currency='INR',
             status='CREATED',
@@ -286,6 +408,7 @@ async def verify_payment(payload: VerifyPaymentRequest, db: AsyncSession = Depen
             .where(
                 Payment.razorpay_order_id == payload.order_id,
                 column_text(Payment.user_id) == user_id,
+                Payment.purpose.in_(list(_topup_purposes())),
             )
             .with_for_update()
         )
@@ -395,6 +518,7 @@ async def verify_payment(payload: VerifyPaymentRequest, db: AsyncSession = Depen
         payment.razorpay_payment_id = payload.razorpay_payment_id
         payment.razorpay_signature = payload.razorpay_signature
         payment.status = 'PAID'
+        payment.purpose = TOPUP_PURPOSE
         payment.verified_at = datetime.now(timezone.utc)
         payment.failure_reason = None
 
@@ -425,6 +549,12 @@ async def verify_payment(payload: VerifyPaymentRequest, db: AsyncSession = Depen
                 "credits_granted": granted_credits,
                 "idempotent": False,
             },
+        )
+        await _ensure_billing_documents(
+            db,
+            payment=payment,
+            credits_delta=granted_credits,
+            source="verify_endpoint",
         )
 
         await db.commit()
@@ -458,6 +588,7 @@ async def mark_payment_failure(payload: PaymentFailureRequest, db: AsyncSession 
             select(Payment).where(
                 Payment.razorpay_order_id == payload.order_id,
                 column_text(Payment.user_id) == user_id,
+                Payment.purpose.in_(list(_topup_purposes())),
             )
         )
     ).scalar_one_or_none()
@@ -503,3 +634,201 @@ async def mark_payment_failure(payload: PaymentFailureRequest, db: AsyncSession 
         },
         'Payment marked as failed',
     )
+
+
+@router.post('/razorpay/webhook')
+async def razorpay_topup_webhook(
+    request: Request,
+    x_razorpay_signature: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    raw_body = await request.body()
+    payload_hash = hashlib.sha256(raw_body).hexdigest()
+
+    if not _verify_webhook_signature(raw_body, x_razorpay_signature):
+        raise HTTPException(status_code=400, detail='Invalid webhook signature')
+
+    try:
+        payload = json.loads(raw_body.decode('utf-8'))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail='Invalid webhook payload') from exc
+
+    event_type = str(payload.get('event') or '')
+    payment_entity = payload.get('payload', {}).get('payment', {}).get('entity', {})
+    webhook_event_key = str(payment_entity.get('id') or payload.get('id') or '') or None
+
+    if event_type not in {'payment.captured', 'payment.failed'}:
+        await _record_webhook_event(
+            db,
+            event_type=event_type,
+            payload_json=raw_body.decode('utf-8', errors='ignore'),
+            signature=x_razorpay_signature,
+            status='IGNORED',
+            event_key=webhook_event_key,
+            payload_hash=payload_hash,
+            processing_error='unsupported_event',
+        )
+        await db.commit()
+        return success_response({'event': event_type, 'status': 'ignored'}, 'Event ignored')
+
+    order_id = str(payment_entity.get('order_id') or '')
+    razorpay_payment_id = str(payment_entity.get('id') or '')
+    if not order_id:
+        await _record_webhook_event(
+            db,
+            event_type=event_type,
+            payload_json=raw_body.decode('utf-8', errors='ignore'),
+            signature=x_razorpay_signature,
+            status='FAILED',
+            event_key=webhook_event_key,
+            payload_hash=payload_hash,
+            processing_error='missing_order_id',
+        )
+        await db.commit()
+        return success_response({'event': event_type, 'status': 'failed'}, 'Missing order_id')
+
+    payment = (
+        await db.execute(
+            select(Payment)
+            .where(
+                Payment.razorpay_order_id == order_id,
+                Payment.purpose.in_(list(_topup_purposes())),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+
+    if not payment:
+        await _record_webhook_event(
+            db,
+            event_type=event_type,
+            payload_json=raw_body.decode('utf-8', errors='ignore'),
+            signature=x_razorpay_signature,
+            status='IGNORED',
+            event_key=webhook_event_key,
+            payload_hash=payload_hash,
+            processing_error='payment_not_found',
+        )
+        await db.commit()
+        return success_response({'event': event_type, 'status': 'ignored'}, 'No matching payment order found')
+
+    if event_type == 'payment.captured':
+        if payment.status == 'PAID':
+            await _record_webhook_event(
+                db,
+                event_type=event_type,
+                payload_json=raw_body.decode('utf-8', errors='ignore'),
+                signature=x_razorpay_signature,
+                status='IGNORED',
+                event_key=webhook_event_key,
+                payload_hash=payload_hash,
+                payment=payment,
+                processing_error='already_paid',
+            )
+            await db.commit()
+            return success_response({'event': event_type, 'status': 'already_processed'}, 'Already processed')
+
+        captured_amount = int(payment_entity.get('amount') or 0)
+        expected_amount = int(payment.amount_inr or 0) * 100
+        if captured_amount != expected_amount:
+            payment.status = 'FAILED'
+            payment.failure_reason = 'amount_mismatch'
+            await _sync_billing_order(
+                db,
+                payment,
+                metadata={
+                    "flow": "credits_topup_webhook_failed",
+                    "reason": "amount_mismatch",
+                },
+            )
+            await _record_webhook_event(
+                db,
+                event_type=event_type,
+                payload_json=raw_body.decode('utf-8', errors='ignore'),
+                signature=x_razorpay_signature,
+                status='FAILED',
+                event_key=webhook_event_key,
+                payload_hash=payload_hash,
+                payment=payment,
+                processing_error='amount_mismatch',
+            )
+            await db.commit()
+            return success_response({'event': event_type, 'status': 'failed'}, 'Payment amount mismatch')
+
+        granted_credits = int(payment.amount_inr or 0)
+        credit_row = await _ensure_credit_row(db, str(payment.user_id))
+        new_balance = int(credit_row.balance or 0) + granted_credits
+        credit_row.balance = new_balance
+
+        payment.purpose = TOPUP_PURPOSE
+        payment.status = 'PAID'
+        payment.failure_reason = None
+        payment.verified_at = datetime.now(timezone.utc)
+        payment.razorpay_payment_id = razorpay_payment_id or payment.razorpay_payment_id
+
+        db.add(
+            CreditTransaction(
+                id=str(uuid4()),
+                user_id=as_uuid_or_str(str(payment.user_id)),
+                transaction_type=CreditTransactionType.CREDIT,
+                amount=granted_credits,
+                balance_after=new_balance,
+                description=(
+                    f"Credits top-up via Razorpay webhook | billing_order_id={payment.billing_order_id} | "
+                    f"razorpay_order_id={payment.razorpay_order_id} | razorpay_payment_id={payment.razorpay_payment_id}"
+                ),
+            )
+        )
+
+        await _sync_billing_order(
+            db,
+            payment,
+            metadata={
+                "flow": "credits_topup_webhook_captured",
+                "credits_granted": granted_credits,
+            },
+        )
+        await _ensure_billing_documents(
+            db,
+            payment=payment,
+            credits_delta=granted_credits,
+            source='webhook_payment_captured',
+        )
+        await _record_webhook_event(
+            db,
+            event_type=event_type,
+            payload_json=raw_body.decode('utf-8', errors='ignore'),
+            signature=x_razorpay_signature,
+            status='PROCESSED',
+            event_key=webhook_event_key,
+            payload_hash=payload_hash,
+            payment=payment,
+        )
+        await db.commit()
+        return success_response({'event': event_type, 'status': 'processed'}, 'Top-up payment processed')
+
+    # payment.failed
+    if payment.status != 'PAID':
+        payment.status = 'FAILED'
+        payment.failure_reason = str(payment_entity.get('error_description') or 'webhook_payment_failed')
+        await _sync_billing_order(
+            db,
+            payment,
+            metadata={
+                "flow": "credits_topup_webhook_failed",
+                "reason": payment.failure_reason,
+            },
+        )
+
+    await _record_webhook_event(
+        db,
+        event_type=event_type,
+        payload_json=raw_body.decode('utf-8', errors='ignore'),
+        signature=x_razorpay_signature,
+        status='PROCESSED',
+        event_key=webhook_event_key,
+        payload_hash=payload_hash,
+        payment=payment,
+    )
+    await db.commit()
+    return success_response({'event': event_type, 'status': 'processed'}, 'Failure event processed')

@@ -88,6 +88,7 @@ export default function AdminOrdersPage() {
           </select>
           <select value={sourceType} onChange={(e) => setSourceType(e.target.value)} className="rounded-xl border border-border/50 bg-card/20 px-3 py-2 text-sm text-foreground">
             <option value="">All source types</option>
+            <option value="CREDIT_TOPUP">CREDIT_TOPUP</option>
             <option value="CREDITS_TOPUP">CREDITS_TOPUP</option>
             <option value="SUBSCRIPTION">SUBSCRIPTION</option>
           </select>

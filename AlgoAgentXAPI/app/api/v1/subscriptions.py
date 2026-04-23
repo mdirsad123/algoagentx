@@ -14,8 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import settings
 from ...core.dependencies import get_current_user, get_db
-from ...db.compat import column_text, table_has_column
-from ...db.models import BillingOrder, Payment, Plan, UserSubscription
+from ...db.compat import as_uuid_or_str, column_text, table_has_column
+from ...db.models import (
+    BillingDocument,
+    BillingOrder,
+    BillingWebhookEvent,
+    Payment,
+    Plan,
+    UserSubscription,
+)
 from ...services.subscriptions import SubscriptionLifecycleService, SubscriptionLifecycleState
 from ...utils.api_response import success_response
 
@@ -39,12 +46,10 @@ class SubscriptionCheckoutRequest(BaseModel):
             return "YEARLY"
         return normalized
 
-
 class SubscriptionVerifyRequest(BaseModel):
     order_id: str
     razorpay_payment_id: str
     razorpay_signature: str
-
 
 class SubscriptionFailureRequest(BaseModel):
     order_id: str
@@ -228,6 +233,96 @@ def _verify_webhook_signature(raw_body: bytes, signature: str | None) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
+async def _ensure_billing_documents(
+    db: AsyncSession,
+    *,
+    payment: Payment,
+    subscription: UserSubscription | None,
+    source: str,
+) -> None:
+    if not await table_has_column(db, "billing_documents", "id"):
+        return
+
+    payment_id = getattr(payment, "id", None)
+    if not payment_id:
+        return
+
+    credits_delta = int(getattr(subscription, "included_credits_total", 0) or 0)
+    now = _now_utc()
+
+    for document_type, prefix in (("INVOICE", "INV"), ("RECEIPT", "RCPT")):
+        existing = (
+            await db.execute(
+                select(BillingDocument).where(
+                    BillingDocument.payment_id == payment_id,
+                    BillingDocument.document_type == document_type,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing:
+            continue
+
+        doc_number = f"{prefix}-{now.strftime('%Y%m%d')}-{str(payment_id).replace('-', '')[:12].upper()}"
+        db.add(
+            BillingDocument(
+                user_id=as_uuid_or_str(str(payment.user_id)),
+                payment_id=payment_id,
+                billing_order_id=str(payment.billing_order_id or "") or None,
+                document_type=document_type,
+                document_number=doc_number,
+                provider="RAZORPAY",
+                purpose="SUBSCRIPTION",
+                amount_inr=int(payment.amount_inr or 0),
+                currency=str(payment.currency or "INR"),
+                plan_code=str(payment.plan_code or "") or None,
+                billing_period=str(payment.billing_period or "") or None,
+                credits_delta=credits_delta,
+                metadata_json=json.dumps(
+                    {
+                        "source": source,
+                        "subscription_id": str(getattr(subscription, "id", "") or "") or None,
+                        "razorpay_order_id": payment.razorpay_order_id,
+                        "razorpay_payment_id": payment.razorpay_payment_id,
+                    }
+                ),
+            )
+        )
+
+
+async def _record_webhook_event(
+    db: AsyncSession,
+    *,
+    event_type: str,
+    payload_json: str,
+    signature: str | None,
+    status: str,
+    event_key: str | None = None,
+    payload_hash: str | None = None,
+    payment: Payment | None = None,
+    processing_error: str | None = None,
+) -> BillingWebhookEvent | None:
+    if not await table_has_column(db, "billing_webhook_events", "id"):
+        return None
+
+    row = BillingWebhookEvent(
+        provider="RAZORPAY",
+        event_type=event_type,
+        event_key=event_key,
+        payload_hash=payload_hash,
+        signature=signature,
+        payload_json=payload_json,
+        status=status,
+        processing_error=processing_error,
+        payment_id=getattr(payment, "id", None),
+        billing_order_id=str(getattr(payment, "billing_order_id", None) or "") or None,
+        purpose="SUBSCRIPTION" if payment else None,
+        processed_at=_now_utc() if status in {"PROCESSED", "FAILED", "IGNORED"} else None,
+    )
+    db.add(row)
+    await db.flush()
+    return row
+
+
 async def _activate_or_refill_subscription(
     db: AsyncSession,
     *,
@@ -269,7 +364,7 @@ async def _activate_or_refill_subscription(
         subscription = active
     else:
         subscription = UserSubscription(
-            user_id=str(user_id),
+            user_id=as_uuid_or_str(user_id),
             plan_id=plan.id,
             status="ACTIVE",
             start_at=now,
@@ -496,7 +591,7 @@ async def upgrade_subscription_compat(
         sub.trial_end_at = None
     else:
         sub = UserSubscription(
-            user_id=user_id,
+            user_id=as_uuid_or_str(user_id),
             plan_id=free_plan.id,
             status="ACTIVE",
             start_at=now,
@@ -582,7 +677,7 @@ async def create_subscription_checkout(
         raise HTTPException(status_code=502, detail="Unable to create Razorpay order") from exc
 
     payment = Payment(
-        user_id=user_id,
+        user_id=as_uuid_or_str(user_id),
         provider="RAZORPAY",
         purpose="SUBSCRIPTION",
         amount_inr=int(plan.price_inr or 0),
@@ -757,6 +852,12 @@ async def verify_subscription_payment(
             "subscription_id": str(subscription.id),
         },
     )
+    await _ensure_billing_documents(
+        db,
+        payment=payment,
+        subscription=subscription,
+        source="verify_endpoint",
+    )
     await db.commit()
 
     return success_response(
@@ -859,6 +960,7 @@ async def razorpay_subscription_webhook(
     db: AsyncSession = Depends(get_db),
 ):
     raw_body = await request.body()
+    payload_hash = hashlib.sha256(raw_body).hexdigest()
     if not _verify_webhook_signature(raw_body, x_razorpay_signature):
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
@@ -868,11 +970,39 @@ async def razorpay_subscription_webhook(
         raise HTTPException(status_code=400, detail="Invalid webhook payload") from exc
 
     event = str(payload.get("event") or "")
+    payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+    webhook_event_key = str(payment_entity.get("id") or payload.get("id") or "") or None
+
+    if event not in {"payment.captured", "payment.failed"}:
+        await _record_webhook_event(
+            db,
+            event_type=event,
+            payload_json=raw_body.decode("utf-8", errors="ignore"),
+            signature=x_razorpay_signature,
+            status="IGNORED",
+            event_key=webhook_event_key,
+            payload_hash=payload_hash,
+            processing_error="unsupported_event",
+        )
+        await db.commit()
+        return success_response({"event": event, "status": "ignored"}, "Event ignored")
+
     if event == "payment.captured":
-        entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+        entity = payment_entity
         order_id = str(entity.get("order_id") or "")
         payment_id = str(entity.get("id") or "")
         if not order_id or not payment_id:
+            await _record_webhook_event(
+                db,
+                event_type=event,
+                payload_json=raw_body.decode("utf-8", errors="ignore"),
+                signature=x_razorpay_signature,
+                status="FAILED",
+                event_key=webhook_event_key,
+                payload_hash=payload_hash,
+                processing_error="missing_payment_identifiers",
+            )
+            await db.commit()
             return success_response({"event": event, "status": "ignored"}, "Missing payment identifiers")
 
         payment = (
@@ -883,9 +1013,32 @@ async def razorpay_subscription_webhook(
             )
         ).scalar_one_or_none()
         if not payment:
+            await _record_webhook_event(
+                db,
+                event_type=event,
+                payload_json=raw_body.decode("utf-8", errors="ignore"),
+                signature=x_razorpay_signature,
+                status="IGNORED",
+                event_key=webhook_event_key,
+                payload_hash=payload_hash,
+                processing_error="payment_not_found",
+            )
+            await db.commit()
             return success_response({"event": event, "status": "ignored"}, "No matching subscription payment")
 
         if payment.status == "PAID":
+            await _record_webhook_event(
+                db,
+                event_type=event,
+                payload_json=raw_body.decode("utf-8", errors="ignore"),
+                signature=x_razorpay_signature,
+                status="IGNORED",
+                event_key=webhook_event_key,
+                payload_hash=payload_hash,
+                payment=payment,
+                processing_error="already_paid",
+            )
+            await db.commit()
             return success_response({"event": event, "status": "already_processed"}, "Already processed")
 
         duplicate_paid = (
@@ -899,6 +1052,22 @@ async def razorpay_subscription_webhook(
         if duplicate_paid and str(duplicate_paid.id) != str(payment.id):
             payment.status = "FAILED"
             payment.failure_reason = "duplicate_payment_id"
+            await _sync_billing_order(
+                db,
+                payment,
+                metadata={"flow": "subscription_webhook_payment_failed", "reason": payment.failure_reason},
+            )
+            await _record_webhook_event(
+                db,
+                event_type=event,
+                payload_json=raw_body.decode("utf-8", errors="ignore"),
+                signature=x_razorpay_signature,
+                status="FAILED",
+                event_key=webhook_event_key,
+                payload_hash=payload_hash,
+                payment=payment,
+                processing_error="duplicate_payment_id",
+            )
             await db.commit()
             return success_response({"event": event, "status": "failed"}, "Payment already linked to another order")
 
@@ -915,6 +1084,22 @@ async def razorpay_subscription_webhook(
         if not plan:
             payment.status = "FAILED"
             payment.failure_reason = "plan_metadata_missing"
+            await _sync_billing_order(
+                db,
+                payment,
+                metadata={"flow": "subscription_webhook_payment_failed", "reason": payment.failure_reason},
+            )
+            await _record_webhook_event(
+                db,
+                event_type=event,
+                payload_json=raw_body.decode("utf-8", errors="ignore"),
+                signature=x_razorpay_signature,
+                status="FAILED",
+                event_key=webhook_event_key,
+                payload_hash=payload_hash,
+                payment=payment,
+                processing_error="plan_metadata_missing",
+            )
             await db.commit()
             return success_response({"event": event, "status": "failed"}, "Plan metadata missing")
 
@@ -923,6 +1108,22 @@ async def razorpay_subscription_webhook(
         if fetched_amount != expected_amount:
             payment.status = "FAILED"
             payment.failure_reason = "amount_mismatch"
+            await _sync_billing_order(
+                db,
+                payment,
+                metadata={"flow": "subscription_webhook_payment_failed", "reason": payment.failure_reason},
+            )
+            await _record_webhook_event(
+                db,
+                event_type=event,
+                payload_json=raw_body.decode("utf-8", errors="ignore"),
+                signature=x_razorpay_signature,
+                status="FAILED",
+                event_key=webhook_event_key,
+                payload_hash=payload_hash,
+                payment=payment,
+                processing_error="amount_mismatch",
+            )
             await db.commit()
             return success_response({"event": event, "status": "failed"}, "Payment amount mismatch")
 
@@ -939,11 +1140,27 @@ async def razorpay_subscription_webhook(
                 "subscription_id": str(subscription.id),
             },
         )
+        await _ensure_billing_documents(
+            db,
+            payment=payment,
+            subscription=subscription,
+            source="webhook_payment_captured",
+        )
+        await _record_webhook_event(
+            db,
+            event_type=event,
+            payload_json=raw_body.decode("utf-8", errors="ignore"),
+            signature=x_razorpay_signature,
+            status="PROCESSED",
+            event_key=webhook_event_key,
+            payload_hash=payload_hash,
+            payment=payment,
+        )
         await db.commit()
         return success_response({"event": event, "status": "processed"}, "Subscription payment processed")
 
     if event == "payment.failed":
-        entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+        entity = payment_entity
         order_id = str(entity.get("order_id") or "")
         if order_id:
             payment = (
@@ -964,7 +1181,52 @@ async def razorpay_subscription_webhook(
                         "reason": payment.failure_reason,
                     },
                 )
+                await _record_webhook_event(
+                    db,
+                    event_type=event,
+                    payload_json=raw_body.decode("utf-8", errors="ignore"),
+                    signature=x_razorpay_signature,
+                    status="PROCESSED",
+                    event_key=webhook_event_key,
+                    payload_hash=payload_hash,
+                    payment=payment,
+                )
                 await db.commit()
+            elif payment:
+                await _record_webhook_event(
+                    db,
+                    event_type=event,
+                    payload_json=raw_body.decode("utf-8", errors="ignore"),
+                    signature=x_razorpay_signature,
+                    status="IGNORED",
+                    event_key=webhook_event_key,
+                    payload_hash=payload_hash,
+                    payment=payment,
+                    processing_error="already_paid",
+                )
+                await db.commit()
+            else:
+                await _record_webhook_event(
+                    db,
+                    event_type=event,
+                    payload_json=raw_body.decode("utf-8", errors="ignore"),
+                    signature=x_razorpay_signature,
+                    status="IGNORED",
+                    event_key=webhook_event_key,
+                    payload_hash=payload_hash,
+                    processing_error="payment_not_found",
+                )
+                await db.commit()
+        else:
+            await _record_webhook_event(
+                db,
+                event_type=event,
+                payload_json=raw_body.decode("utf-8", errors="ignore"),
+                signature=x_razorpay_signature,
+                status="FAILED",
+                event_key=webhook_event_key,
+                payload_hash=payload_hash,
+                processing_error="missing_order_id",
+            )
+            await db.commit()
         return success_response({"event": event, "status": "processed"}, "Failure event processed")
-
-    return success_response({"event": event, "status": "ignored"}, "Event ignored")

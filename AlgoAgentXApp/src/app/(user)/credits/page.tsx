@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,16 +15,15 @@ import {
   RefreshCw,
   Calendar,
   Clock,
-  DollarSign,
   AlertCircle,
-  CheckCircle,
-  XCircle
 } from "lucide-react";
 import axiosInstance from "@/lib/axios";
 import RazorpayScript from "@/components/shared/RazorpayScript";
+import { toast } from "sonner";
 
 interface CreditBalance {
   user_id: string;
+  balance?: number;
   current_balance: number;
   last_updated: string;
 }
@@ -32,8 +31,10 @@ interface CreditBalance {
 interface CreditTransaction {
   id: string;
   user_id: string;
+  type?: 'debit' | 'credit' | 'refund';
   transaction_type: 'debit' | 'credit' | 'refund';
   amount: number;
+  reason?: string | null;
   description: string | null;
   backtest_id: string | null;
   job_id: string | null;
@@ -41,58 +42,131 @@ interface CreditTransaction {
   created_at: string;
 }
 
+interface TopUpPack {
+  code: string;
+  credits: number;
+  amount_inr: number;
+  label: string;
+  popular?: boolean;
+}
+
+interface RazorpayConfigResponse {
+  configured: boolean;
+  key_id: string;
+  packs: TopUpPack[];
+  allow_custom_topup: boolean;
+  min_custom_credits: number;
+  max_custom_credits: number;
+}
+
 interface CreateOrderResponse {
   order_id: string;
+  billing_order_id: string;
   amount: number;
+  amount_inr: number;
   currency: string;
+  key_id?: string;
   razorpay_key_id: string;
+  status?: string;
 }
 
 interface VerifyPaymentResponse {
   success: boolean;
   payment_id: string;
+  order_id: string;
+  billing_order_id?: string;
   credits_granted: number;
+  balance?: number;
+  idempotent?: boolean;
+  status?: string;
   message: string;
-}
-
-interface TopUpPack {
-  credits: number;
-  price: number;
-  label: string;
-  popular?: boolean;
 }
 
 const unwrapApiData = (payload: any) => payload?.success ? payload.data : payload;
 
-const TOP_UP_PACKS: TopUpPack[] = [
-  { credits: 5, price: 500, label: "₹5", popular: false },
-  { credits: 10, price: 1000, label: "₹10", popular: false },
-  { credits: 20, price: 2000, label: "₹20", popular: false },
-  { credits: 50, price: 5000, label: "₹50", popular: true },
-  { credits: 100, price: 10000, label: "₹100", popular: false }
+const DEFAULT_TOP_UP_PACKS: TopUpPack[] = [
+  { code: "PACK_100", credits: 100, amount_inr: 100, label: "₹100", popular: false },
+  { code: "PACK_250", credits: 250, amount_inr: 250, label: "₹250", popular: false },
+  { code: "PACK_500", credits: 500, amount_inr: 500, label: "₹500", popular: true },
+  { code: "PACK_1000", credits: 1000, amount_inr: 1000, label: "₹1000", popular: false },
 ];
+
+const getErrorMessage = (error: any): string =>
+  error?.response?.data?.detail || error?.message || "Something went wrong";
 
 export default function CreditsWalletPage() {
   const [balance, setBalance] = useState<CreditBalance | null>(null);
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedPack, setSelectedPack] = useState<TopUpPack | null>(null);
+  const [packs, setPacks] = useState<TopUpPack[]>(DEFAULT_TOP_UP_PACKS);
+  const [selectedPackCode, setSelectedPackCode] = useState<string>(DEFAULT_TOP_UP_PACKS[0].code);
   const [customAmount, setCustomAmount] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [configured, setConfigured] = useState(false);
+  const [allowCustomTopup, setAllowCustomTopup] = useState(true);
+  const [minCustomCredits, setMinCustomCredits] = useState(1);
+  const [maxCustomCredits, setMaxCustomCredits] = useState(100000);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const router = useRouter();
-  
-  useEffect(() => {
-    fetchInitialData();
+
+  const selectedPack = useMemo(
+    () => packs.find((pack) => pack.code === selectedPackCode) || null,
+    [packs, selectedPackCode],
+  );
+
+  const fetchPaymentConfig = useCallback(async () => {
+    const response = await axiosInstance.get('/api/v1/payments/razorpay/config');
+    const config: RazorpayConfigResponse = unwrapApiData(response.data);
+    setConfigured(!!config?.configured);
+    setAllowCustomTopup(config?.allow_custom_topup !== false);
+    setMinCustomCredits(Number(config?.min_custom_credits || 1));
+    setMaxCustomCredits(Number(config?.max_custom_credits || 100000));
+
+    if (Array.isArray(config?.packs) && config.packs.length > 0) {
+      setPacks(config.packs);
+      const preferredPack = config.packs.find((pack) => pack.popular) || config.packs[0];
+      setSelectedPackCode(preferredPack.code);
+    }
   }, []);
 
-  const fetchInitialData = async () => {
+  const fetchBalance = useCallback(async () => {
+    try {
+      const response = await axiosInstance.get('/api/v1/credits/balance');
+      const data = unwrapApiData(response.data) as CreditBalance;
+      setBalance({
+        ...data,
+        current_balance: Number(data?.current_balance ?? data?.balance ?? 0),
+      });
+      setLastUpdated(new Date());
+    } catch (err: any) {
+      console.error('Error fetching balance:', err);
+    }
+  }, []);
+
+  const fetchTransactions = useCallback(async () => {
+    try {
+      const response = await axiosInstance.get('/api/v1/credits/transactions?limit=50');
+      const data = unwrapApiData(response.data);
+      const normalized = (Array.isArray(data) ? data : []).map((txn: any) => ({
+        ...txn,
+        transaction_type: String(txn?.transaction_type || txn?.type || '').toLowerCase(),
+        description: txn?.description || txn?.reason || null,
+      })) as CreditTransaction[];
+      setTransactions(normalized);
+    } catch (err: any) {
+      console.error('Error fetching transactions:', err);
+    }
+  }, []);
+
+  const fetchInitialData = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
       await Promise.all([
         fetchBalance(),
-        fetchTransactions()
+        fetchTransactions(),
+        fetchPaymentConfig(),
       ]);
     } catch (err: any) {
       console.error('Error fetching data:', err);
@@ -100,28 +174,96 @@ export default function CreditsWalletPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchBalance, fetchTransactions, fetchPaymentConfig]);
 
-  const fetchBalance = async () => {
+  useEffect(() => {
+    void fetchInitialData();
+  }, [fetchInitialData]);
+
+  const markPaymentFailure = useCallback(async (orderId: string, reason?: string, code?: string) => {
     try {
-      const response = await axiosInstance.get('/api/v1/credits/balance');
-      setBalance(unwrapApiData(response.data));
-      setLastUpdated(new Date());
-    } catch (err: any) {
-      console.error('Error fetching balance:', err);
+      await axiosInstance.post('/api/v1/payments/razorpay/failure', {
+        order_id: orderId,
+        reason,
+        code,
+      });
+    } catch {
+      // best-effort
     }
-  };
+  }, []);
 
-  const fetchTransactions = async () => {
-    try {
-      const response = await axiosInstance.get('/api/v1/credits/transactions?limit=50');
-      setTransactions(unwrapApiData(response.data));
-    } catch (err: any) {
-      console.error('Error fetching transactions:', err);
-    }
-  };
+  const openRazorpayCheckout = useCallback(
+    (orderData: CreateOrderResponse, creditsToBuy: number): Promise<void> =>
+      new Promise((resolve, reject) => {
+        const Razorpay = (window as any)?.Razorpay;
+        if (!Razorpay) {
+          reject(new Error('Razorpay SDK not loaded. Please refresh and try again.'));
+          return;
+        }
 
-  const handleTopUp = async (creditsToBuy: number) => {
+        const options = {
+          key: orderData.razorpay_key_id || orderData.key_id,
+          amount: orderData.amount,
+          currency: orderData.currency,
+          name: 'AlgoAgentX',
+          description: `${creditsToBuy} Credits Top-up`,
+          image: '/images/algoagentx_icon.jpeg',
+          order_id: orderData.order_id,
+          notes: {
+            credits_to_buy: String(creditsToBuy),
+            billing_order_id: orderData.billing_order_id,
+          },
+          theme: { color: '#7c3aed' },
+          handler: async (response: any) => {
+            try {
+              const verifyResponse = await axiosInstance.post('/api/v1/payments/razorpay/verify', {
+                order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              });
+
+              const verifyData: VerifyPaymentResponse = unwrapApiData(verifyResponse.data);
+              if (!verifyData?.success) {
+                throw new Error(verifyData?.message || 'Payment verification failed');
+              }
+
+              toast.success(
+                verifyData.idempotent
+                  ? 'Payment already verified. Wallet is up to date.'
+                  : `Success! ${verifyData.credits_granted} credits added to your wallet.`,
+              );
+              await Promise.all([fetchBalance(), fetchTransactions()]);
+              resolve();
+            } catch (err: any) {
+              const message = getErrorMessage(err);
+              toast.error(message || 'Payment verification failed. Please contact support if charged.');
+              reject(err);
+            }
+          },
+          modal: {
+            ondismiss: async () => {
+              await markPaymentFailure(orderData.order_id, 'checkout_closed_by_user');
+              reject(new Error('checkout_cancelled'));
+            },
+          },
+        };
+
+        const rzp = new Razorpay(options);
+        rzp.on('payment.failed', async (failure: any) => {
+          await markPaymentFailure(
+            orderData.order_id,
+            failure?.error?.description || 'payment_failed',
+            failure?.error?.code,
+          );
+          reject(new Error(failure?.error?.description || 'Payment failed'));
+        });
+
+        rzp.open();
+      }),
+    [fetchBalance, fetchTransactions, markPaymentFailure],
+  );
+
+  const handleTopUp = async (creditsToBuy: number, packCode?: string) => {
     try {
       setIsProcessing(true);
       setError(null);
@@ -133,82 +275,55 @@ export default function CreditsWalletPage() {
         return;
       }
 
+      if (!configured) {
+        throw new Error('Razorpay is not configured. Please contact support.');
+      }
+
       // Create order
-      const orderResponse = await axiosInstance.post('/api/v1/payments/razorpay/create-order', {
-        credits_to_buy: creditsToBuy
-      });
+      const orderResponse = await axiosInstance.post('/api/v1/payments/razorpay/create-order',
+        packCode ? { pack_code: packCode } : { credits_to_buy: creditsToBuy },
+      );
 
       const orderData: CreateOrderResponse = unwrapApiData(orderResponse.data);
-
-      // Open Razorpay checkout
-      const options = {
-        key: orderData.razorpay_key_id,
-        amount: orderData.amount,
-        currency: orderData.currency,
-        name: 'AlgoAgentX',
-        description: `${creditsToBuy} Credits Top-up`,
-        image: '/images/algoagentx_icon.jpeg',
-        order_id: orderData.order_id,
-        handler: async function (response: any) {
-          try {
-            // Verify payment
-            const verifyResponse = await axiosInstance.post('/api/v1/payments/razorpay/verify', {
-              order_id: response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature
-            });
-
-            const verifyData: VerifyPaymentResponse = unwrapApiData(verifyResponse.data);
-
-            if (verifyData.success) {
-              // Refresh balance and transactions
-          await fetchInitialData();
-              
-              // Show success message
-              alert(`Success! ${verifyData.credits_granted} credits added to your wallet.`);
-            } else {
-              throw new Error(verifyData.message || 'Payment verification failed');
-            }
-          } catch (err: any) {
-            console.error('Error verifying payment:', err);
-            alert('Payment verification failed. Please contact support if you were charged.');
-          }
-        },
-        prefill: {
-          name: '', // Will be filled by Razorpay
-          email: '', // Will be filled by Razorpay
-          contact: '' // Will be filled by Razorpay
-        },
-        notes: {
-          credits_to_buy: creditsToBuy
-        },
-        theme: {
-          color: '#2563eb'
-        }
-      };
-
-      const rzp = new (window as any).Razorpay(options);
-      rzp.open();
+      await openRazorpayCheckout(orderData, creditsToBuy);
     } catch (err: any) {
       console.error('Error processing payment:', err);
-      setError('Failed to process payment. Please try again.');
+      const message = getErrorMessage(err);
+      if (String(message || '').toLowerCase() !== 'checkout_cancelled') {
+        setError(message || 'Failed to process payment. Please try again.');
+        toast.error(message || 'Failed to process payment. Please try again.');
+      }
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleCustomTopUp = () => {
-    const amount = parseInt(customAmount);
+    const amount = parseInt(customAmount, 10);
     if (!amount || amount <= 0) {
       setError('Please enter a valid amount');
       return;
     }
+
+    if (!allowCustomTopup) {
+      setError('Custom credit top-up is disabled. Please choose a configured pack.');
+      return;
+    }
+
+    if (amount < minCustomCredits || amount > maxCustomCredits) {
+      setError(`Custom credits must be between ${minCustomCredits} and ${maxCustomCredits}.`);
+      return;
+    }
+
     handleTopUp(amount);
   };
 
-  const formatCurrency = (amount: number) => {
-    return `₹${(amount / 100).toFixed(2)}`;
-  };
+  const formatCurrency = (amountInr: number) =>
+    new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 0,
+    }).format(amountInr || 0);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString();
@@ -250,6 +365,10 @@ export default function CreditsWalletPage() {
     }
     
     return 'Transaction';
+  };
+
+  const handleRefreshAll = async () => {
+    await fetchInitialData();
   };
 
   if (loading && !balance) {
@@ -323,13 +442,13 @@ export default function CreditsWalletPage() {
               <div className="space-y-2">
                 <Label className="text-purple-100/60">Select Top-up Pack</Label>
                 <div className="grid grid-cols-2 gap-2">
-                  {TOP_UP_PACKS.map((pack) => (
+                  {packs.map((pack) => (
                     <Button
-                      key={pack.credits}
-                      variant={selectedPack?.credits === pack.credits ? "default" : "outline"}
-                      onClick={() => setSelectedPack(pack)}
+                      key={pack.code}
+                      variant={selectedPack?.code === pack.code ? "default" : "outline"}
+                      onClick={() => setSelectedPackCode(pack.code)}
                       className={`h-12 ${
-                        selectedPack?.credits === pack.credits 
+                        selectedPack?.code === pack.code 
                           ? 'bg-gradient-to-r from-green-500 to-emerald-500 shadow-lg' 
                           : 'border-white/20 text-purple-100 hover:bg-white/10 hover:border-purple-400/50'
                       }`}
@@ -353,22 +472,33 @@ export default function CreditsWalletPage() {
                     value={customAmount}
                     onChange={(e) => setCustomAmount(e.target.value)}
                     className="bg-white/10 border-white/20 text-white placeholder:text-purple-100/50 focus:border-purple-400 focus:ring-2 focus:ring-purple-400/30"
+                    disabled={!allowCustomTopup || isProcessing}
                   />
                   <Button
                     onClick={handleCustomTopUp}
-                    disabled={isProcessing || !customAmount}
+                    disabled={isProcessing || !customAmount || !allowCustomTopup}
                     className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0"
                   >
                     <Plus className="h-4 w-4 mr-2" />
                     Top Up
                   </Button>
                 </div>
+                <p className="text-xs text-purple-100/60">
+                  {allowCustomTopup
+                    ? `Allowed range: ${minCustomCredits} - ${maxCustomCredits} credits`
+                    : 'Custom top-up disabled. Please select a pack.'}
+                </p>
               </div>
 
               {selectedPack && (
                 <div className="flex justify-between items-center p-3 bg-gradient-to-br from-white/10 to-purple-500/10 rounded-lg border border-white/20">
                   <span className="text-purple-100/60">Selected: {selectedPack.credits} credits</span>
-                  <span className="text-green-400 font-bold">{formatCurrency(selectedPack.price)}</span>
+                  <span className="text-green-400 font-bold">{formatCurrency(selectedPack.amount_inr)}</span>
+                </div>
+              )}
+              {!configured && (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+                  Razorpay configuration is missing. Please set backend Razorpay credentials.
                 </div>
               )}
             </CardContent>
@@ -385,21 +515,21 @@ export default function CreditsWalletPage() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                {TOP_UP_PACKS.map((pack) => (
+                {packs.map((pack) => (
                   <div
-                    key={pack.credits}
+                    key={pack.code}
                     className={`p-4 border-2 rounded-lg cursor-pointer transition-all duration-200 hover:shadow-lg ${
-                      selectedPack?.credits === pack.credits
+                      selectedPack?.code === pack.code
                         ? 'border-purple-400 bg-purple-500/10'
                         : 'border-white/20 hover:border-purple-400/50'
                     }`}
-                    onClick={() => setSelectedPack(pack)}
+                    onClick={() => setSelectedPackCode(pack.code)}
                   >
                     {pack.popular && (
                       <span className="inline-block mb-2 px-2 py-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs rounded shadow-lg">Popular</span>
                     )}
                     <div className="text-2xl font-bold text-white">{pack.credits} Credits</div>
-                    <div className="text-purple-400 font-bold text-lg mt-1">{formatCurrency(pack.price)}</div>
+                    <div className="text-purple-400 font-bold text-lg mt-1">{formatCurrency(pack.amount_inr)}</div>
                     <div className="text-purple-100/60 text-sm mt-1">One-time purchase</div>
                   </div>
                 ))}
@@ -407,30 +537,12 @@ export default function CreditsWalletPage() {
               
               <div className="mt-6 flex justify-center space-x-4">
                 <Button
-                  onClick={() => selectedPack ? handleTopUp(selectedPack.credits) : null}
-                  disabled={isProcessing || !selectedPack}
+                  onClick={() => selectedPack ? handleTopUp(selectedPack.credits, selectedPack.code) : null}
+                  disabled={isProcessing || !selectedPack || !configured}
                   className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-8 py-3 text-lg shadow-lg shadow-purple-500/30"
                 >
                   <CreditCard className="h-5 w-5 mr-3" />
                   {isProcessing ? 'Processing...' : `Top Up ${selectedPack ? selectedPack.credits : ''} Credits`}
-                </Button>
-                <Button
-                  onClick={async () => {
-                    // Use demo-only mode for testing
-                    const demoProcessor = createPaymentProcessor(true);
-                    await demoProcessor.processCreditPurchase(
-                      10,
-                      (result) => {
-                        alert(result.message);
-                        fetchInitialData();
-                      },
-                      (error) => setError(error)
-                    );
-                  }}
-                  variant="outline"
-                  className="border-white/20 text-purple-100 hover:bg-white/10 hover:border-purple-400/50"
-                >
-                  💫 Test Demo Payment
                 </Button>
               </div>
             </CardContent>
@@ -497,11 +609,11 @@ export default function CreditsWalletPage() {
               <div className="mt-4 text-center">
                 <Button
                   variant="outline"
-                  onClick={fetchTransactions}
+                  onClick={handleRefreshAll}
                   className="border-white/20 text-purple-100 hover:bg-white/10 hover:border-purple-400/50"
                 >
                   <RefreshCw className="h-4 w-4 mr-2" />
-                  Refresh History
+                  Refresh Data
                 </Button>
               </div>
             </CardContent>

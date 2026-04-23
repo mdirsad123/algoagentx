@@ -14,18 +14,17 @@ class Payment(Base):
     )
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(String(36), nullable=False)  # String to handle both UUID and Integer
-    provider = Column(String(50), nullable=False)  # RAZORPAY
-    purpose = Column(String(50), nullable=False)  # SUBSCRIPTION, CREDITS_TOPUP
+    user_id = Column(PG_UUID(as_uuid=True), nullable=False)
+    provider = Column(String(50), nullable=False)
+    purpose = Column(String(50), nullable=False)
     amount_inr = Column(Integer, nullable=False)
     currency = Column(String(3), default='INR')
-    status = Column(String(20), nullable=False)  # CREATED, PAID, FAILED, REFUNDED
+    status = Column(String(20), nullable=False)
     billing_order_id = Column(String(64), nullable=True)
     razorpay_order_id = Column(String(100), nullable=True)
     razorpay_payment_id = Column(String(100), nullable=True)
     razorpay_signature = Column(String(200), nullable=True)
 
-    # Subscription intent snapshot fields (legacy-safe, nullable)
     plan_id = Column(PG_UUID(as_uuid=True), nullable=True)
     plan_code = Column(String(50), nullable=True)
     billing_period = Column(String(20), nullable=True)

@@ -16,11 +16,11 @@ class BillingDocument(Base):
     )
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(String(36), nullable=False)
+    user_id = Column(PG_UUID(as_uuid=True), nullable=False)
     payment_id = Column(PG_UUID(as_uuid=True), nullable=True)
     billing_order_id = Column(String(64), nullable=True)
 
-    document_type = Column(String(20), nullable=False)  # INVOICE, RECEIPT
+    document_type = Column(String(20), nullable=False)
     document_number = Column(String(100), nullable=False)
     provider = Column(String(50), nullable=False, default="INTERNAL")
     purpose = Column(String(50), nullable=False)

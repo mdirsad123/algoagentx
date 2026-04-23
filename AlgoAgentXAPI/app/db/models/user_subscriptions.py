@@ -1,6 +1,5 @@
 from sqlalchemy import Column, String, DateTime, Boolean, Integer, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import relationship
 from ..base import Base
 import uuid
 
@@ -9,9 +8,9 @@ class UserSubscription(Base):
     __tablename__ = "user_subscriptions"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(String(36), nullable=False)  # String to handle both UUID and Integer
+    user_id = Column(PG_UUID(as_uuid=True), nullable=False)
     plan_id = Column(PG_UUID(as_uuid=True), nullable=False)
-    status = Column(String(20), nullable=False)  # TRIALING, ACTIVE, CANCELED, EXPIRED
+    status = Column(String(20), nullable=False)
     start_at = Column(DateTime(timezone=True), nullable=False)
     end_at = Column(DateTime(timezone=True), nullable=False)
     trial_end_at = Column(DateTime(timezone=True), nullable=True)
@@ -19,7 +18,6 @@ class UserSubscription(Base):
     razorpay_subscription_id = Column(String(100), nullable=True)
     razorpay_customer_id = Column(String(100), nullable=True)
 
-    # Snapshot + recurring quota tracking (legacy-safe additive columns)
     plan_code_snapshot = Column(String(50), nullable=True)
     billing_period_snapshot = Column(String(20), nullable=True)
     plan_price_inr = Column(Integer, nullable=True)

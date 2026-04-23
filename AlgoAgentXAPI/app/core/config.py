@@ -197,7 +197,7 @@ class Settings(BaseSettings):
             return [self.web_origin]
 
     model_config = ConfigDict(
-        env_file=".env",
+        env_file=(".env", ".env.local"),
         case_sensitive=False,
         extra='allow'  # Allow extra fields from env
     )
@@ -215,6 +215,7 @@ if settings.is_development:
 
 # Validate production requirements on import
 settings.validate_production_requirements()
+
 
 
 

@@ -171,6 +171,29 @@ export interface CreditTransaction {
   created_at: string;
 }
 
+export interface SupportTicketReply {
+  id: string;
+  ticket_id: string;
+  user_id?: string | null;
+  admin_id?: string | null;
+  message: string;
+  created_at: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  user_id: string;
+  user_email: string;
+  title: string;
+  message: string;
+  status: string;
+  category?: string | null;
+  priority?: string | null;
+  created_at: string;
+  updated_at: string;
+  replies?: SupportTicketReply[];
+}
+
 export interface Order {
   id: string;
   user_id: string;
@@ -589,7 +612,7 @@ export const adminApi = {
   getCredits: async (skip = 0, limit = 20, search?: string, transaction_type?: string): Promise<PaginatedResponse<CreditTransaction>> =>
     unwrap(await axiosInstance.get("/api/v1/admin/credits/ledger", { params: { skip, limit, ...(search && { search }), ...(transaction_type && { transaction_type }) } })),
 
-  getSupportTickets: async (skip = 0, limit = 20, status?: string) =>
+  getSupportTickets: async (skip = 0, limit = 20, status?: string): Promise<PaginatedResponse<SupportTicket>> =>
     unwrap(await axiosInstance.get("/api/v1/admin/support-tickets", { params: { skip, limit, ...(status && { status }) } })),
 
   updateTicketStatus: async (ticketId: string, status: string) =>
@@ -607,7 +630,7 @@ export const adminApi = {
     method?: string,
     from_date?: string,
     to_date?: string,
-  ) =>
+  ): Promise<PaginatedResponse<Order>> =>
     unwrap(
       await axiosInstance.get("/api/v1/admin/orders", {
         params: {
@@ -644,7 +667,7 @@ export const adminApi = {
       }),
     ),
 
-  getOrder: async (orderId: string) =>
+  getOrder: async (orderId: string): Promise<Order> =>
     unwrap(await axiosInstance.get(`/api/v1/admin/orders/${orderId}`)),
 
   updateOrderStatus: async (orderId: string, status: string) =>
@@ -662,7 +685,7 @@ export const adminApi = {
   updateSubscription: async (subscriptionId: string, payload: { status?: string; renews?: boolean; end_at?: string }) =>
     unwrap(await axiosInstance.patch(`/api/v1/admin/subscriptions/${subscriptionId}`, payload)),
 
-  getPayment: async (paymentId: string) =>
+  getPayment: async (paymentId: string): Promise<Payment> =>
     unwrap(await axiosInstance.get(`/api/v1/admin/payments/${paymentId}`)),
 
   refundPayment: async (paymentId: string, note?: string) =>
