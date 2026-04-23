@@ -165,7 +165,13 @@ export default function BacktestPage() {
   const [timeframes, setTimeframes] = useState<string[]>([]);
 
   const [limits, setLimits] = useState<{ max_backtests_per_day?: number; max_date_range_days?: number } | null>(null);
-  const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  const [creditSnapshot, setCreditSnapshot] = useState<{
+    totalAvailable: number;
+    walletBalance: number;
+    includedBalance: number;
+    deductionOrder: string[];
+    subscriptionState?: string | null;
+  } | null>(null);
 
   const [selectedStrategyId, setSelectedStrategyId] = useState<string>("");
   const [selectedInstrumentId, setSelectedInstrumentId] = useState<string>("");
@@ -271,9 +277,18 @@ export default function BacktestPage() {
         nextTimeframes = configData.timeframes || [];
         setLimits(configData.limits || null);
 
-        if (typeof configData.credits?.balance === "number") {
-          setCreditBalance(configData.credits.balance);
-        }
+        setCreditSnapshot({
+          totalAvailable: safeNumber(
+            configData.credits?.total_available ?? configData.credits?.current_balance ?? configData.credits?.balance,
+            0,
+          ),
+          walletBalance: safeNumber(configData.credits?.wallet_balance, 0),
+          includedBalance: safeNumber(configData.credits?.included_balance ?? configData.credits?.included, 0),
+          deductionOrder: Array.isArray(configData.credits?.deduction_order)
+            ? configData.credits?.deduction_order
+            : ["subscription", "wallet"],
+          subscriptionState: configData.credits?.subscription_state ?? null,
+        });
 
         nextStrategies = (configData.strategies || []).map((item) => ({
           id: item.id,
@@ -415,6 +430,13 @@ export default function BacktestPage() {
       setAvailability(availabilityData);
       setCostPreview(costData);
       setLastPreviewSignature(requestSignature);
+      setCreditSnapshot((previous) => ({
+        totalAvailable: safeNumber(costData.balances?.total_available, previous?.totalAvailable ?? 0),
+        walletBalance: safeNumber(costData.balances?.wallet_balance, previous?.walletBalance ?? 0),
+        includedBalance: safeNumber(costData.balances?.included_balance, previous?.includedBalance ?? 0),
+        deductionOrder: previous?.deductionOrder || ["subscription", "wallet"],
+        subscriptionState: costData.subscription_state ?? previous?.subscriptionState ?? null,
+      }));
 
       const warnings: string[] = [];
       if (!availabilityData.available || (availabilityData.requested_candle_count || 0) <= 0) {
@@ -507,11 +529,25 @@ export default function BacktestPage() {
       });
 
       setRunResponse(response);
-      if (typeof response.credits?.balance_after === "number") {
-        setCreditBalance(response.credits.balance_after);
-      } else if (creditBalance !== null && typeof response.credits?.debited === "number") {
-        setCreditBalance(Math.max(creditBalance - response.credits.debited, 0));
-      }
+      setCreditSnapshot((previous) => {
+        const nextWallet = typeof response.credits?.balance_after === "number"
+          ? safeNumber(response.credits.balance_after, 0)
+          : previous?.walletBalance ?? 0;
+        const nextIncluded = typeof response.credits?.included_balance_after === "number"
+          ? safeNumber(response.credits.included_balance_after, 0)
+          : previous?.includedBalance ?? 0;
+        const nextTotal = typeof response.credits?.total_balance_after === "number"
+          ? safeNumber(response.credits.total_balance_after, nextWallet + nextIncluded)
+          : nextWallet + nextIncluded;
+
+        return {
+          totalAvailable: nextTotal,
+          walletBalance: nextWallet,
+          includedBalance: nextIncluded,
+          deductionOrder: response.credits?.deduction_order || previous?.deductionOrder || ["subscription", "wallet"],
+          subscriptionState: response.credits?.subscription_state ?? previous?.subscriptionState ?? null,
+        };
+      });
 
       const backtestId = response.backtest_id || response.result?.backtest_id;
       if (backtestId) {
@@ -534,7 +570,7 @@ export default function BacktestPage() {
   }, [
     availability,
     costPreview,
-    creditBalance,
+    creditSnapshot,
     initialCapital,
     isReadyForRun,
     lastPreviewSignature,
@@ -556,8 +592,14 @@ export default function BacktestPage() {
 
   const requestedCandleCount = availability?.requested_candle_count || 0;
   const estimatedCost = costPreview?.total_cost ?? null;
+  const totalAvailableCredits = creditSnapshot?.totalAvailable ?? null;
+  const subscriptionCredits = creditSnapshot?.includedBalance ?? 0;
+  const walletCredits = creditSnapshot?.walletBalance ?? 0;
+  const deductionOrderLabel = (creditSnapshot?.deductionOrder || ["subscription", "wallet"])
+    .map((item) => item.charAt(0).toUpperCase() + item.slice(1))
+    .join(" → ");
   const postRunBalance =
-    creditBalance !== null && estimatedCost !== null ? Math.max(creditBalance - estimatedCost, 0) : null;
+    totalAvailableCredits !== null && estimatedCost !== null ? Math.max(totalAvailableCredits - estimatedCost, 0) : null;
   const isCreditInsufficient = Boolean(costPreview && !costPreview.can_run);
 
   const equityChartRows = useMemo(
@@ -576,8 +618,8 @@ export default function BacktestPage() {
           <div className="h-8 w-56 animate-pulse rounded-xl bg-card/40" />
           <div className="h-5 w-80 animate-pulse rounded-xl bg-card/40" />
         </div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, index) => (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, index) => (
             <div key={index} className="h-28 animate-pulse rounded-xl border border-border/50 bg-card/30 backdrop-blur-xl" />
           ))}
         </div>
@@ -618,17 +660,37 @@ export default function BacktestPage() {
         </p>
       </header>
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
         <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
           <CardHeader className="pb-2">
-            <CardDescription className="text-muted-foreground">Credit Balance</CardDescription>
-            <CardTitle className="text-2xl text-foreground">{formatNumber(creditBalance, 0)}</CardTitle>
+            <CardDescription className="text-muted-foreground">Available Credits</CardDescription>
+            <CardTitle className="text-2xl text-foreground">{formatNumber(totalAvailableCredits, 0)}</CardTitle>
           </CardHeader>
           <CardContent className="pt-0 text-xs text-muted-foreground">
             <div className="inline-flex items-center gap-2">
               <Wallet className="h-4 w-4" />
-              Available for backtest execution
+              Deduction order: {deductionOrderLabel}
             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader className="pb-2">
+            <CardDescription className="text-muted-foreground">Subscription Credits</CardDescription>
+            <CardTitle className="text-2xl text-foreground">{formatNumber(subscriptionCredits, 0)}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 text-xs text-muted-foreground">
+            Included plan credits remaining in current cycle
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader className="pb-2">
+            <CardDescription className="text-muted-foreground">Wallet Credits</CardDescription>
+            <CardTitle className="text-2xl text-foreground">{formatNumber(walletCredits, 0)}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 text-xs text-muted-foreground">
+            Manual top-up credits that stay after plan usage
           </CardContent>
         </Card>
 
@@ -653,20 +715,7 @@ export default function BacktestPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0 text-xs text-muted-foreground">
-            {isCreditInsufficient ? "Insufficient credits for current scope" : "Projected post-run balance"}
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
-          <CardHeader className="pb-2">
-            <CardDescription className="text-muted-foreground">Candles in Scope</CardDescription>
-            <CardTitle className="text-2xl text-foreground">{requestedCandleCount > 0 ? formatNumber(requestedCandleCount, 0) : "—"}</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0 text-xs text-muted-foreground">
-            <div className="inline-flex items-center gap-2">
-              <Database className="h-4 w-4" />
-              Requested candles for selected range
-            </div>
+            {isCreditInsufficient ? "Insufficient credits for current scope" : "Projected total after deduction"}
           </CardContent>
         </Card>
       </section>
@@ -860,7 +909,7 @@ export default function BacktestPage() {
                 {costPreview ? (costPreview.can_run ? "Ready" : "Insufficient") : "—"}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Cost {estimatedCost !== null ? formatNumber(estimatedCost, 0) : "—"} / Balance {formatNumber(creditBalance, 0)}
+                Cost {estimatedCost !== null ? formatNumber(estimatedCost, 0) : "—"} / Balance {formatNumber(totalAvailableCredits, 0)}
               </p>
             </div>
           </div>

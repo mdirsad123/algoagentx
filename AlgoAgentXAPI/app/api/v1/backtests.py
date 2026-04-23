@@ -434,9 +434,17 @@ async def get_backtest_config(
     ).scalars().all()
 
     try:
-        balance = await CreditManagementService.get_user_balance(db, str(user_id))
+        capacity = await CreditManagementService.get_credit_capacity(db, str(user_id), for_update=False)
     except Exception:
-        balance = Decimal("0")
+        capacity = {
+            "wallet_balance": 0,
+            "included_balance": 0,
+            "total_available": 0,
+            "subscription_state": "NONE",
+            "subscription_id": None,
+            "refill_applied": False,
+            "next_refill_at": None,
+        }
 
     return success_response(
         {
@@ -453,8 +461,15 @@ async def get_backtest_config(
             ],
             "timeframes": [tf for tf in timeframes if tf],
             "credits": {
-                "balance": _to_float(balance),
-                "included": _to_int(entitlements.get("included_credits", 0)),
+                "balance": _to_float(capacity.get("total_available") or 0),
+                "current_balance": _to_float(capacity.get("total_available") or 0),
+                "wallet_balance": _to_int(capacity.get("wallet_balance") or 0),
+                "included": _to_int(capacity.get("included_balance") or 0),
+                "included_balance": _to_int(capacity.get("included_balance") or 0),
+                "total_available": _to_int(capacity.get("total_available") or 0),
+                "subscription_state": capacity.get("subscription_state"),
+                "next_refill_at": capacity.get("next_refill_at").isoformat() if capacity.get("next_refill_at") else None,
+                "deduction_order": ["subscription", "wallet"],
             },
             "limits": {
                 "max_backtests_per_day": _to_int(entitlements.get("features", {}).get("backtests_per_day", 5)),
@@ -763,7 +778,12 @@ async def run_backtest(
                     "wallet_debit_transaction_id": str(debit_txn.id) if debit_txn is not None else None,
                     "balance_after": float((consumption or {}).get("wallet_balance_after") or 0),
                     "included_balance_after": int((consumption or {}).get("included_balance_after") or 0),
+                    "total_balance_after": float(
+                        int((consumption or {}).get("wallet_balance_after") or 0)
+                        + int((consumption or {}).get("included_balance_after") or 0)
+                    ),
                     "subscription_state": (consumption or {}).get("subscription_state"),
+                    "deduction_order": ["subscription", "wallet"],
                 },
             },
             "Backtest completed successfully",
