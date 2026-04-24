@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, Date, Numeric, Integer, ForeignKey, DateTime, Index
+from sqlalchemy.orm import deferred
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.sql import func
 from ..base import Base
@@ -27,9 +28,14 @@ class PerformanceMetric(Base):
     winning_trades = Column(Integer)
     losing_trades = Column(Integer)
     profit_factor = Column(Numeric, nullable=True)
+    period = Column(String, nullable=True)
+    return_pct = Column(Numeric, nullable=True)
+    avg_win = Column(Numeric, nullable=True)
+    avg_loss = Column(Numeric, nullable=True)
+    expectancy = Column(Numeric, nullable=True)
     status = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at = deferred(Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=True))
 
     __table_args__ = (
         Index("idx_performance_metrics_user_strategy", "user_id", "strategy_id"),

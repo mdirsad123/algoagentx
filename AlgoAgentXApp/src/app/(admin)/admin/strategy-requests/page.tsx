@@ -51,6 +51,7 @@ type StrategyEditorForm = {
   invalidation_rules: string;
   trade_management_rules: string;
   notes: string;
+  source_code: string;
   visibility: StrategyVisibility;
   winRate: string;
   sharpeRatio: string;
@@ -91,6 +92,7 @@ const initialEditorForm: StrategyEditorForm = {
   invalidation_rules: "",
   trade_management_rules: "",
   notes: "",
+  source_code: "",
   visibility: "PRIVATE",
   winRate: "",
   sharpeRatio: "",
@@ -137,6 +139,7 @@ function strategyToForm(strategy: ImplementedStrategy): StrategyEditorForm {
     invalidation_rules: strategy.invalidation_rules || "",
     trade_management_rules: strategy.trade_management_rules || "",
     notes: strategy.notes || "",
+    source_code: strategy.source_code || strategy.sourceCode || String(strategy.parameters?.source_code || ""),
     visibility: (strategy.visibility?.toUpperCase() === "PUBLIC" ? "PUBLIC" : "PRIVATE") as StrategyVisibility,
     winRate: asNumberInput(strategy.winRate),
     sharpeRatio: asNumberInput(strategy.sharpeRatio),
@@ -160,6 +163,7 @@ function formToPayload(form: StrategyEditorForm): AdminStrategyCreatePayload | A
     invalidation_rules: form.invalidation_rules.trim() || null,
     trade_management_rules: form.trade_management_rules.trim() || null,
     notes: form.notes.trim() || null,
+    source_code: form.source_code || null,
     visibility: form.visibility,
     performance_metrics: {
       winRate: toOptionalNumber(form.winRate),
@@ -325,6 +329,10 @@ export default function AdminStrategyRequestsPage() {
       return;
     }
 
+    if (editorMode === "edit" && !window.confirm("Save updated strategy code and configuration?")) {
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -359,6 +367,23 @@ export default function AdminStrategyRequestsPage() {
       await loadData(requestSkip, strategySkip);
     } catch (err: any) {
       toast.error(err?.message || "Unable to delete strategy");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+
+  const handleValidateStrategy = async (strategy: ImplementedStrategy) => {
+    try {
+      setSaving(true);
+      const result = await adminApi.validateAdminStrategyById(strategy.id, {});
+      if (result?.validation_ok) {
+        toast.success(result?.message || "Strategy validation passed");
+      } else {
+        toast.error(result?.message || "Strategy validation failed");
+      }
+    } catch (error: any) {
+      toast.error(error?.response?.data?.detail || "Unable to validate strategy");
     } finally {
       setSaving(false);
     }
@@ -732,6 +757,14 @@ export default function AdminStrategyRequestsPage() {
                           <Edit3 className="mr-2 h-4 w-4" />
                           Edit
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50"
+                          onClick={() => void handleValidateStrategy(strategy)}
+                        >
+                          Verify Code
+                        </Button>
 
                         <Button
                           variant="outline"
@@ -973,11 +1006,12 @@ export default function AdminStrategyRequestsPage() {
             ["invalidation_rules", "Invalidation Rules"],
             ["trade_management_rules", "Trade Management Rules"],
             ["notes", "Additional Notes"],
+            ["source_code", "Source Code"],
           ].map(([key, label]) => (
             <div key={key}>
               <label className="mb-2 block text-sm text-muted-foreground">{label}</label>
               <textarea
-                rows={3}
+                rows={key === "source_code" ? 12 : 3}
                 value={editorForm[key as keyof StrategyEditorForm] as string}
                 onChange={(event) =>
                   setEditorForm((prev) => ({
@@ -985,7 +1019,7 @@ export default function AdminStrategyRequestsPage() {
                     [key]: event.target.value,
                   }))
                 }
-                className={fieldClass}
+                className={key === "source_code" ? `${fieldClass} font-mono text-xs` : fieldClass}
               />
             </div>
           ))}

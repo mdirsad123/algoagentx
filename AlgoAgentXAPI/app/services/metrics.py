@@ -109,6 +109,33 @@ class MetricsCalculator:
         return float(sharpe)
 
     @staticmethod
+    def calculate_avg_win(trades: pd.DataFrame) -> float:
+        if trades.empty:
+            return 0.0
+        wins = trades[trades['pnl'] > 0]['pnl']
+        return float(wins.mean()) if len(wins) else 0.0
+
+    @staticmethod
+    def calculate_avg_loss(trades: pd.DataFrame) -> float:
+        if trades.empty:
+            return 0.0
+        losses = trades[trades['pnl'] < 0]['pnl']
+        return float(abs(losses.mean())) if len(losses) else 0.0
+
+    @staticmethod
+    def calculate_expectancy(trades: pd.DataFrame) -> float:
+        if trades.empty:
+            return 0.0
+        return float(trades['pnl'].mean())
+
+    @staticmethod
+    def calculate_return_pct(equity_curve: pd.DataFrame, initial_capital: float = 100000.0) -> float:
+        if equity_curve.empty or initial_capital == 0:
+            return 0.0
+        final_equity = float(equity_curve['equity'].iloc[-1])
+        return ((final_equity - initial_capital) / initial_capital) * 100.0
+
+    @staticmethod
     def calculate_profit_factor(trades: pd.DataFrame) -> float:
         """
         Calculate profit factor as total profits divided by total losses.
@@ -159,6 +186,10 @@ class MetricsCalculator:
                 equity_curve, risk_free_rate, trading_days
             ),
             'profit_factor': MetricsCalculator.calculate_profit_factor(trades),
+            'avg_win': MetricsCalculator.calculate_avg_win(trades),
+            'avg_loss': MetricsCalculator.calculate_avg_loss(trades),
+            'expectancy': MetricsCalculator.calculate_expectancy(trades),
+            'return_pct': MetricsCalculator.calculate_return_pct(equity_curve, initial_capital),
         }
 
     @staticmethod

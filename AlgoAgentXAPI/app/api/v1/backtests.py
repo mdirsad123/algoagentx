@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+from io import BytesIO
+from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from math import ceil
@@ -9,7 +11,12 @@ from uuid import UUID, uuid4
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from sqlalchemy import String, and_, cast, desc, func, or_, select, text, update
+from sqlalchemy.orm import load_only
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_current_user, get_db, get_user_entitlements
@@ -68,6 +75,17 @@ def _as_uuid(value: str) -> UUID:
     return UUID(str(value))
 
 
+def _ensure_aware_datetime(value):
+    if value is None:
+        return None
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    else:
+        ts = ts.tz_convert("UTC")
+    return ts.to_pydatetime()
+
+
 async def _table_exists(db: AsyncSession, table_name: str) -> bool:
     try:
         bind = db.get_bind()
@@ -96,6 +114,32 @@ async def _table_exists(db: AsyncSession, table_name: str) -> bool:
         return False
 
 
+
+
+async def _column_exists(db: AsyncSession, table_name: str, column_name: str) -> bool:
+    try:
+        bind = db.get_bind()
+        dialect = bind.dialect.name if bind is not None else ""
+        if dialect == "sqlite":
+            result = await db.execute(text(f"PRAGMA table_info({table_name})"))
+            return any(row[1] == column_name for row in result.fetchall())
+
+        result = await db.execute(
+            text(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = :table_name
+                  AND column_name = :column_name
+                LIMIT 1
+                """
+            ),
+            {"table_name": table_name, "column_name": column_name},
+        )
+        return result.scalar() is not None
+    except Exception:
+        return False
 async def _column_udt_name(db: AsyncSession, table_name: str, column_name: str) -> str | None:
     try:
         bind = db.get_bind()
@@ -124,6 +168,92 @@ async def _column_udt_name(db: AsyncSession, table_name: str, column_name: str) 
         return str(value).lower() if value else None
     except Exception:
         return None
+
+
+async def _table_columns_meta(db: AsyncSession, table_name: str) -> list[dict[str, str]]:
+    bind = db.get_bind()
+    dialect = bind.dialect.name if bind is not None else ""
+    if dialect == "sqlite":
+        result = await db.execute(text(f"PRAGMA table_info({table_name})"))
+        rows = []
+        for row in result.fetchall():
+            rows.append({
+                "column_name": row[1],
+                "is_nullable": "NO" if row[3] else "YES",
+                "data_type": str(row[2]).lower(),
+                "udt_name": str(row[2]).lower(),
+                "column_default": row[4],
+            })
+        return rows
+
+    result = await db.execute(
+        text(
+            """
+            SELECT
+                column_name,
+                is_nullable,
+                data_type,
+                udt_name,
+                column_default
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = :table_name
+            ORDER BY ordinal_position
+            """
+        ),
+        {"table_name": table_name},
+    )
+    return [dict(row._mapping) for row in result]
+
+
+def _default_perf_metric_value(
+    column_name: str,
+    payload: BacktestRunRequest,
+    service_response,
+    metrics: dict,
+    winning_trades: int,
+    losing_trades: int,
+    total_trades: int,
+):
+    final_capital = _to_float(service_response.final_capital, 0.0)
+    initial_capital = _to_float(payload.capital, 0.0)
+    net_profit = _to_float(metrics.get("net_profit"), 0.0)
+    trade_pnls = [_to_float(getattr(trade, "pnl", 0.0), 0.0) for trade in (service_response.result.trades or [])]
+    wins = [p for p in trade_pnls if p > 0]
+    losses = [abs(p) for p in trade_pnls if p < 0]
+    return_pct = ((final_capital - initial_capital) / initial_capital * 100.0) if initial_capital else 0.0
+    expectancy = (net_profit / total_trades) if total_trades else 0.0
+
+    special_values = {
+        "id": None,
+        "user_id": as_uuid_or_str(payload.user_id) if hasattr(payload, "user_id") else None,
+        "period": f"{payload.start_date.isoformat()} to {payload.end_date.isoformat()}",
+        "strategy_id": payload.strategy_id,
+        "instrument_id": payload.instrument_id,
+        "timeframe": payload.timeframe,
+        "start_date": payload.start_date,
+        "end_date": payload.end_date,
+        "initial_capital": _decimal(initial_capital),
+        "final_capital": _decimal(final_capital),
+        "net_profit": _decimal(net_profit),
+        "max_drawdown": _decimal(metrics.get("max_drawdown", 0.0)),
+        "sharpe_ratio": _decimal(metrics.get("sharpe_ratio", 0.0)),
+        "sortino_ratio": _decimal(metrics.get("sortino_ratio", 0.0)),
+        "calmar_ratio": _decimal(metrics.get("calmar_ratio", 0.0)),
+        "win_rate": _decimal(metrics.get("win_rate", 0.0)),
+        "total_trades": total_trades,
+        "winning_trades": winning_trades,
+        "losing_trades": losing_trades,
+        "profit_factor": _decimal(metrics.get("profit_factor", 0.0)),
+        "avg_win": _decimal((sum(wins) / len(wins)) if wins else 0.0),
+        "avg_loss": _decimal((sum(losses) / len(losses)) if losses else 0.0),
+        "expectancy": _decimal(expectancy),
+        "return_pct": _decimal(return_pct),
+        "status": "completed",
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+    }
+    return special_values.get(column_name)
 
 
 async def _resolve_backtest_fk_value(db: AsyncSession, table_name: str, backtest_id: str):
@@ -288,7 +418,11 @@ async def _serialize_summary(
         "debit_transaction_id": debit_transaction_id,
         "status": row.status,
         "created_at": row.created_at.isoformat() if row.created_at else None,
-        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "updated_at": (row.__dict__.get("updated_at").isoformat() if row.__dict__.get("updated_at") else None),
+        "return_pct": _to_float(getattr(row, "return_pct", None), None),
+        "avg_win": _to_float(getattr(row, "avg_win", None), None),
+        "avg_loss": _to_float(getattr(row, "avg_loss", None), None),
+        "expectancy": _to_float(getattr(row, "expectancy", None), None),
     }
 
 
@@ -308,27 +442,98 @@ async def _save_backtest_payload(
     winning_trades = int(round(total_trades * float(win_rate))) if total_trades > 0 else 0
     losing_trades = max(total_trades - winning_trades, 0)
 
-    performance = PerformanceMetric(
-        id=backtest_id,
-        user_id=as_uuid_or_str(user_id),
-        strategy_id=payload.strategy_id,
-        instrument_id=payload.instrument_id,
-        timeframe=payload.timeframe,
-        start_date=payload.start_date,
-        end_date=payload.end_date,
-        initial_capital=_decimal(payload.capital),
-        final_capital=_decimal(service_response.final_capital),
-        net_profit=_decimal(metrics.get("net_profit")),
-        max_drawdown=_decimal(metrics.get("max_drawdown")),
-        sharpe_ratio=_decimal(metrics.get("sharpe_ratio")),
-        win_rate=win_rate,
-        total_trades=total_trades,
-        winning_trades=winning_trades,
-        losing_trades=losing_trades,
-        profit_factor=_decimal(metrics.get("profit_factor")),
-        status="completed",
+    insert_values = {
+        "id": backtest_id,
+        "user_id": as_uuid_or_str(user_id),
+        "strategy_id": payload.strategy_id,
+        "instrument_id": payload.instrument_id,
+        "timeframe": payload.timeframe,
+        "period": f"{payload.start_date.isoformat()} to {payload.end_date.isoformat()}",
+        "start_date": payload.start_date,
+        "end_date": payload.end_date,
+        "initial_capital": _decimal(payload.capital),
+        "final_capital": _decimal(service_response.final_capital),
+        "net_profit": _decimal(metrics.get("net_profit")),
+        "max_drawdown": _decimal(metrics.get("max_drawdown")),
+        "sharpe_ratio": _decimal(metrics.get("sharpe_ratio")),
+        "win_rate": win_rate,
+        "total_trades": total_trades,
+        "winning_trades": winning_trades,
+        "losing_trades": losing_trades,
+        "profit_factor": _decimal(metrics.get("profit_factor")),
+        "return_pct": _decimal(metrics.get("return_pct")),
+        "avg_win": _decimal(metrics.get("avg_win")),
+        "avg_loss": _decimal(metrics.get("avg_loss")),
+        "expectancy": _decimal(metrics.get("expectancy")),
+        "status": "completed",
+    }
+
+    column_meta = await _table_columns_meta(db, "performance_metrics")
+    available_columns = [meta["column_name"] for meta in column_meta]
+    missing_columns = sorted(set(insert_values.keys()) - set(available_columns))
+    if missing_columns:
+        logger.warning(
+            "performance_metrics is missing columns %s; persisting compatible subset only",
+            ", ".join(missing_columns),
+        )
+
+    if not available_columns:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "DB_MIGRATION_REQUIRED",
+                "message": "performance_metrics table is missing required backtest columns. Run scripts/backtest_performance_metrics_safe_migration.sql and retry.",
+                "migration": "scripts/backtest_performance_metrics_safe_migration.sql",
+            },
+        )
+
+    final_insert_values = {column: insert_values[column] for column in available_columns if column in insert_values}
+    class _PayloadShim:
+        pass
+    payload_shim = _PayloadShim()
+    payload_shim.user_id = user_id
+    payload_shim.strategy_id = payload.strategy_id
+    payload_shim.instrument_id = payload.instrument_id
+    payload_shim.timeframe = payload.timeframe
+    payload_shim.start_date = payload.start_date
+    payload_shim.end_date = payload.end_date
+    payload_shim.capital = payload.capital
+
+    for meta in column_meta:
+        column = meta["column_name"]
+        if column in final_insert_values:
+            continue
+        if str(meta.get("is_nullable", "YES")).upper() == "NO" and not meta.get("column_default"):
+            fallback = _default_perf_metric_value(
+                column,
+                payload_shim,
+                service_response,
+                metrics,
+                winning_trades,
+                losing_trades,
+                total_trades,
+            )
+            if fallback is None:
+                data_type = str(meta.get("data_type") or meta.get("udt_name") or "").lower()
+                if any(token in data_type for token in ["int", "numeric", "double", "real", "decimal"]):
+                    fallback = 0
+                elif data_type == "date":
+                    fallback = payload.start_date
+                elif "time" in data_type:
+                    fallback = datetime.utcnow()
+                elif meta.get("udt_name") == "uuid":
+                    fallback = None
+                else:
+                    fallback = ""
+            if fallback is not None:
+                final_insert_values[column] = fallback
+
+    columns_sql = ", ".join(final_insert_values.keys())
+    values_sql = ", ".join(f":{column}" for column in final_insert_values.keys())
+    await db.execute(
+        text(f"INSERT INTO performance_metrics ({columns_sql}) VALUES ({values_sql})"),
+        final_insert_values,
     )
-    db.add(performance)
     await db.flush()
 
     trades_fk_value = await _resolve_backtest_fk_value(db, "trades", backtest_id)
@@ -365,8 +570,8 @@ async def _save_backtest_payload(
                             id=int(uuid4().int % 9_000_000_000_000_000_000),
                             backtest_id=trades_fk_value,
                             instrument_id=payload.instrument_id,
-                            entry_time=trade.entry_datetime,
-                            exit_time=trade.exit_datetime,
+                            entry_time=_ensure_aware_datetime(trade.entry_datetime),
+                            exit_time=_ensure_aware_datetime(trade.exit_datetime),
                             side=trade.direction,
                             quantity=int(_to_float(trade.quantity, 0.0)),
                             entry_price=_decimal(trade.entry_price),
@@ -386,7 +591,7 @@ async def _save_backtest_payload(
                     db.add(
                         EquityCurve(
                             backtest_id=equity_fk_value,
-                            timestamp=base + timedelta(minutes=idx),
+                            timestamp=_ensure_aware_datetime(base + timedelta(minutes=idx)),
                             equity=_decimal(equity),
                         )
                     )
@@ -410,6 +615,203 @@ async def _save_backtest_payload(
             logger.warning("Failed to persist pnl calendar for backtest %s: %s", backtest_id, exc)
 
     return backtest_id
+
+
+def _build_detail_export_frames(detail: dict):
+    summary = detail.get("summary", {}) if isinstance(detail, dict) else {}
+    metrics_rows = [
+        ["Backtest ID", summary.get("id")],
+        ["Strategy", summary.get("strategy_name")],
+        ["Instrument", summary.get("instrument_symbol")],
+        ["Timeframe", summary.get("timeframe")],
+        ["Initial Capital", summary.get("initial_capital")],
+        ["Final Capital", summary.get("final_capital")],
+        ["Net Profit", summary.get("net_profit")],
+        ["Return %", summary.get("return_pct")],
+        ["Win Rate", summary.get("win_rate")],
+        ["Sharpe Ratio", summary.get("sharpe_ratio")],
+        ["Max Drawdown", summary.get("max_drawdown")],
+        ["Profit Factor", summary.get("profit_factor")],
+        ["Avg Win", summary.get("avg_win")],
+        ["Avg Loss", summary.get("avg_loss")],
+        ["Expectancy", summary.get("expectancy")],
+        ["Total Trades", summary.get("total_trades")],
+        ["Winning Trades", summary.get("winning_trades")],
+        ["Losing Trades", summary.get("losing_trades")],
+        ["Created At", summary.get("created_at")],
+    ]
+    metrics_df = pd.DataFrame(metrics_rows, columns=["Metric", "Value"])
+    trades_df = pd.DataFrame(detail.get("trades", []))
+    equity_df = pd.DataFrame(detail.get("equity_curve", []))
+    pnl_df = pd.DataFrame(detail.get("pnl_calendar", []))
+    return metrics_df, trades_df, equity_df, pnl_df
+
+
+async def _detail_payload_for_export(backtest_id: str, db: AsyncSession, current_user: dict) -> dict:
+    response = await get_backtest_detail(backtest_id=backtest_id, db=db, current_user=current_user)
+    payload = response.get("data") if isinstance(response, dict) and "data" in response else response
+    return payload
+
+
+def _autosize_excel_sheet(ws):
+    header_fill = PatternFill(fill_type="solid", fgColor="2F1B57")
+    header_font = Font(color="FFFFFF", bold=True)
+    for row in ws.iter_rows(min_row=1, max_row=1):
+        for cell in row:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+    for column_cells in ws.columns:
+        values = ["" if cell.value is None else str(cell.value) for cell in column_cells]
+        width = min(max(len(v) for v in values) + 2, 42) if values else 12
+        ws.column_dimensions[get_column_letter(column_cells[0].column)].width = max(width, 12)
+
+
+def _build_trade_analysis_frames(detail: dict):
+    trades = detail.get("trades", []) if isinstance(detail, dict) else []
+    if not trades:
+        empty = pd.DataFrame(columns=["label", "value"])
+        return empty, empty, empty
+
+    trades_df = pd.DataFrame(trades)
+    if not trades_df.empty:
+        trades_df["entry_time"] = pd.to_datetime(trades_df.get("entry_time"), errors="coerce")
+        trades_df["exit_time"] = pd.to_datetime(trades_df.get("exit_time"), errors="coerce")
+        trades_df["pnl"] = pd.to_numeric(trades_df.get("pnl"), errors="coerce").fillna(0.0)
+        trades_df["quantity"] = pd.to_numeric(trades_df.get("quantity"), errors="coerce").fillna(0)
+        trades_df["duration_minutes"] = ((trades_df["exit_time"] - trades_df["entry_time"]).dt.total_seconds() / 60.0).fillna(0.0)
+
+    side_breakdown = (
+        trades_df.groupby("side", dropna=False)
+        .agg(trades=("id", "count"), total_pnl=("pnl", "sum"), avg_pnl=("pnl", "mean"))
+        .reset_index()
+    ) if not trades_df.empty else pd.DataFrame(columns=["side", "trades", "total_pnl", "avg_pnl"])
+
+    daily_trades = pd.DataFrame(columns=["date", "trade_count", "daily_pnl"])
+    if not trades_df.empty and "exit_time" in trades_df.columns:
+        temp = trades_df.copy()
+        temp["date"] = temp["exit_time"].dt.date
+        daily_trades = temp.groupby("date").agg(trade_count=("id", "count"), daily_pnl=("pnl", "sum")).reset_index()
+
+    highlights = pd.DataFrame([
+        ["Largest Win", float(trades_df["pnl"].max()) if not trades_df.empty else 0.0],
+        ["Largest Loss", float(trades_df["pnl"].min()) if not trades_df.empty else 0.0],
+        ["Average Duration (min)", float(trades_df["duration_minutes"].mean()) if not trades_df.empty else 0.0],
+        ["Median Duration (min)", float(trades_df["duration_minutes"].median()) if not trades_df.empty else 0.0],
+        ["Average Position Size", float(trades_df["quantity"].mean()) if not trades_df.empty else 0.0],
+    ], columns=["Metric", "Value"])
+
+    return side_breakdown, daily_trades, highlights
+
+
+@router.get("/{backtest_id}/export/excel")
+async def export_backtest_excel(backtest_id: str, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    detail = await _detail_payload_for_export(backtest_id, db, current_user)
+    metrics_df, trades_df, equity_df, pnl_df = _build_detail_export_frames(detail)
+    side_df, daily_trades_df, highlights_df = _build_trade_analysis_frames(detail)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        metrics_df.to_excel(writer, sheet_name="Summary", index=False)
+        highlights_df.to_excel(writer, sheet_name="Highlights", index=False)
+        trades_df.to_excel(writer, sheet_name="Trades", index=False)
+        side_df.to_excel(writer, sheet_name="Trade Breakdown", index=False)
+        daily_trades_df.to_excel(writer, sheet_name="Daily Trades", index=False)
+        equity_df.to_excel(writer, sheet_name="Equity Curve", index=False)
+        pnl_df.to_excel(writer, sheet_name="PnL Calendar", index=False)
+    output.seek(0)
+    workbook = load_workbook(output)
+    for sheet in workbook.worksheets:
+        _autosize_excel_sheet(sheet)
+        sheet.freeze_panes = "A2"
+    formatted = BytesIO()
+    workbook.save(formatted)
+    formatted.seek(0)
+    filename = f"backtest-{backtest_id}-full-report.xlsx"
+    return StreamingResponse(formatted, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.get("/{backtest_id}/export/pdf")
+async def export_backtest_pdf(backtest_id: str, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+
+    detail = await _detail_payload_for_export(backtest_id, db, current_user)
+    summary = detail.get("summary", {})
+    trades = detail.get("trades", [])
+    pnl_calendar = detail.get("pnl_calendar", [])
+    output = BytesIO()
+    c = canvas.Canvas(output, pagesize=A4)
+    width, height = A4
+
+    def new_page(title: str | None = None):
+        c.showPage()
+        c.setFont("Helvetica-Bold", 15)
+        c.drawString(15 * mm, height - 18 * mm, title or "AlgoAgentX Backtest Report")
+        c.setFont("Helvetica", 9)
+        return height - 28 * mm
+
+    y = height - 18 * mm
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(15 * mm, y, "AlgoAgentX Backtest Report")
+    y -= 10 * mm
+    c.setFont("Helvetica", 10)
+    fields = [
+        ("Backtest ID", summary.get("id")),
+        ("Strategy", summary.get("strategy_name")),
+        ("Instrument", summary.get("instrument_symbol")),
+        ("Timeframe", summary.get("timeframe")),
+        ("Initial Capital", summary.get("initial_capital")),
+        ("Final Capital", summary.get("final_capital")),
+        ("Net Profit", summary.get("net_profit")),
+        ("Return %", summary.get("return_pct")),
+        ("Win Rate", summary.get("win_rate")),
+        ("Sharpe", summary.get("sharpe_ratio")),
+        ("Drawdown", summary.get("max_drawdown")),
+        ("Profit Factor", summary.get("profit_factor")),
+        ("Avg Win", summary.get("avg_win")),
+        ("Avg Loss", summary.get("avg_loss")),
+        ("Expectancy", summary.get("expectancy")),
+        ("Trades", summary.get("total_trades")),
+        ("Created At", summary.get("created_at")),
+    ]
+    for label, value in fields:
+        c.drawString(15 * mm, y, f"{label}: {value}")
+        y -= 6 * mm
+        if y < 22 * mm:
+            y = new_page("Backtest Report - Summary Continued")
+
+    y -= 4 * mm
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(15 * mm, y, "Trade List")
+    y -= 7 * mm
+    c.setFont("Helvetica", 8)
+    if not trades:
+        c.drawString(15 * mm, y, "No trades available for this run.")
+        y -= 6 * mm
+    else:
+        for idx, trade in enumerate(trades, start=1):
+            line = f"{idx}. {trade.get('entry_time')} | {trade.get('side')} | qty {trade.get('quantity')} | entry {trade.get('entry_price')} | exit {trade.get('exit_price')} | pnl {trade.get('pnl')} | {trade.get('exit_type')}"
+            c.drawString(15 * mm, y, line[:145])
+            y -= 5 * mm
+            if y < 18 * mm:
+                y = new_page("Backtest Report - Trades")
+
+    y -= 4 * mm
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(15 * mm, y, "PnL Calendar")
+    y -= 7 * mm
+    c.setFont("Helvetica", 8)
+    for row in pnl_calendar[:120]:
+        c.drawString(15 * mm, y, f"{row.get('date')}: {row.get('pnl')}")
+        y -= 5 * mm
+        if y < 18 * mm:
+            y = new_page("Backtest Report - PnL Calendar")
+
+    c.save()
+    output.seek(0)
+    filename = f"backtest-{backtest_id}-full-report.pdf"
+    return StreamingResponse(output, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @router.get("/config")
@@ -656,6 +1058,21 @@ async def run_backtest(
             },
         )
 
+    if not await _column_exists(db, "job_status", "debit_txn_id"):
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "DB_MIGRATION_REQUIRED",
+                "message": "Database schema is missing job_status.debit_txn_id required for backtest credit tracking. Run scripts/backtest_job_status_credit_link_safe_migration.sql and retry.",
+                "migration": "scripts/backtest_job_status_credit_link_safe_migration.sql",
+            },
+        )
+
+    if not await _column_exists(db, "performance_metrics", "instrument_id"):
+        logger.warning(
+            "performance_metrics.instrument_id missing; history/detail pages will be limited until scripts/backtest_performance_metrics_safe_migration.sql is applied"
+        )
+
     job_id = str(uuid4())
     job = JobStatus(
         id=job_id,
@@ -745,6 +1162,10 @@ async def run_backtest(
             "sharpe_ratio": _to_float(metrics.get("sharpe_ratio")),
             "win_rate": _to_float(metrics.get("win_rate")),
             "profit_factor": _to_float(metrics.get("profit_factor")),
+            "return_pct": _to_float(metrics.get("return_pct")),
+            "avg_win": _to_float(metrics.get("avg_win")),
+            "avg_loss": _to_float(metrics.get("avg_loss")),
+            "expectancy": _to_float(metrics.get("expectancy")),
             "total_trades": _to_int(service_response.total_trades),
             "credit_cost": _to_float(cost),
             "included_credits_used": int((consumption or {}).get("effective_included_debited") or 0),
@@ -805,7 +1226,14 @@ async def run_backtest(
         )
     except Exception as exc:
         logger.exception("Backtest run failed for user %s", current_user["user_id"])
-        if consumption is not None:
+        rollback_ok = True
+        try:
+            await db.rollback()
+        except Exception:
+            rollback_ok = False
+            logger.exception("Rollback failed after backtest error for job %s", job_id)
+
+        if consumption is not None and not rollback_ok:
             try:
                 refund_result = await CreditManagementService.restore_consumed_credits(
                     db=db,
@@ -825,12 +1253,29 @@ async def run_backtest(
             except Exception as refund_exc:
                 logger.error("Failed to refund credits for job %s: %s", job_id, refund_exc)
 
-        job.status = "failed"
-        job.progress = 0
-        job.message = str(exc)
-        job.completed_at = datetime.utcnow()
-        await db.commit()
-        raise HTTPException(status_code=500, detail=f"Backtest execution failed: {exc}")
+        try:
+            await db.execute(
+                update(JobStatus)
+                .where(JobStatus.id == job_id)
+                .values(
+                    status="failed",
+                    progress=0,
+                    message=str(exc),
+                    completed_at=datetime.utcnow(),
+                )
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.exception("Failed to persist failed job status for job %s", job_id)
+
+        detail = str(exc)
+        if "performance_metrics" in detail:
+            detail = (
+                "Backtest execution failed because performance_metrics schema is outdated or has legacy NOT NULL columns. "
+                "Run scripts/backtest_performance_metrics_safe_migration.sql and retry."
+            )
+        raise HTTPException(status_code=500, detail=detail)
 
 
 @router.get("/")
@@ -879,6 +1324,7 @@ async def get_backtest_history(
 
     base_stmt = (
         select(PerformanceMetric, Strategy.name.label("strategy_name"), Instrument.symbol.label("instrument_symbol"))
+        .options(load_only(PerformanceMetric.id, PerformanceMetric.user_id, PerformanceMetric.strategy_id, PerformanceMetric.instrument_id, PerformanceMetric.timeframe, PerformanceMetric.start_date, PerformanceMetric.end_date, PerformanceMetric.initial_capital, PerformanceMetric.final_capital, PerformanceMetric.net_profit, PerformanceMetric.max_drawdown, PerformanceMetric.sharpe_ratio, PerformanceMetric.sortino_ratio, PerformanceMetric.calmar_ratio, PerformanceMetric.win_rate, PerformanceMetric.total_trades, PerformanceMetric.winning_trades, PerformanceMetric.losing_trades, PerformanceMetric.profit_factor, PerformanceMetric.period, PerformanceMetric.return_pct, PerformanceMetric.avg_win, PerformanceMetric.avg_loss, PerformanceMetric.expectancy, PerformanceMetric.status, PerformanceMetric.created_at))
         .outerjoin(Strategy, Strategy.id == PerformanceMetric.strategy_id)
         .outerjoin(Instrument, Instrument.id == PerformanceMetric.instrument_id)
         .where(and_(*filters))
@@ -932,7 +1378,7 @@ async def get_backtest_by_id(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    row = await db.get(PerformanceMetric, backtest_id)
+    row = (await db.execute(select(PerformanceMetric).options(load_only(PerformanceMetric.id, PerformanceMetric.user_id, PerformanceMetric.strategy_id, PerformanceMetric.instrument_id, PerformanceMetric.timeframe, PerformanceMetric.start_date, PerformanceMetric.end_date, PerformanceMetric.initial_capital, PerformanceMetric.final_capital, PerformanceMetric.net_profit, PerformanceMetric.max_drawdown, PerformanceMetric.sharpe_ratio, PerformanceMetric.sortino_ratio, PerformanceMetric.calmar_ratio, PerformanceMetric.win_rate, PerformanceMetric.total_trades, PerformanceMetric.winning_trades, PerformanceMetric.losing_trades, PerformanceMetric.profit_factor, PerformanceMetric.period, PerformanceMetric.return_pct, PerformanceMetric.avg_win, PerformanceMetric.avg_loss, PerformanceMetric.expectancy, PerformanceMetric.status, PerformanceMetric.created_at)).where(PerformanceMetric.id == backtest_id))).scalars().first()
     if not row or str(row.user_id) != str(current_user["user_id"]):
         raise HTTPException(status_code=404, detail="Backtest not found")
     debit = (await _get_backtest_debit_map(db, [str(row.id)])).get(str(row.id), {})
@@ -952,7 +1398,7 @@ async def get_backtest_detail(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    row = await db.get(PerformanceMetric, backtest_id)
+    row = (await db.execute(select(PerformanceMetric).options(load_only(PerformanceMetric.id, PerformanceMetric.user_id, PerformanceMetric.strategy_id, PerformanceMetric.instrument_id, PerformanceMetric.timeframe, PerformanceMetric.start_date, PerformanceMetric.end_date, PerformanceMetric.initial_capital, PerformanceMetric.final_capital, PerformanceMetric.net_profit, PerformanceMetric.max_drawdown, PerformanceMetric.sharpe_ratio, PerformanceMetric.sortino_ratio, PerformanceMetric.calmar_ratio, PerformanceMetric.win_rate, PerformanceMetric.total_trades, PerformanceMetric.winning_trades, PerformanceMetric.losing_trades, PerformanceMetric.profit_factor, PerformanceMetric.period, PerformanceMetric.return_pct, PerformanceMetric.avg_win, PerformanceMetric.avg_loss, PerformanceMetric.expectancy, PerformanceMetric.status, PerformanceMetric.created_at)).where(PerformanceMetric.id == backtest_id))).scalars().first()
     if not row or str(row.user_id) != str(current_user["user_id"]):
         raise HTTPException(status_code=404, detail="Backtest not found")
 

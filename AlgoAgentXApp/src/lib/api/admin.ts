@@ -284,6 +284,8 @@ export interface StrategyRequest {
   exit_rules?: string | null;
   risk_rules?: string | null;
   notes?: string | null;
+  source_code?: string | null;
+  sourceCode?: string | null;
   description?: string | null;
   status: StrategyRequestStatus | string;
   user_id?: string;
@@ -314,6 +316,8 @@ export interface ImplementedStrategy {
   invalidation_rules?: string | null;
   trade_management_rules?: string | null;
   notes?: string | null;
+  source_code?: string | null;
+  sourceCode?: string | null;
   winRate?: number | null;
   sharpeRatio?: number | null;
   maxDrawdown?: number | null;
@@ -471,6 +475,7 @@ export interface AdminStrategyCreatePayload {
   invalidation_rules?: string | null;
   trade_management_rules?: string | null;
   notes?: string | null;
+  source_code?: string | null;
   visibility?: StrategyVisibility;
   source_request_id?: string | null;
   created_by?: string | null;
@@ -497,6 +502,7 @@ export interface AdminStrategyUpdatePayload {
   invalidation_rules?: string | null;
   trade_management_rules?: string | null;
   notes?: string | null;
+  source_code?: string | null;
   visibility?: StrategyVisibility;
   source_request_id?: string | null;
   performance_metrics?: {
@@ -744,6 +750,16 @@ export const adminApi = {
 
   publishStrategyWithPayload: async (requestId: string, payload: DeployStrategyRequestPayload) =>
     unwrap(await axiosInstance.post(`/api/v1/admin/strategy-requests/${requestId}/publish`, payload)),
+
+
+  validateAdminStrategyById: async (strategyId: string, payload?: {
+    instrument_id?: number;
+    timeframe?: string;
+    start_date?: string;
+    end_date?: string;
+    capital?: number;
+  }): Promise<any> =>
+    unwrap(await axiosInstance.post(`/api/v1/admin/strategy-requests/strategies/${strategyId}/validate`, payload || {})),
 
   listAdminStrategies: async (params?: {
     skip?: number;

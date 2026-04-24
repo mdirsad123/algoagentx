@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Calendar,
   Clock3,
@@ -179,6 +179,7 @@ const downloadCsv = (filename: string, headers: string[], rows: Array<Array<unkn
 
 export default function BacktestHistoryPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [strategies, setStrategies] = useState<StrategyOption[]>([]);
   const [instruments, setInstruments] = useState<InstrumentOption[]>([]);
@@ -400,21 +401,7 @@ export default function BacktestHistoryPage() {
   };
 
   const openDetail = async (item: BacktestHistoryItem) => {
-    setSelectedRun(item);
-    setDetailOpen(true);
-    setDetailLoading(true);
-    setDetailError(null);
-    setDetail(null);
-
-    try {
-      const data = await backtestsApi.getDetail(item.id);
-      setDetail(data);
-    } catch (err) {
-      const parsed = parseApiError(err);
-      setDetailError(formatErrorMessage(parsed));
-    } finally {
-      setDetailLoading(false);
-    }
+    router.push(`/backtest-report/${item.id}`);
   };
 
   const exportDetailTrades = () => {
@@ -435,6 +422,24 @@ export default function BacktestHistoryPage() {
       ]),
     );
   };
+
+
+  const exportDetailFile = async (format: "excel" | "pdf") => {
+    if (!selectedRun) return;
+    const blob = await backtestsApi.downloadExport(selectedRun.id, format);
+    downloadBlob(`backtest-${selectedRun.id}.${format === "excel" ? "xlsx" : "pdf"}`, blob);
+  };
+
+  useEffect(() => {
+    const requestedId = searchParams.get("backtestId");
+    if (!requestedId || detailOpen) return;
+    const existing = rows.find((item) => item.id === requestedId);
+    if (existing) {
+      router.replace(`/backtest-report/${requestedId}`);
+      return;
+    }
+    router.replace(`/backtest-report/${requestedId}`);
+  }, [searchParams, rows, detailOpen]);
 
   const summaryStats = useMemo(() => {
     const profitableRuns = rows.filter((item) => safeNumber(item.net_profit, 0) > 0).length;
@@ -1072,154 +1077,6 @@ export default function BacktestHistoryPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-h-[88vh] overflow-y-auto rounded-xl border border-border/50 bg-card/90 backdrop-blur-xl sm:max-w-4xl">
-          <DialogHeader>
-            <DialogTitle className="text-foreground">
-              Backtest Detail • {selectedRun?.strategy_name || "Strategy"} / {selectedRun?.instrument_symbol || "Instrument"}
-            </DialogTitle>
-            <DialogDescription className="text-muted-foreground">
-              View key metrics, recent trades, and export structured detail.
-            </DialogDescription>
-          </DialogHeader>
-
-          {detailLoading ? (
-            <div className="space-y-3">
-              <div className="h-20 animate-pulse rounded-xl border border-border/50 bg-card/30" />
-              <div className="h-20 animate-pulse rounded-xl border border-border/50 bg-card/30" />
-              <div className="h-52 animate-pulse rounded-xl border border-border/50 bg-card/30" />
-            </div>
-          ) : detailError ? (
-            <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-              {detailError}
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-                <div className="rounded-xl border border-border/50 bg-card/20 p-3">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">PnL</p>
-                  <p className={`mt-1 text-lg font-semibold ${safeNumber(detailSummary?.net_profit, 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                    {formatCurrency(detailSummary?.net_profit)}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-border/50 bg-card/20 p-3">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Return %</p>
-                  <p className={`mt-1 text-lg font-semibold ${safeNumber(detailReturn, 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                    {formatPercentAuto(detailReturn)}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-border/50 bg-card/20 p-3">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Win Rate</p>
-                  <p className="mt-1 text-lg font-semibold text-foreground">{formatPercentAuto(detailSummary?.win_rate)}</p>
-                </div>
-                <div className="rounded-xl border border-border/50 bg-card/20 p-3">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Sharpe</p>
-                  <p className="mt-1 text-lg font-semibold text-foreground">{formatNumber(detailSummary?.sharpe_ratio, 2)}</p>
-                </div>
-                <div className="rounded-xl border border-border/50 bg-card/20 p-3">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Drawdown</p>
-                  <p className="mt-1 text-lg font-semibold text-foreground">{formatPercentAuto(detailSummary?.max_drawdown)}</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="rounded-xl border border-border/50 bg-card/20 p-4 text-sm">
-                  <p className="mb-2 font-medium text-foreground">Run Metadata</p>
-                  <div className="space-y-1.5 text-muted-foreground">
-                    <p>Backtest ID: <span className="text-foreground">{selectedRun?.id || detailSummary?.id || "—"}</span></p>
-                    <p>Timeframe: <span className="text-foreground">{selectedRun?.timeframe || detailSummary?.timeframe || "—"}</span></p>
-                    <p>Created: <span className="text-foreground">{formatDateTime(detailSummary?.created_at || selectedRun?.created_at)}</span></p>
-                    <p>Status: <span className="text-foreground">{humanize(selectedRun?.status || "completed")}</span></p>
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-border/50 bg-card/20 p-4 text-sm">
-                  <p className="mb-2 font-medium text-foreground">Capital</p>
-                  <div className="space-y-1.5 text-muted-foreground">
-                    <p>Initial Capital: <span className="text-foreground">{formatCurrency(detailSummary?.initial_capital)}</span></p>
-                    <p>Final Capital: <span className="text-foreground">{formatCurrency(detailSummary?.final_capital)}</span></p>
-                    <p>Total Trades: <span className="text-foreground">{formatNumber(detailSummary?.total_trades, 0)}</span></p>
-                    <p>Instrument: <span className="text-foreground">{selectedRun?.instrument_symbol || detailSummary?.instrument_symbol || "—"}</span></p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <p className="text-sm font-medium text-foreground">Recent Trades</p>
-                  <p className="text-xs text-muted-foreground">{detail?.trades?.length || 0} trades available</p>
-                </div>
-
-                {!!detail?.trades?.length ? (
-                  <div className="overflow-x-auto">
-                    <Table className="min-w-[760px]">
-                      <TableHeader>
-                        <TableRow className="border-border/40 hover:bg-transparent">
-                          <TableHead>Entry</TableHead>
-                          <TableHead>Exit</TableHead>
-                          <TableHead>Side</TableHead>
-                          <TableHead className="text-right">Qty</TableHead>
-                          <TableHead className="text-right">Entry Px</TableHead>
-                          <TableHead className="text-right">Exit Px</TableHead>
-                          <TableHead className="text-right">PnL</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {detail.trades.slice(0, 15).map((trade, idx) => {
-                          const pnl = safeNumber(trade.pnl, 0);
-                          return (
-                            <TableRow key={`${trade.id || "trade"}-${idx}`} className="border-border/30">
-                              <TableCell>{formatDateTime(trade.entry_time)}</TableCell>
-                              <TableCell>{formatDateTime(trade.exit_time)}</TableCell>
-                              <TableCell>{trade.side || "—"}</TableCell>
-                              <TableCell className="text-right">{formatNumber(trade.quantity, 0)}</TableCell>
-                              <TableCell className="text-right">{formatNumber(trade.entry_price, 2)}</TableCell>
-                              <TableCell className="text-right">{formatNumber(trade.exit_price, 2)}</TableCell>
-                              <TableCell className={`text-right font-medium ${pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                                {formatCurrency(trade.pnl)}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Trade-level detail not available for this run.</p>
-                )}
-              </div>
-
-              <div className="flex flex-wrap justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => selectedRun && rerunBacktest(selectedRun)}
-                  className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"
-                >
-                  <Play className="mr-2 h-4 w-4" />
-                  Rerun
-                </Button>
-
-                <Button
-                  variant="outline"
-                  disabled={!detail?.trades?.length}
-                  onClick={exportDetailTrades}
-                  className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40 disabled:opacity-50"
-                >
-                  <Download className="mr-2 h-4 w-4" />
-                  Export Trades CSV
-                </Button>
-
-                <Button
-                  onClick={() => setDetailOpen(false)}
-                  className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  Close
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

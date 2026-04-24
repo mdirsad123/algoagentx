@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Optional
+from datetime import date, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,6 +14,8 @@ from ...db.compat import as_uuid_or_str, column_text
 from ...db.models.strategy_requests import StrategyRequest
 from ...db.models.strategies import Strategy
 from ...db.models.users import User
+from ...db.models import Instrument, MarketData
+from ...services.backtest_service import BacktestService
 from ...utils.api_response import success_response
 from .strategies import (
     PRIVATE_VISIBILITY,
@@ -55,6 +58,7 @@ class StrategyCreateIn(BaseModel):
     invalidation_rules: Optional[str] = None
     trade_management_rules: Optional[str] = None
     notes: Optional[str] = None
+    source_code: Optional[str] = None
     parameters: Optional[dict[str, Any]] = None
     performance_metrics: Optional[dict[str, Any]] = None
     visibility: Optional[str] = PRIVATE_VISIBILITY
@@ -75,6 +79,7 @@ class StrategyUpdateIn(BaseModel):
     invalidation_rules: Optional[str] = None
     trade_management_rules: Optional[str] = None
     notes: Optional[str] = None
+    source_code: Optional[str] = None
     parameters: Optional[dict[str, Any]] = None
     performance_metrics: Optional[dict[str, Any]] = None
     visibility: Optional[str] = None
@@ -181,6 +186,8 @@ def _serialize_strategy(item: Strategy) -> dict[str, Any]:
         "invalidation_rules": params.get("invalidation_rules"),
         "trade_management_rules": params.get("trade_management_rules"),
         "notes": params.get("notes"),
+        "source_code": params.get("source_code"),
+        "sourceCode": params.get("source_code"),
         "winRate": _safe_float(metrics.get("win_rate")),
         "sharpeRatio": _safe_float(metrics.get("sharpe_ratio")),
         "maxDrawdown": _safe_float(metrics.get("max_drawdown")),
@@ -222,6 +229,8 @@ def _apply_payload_to_parameters(params: dict[str, Any], payload: StrategyCreate
         _set_or_remove(params, "trade_management_rules", _clean(payload.trade_management_rules))
     if payload.notes is not None:
         _set_or_remove(params, "notes", _clean(payload.notes))
+    if getattr(payload, "source_code", None) is not None:
+        _set_or_remove(params, "source_code", _clean(payload.source_code), remove_if_none=False)
 
     if payload.performance_metrics is not None:
         _set_or_remove(params, "performance_metrics", payload.performance_metrics)
@@ -363,6 +372,88 @@ async def list_strategy_requests(
         "No data found" if not items and not implemented_rows else None,
     )
 
+
+
+
+class StrategyValidationIn(BaseModel):
+    instrument_id: Optional[int] = None
+    timeframe: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    capital: float = 100000
+
+
+@router.post("/strategies/{strategy_id}/validate")
+async def validate_strategy_code(
+    strategy_id: str,
+    payload: StrategyValidationIn,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    strategy = await _get_strategy_or_404(db, strategy_id)
+    params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
+    source_code = str(params.get("source_code") or "")
+
+    syntax_ok = True
+    syntax_message = "No custom source code attached."
+    if source_code.strip():
+        try:
+            compile(source_code, f"strategy:{strategy_id}", "exec")
+            syntax_message = "Source code syntax check passed."
+        except Exception as exc:
+            syntax_ok = False
+            syntax_message = f"Syntax check failed: {exc}"
+
+    instrument_id = payload.instrument_id
+    timeframe = payload.timeframe or params.get("timeframe") or "5m"
+    if instrument_id is None:
+        instrument_id = (await db.execute(select(Instrument.id).order_by(Instrument.id.asc()).limit(1))).scalar()
+    if instrument_id is None:
+        raise HTTPException(status_code=400, detail="No instrument available for validation")
+
+    end_date = payload.end_date or date.today()
+    start_date = payload.start_date or (end_date - timedelta(days=14))
+
+    sample_result = None
+    validation_ok = False
+    validation_message = syntax_message
+    try:
+        service_response = await BacktestService.run_backtest(
+            db=db,
+            strategy_id=strategy_id,
+            instrument_id=int(instrument_id),
+            timeframe=str(timeframe),
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=payload.capital,
+        )
+        trades = service_response.result.trades or []
+        buy_count = sum(1 for t in trades if str(getattr(t, "direction", "")).upper() == "LONG")
+        sell_count = sum(1 for t in trades if str(getattr(t, "direction", "")).upper() == "SHORT")
+        sample_result = {
+            "instrument_id": int(instrument_id),
+            "timeframe": str(timeframe),
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "total_trades": len(trades),
+            "buy_signals": buy_count,
+            "sell_signals": sell_count,
+            "final_capital": float(service_response.final_capital),
+        }
+        validation_ok = syntax_ok
+        validation_message = "Validation run completed successfully." if syntax_ok else syntax_message
+    except Exception as exc:
+        validation_ok = False
+        validation_message = f"Validation backtest failed: {exc}"
+
+    return success_response({
+        "strategy_id": strategy_id,
+        "strategy_name": strategy.name,
+        "syntax_ok": syntax_ok,
+        "validation_ok": validation_ok,
+        "message": validation_message,
+        "sample_result": sample_result,
+    })
 
 @router.get("/strategies")
 async def list_strategies(

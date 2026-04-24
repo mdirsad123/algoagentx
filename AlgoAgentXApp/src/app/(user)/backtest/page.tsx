@@ -732,10 +732,10 @@ export default function BacktestPage() {
             <div className="space-y-2">
               <Label className="text-muted-foreground">Strategy</Label>
               <Select value={selectedStrategyId} onValueChange={setSelectedStrategyId}>
-                <SelectTrigger className="rounded-xl border-border/50 bg-card/20 text-foreground">
+                <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground data-[placeholder]:text-muted-foreground">
                   <SelectValue placeholder="Select strategy" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[90] rounded-xl border-border/60 bg-[#34135c] text-foreground">
                   {strategies.map((strategy) => (
                     <SelectItem key={strategy.id} value={strategy.id}>
                       {strategy.name}
@@ -748,10 +748,10 @@ export default function BacktestPage() {
             <div className="space-y-2">
               <Label className="text-muted-foreground">Instrument</Label>
               <Select value={selectedInstrumentId} onValueChange={setSelectedInstrumentId}>
-                <SelectTrigger className="rounded-xl border-border/50 bg-card/20 text-foreground">
+                <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground data-[placeholder]:text-muted-foreground">
                   <SelectValue placeholder="Select instrument" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[90] rounded-xl border-border/60 bg-[#34135c] text-foreground">
                   {instruments.map((instrument) => (
                     <SelectItem key={instrument.id} value={String(instrument.id)}>
                       {instrument.symbol}
@@ -764,10 +764,10 @@ export default function BacktestPage() {
             <div className="space-y-2">
               <Label className="text-muted-foreground">Timeframe</Label>
               <Select value={selectedTimeframe} onValueChange={setSelectedTimeframe}>
-                <SelectTrigger className="rounded-xl border-border/50 bg-card/20 text-foreground">
+                <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground data-[placeholder]:text-muted-foreground">
                   <SelectValue placeholder="Select timeframe" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[90] rounded-xl border-border/60 bg-[#34135c] text-foreground">
                   {timeframes.map((timeframe) => (
                     <SelectItem key={timeframe} value={timeframe}>
                       {timeframe}
@@ -1122,7 +1122,7 @@ export default function BacktestPage() {
                   variant="outline"
                   className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"
                 >
-                  <Link href="/backtest-history">View Full Detailed Report</Link>
+                  <Link href={`/backtest-report/${runResponse.backtest_id || runResponse.result?.backtest_id}`}>View Full Detailed Report</Link>
                 </Button>
               )}
 
