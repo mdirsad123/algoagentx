@@ -748,14 +748,20 @@ export default function AdminStrategyRequestsPage() {
                         )}
                       </div>
 
+                      <div className="rounded-xl border border-border/40 bg-card/20 px-3 py-2 text-xs text-muted-foreground">
+                        Source Code: {strategy.sourceCode || strategy.source_code ? "Attached" : "Not attached yet"}
+                      </div>
+
                       <div className="grid grid-cols-2 gap-2">
                         <Button
+                          asChild
                           variant="outline"
                           className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50"
-                          onClick={() => openEditEditor(strategy)}
                         >
-                          <Edit3 className="mr-2 h-4 w-4" />
-                          Edit
+                          <Link href={`/admin/strategy-requests/strategies/${strategy.id}`}>
+                            <Edit3 className="mr-2 h-4 w-4" />
+                            Open Workspace
+                          </Link>
                         </Button>
                         <Button
                           size="sm"

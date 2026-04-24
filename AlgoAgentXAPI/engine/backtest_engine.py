@@ -1,5 +1,6 @@
 import pandas as pd
 import datetime
+import inspect
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 
@@ -94,7 +95,21 @@ def run_backtest_engine(
     df["Date"] = pd.to_datetime(df["Date"])
 
     # Initialize strategy
-    strategy = strategy_class(df, **strategy_params)
+    try:
+        signature = inspect.signature(strategy_class.__init__)
+        if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
+            filtered_params = dict(strategy_params)
+        else:
+            allowed = {
+                name for name, param in signature.parameters.items()
+                if name not in {"self", "df"}
+                and param.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
+            }
+            filtered_params = {key: value for key, value in (strategy_params or {}).items() if key in allowed}
+    except (TypeError, ValueError):
+        filtered_params = dict(strategy_params or {})
+
+    strategy = strategy_class(df, **filtered_params)
     df = strategy.generate().copy()
 
     capital = backtest_params.initial_capital

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from typing import Any, Optional
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, timezone
 from uuid import uuid4
+import hashlib
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -164,6 +165,85 @@ def _serialize_request(req: StrategyRequest, email: Optional[str] = None, fullna
     }
 
 
+
+
+def _snapshot_strategy(strategy: Strategy) -> dict[str, Any]:
+    params = dict(strategy.parameters or {})
+    return {
+        "version_id": str(uuid4()),
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "name": strategy.name,
+        "description": strategy.description,
+        "visibility": getattr(strategy, "visibility", PRIVATE_VISIBILITY),
+        "source_request_id": str(strategy.source_request_id) if getattr(strategy, "source_request_id", None) else None,
+        "payload": {
+            "strategy_type": params.get("strategy_type"),
+            "market": params.get("market"),
+            "timeframe": params.get("timeframe"),
+            "entry_rules": params.get("entry_rules"),
+            "exit_rules": params.get("exit_rules"),
+            "confirmation_rules": params.get("confirmation_rules"),
+            "risk_rules": params.get("risk_rules"),
+            "invalidation_rules": params.get("invalidation_rules"),
+            "trade_management_rules": params.get("trade_management_rules"),
+            "notes": params.get("notes"),
+            "source_code": params.get("source_code"),
+            "parameters": {
+                k: v for k, v in params.items() if not str(k).startswith("_") and k not in {
+                    "strategy_type", "market", "timeframe", "entry_rules", "exit_rules", "confirmation_rules",
+                    "risk_rules", "invalidation_rules", "trade_management_rules", "notes", "source_code", "performance_metrics"
+                }
+            },
+            "performance_metrics": params.get("performance_metrics"),
+        },
+    }
+
+
+def _append_version_history(params: dict[str, Any], strategy: Strategy, admin_user: dict, reason: str = "save") -> dict[str, Any]:
+    history = list(params.get("_ide_versions") or [])
+    snapshot = _snapshot_strategy(strategy)
+    snapshot["editor_user_id"] = str(admin_user.get("user_id")) if admin_user.get("user_id") else None
+    snapshot["reason"] = reason
+    history.insert(0, snapshot)
+    params["_ide_versions"] = history[:20]
+    return params
+
+
+def _strategy_hash_from_params(params: dict[str, Any]) -> str:
+    relevant = {
+        "source_code": params.get("source_code"),
+        "execution": {
+            "rr_ratio": params.get("rr_ratio"),
+            "capital_risk_pct": params.get("capital_risk_pct"),
+            "price_risk_pct": params.get("price_risk_pct"),
+            "max_bars_in_trade": params.get("max_bars_in_trade"),
+        },
+        "rules": {
+            "entry_rules": params.get("entry_rules"),
+            "exit_rules": params.get("exit_rules"),
+            "confirmation_rules": params.get("confirmation_rules"),
+            "risk_rules": params.get("risk_rules"),
+            "invalidation_rules": params.get("invalidation_rules"),
+            "trade_management_rules": params.get("trade_management_rules"),
+        },
+    }
+    return hashlib.sha256(repr(relevant).encode("utf-8")).hexdigest()
+
+
+def _get_workflow_state(params: dict[str, Any]) -> dict[str, Any]:
+    return dict(params.get("_workflow") or {})
+
+
+def _set_workflow_state(params: dict[str, Any], *, validation: dict[str, Any] | None = None, sandbox: dict[str, Any] | None = None) -> dict[str, Any]:
+    workflow = _get_workflow_state(params)
+    if validation is not None:
+        workflow["validation"] = validation
+    if sandbox is not None:
+        workflow["sandbox"] = sandbox
+    params["_workflow"] = workflow
+    return params
+
+
 def _serialize_strategy(item: Strategy) -> dict[str, Any]:
     params = item.parameters if isinstance(item.parameters, dict) else {}
     metrics = _extract_metrics_from_parameters(params)
@@ -194,6 +274,8 @@ def _serialize_strategy(item: Strategy) -> dict[str, Any]:
         "totalTrades": _safe_int(metrics.get("total_trades")),
         "profitFactor": _safe_float(metrics.get("profit_factor")),
         "parameters": params,
+        "workflow": _get_workflow_state(params),
+        "version_count": len(params.get("_ide_versions") or []),
         "source_request_id": str(item.source_request_id) if getattr(item, "source_request_id", None) else None,
         "sourceRequestId": str(item.source_request_id) if getattr(item, "source_request_id", None) else None,
         "created_by": str(item.created_by) if getattr(item, "created_by", None) else None,
@@ -203,6 +285,8 @@ def _serialize_strategy(item: Strategy) -> dict[str, Any]:
         "updated_at": _serialize_dt(item.updated_at),
         "updatedAt": _serialize_dt(item.updated_at),
     }
+
+
 
 
 def _apply_payload_to_parameters(params: dict[str, Any], payload: StrategyCreateIn | StrategyUpdateIn) -> dict[str, Any]:
@@ -234,6 +318,9 @@ def _apply_payload_to_parameters(params: dict[str, Any], payload: StrategyCreate
 
     if payload.performance_metrics is not None:
         _set_or_remove(params, "performance_metrics", payload.performance_metrics)
+
+    if any(getattr(payload, field, None) is not None for field in ["source_code", "entry_rules", "exit_rules", "confirmation_rules", "risk_rules", "invalidation_rules", "trade_management_rules", "market", "timeframe"]):
+        params["_workflow"] = {}
 
     return params
 
@@ -383,6 +470,31 @@ class StrategyValidationIn(BaseModel):
     capital: float = 100000
 
 
+async def _resolve_validation_window(db: AsyncSession, instrument_id: int, timeframe: str, requested_start: Optional[date], requested_end: Optional[date]) -> tuple[date, date]:
+    if requested_start and requested_end:
+        return requested_start, requested_end
+
+    row = (
+        await db.execute(
+            select(func.min(MarketData.timestamp), func.max(MarketData.timestamp))
+            .where(MarketData.instrument_id == instrument_id, MarketData.timeframe == timeframe)
+        )
+    ).one_or_none()
+
+    min_ts = row[0] if row else None
+    max_ts = row[1] if row else None
+    if max_ts is None:
+        end_date = requested_end or date.today()
+        start_date = requested_start or (end_date - timedelta(days=14))
+        return start_date, end_date
+
+    resolved_end = requested_end or max_ts.date()
+    resolved_start = requested_start or max(min_ts.date() if min_ts else resolved_end - timedelta(days=14), resolved_end - timedelta(days=14))
+    if resolved_start > resolved_end:
+        resolved_start = resolved_end - timedelta(days=14)
+    return resolved_start, resolved_end
+
+
 @router.post("/strategies/{strategy_id}/validate")
 async def validate_strategy_code(
     strategy_id: str,
@@ -411,8 +523,7 @@ async def validate_strategy_code(
     if instrument_id is None:
         raise HTTPException(status_code=400, detail="No instrument available for validation")
 
-    end_date = payload.end_date or date.today()
-    start_date = payload.start_date or (end_date - timedelta(days=14))
+    start_date, end_date = await _resolve_validation_window(db, int(instrument_id), str(timeframe), payload.start_date, payload.end_date)
 
     sample_result = None
     validation_ok = False
@@ -446,6 +557,17 @@ async def validate_strategy_code(
         validation_ok = False
         validation_message = f"Validation backtest failed: {exc}"
 
+    params = dict(strategy.parameters or {})
+    params = _set_workflow_state(params, validation={
+        "ok": bool(validation_ok),
+        "message": validation_message,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "source_hash": _strategy_hash_from_params(params),
+        "sample_result": sample_result,
+    })
+    strategy.parameters = params
+    await db.commit()
+
     return success_response({
         "strategy_id": strategy_id,
         "strategy_name": strategy.name,
@@ -453,6 +575,153 @@ async def validate_strategy_code(
         "validation_ok": validation_ok,
         "message": validation_message,
         "sample_result": sample_result,
+    })
+
+
+
+@router.get("/strategies/{strategy_id}")
+async def get_strategy_by_id(
+    strategy_id: str,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    strategy = await _get_strategy_or_404(db, strategy_id)
+    return success_response(_serialize_strategy(strategy))
+
+
+class StrategySandboxBacktestIn(BaseModel):
+    instrument_id: int
+    timeframe: str
+    start_date: date
+    end_date: date
+    capital: float = 100000
+
+
+@router.post("/strategies/{strategy_id}/sandbox-backtest")
+async def sandbox_backtest_strategy(
+    strategy_id: str,
+    payload: StrategySandboxBacktestIn,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    strategy = await _get_strategy_or_404(db, strategy_id)
+    resolved_start_date, resolved_end_date = await _resolve_validation_window(db, int(payload.instrument_id), str(payload.timeframe), payload.start_date, payload.end_date)
+    service_response = await BacktestService.run_backtest(
+        db=db,
+        strategy_id=strategy_id,
+        instrument_id=int(payload.instrument_id),
+        timeframe=str(payload.timeframe),
+        start_date=resolved_start_date,
+        end_date=resolved_end_date,
+        initial_capital=payload.capital,
+    )
+
+    result = service_response.result
+    trades = getattr(result, "trades", None) or []
+    raw_pnl_calendar = getattr(result, "daily_pnl", None) or []
+    equity = getattr(result, "equity_curve", None) or []
+    summary = getattr(result, "summary", None) or {}
+
+    def _dt(v):
+        return v.isoformat() if hasattr(v, 'isoformat') else v
+
+    if not raw_pnl_calendar and trades:
+        daily_totals: dict[str, float] = {}
+        for t in trades:
+            dt_value = getattr(t, 'exit_time', None) or getattr(t, 'exit_datetime', None) or getattr(t, 'entry_time', None) or getattr(t, 'entry_datetime', None)
+            key = dt_value.date().isoformat() if hasattr(dt_value, 'date') else str(dt_value)[:10]
+            daily_totals[key] = daily_totals.get(key, 0.0) + float(getattr(t, 'pnl', 0) or 0)
+        pnl_calendar = [{"date": key, "pnl": value} for key, value in sorted(daily_totals.items())]
+    else:
+        pnl_calendar = raw_pnl_calendar
+
+    if not summary:
+        total_trades = len(trades)
+        win_rate = float(getattr(service_response, 'win_rate', 0) or 0) * 100.0
+        net_profit = float(getattr(service_response, 'net_profit', 0) or 0)
+        return_pct = ((float(getattr(service_response, 'final_capital', 0) or 0) - float(getattr(service_response, 'initial_capital', payload.capital) or payload.capital)) / float(getattr(service_response, 'initial_capital', payload.capital) or payload.capital) * 100.0) if float(getattr(service_response, 'initial_capital', payload.capital) or payload.capital) else 0.0
+        wins = [float(getattr(t, 'pnl', 0) or 0) for t in trades if float(getattr(t, 'pnl', 0) or 0) > 0]
+        losses = [abs(float(getattr(t, 'pnl', 0) or 0)) for t in trades if float(getattr(t, 'pnl', 0) or 0) < 0]
+        gross_profit = sum(wins)
+        gross_loss = sum(losses)
+        avg_win = gross_profit / len(wins) if wins else 0.0
+        avg_loss = gross_loss / len(losses) if losses else 0.0
+        profit_factor = gross_profit / gross_loss if gross_loss else (gross_profit if gross_profit else 0.0)
+        expectancy = (sum(float(getattr(t, 'pnl', 0) or 0) for t in trades) / total_trades) if total_trades else 0.0
+        summary = {
+            'net_profit': net_profit,
+            'return_pct': return_pct,
+            'win_rate': win_rate,
+            'max_drawdown': float(getattr(service_response, 'max_drawdown', 0) or 0) * 100.0 if abs(float(getattr(service_response, 'max_drawdown', 0) or 0)) <= 1 else float(getattr(service_response, 'max_drawdown', 0) or 0),
+            'sharpe_ratio': float(getattr(service_response, 'sharpe_ratio', 0) or 0),
+            'profit_factor': profit_factor,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'expectancy': expectancy,
+            'total_trades': total_trades,
+        }
+
+    def _equity_point(point, index):
+        if isinstance(point, dict):
+            ts = point.get('timestamp')
+            eq = point.get('equity', 0)
+        else:
+            ts = None
+            eq = point
+        return {"timestamp": _dt(ts) if ts is not None else str(index + 1), "equity": float(eq or 0)}
+
+    params = dict(strategy.parameters or {})
+    params = _set_workflow_state(params, sandbox={
+        "ok": True,
+        "message": "Sandbox backtest completed successfully",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "source_hash": _strategy_hash_from_params(params),
+        "summary": {
+            "net_profit": float(summary.get('net_profit', 0) or 0),
+            "return_pct": float(summary.get('return_pct', 0) or 0),
+            "total_trades": int(summary.get('total_trades', len(trades)) or 0),
+            "win_rate": float(summary.get('win_rate', 0) or 0),
+            "profit_factor": float(summary.get('profit_factor', 0) or 0),
+        },
+    })
+    strategy.parameters = params
+    await db.commit()
+
+    return success_response({
+        "strategy_id": strategy_id,
+        "strategy_name": strategy.name,
+        "summary": {
+            "initial_capital": float(getattr(service_response, 'initial_capital', payload.capital) or payload.capital),
+            "final_capital": float(getattr(service_response, 'final_capital', payload.capital) or payload.capital),
+            "net_profit": float(summary.get('net_profit', 0) or 0),
+            "return_pct": float(summary.get('return_pct', 0) or 0),
+            "win_rate": float(summary.get('win_rate', 0) or 0),
+            "max_drawdown": float(summary.get('max_drawdown', 0) or 0),
+            "sharpe_ratio": float(summary.get('sharpe_ratio', 0) or 0),
+            "profit_factor": float(summary.get('profit_factor', 0) or 0),
+            "avg_win": float(summary.get('avg_win', 0) or 0),
+            "avg_loss": float(summary.get('avg_loss', 0) or 0),
+            "expectancy": float(summary.get('expectancy', 0) or 0),
+            "total_trades": int(summary.get('total_trades', len(trades)) or 0),
+        },
+        "trades": [
+            {
+                "entry_time": _dt(getattr(t, 'entry_time', None)),
+                "exit_time": _dt(getattr(t, 'exit_time', None)),
+                "side": getattr(t, 'direction', None) or getattr(t, 'side', None),
+                "quantity": getattr(t, 'quantity', None),
+                "entry_price": getattr(t, 'entry_price', None),
+                "exit_price": getattr(t, 'exit_price', None),
+                "pnl": getattr(t, 'pnl', None),
+                "exit_type": getattr(t, 'exit_reason', None) or getattr(t, 'exit_type', None),
+            }
+            for t in trades[:50]
+        ],
+        "equity_curve": [_equity_point(point, index) for index, point in enumerate(equity[-300:])],
+        "pnl_calendar": [
+            {"date": item.get('date'), "pnl": float(item.get('pnl', 0) or 0)}
+            for item in pnl_calendar
+        ],
     })
 
 @router.get("/strategies")
@@ -562,6 +831,7 @@ async def update_strategy(
         strategy.description = _clean(payload.description)
 
     params = dict(strategy.parameters or {})
+    params = _append_version_history(params, strategy, admin_user, reason="save")
     params = _apply_payload_to_parameters(params, payload)
     strategy.parameters = params
 
@@ -569,6 +839,7 @@ async def update_strategy(
         strategy.visibility = _normalize_visibility(payload.visibility)
 
     if strategy.visibility == PUBLIC_VISIBILITY:
+        _ensure_publish_gate(params)
         strategy.published_by = as_uuid_or_str(admin_user["user_id"])
     elif payload.visibility is not None:
         strategy.published_by = None
@@ -614,6 +885,77 @@ async def delete_strategy(
     )
 
 
+@router.get("/strategies/{strategy_id}/versions")
+async def list_strategy_versions(
+    strategy_id: str,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    strategy = await _get_strategy_or_404(db, strategy_id)
+    params = dict(strategy.parameters or {})
+    return success_response({
+        "items": list(params.get("_ide_versions") or []),
+        "current_hash": _strategy_hash_from_params(params),
+        "workflow": _get_workflow_state(params),
+    })
+
+
+@router.post("/strategies/{strategy_id}/rollback/{version_id}")
+async def rollback_strategy_version(
+    strategy_id: str,
+    version_id: str,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    strategy = await _get_strategy_or_404(db, strategy_id)
+    params = dict(strategy.parameters or {})
+    history = list(params.get("_ide_versions") or [])
+    match = next((v for v in history if str(v.get("version_id")) == str(version_id)), None)
+    if not match:
+        raise HTTPException(status_code=404, detail="Version not found")
+    params = _append_version_history(params, strategy, admin_user, reason="rollback")
+    payload = match.get("payload") or {}
+    strategy.name = match.get("name") or strategy.name
+    strategy.description = match.get("description")
+    strategy.visibility = match.get("visibility") or strategy.visibility
+    strategy.source_request_id = as_uuid_or_str(match.get("source_request_id")) if match.get("source_request_id") else strategy.source_request_id
+    params.update(payload.get("parameters") or {})
+    for key in ["strategy_type","market","timeframe","entry_rules","exit_rules","confirmation_rules","risk_rules","invalidation_rules","trade_management_rules","notes","source_code","performance_metrics"]:
+        if key in payload:
+            if payload.get(key) is None:
+                params.pop(key, None)
+            else:
+                params[key] = payload.get(key)
+    params["_workflow"] = {}
+    strategy.parameters = params
+    await db.commit()
+    await db.refresh(strategy)
+    return success_response(_serialize_strategy(strategy), "Strategy rolled back successfully")
+
+
+@router.get("/strategy-presets")
+async def list_strategy_presets(
+    admin_user: dict = Depends(get_admin_user),
+):
+    presets = [
+        {"key": "intraday_momentum", "name": "Intraday Momentum", "config": {"rr_ratio": 2, "capital_risk_pct": 0.01, "price_risk_pct": 0.002, "max_bars_in_trade": 6}},
+        {"key": "swing_rr4", "name": "Swing RR 1:4", "config": {"rr_ratio": 4, "capital_risk_pct": 0.02, "price_risk_pct": 0.01, "max_bars_in_trade": 20}},
+        {"key": "scalp_tight_risk", "name": "Scalp Tight Risk", "config": {"rr_ratio": 1.5, "capital_risk_pct": 0.005, "price_risk_pct": 0.001, "max_bars_in_trade": 3}},
+    ]
+    return success_response({"items": presets})
+
+
+def _ensure_publish_gate(params: dict[str, Any]) -> None:
+    workflow = _get_workflow_state(params)
+    current_hash = _strategy_hash_from_params(params)
+    validation = workflow.get("validation") or {}
+    sandbox = workflow.get("sandbox") or {}
+    if not (validation.get("ok") and validation.get("source_hash") == current_hash):
+        raise HTTPException(status_code=400, detail="Publish blocked: run Verify Code successfully for the latest source/config.")
+    if not (sandbox.get("ok") and sandbox.get("source_hash") == current_hash):
+        raise HTTPException(status_code=400, detail="Publish blocked: run Sandbox Backtest successfully for the latest source/config.")
+
+
 @router.post("/strategies/{strategy_id}/publish")
 async def publish_strategy(
     strategy_id: str,
@@ -621,6 +963,8 @@ async def publish_strategy(
     db: AsyncSession = Depends(get_db),
 ):
     strategy = await _get_strategy_or_404(db, strategy_id)
+    params = dict(strategy.parameters or {})
+    _ensure_publish_gate(params)
     strategy.visibility = PUBLIC_VISIBILITY
     strategy.published_by = as_uuid_or_str(admin_user["user_id"])
 

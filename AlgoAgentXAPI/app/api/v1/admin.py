@@ -7,16 +7,22 @@ from math import ceil
 from typing import Any, Optional
 from uuid import uuid4
 import logging
+from pathlib import Path
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import String, and_, cast, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from ...core.dependencies import get_admin_user, get_current_user, get_db
 from ...utils.api_response import success_response
 from ...db.models import (
+    Trade,
+    EquityCurve,
+    PnLCalendar,
     BillingOrder,
     CreditTransaction,
     CreditTransactionType,
@@ -39,6 +45,20 @@ from ...services.credits.management import CreditManagementService
 from ...services.pricing.backtest_pricing_service import BacktestPricingService
 
 logger = logging.getLogger(__name__)
+
+
+def _admin_to_float(value):
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _admin_to_int(value):
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 router = APIRouter()
 
 
@@ -129,6 +149,28 @@ def _serialize(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     return value
+
+
+def _safe_attr(instance: Any, name: str, default: Any = None) -> Any:
+    try:
+        return instance.__dict__.get(name, default)
+    except Exception:
+        return default
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _read_text_file(path: Path) -> str:
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {path.name}")
+    return path.read_text(encoding="utf-8")
+
+
+def _write_text_file(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+
 
 
 def _parse_iso_datetime(value: Optional[str], *, field_name: str) -> Optional[datetime]:
@@ -1538,7 +1580,7 @@ async def get_admin_backtests(
                 "refund_transaction_ids": debit.get("refund_transaction_ids", []),
                 "status": metric.status,
                 "created_at": _serialize(metric.created_at),
-                "updated_at": _serialize(metric.updated_at),
+                "updated_at": _serialize(_safe_attr(metric, "updated_at")),
             }
         )
 
@@ -1600,9 +1642,120 @@ async def get_admin_backtest_detail(
             "refund_transaction_ids": billing.get("refund_transaction_ids", []),
             "status": metric.status,
             "created_at": _serialize(metric.created_at),
-            "updated_at": _serialize(metric.updated_at),
+            "updated_at": _serialize(_safe_attr(metric, "updated_at")),
         }
     )
+
+
+@router.get("/backtests/{backtest_id}/detail")
+async def get_admin_backtest_detail_full(
+    backtest_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_admin_user),
+):
+    row = (await db.execute(
+        select(PerformanceMetric).options(
+            load_only(
+                PerformanceMetric.id, PerformanceMetric.user_id, PerformanceMetric.strategy_id, PerformanceMetric.instrument_id,
+                PerformanceMetric.timeframe, PerformanceMetric.start_date, PerformanceMetric.end_date,
+                PerformanceMetric.initial_capital, PerformanceMetric.final_capital, PerformanceMetric.net_profit,
+                PerformanceMetric.max_drawdown, PerformanceMetric.sharpe_ratio, PerformanceMetric.sortino_ratio,
+                PerformanceMetric.calmar_ratio, PerformanceMetric.win_rate, PerformanceMetric.total_trades,
+                PerformanceMetric.winning_trades, PerformanceMetric.losing_trades, PerformanceMetric.profit_factor,
+                PerformanceMetric.period, PerformanceMetric.return_pct, PerformanceMetric.avg_win, PerformanceMetric.avg_loss,
+                PerformanceMetric.expectancy, PerformanceMetric.status, PerformanceMetric.created_at
+            )
+        ).where(PerformanceMetric.id == backtest_id)
+    )).scalars().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Backtest not found")
+
+    trades = (await db.execute(
+        select(Trade).where(cast(Trade.backtest_id, String) == str(backtest_id)).order_by(Trade.entry_time.asc())
+    )).scalars().all()
+    equity_rows = (await db.execute(
+        select(EquityCurve).where(cast(EquityCurve.backtest_id, String) == str(backtest_id)).order_by(EquityCurve.timestamp.asc())
+    )).scalars().all()
+    pnl_rows = (await db.execute(
+        select(PnLCalendar).where(cast(PnLCalendar.backtest_id, String) == str(backtest_id)).order_by(PnLCalendar.date.asc())
+    )).scalars().all()
+
+    strategy_name = (await db.execute(select(Strategy.name).where(Strategy.id == row.strategy_id))).scalar_one_or_none()
+    instrument_symbol = (await db.execute(select(Instrument.symbol).where(Instrument.id == row.instrument_id))).scalar_one_or_none()
+    billing = (await _get_backtest_billing_snapshot(db, [str(row.id)])).get(str(row.id), {})
+
+    summary = {
+        "id": str(row.id),
+        "strategy_id": row.strategy_id,
+        "strategy_name": strategy_name,
+        "instrument_id": row.instrument_id,
+        "instrument_symbol": instrument_symbol,
+        "user_id": str(row.user_id),
+        "timeframe": row.timeframe,
+        "start_date": row.start_date.isoformat() if row.start_date else None,
+        "end_date": row.end_date.isoformat() if row.end_date else None,
+        "initial_capital": float(row.initial_capital or 0),
+        "final_capital": float(row.final_capital or 0),
+        "net_profit": float(row.net_profit or 0),
+        "max_drawdown": float(row.max_drawdown or 0),
+        "sharpe_ratio": float(row.sharpe_ratio or 0),
+        "sortino_ratio": float(getattr(row, "sortino_ratio", 0) or 0),
+        "calmar_ratio": float(getattr(row, "calmar_ratio", 0) or 0),
+        "win_rate": float(row.win_rate or 0),
+        "total_trades": int(row.total_trades or 0),
+        "winning_trades": int(row.winning_trades or 0),
+        "losing_trades": int(row.losing_trades or 0),
+        "profit_factor": float(row.profit_factor or 0),
+        "return_pct": float(getattr(row, "return_pct", 0) or 0),
+        "avg_win": float(getattr(row, "avg_win", 0) or 0),
+        "avg_loss": float(getattr(row, "avg_loss", 0) or 0),
+        "expectancy": float(getattr(row, "expectancy", 0) or 0),
+        "credit_cost": billing.get("effective_credit_cost", billing.get("credit_cost")),
+        "effective_credit_cost": billing.get("effective_credit_cost", billing.get("credit_cost")),
+        "included_debited": billing.get("included_debited", 0.0),
+        "wallet_debited": billing.get("wallet_debited", 0.0),
+        "included_refunded": billing.get("included_refunded", 0.0),
+        "wallet_refunded": billing.get("wallet_refunded", 0.0),
+        "refund_total": billing.get("refund_total", 0.0),
+        "charge_status": billing.get("charge_status", "not_charged"),
+        "debit_transaction_id": billing.get("debit_transaction_id"),
+        "refund_transaction_ids": billing.get("refund_transaction_ids", []),
+        "status": row.status,
+        "created_at": _serialize(row.created_at),
+        "updated_at": _serialize(_safe_attr(row, "updated_at")),
+    }
+
+    return success_response({
+        "summary": summary,
+        "trades": [
+            {
+                "id": str(t.id),
+                "entry_time": t.entry_time.isoformat() if t.entry_time else None,
+                "exit_time": t.exit_time.isoformat() if t.exit_time else None,
+                "side": t.side,
+                "quantity": _admin_to_int(t.quantity),
+                "entry_price": _admin_to_float(t.entry_price),
+                "exit_price": _admin_to_float(t.exit_price),
+                "pnl": _admin_to_float(t.pnl),
+                "exit_type": t.exit_type,
+            }
+            for t in trades
+        ],
+        "equity_curve": [
+            {
+                "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+                "equity": _admin_to_float(e.equity),
+            }
+            for e in equity_rows
+        ],
+        "pnl_calendar": [
+            {
+                "date": p.date.isoformat() if p.date else None,
+                "pnl": _admin_to_float(p.pnl),
+            }
+            for p in pnl_rows
+        ],
+    })
 
 
 @router.get("/backtests/pricing-config")
@@ -1943,3 +2096,40 @@ async def reply_admin_support_ticket(ticket_id: str, payload: TicketReplyRequest
     ticket.status = 'in_progress'
     await db.commit()
     return success_response({'id': str(reply.id)}, 'Reply sent successfully')
+
+
+class BacktestEngineUpdateRequest(BaseModel):
+    source_code: str
+
+
+@router.get("/backtest-engine/source")
+async def get_admin_backtest_engine_source(
+    current_user: dict = Depends(get_admin_user),
+):
+    engine_path = _project_root() / "engine" / "backtest_engine.py"
+    metrics_path = _project_root() / "engine" / "metrics.py"
+    trade_stats_path = _project_root() / "engine" / "trade_stats.py"
+    return success_response({
+        "engine_path": str(engine_path.relative_to(_project_root())),
+        "source_code": _read_text_file(engine_path),
+        "supporting_files": [
+            {"path": str(metrics_path.relative_to(_project_root())), "content": _read_text_file(metrics_path)},
+            {"path": str(trade_stats_path.relative_to(_project_root())), "content": _read_text_file(trade_stats_path)},
+        ],
+    })
+
+
+@router.put("/backtest-engine/source")
+async def update_admin_backtest_engine_source(
+    payload: BacktestEngineUpdateRequest,
+    current_user: dict = Depends(get_admin_user),
+):
+    engine_path = _project_root() / "engine" / "backtest_engine.py"
+    if not payload.source_code.strip():
+        raise HTTPException(status_code=400, detail="Source code cannot be empty")
+    try:
+        compile(payload.source_code, str(engine_path), "exec")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Engine syntax error: {exc}")
+    _write_text_file(engine_path, payload.source_code)
+    return success_response({"engine_path": str(engine_path.relative_to(_project_root()))}, "Backtest engine updated successfully")

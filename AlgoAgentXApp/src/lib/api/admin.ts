@@ -214,6 +214,13 @@ export interface Order {
   user_name: string;
 }
 
+
+export interface AdminBacktestEngineSource {
+  engine_path: string;
+  source_code: string;
+  supporting_files: Array<{ path: string; content: string }>;
+}
+
 export interface AdminBacktest {
   id: string;
   strategy_id?: string;
@@ -299,6 +306,71 @@ export interface StrategyRequest {
   createdAt?: string | null;
   updated_at?: string | null;
   updatedAt?: string | null;
+  workflow?: StrategyWorkflowStatus | null;
+  version_count?: number | null;
+}
+
+
+export interface AdminStrategySandboxResult {
+  strategy_id: string;
+  strategy_name?: string;
+  summary: {
+    initial_capital: number;
+    final_capital: number;
+    net_profit: number;
+    return_pct: number;
+    win_rate: number;
+    max_drawdown: number;
+    sharpe_ratio: number;
+    profit_factor: number;
+    avg_win: number;
+    avg_loss: number;
+    expectancy: number;
+    total_trades: number;
+  };
+  trades: Array<{
+    entry_time?: string;
+    exit_time?: string;
+    side?: string;
+    quantity?: number;
+    entry_price?: number;
+    exit_price?: number;
+    pnl?: number;
+    exit_type?: string;
+  }>;
+  equity_curve: Array<{ timestamp?: string; equity: number }>;
+  pnl_calendar: Array<{ date?: string; pnl: number }>;
+}
+
+export interface StrategyWorkflowCheck {
+  ok?: boolean;
+  message?: string;
+  checked_at?: string;
+  source_hash?: string;
+  sample_result?: any;
+  summary?: any;
+}
+
+export interface StrategyWorkflowStatus {
+  validation?: StrategyWorkflowCheck;
+  sandbox?: StrategyWorkflowCheck;
+}
+
+export interface StrategyVersion {
+  version_id: string;
+  captured_at: string;
+  editor_user_id?: string | null;
+  reason?: string | null;
+  name?: string | null;
+  description?: string | null;
+  visibility?: string | null;
+  payload?: Record<string, any> | null;
+}
+
+export interface StrategyPreset {
+  key: string;
+  name: string;
+  config: Record<string, any>;
 }
 
 export interface ImplementedStrategy {
@@ -334,6 +406,8 @@ export interface ImplementedStrategy {
   createdAt?: string | null;
   updated_at?: string | null;
   updatedAt?: string | null;
+  workflow?: StrategyWorkflowStatus | null;
+  version_count?: number | null;
 }
 
 export interface StrategyRequestsResponse {
@@ -673,6 +747,10 @@ export const adminApi = {
       }),
     ),
 
+
+  getBacktestDetail: async (backtestId: string) =>
+    unwrap(await axiosInstance.get(`/api/v1/admin/backtests/${backtestId}/detail`)),
+
   getOrder: async (orderId: string): Promise<Order> =>
     unwrap(await axiosInstance.get(`/api/v1/admin/orders/${orderId}`)),
 
@@ -760,6 +838,31 @@ export const adminApi = {
     capital?: number;
   }): Promise<any> =>
     unwrap(await axiosInstance.post(`/api/v1/admin/strategy-requests/strategies/${strategyId}/validate`, payload || {})),
+
+
+  getAdminStrategyById: async (strategyId: string): Promise<ImplementedStrategy> =>
+    unwrap(await axiosInstance.get(`/api/v1/admin/strategy-requests/strategies/${strategyId}`)),
+
+  listAdminStrategyVersions: async (strategyId: string): Promise<{ items: StrategyVersion[]; current_hash?: string; workflow?: StrategyWorkflowStatus }> =>
+    unwrap(await axiosInstance.get(`/api/v1/admin/strategy-requests/strategies/${strategyId}/versions`)),
+
+  rollbackAdminStrategyVersion: async (strategyId: string, versionId: string): Promise<ImplementedStrategy> =>
+    unwrap(await axiosInstance.post(`/api/v1/admin/strategy-requests/strategies/${strategyId}/rollback/${versionId}`)),
+
+  listAdminStrategyPresets: async (): Promise<{ items: StrategyPreset[] }> =>
+    unwrap(await axiosInstance.get(`/api/v1/admin/strategy-requests/strategy-presets`)),
+
+  runAdminStrategySandboxBacktest: async (
+    strategyId: string,
+    payload: { instrument_id: number; timeframe: string; start_date: string; end_date: string; capital?: number },
+  ): Promise<AdminStrategySandboxResult> =>
+    unwrap(await axiosInstance.post(`/api/v1/admin/strategy-requests/strategies/${strategyId}/sandbox-backtest`, payload)),
+
+  getAdminBacktestEngineSource: async (): Promise<AdminBacktestEngineSource> =>
+    unwrap(await axiosInstance.get(`/api/v1/admin/backtest-engine/source`)),
+
+  updateAdminBacktestEngineSource: async (source_code: string): Promise<AdminBacktestEngineSource> =>
+    unwrap(await axiosInstance.put(`/api/v1/admin/backtest-engine/source`, { source_code })),
 
   listAdminStrategies: async (params?: {
     skip?: number;

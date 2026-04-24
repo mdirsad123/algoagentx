@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import inspect
 from typing import Any, Dict, Tuple
 
 from strategies.ema_crossover import EMACrossover
@@ -30,6 +31,25 @@ _REGISTRY: dict[str, StrategyRegistryEntry] = {
 
 def _normalize(value: str | None) -> str:
     return " ".join((value or "").strip().lower().replace("_", " ").replace("-", " ").split())
+
+
+def _filter_init_params(strategy_class: Any, params: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        signature = inspect.signature(strategy_class.__init__)
+    except (TypeError, ValueError):
+        return dict(params)
+
+    parameters = signature.parameters
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+        return dict(params)
+
+    allowed = {
+        name
+        for name, param in parameters.items()
+        if name not in {"self", "df"}
+        and param.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
+    }
+    return {key: value for key, value in params.items() if key in allowed}
 
 
 def resolve_strategy(strategy_id: str | None, strategy_name: str | None, db_parameters: Dict[str, Any] | None = None) -> Tuple[Any, Dict[str, Any], str]:
@@ -65,4 +85,5 @@ def resolve_strategy(strategy_id: str | None, strategy_name: str | None, db_para
         for k, v in db_parameters.items():
             if isinstance(v, (str, int, float, bool)):
                 params[k] = v
+    params = _filter_init_params(entry.strategy_class, params)
     return entry.strategy_class, params, entry.canonical_name

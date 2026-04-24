@@ -1,362 +1,130 @@
-"use client"
+"use client";
 
-import React, { useState, useEffect } from "react"
-import { useUser } from "@/contexts/user-context"
-import { toast } from "sonner"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Label } from "@/components/ui/label"
-import { format } from "date-fns"
-import { ru } from "date-fns/locale"
-import { 
-  Search, 
-  Calendar, 
-  Filter, 
-  Eye, 
-  RefreshCw,
-  TrendingUp,
-  TrendingDown,
-  BarChart3,
-  User,
-  DollarSign,
-  Target,
-  Shield
-} from "lucide-react"
-import { LoadingSkeleton } from "@/components/ui/loading-skeleton"
-import { Pagination } from "@/components/ui/pagination"
-import { withLocale } from "@/lib/route"
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { Eye, RefreshCcw, Search, Code2 } from "lucide-react";
+import { toast } from "sonner";
 
-interface Backtest {
-  id: string
-  strategy_id: string
-  strategy_name: string
-  user_id: string
-  user_email: string
-  user_name: string
-  total_return: number
-  sharpe_ratio: number
-  max_drawdown: number
-  created_at: string
-  updated_at: string
-}
+import { adminApi, type AdminBacktest } from "@/lib/api/admin";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/PageHeader";
 
-interface PaginationInfo {
-  total: number
-  page: number
-  page_size: number
-  total_pages: number
-}
+const fieldClass =
+  "w-full rounded-xl border border-border/60 bg-card/25 px-4 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/35";
+
+const formatCurrency = (value: number | null | undefined) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value || 0));
+
+const formatPercent = (value: number | null | undefined) => `${Number(value || 0).toFixed(2)}%`;
 
 export default function AdminBacktestsPage() {
-  const { user } = useUser()
-  const [backtests, setBacktests] = useState<Backtest[]>([])
-  const [loading, setLoading] = useState(true)
-  const [pagination, setPagination] = useState<PaginationInfo>({
-    total: 0,
-    page: 1,
-    page_size: 20,
-    total_pages: 1
-  })
-  
-  // Filters
-  const [filters, setFilters] = useState({
-    search: "",
-    from_date: "",
-    to_date: ""
-  })
-  
-  const [currentPage, setCurrentPage] = useState(1)
+  const [items, setItems] = useState<AdminBacktest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [filters, setFilters] = useState({ search: "", from_date: "", to_date: "", status: "" });
 
-  const fetchBacktests = async () => {
-    setLoading(true)
+  const load = async () => {
+    setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: currentPage.toString(),
-        page_size: pagination.page_size.toString(),
-        ...(filters.search && { search: filters.search }),
-        ...(filters.from_date && { from_date: filters.from_date }),
-        ...(filters.to_date && { to_date: filters.to_date })
-      })
-
-      const response = await fetch(`/api/v1/admin/backtests?${params}`)
-      if (!response.ok) {
-        throw new Error("Failed to fetch backtests")
-      }
-      
-      const data = await response.json()
-      setBacktests(data.items || [])
-      setPagination({
-        total: data.total || 0,
-        page: data.page || 1,
-        page_size: data.page_size || 20,
-        total_pages: data.total_pages || 1
-      })
-    } catch (error) {
-      console.error("Error fetching backtests:", error)
-      toast.error("Failed to load backtests")
+      const res = await adminApi.getBacktests({ page, page_size: pageSize, ...filters, status: filters.status || undefined });
+      setItems(res.items || []);
+      setTotal(res.total || 0);
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to load backtests");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
-  useEffect(() => {
-    fetchBacktests()
-  }, [currentPage, filters])
+  useEffect(() => { void load(); }, [page]);
 
-  const handleFilterChange = (key: string, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value }))
-    setCurrentPage(1)
-  }
-
-  const getPerformanceColor = (returnPercent: number) => {
-    if (returnPercent > 0) return "text-green-600 dark:text-green-400"
-    if (returnPercent < 0) return "text-red-600 dark:text-red-400"
-    return "text-gray-600 dark:text-gray-400"
-  }
-
-  const getPerformanceIcon = (returnPercent: number) => {
-    if (returnPercent > 0) return <TrendingUp className="h-4 w-4 text-green-600" />
-    if (returnPercent < 0) return <TrendingDown className="h-4 w-4 text-red-600" />
-    return <BarChart3 className="h-4 w-4 text-gray-600" />
-  }
-
-  const formatPercentage = (value: number) => {
-    return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`
-  }
-
-  const formatRatio = (value: number) => {
-    return value.toFixed(2)
-  }
-
-  if (loading && backtests.length === 0) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="space-y-2">
-            <LoadingSkeleton className="h-8 w-64" />
-            <LoadingSkeleton className="h-4 w-96" />
-          </div>
-          <LoadingSkeleton className="h-10 w-32" />
-        </div>
-        
-        <Card>
-          <CardHeader>
-            <LoadingSkeleton className="h-6 w-48" />
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-              {[1, 2, 3, 4].map(i => (
-                <LoadingSkeleton key={i} className="h-20 w-full" />
-              ))}
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-              {[1, 2, 3].map(i => (
-                <LoadingSkeleton key={i} className="h-32 w-full" />
-              ))}
-            </div>
-            <LoadingSkeleton className="h-96 w-full" />
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
+  const totals = useMemo(() => {
+    const totalPnl = items.reduce((sum, row) => sum + Number(row.net_profit || 0), 0);
+    const avgReturn = items.length ? items.reduce((sum, row) => sum + Number(row.total_return || 0), 0) / items.length : 0;
+    const avgDrawdown = items.length ? items.reduce((sum, row) => sum + Number(row.max_drawdown || 0), 0) / items.length : 0;
+    return { totalPnl, avgReturn, avgDrawdown, profitable: items.filter((r) => Number(r.net_profit || 0) > 0).length };
+  }, [items]);
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Backtests Management</h1>
-          <p className="text-muted-foreground">
-            Monitor and analyze all strategy backtest results
-          </p>
-        </div>
-        <Button 
-          onClick={fetchBacktests}
-          variant="outline"
-          className="gap-2"
-        >
-          <RefreshCw className="h-4 w-4" />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        title="Backtests Management"
+        subtitle="Review all system backtests, monitor results, and jump into detailed reports."
+        actions={<div className="flex gap-2"><Button variant="outline" className="rounded-xl" asChild><Link href="/admin/backtest-engine"><Code2 className="mr-2 h-4 w-4" />Engine Workspace</Link></Button><Button variant="outline" onClick={() => void load()} className="rounded-xl"><RefreshCcw className="mr-2 h-4 w-4" />Refresh</Button></div>}
+      />
 
-      {/* Filters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Filter className="h-5 w-5" />
-            Filters
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="search">Search</Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="search"
-                  placeholder="Search by strategy name, user email, or ID..."
-                  value={filters.search}
-                  onChange={(e) => handleFilterChange("search", e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="from_date">From Date</Label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="from_date"
-                  type="date"
-                  value={filters.from_date}
-                  onChange={(e) => handleFilterChange("from_date", e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-            </div>
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        {[
+          ["Total Runs", String(total)],
+          ["Profitable Runs", String(totals.profitable)],
+          ["Avg Return", formatPercent(totals.avgReturn)],
+          ["Total PnL", formatCurrency(totals.totalPnl)],
+        ].map(([label, value]) => (
+          <Card key={label} className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+            <CardHeader className="pb-2"><CardDescription>{label}</CardDescription><CardTitle className="text-2xl">{value}</CardTitle></CardHeader>
+          </Card>
+        ))}
+      </section>
 
-            <div className="space-y-2">
-              <Label htmlFor="to_date">To Date</Label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="to_date"
-                  type="date"
-                  value={filters.to_date}
-                  onChange={(e) => handleFilterChange("to_date", e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-end space-y-2">
-              <Button 
-                onClick={() => {
-                  setFilters({ search: "", from_date: "", to_date: "" })
-                  setCurrentPage(1)
-                }}
-                variant="outline"
-                className="w-full"
-              >
-                Clear Filters
-              </Button>
-            </div>
+      <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <CardHeader><CardTitle>Filters</CardTitle></CardHeader>
+        <CardContent className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+          <div className="relative lg:col-span-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input className={`${fieldClass} pl-10`} value={filters.search} onChange={(e)=>setFilters((p)=>({...p,search:e.target.value}))} placeholder="Search by strategy, user, or ID" />
+          </div>
+          <input className={fieldClass} type="date" value={filters.from_date} onChange={(e)=>setFilters((p)=>({...p,from_date:e.target.value}))} />
+          <input className={fieldClass} type="date" value={filters.to_date} onChange={(e)=>setFilters((p)=>({...p,to_date:e.target.value}))} />
+          <div className="flex gap-2">
+            <select className={fieldClass} value={filters.status} onChange={(e)=>setFilters((p)=>({...p,status:e.target.value}))}>
+              <option value="">All statuses</option><option value="completed">Completed</option><option value="failed">Failed</option>
+            </select>
+            <Button className="rounded-xl bg-primary text-primary-foreground" onClick={() => { setPage(1); void load(); }}>Apply</Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Backtests Table */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Backtest Results</CardTitle>
-            <div className="text-sm text-muted-foreground">
-              Showing {((pagination.page - 1) * pagination.page_size) + 1} - {Math.min(pagination.page * pagination.page_size, pagination.total)} of {pagination.total} backtests
-            </div>
-          </div>
-        </CardHeader>
+      <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <CardHeader><CardTitle>Backtest Results</CardTitle></CardHeader>
         <CardContent>
-          {loading ? (
-            <LoadingSkeleton className="h-96 w-full" />
-          ) : backtests.length === 0 ? (
-            <div className="text-center py-12">
-              <BarChart3 className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">No backtests found</p>
-            </div>
+          {loading ? <div className="h-40 animate-pulse rounded-xl bg-card/20" /> : items.length === 0 ? (
+            <div className="flex h-40 items-center justify-center text-muted-foreground">No backtests found</div>
           ) : (
-            <>
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Strategy</TableHead>
-                      <TableHead>Customer</TableHead>
-                      <TableHead>Total Return</TableHead>
-                      <TableHead>Sharpe Ratio</TableHead>
-                      <TableHead>Max Drawdown</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {backtests.map((backtest) => (
-                      <TableRow key={backtest.id}>
-                        <TableCell className="font-medium">
-                          <div className="flex items-center gap-2">
-                            <Target className="h-4 w-4 text-muted-foreground" />
-                            {backtest.strategy_name}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <User className="h-4 w-4 text-muted-foreground" />
-                            <div>
-                              <div className="font-medium">{backtest.user_name}</div>
-                              <div className="text-sm text-muted-foreground">{backtest.user_email}</div>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className={`flex items-center gap-2 font-medium ${getPerformanceColor(backtest.total_return)}`}>
-                            {getPerformanceIcon(backtest.total_return)}
-                            {formatPercentage(backtest.total_return)}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Shield className="h-4 w-4 text-blue-600" />
-                            <span className="font-medium">{formatRatio(backtest.sharpe_ratio)}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <DollarSign className="h-4 w-4 text-red-600" />
-                            <span className="font-medium text-red-600 dark:text-red-400">{formatPercentage(backtest.max_drawdown)}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {format(new Date(backtest.created_at), 'PPp', { locale: ru })}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button 
-                              variant="outline" 
-                              size="sm"
-                              onClick={() => window.location.href = withLocale(window.location.pathname, `/admin/backtests/${backtest.id}`)}
-                            >
-                              <Eye className="h-4 w-4 mr-2" />
-                              View Details
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              {/* Pagination */}
-              <div className="mt-6">
-                <Pagination
-                  currentPage={pagination.page}
-                  totalPages={pagination.total_pages}
-                  onPageChange={setCurrentPage}
-                  totalItems={pagination.total}
-                  itemsPerPage={pagination.page_size}
-                />
-              </div>
-            </>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border/40 text-left text-muted-foreground">
+                    {['Strategy','User','Instrument','TF','PnL','Return','Win Rate','Trades','Created','Actions'].map((h)=><th key={h} className="px-3 py-3 font-medium">{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((row) => (
+                    <tr key={row.id} className="border-b border-border/20">
+                      <td className="px-3 py-3">{row.strategy_name || row.strategy_id || '—'}</td>
+                      <td className="px-3 py-3">{row.user_email || row.user_name || '—'}</td>
+                      <td className="px-3 py-3">{row.instrument_symbol || '—'}</td>
+                      <td className="px-3 py-3">{row.timeframe || '—'}</td>
+                      <td className="px-3 py-3">{formatCurrency(row.net_profit)}</td>
+                      <td className="px-3 py-3">{formatPercent(row.total_return)}</td>
+                      <td className="px-3 py-3">{formatPercent(row.win_rate)}</td>
+                      <td className="px-3 py-3">{row.total_trades || 0}</td>
+                      <td className="px-3 py-3">{row.created_at ? new Date(row.created_at).toLocaleString() : '—'}</td>
+                      <td className="px-3 py-3">
+                        <Button size="sm" variant="outline" className="rounded-xl" asChild>
+                          <Link href={`/admin/backtest-report/${row.id}`}><Eye className="mr-2 h-4 w-4" />View</Link>
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }
