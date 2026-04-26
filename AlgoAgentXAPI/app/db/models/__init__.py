@@ -24,6 +24,15 @@ from .billing_webhook_events import BillingWebhookEvent
 from .billing_documents import BillingDocument
 from .billing_refunds import BillingRefund
 from .financial_audit_logs import FinancialAuditLog
+from .live_trading import (
+    BrokerAccount,
+    StrategyDeployment,
+    LiveSignal,
+    LiveOrder,
+    LivePosition,
+    LiveTradeLog,
+    LiveEquityPoint,
+)
 
 __all__ = [
     "User",
@@ -54,4 +63,11 @@ __all__ = [
     "BillingDocument",
     "BillingRefund",
     "FinancialAuditLog",
+    "BrokerAccount",
+    "StrategyDeployment",
+    "LiveSignal",
+    "LiveOrder",
+    "LivePosition",
+    "LiveTradeLog",
+    "LiveEquityPoint",
 ]

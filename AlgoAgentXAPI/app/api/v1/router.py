@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from . import auth, users, strategies, backtests, signals, metrics, instruments, jobs, market_data, credits, billing, payments, subscriptions, ai_screener, notifications, strategy_requests, admin_strategy_requests, ai_screener_jobs, admin, admin_market_data, support_tickets
 from . import admin_pricing
+from . import broker_accounts, live_deployments, live_signals, live_orders, live_positions, live_logs, webhooks
 
 api_router = APIRouter()
 
@@ -27,3 +28,10 @@ api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_market_data.router, prefix="/admin/market-data", tags=["admin-market-data"])
 api_router.include_router(admin_pricing.router, prefix="/admin/pricing", tags=["admin-pricing"])
 api_router.include_router(support_tickets.router, prefix="/support-tickets", tags=["support-tickets"])
+api_router.include_router(broker_accounts.router, prefix="/broker-accounts", tags=["broker-accounts"])
+api_router.include_router(live_deployments.router, prefix="/live/deployments", tags=["live-deployments"])
+api_router.include_router(live_signals.router, prefix="/live/signals", tags=["live-signals"])
+api_router.include_router(live_orders.router, prefix="/live/orders", tags=["live-orders"])
+api_router.include_router(live_positions.router, prefix="/live/positions", tags=["live-positions"])
+api_router.include_router(live_logs.router, prefix="/live/logs", tags=["live-logs"])
+api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])

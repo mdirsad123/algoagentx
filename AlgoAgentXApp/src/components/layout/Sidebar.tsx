@@ -18,6 +18,7 @@ import {
   Settings,
   Shield,
   TrendingUp,
+  Activity,
   User,
   Users,
   Wallet,
@@ -28,6 +29,7 @@ import { Button } from "@/components/ui/button";
 const userMenuItems = [
   { icon: Home, label: "Dashboard", href: "/dashboard" },
   { icon: Layers, label: "Brokers", href: "/brokers" },
+  { icon: Activity, label: "Live Trading", href: "/live-trading" },
   { icon: BarChart3, label: "Strategies", href: "/strategies" },
   { icon: PlayCircle, label: "Backtest", href: "/backtest" },
   { icon: History, label: "Backtest History", href: "/backtest-history" },
@@ -50,6 +52,7 @@ const adminMenuItems = [
   { icon: Layers, label: "Strategies", href: "/admin/strategy-requests" },
   { icon: Database, label: "Market Data", href: "/admin/market-data" },
   { icon: TrendingUp, label: "Backtests", href: "/admin/backtests" },
+  { icon: Activity, label: "Live Trading", href: "/admin/live-trading" },
   { icon: Shield, label: "Support Tickets", href: "/admin/support-tickets" },
 ];
 

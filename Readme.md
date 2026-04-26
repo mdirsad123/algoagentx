@@ -1,5 +1,5 @@
 <!-- activate env -->
-D:\ird-projects\common_env312\.venv\Scripts\activate.bat
+D:\Stock_market\algoagentx\AlgoAgentXAPI\.venv\Scripts\activate.bat
 
 <!-- run api -->
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
