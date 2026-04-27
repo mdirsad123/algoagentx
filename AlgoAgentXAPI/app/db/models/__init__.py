@@ -32,6 +32,9 @@ from .live_trading import (
     LivePosition,
     LiveTradeLog,
     LiveEquityPoint,
+    LiveMarketCandle,
+    AdminLiveAction,
+    PlatformTradingSettings,
 )
 
 __all__ = [
@@ -70,4 +73,7 @@ __all__ = [
     "LivePosition",
     "LiveTradeLog",
     "LiveEquityPoint",
+    "LiveMarketCandle",
+    "AdminLiveAction",
+    "PlatformTradingSettings",
 ]

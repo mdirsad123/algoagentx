@@ -12,6 +12,7 @@ from ...db.models import BrokerAccount
 from ...schemas.live_trading import BrokerAccountCreate, BrokerAccountOut, BrokerAccountUpdate
 from ...services.brokers.factory import get_broker_adapter
 from ...utils.api_response import success_response
+from ...utils.credential_crypto import encrypt_credential
 from .live_common import dump_list, dump_one, get_broker_account_or_404, is_admin, update_from_payload, user_id_from
 
 router = APIRouter()
@@ -53,6 +54,10 @@ async def create_broker_account(
     if values.get("mode") == "LIVE":
         values["mode"] = "DEMO"
     values["status"] = values.get("status") or "DISCONNECTED"
+    if values.get("encrypted_password"):
+        values["encrypted_password"] = encrypt_credential(values.get("encrypted_password"))
+    if values.get("encrypted_token"):
+        values["encrypted_token"] = encrypt_credential(values.get("encrypted_token"))
     row = BrokerAccount(user_id=user_id_from(current_user), **values)
     db.add(row)
     await db.commit()
@@ -83,6 +88,10 @@ async def update_broker_account(
         values.pop("encrypted_password", None)
     if values.get("encrypted_token") in {None, ""}:
         values.pop("encrypted_token", None)
+    if values.get("encrypted_password"):
+        values["encrypted_password"] = encrypt_credential(values.get("encrypted_password"))
+    if values.get("encrypted_token"):
+        values["encrypted_token"] = encrypt_credential(values.get("encrypted_token"))
     for key, value in values.items():
         setattr(row, key, value)
     if row.mode == "LIVE":

@@ -61,3 +61,6 @@ class BrokerAdapter:
 
     async def get_orders(self) -> list[dict[str, Any]]:
         raise NotImplementedError
+
+    async def get_rates(self, symbol: str, timeframe: str, count: int = 300) -> list[dict[str, Any]]:
+        raise NotImplementedError

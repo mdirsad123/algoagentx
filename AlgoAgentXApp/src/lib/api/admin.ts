@@ -308,6 +308,26 @@ export interface StrategyRequest {
   updatedAt?: string | null;
   workflow?: StrategyWorkflowStatus | null;
   version_count?: number | null;
+  lifecycle_status?: string | null;
+  lifecycleStatus?: string | null;
+  is_deployable_paper?: boolean;
+  isDeployablePaper?: boolean;
+  is_deployable_demo?: boolean;
+  isDeployableDemo?: boolean;
+  is_live_approved?: boolean;
+  isLiveApproved?: boolean;
+  verified_at?: string | null;
+  verifiedAt?: string | null;
+  sandbox_passed_at?: string | null;
+  sandboxPassedAt?: string | null;
+  paper_enabled_at?: string | null;
+  paperEnabledAt?: string | null;
+  demo_enabled_at?: string | null;
+  demoEnabledAt?: string | null;
+  live_approved_at?: string | null;
+  liveApprovedAt?: string | null;
+  approved_by?: string | null;
+  approvedBy?: string | null;
 }
 
 
@@ -408,6 +428,26 @@ export interface ImplementedStrategy {
   updatedAt?: string | null;
   workflow?: StrategyWorkflowStatus | null;
   version_count?: number | null;
+  lifecycle_status?: string | null;
+  lifecycleStatus?: string | null;
+  is_deployable_paper?: boolean;
+  isDeployablePaper?: boolean;
+  is_deployable_demo?: boolean;
+  isDeployableDemo?: boolean;
+  is_live_approved?: boolean;
+  isLiveApproved?: boolean;
+  verified_at?: string | null;
+  verifiedAt?: string | null;
+  sandbox_passed_at?: string | null;
+  sandboxPassedAt?: string | null;
+  paper_enabled_at?: string | null;
+  paperEnabledAt?: string | null;
+  demo_enabled_at?: string | null;
+  demoEnabledAt?: string | null;
+  live_approved_at?: string | null;
+  liveApprovedAt?: string | null;
+  approved_by?: string | null;
+  approvedBy?: string | null;
 }
 
 export interface StrategyRequestsResponse {
@@ -897,6 +937,9 @@ export const adminApi = {
 
   unpublishAdminStrategyById: async (strategyId: string): Promise<ImplementedStrategy> =>
     unwrap(await axiosInstance.post(`/api/v1/admin/strategy-requests/strategies/${strategyId}/unpublish`)),
+
+  updateAdminStrategyDeploymentGate: async (strategyId: string, payload: { is_deployable_paper?: boolean; is_deployable_demo?: boolean; is_live_approved?: boolean; reason?: string }): Promise<ImplementedStrategy> =>
+    unwrap(await axiosInstance.post(`/api/v1/admin/strategies/${strategyId}/deployment-gate`, payload)),
 
   getMarketDataCatalog: async (): Promise<AdminMarketDataCatalog> =>
     unwrap(await axiosInstance.get("/api/v1/admin/market-data/catalog")),

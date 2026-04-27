@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 BROKER_MODES = {"PAPER", "DEMO", "LIVE"}
 BROKER_STATUSES = {"CONNECTED", "DISCONNECTED", "EXPIRED", "ERROR"}
@@ -288,18 +288,20 @@ class LiveEquityPointOut(LiveBaseModel):
 
 
 class ManualDeploymentSignalIn(LiveBaseModel):
-    signal_type: str
+    signal_type: Optional[str] = None
+    signal: Optional[str] = None
     price: Decimal
-    reason: Optional[str] = "Manual paper test"
+    reason: Optional[str] = "Manual signal test"
     candle_time: Optional[datetime] = None
 
-    @field_validator("signal_type")
-    @classmethod
-    def validate_signal_type(cls, value: str):
-        value = _upper(value)
+    @model_validator(mode="after")
+    def normalize_signal_field(self):
+        value = _upper(self.signal_type or self.signal)
         if value not in SIGNAL_TYPES:
-            raise ValueError(f"Invalid signal_type. Allowed: {sorted(SIGNAL_TYPES)}")
-        return value
+            raise ValueError(f"Invalid signal. Allowed: {sorted(SIGNAL_TYPES)}")
+        self.signal_type = value
+        self.signal = value
+        return self
 
 
 class LiveDeploymentSummaryOut(LiveBaseModel):
@@ -312,3 +314,47 @@ class LiveDeploymentSummaryOut(LiveBaseModel):
     orders_count_today: int
     signals_count_today: int
     equity: Decimal
+
+
+class LiveMarketCandleOut(LiveBaseModel):
+    id: UUID
+    deployment_id: Optional[UUID] = None
+    broker_account_id: Optional[UUID] = None
+    symbol: str
+    timeframe: str
+    candle_time: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Optional[Decimal] = None
+    source: str = "MT5"
+    is_closed: bool = True
+    created_at: datetime
+    updated_at: datetime
+
+
+class LiveCandleSnapshotOut(LiveBaseModel):
+    source: str = "MT5"
+    symbol: str
+    timeframe: str
+    stored_count: int = 0
+    latest_candle_time: Optional[datetime] = None
+    latest_close: Optional[Decimal] = None
+    candles: list[dict[str, Any]] = Field(default_factory=list)
+
+class RunStrategyOnceIn(LiveBaseModel):
+    execute: bool = True
+
+
+class RunStrategyOnceOut(LiveBaseModel):
+    success: bool
+    deployment_id: str
+    latest_candle_time: Optional[datetime] = None
+    signal: Optional[str] = None
+    executed: bool = False
+    order_id: Optional[str] = None
+    signal_id: Optional[str] = None
+    duplicate: bool = False
+    message: str
+    latest_runner_log: Optional[str] = None

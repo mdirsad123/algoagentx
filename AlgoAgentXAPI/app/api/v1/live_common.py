@@ -83,9 +83,27 @@ async def get_published_strategy_or_400(db: AsyncSession, strategy_id: str) -> S
     return row
 
 
+async def get_deployable_strategy_or_400(db: AsyncSession, strategy_id: str, mode: str | None) -> Strategy:
+    strategy = await get_published_strategy_or_400(db, strategy_id)
+    normalized_mode = str(mode or "PAPER").upper()
+    block_live_mode(normalized_mode)
+
+    if normalized_mode == "PAPER" and not bool(getattr(strategy, "is_deployable_paper", False)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Strategy is not enabled for PAPER deployment. Ask admin to enable Paper Deployment in Deployment Gate.",
+        )
+    if normalized_mode == "DEMO" and not bool(getattr(strategy, "is_deployable_demo", False)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Strategy is not enabled for MT5 DEMO deployment. Ask admin to enable Demo Deployment in Deployment Gate.",
+        )
+    return strategy
+
+
 def block_live_mode(mode: str | None) -> None:
     if str(mode or "").upper() == "LIVE":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="LIVE mode is blocked in Phase 1. Use PAPER or DEMO.",
+            detail="Live trading is disabled until final production review.",
         )

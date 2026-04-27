@@ -294,6 +294,18 @@ export default function AdminStrategyWorkspacePage() {
     }
   };
 
+  const updateDeploymentGate = async (payload: { is_deployable_paper?: boolean; is_deployable_demo?: boolean; is_live_approved?: boolean; reason?: string }) => {
+    try {
+      const updated = await adminApi.updateAdminStrategyDeploymentGate(strategyId, payload);
+      setStrategy(updated);
+      setForm(strategyToForm(updated));
+      toast.success("Deployment gate updated");
+      await refreshWorkflowAndVersions();
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to update deployment gate");
+    }
+  };
+
   if (loading) {
     return <div className="h-72 animate-pulse rounded-xl bg-card/30" />;
   }
@@ -355,6 +367,33 @@ export default function AdminStrategyWorkspacePage() {
             ))}
           </CardContent>
         </Card>
+        <Card className="rounded-xl border border-lime-400/30 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader><CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-4 w-4 text-lime-300" />Deployment Gate</CardTitle><CardDescription>Control which published strategies are allowed for PAPER and MT5 DEMO deployment.</CardDescription></CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            {[
+              ["Verify Status", strategy?.verifiedAt || strategy?.verified_at ? "PASS" : "PENDING", strategy?.verifiedAt || strategy?.verified_at],
+              ["Sandbox Status", strategy?.sandboxPassedAt || strategy?.sandbox_passed_at ? "PASS" : "PENDING", strategy?.sandboxPassedAt || strategy?.sandbox_passed_at],
+              ["Paper Deployment", strategy?.isDeployablePaper || strategy?.is_deployable_paper ? "ENABLED" : "DISABLED", strategy?.paperEnabledAt || strategy?.paper_enabled_at],
+              ["Demo Deployment", strategy?.isDeployableDemo || strategy?.is_deployable_demo ? "ENABLED" : "DISABLED", strategy?.demoEnabledAt || strategy?.demo_enabled_at],
+              ["Live", strategy?.isLiveApproved || strategy?.is_live_approved ? "APPROVED (still locked globally)" : "LOCKED", strategy?.liveApprovedAt || strategy?.live_approved_at],
+            ].map(([label, state, at]) => (
+              <div key={String(label)} className="flex items-center justify-between gap-3 rounded-xl border border-border/50 bg-card/20 p-3">
+                <div><p className="font-medium text-foreground">{String(label)}</p><p className="text-xs text-muted-foreground">{formatDateTime(String(at || ""))}</p></div>
+                <span className={`rounded-full px-2 py-1 text-xs ${String(state).includes("ENABLED") || String(state) === "PASS" ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300"}`}>{String(state)}</span>
+              </div>
+            ))}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Button variant="outline" className="rounded-xl" onClick={() => void updateDeploymentGate({ is_deployable_paper: true, reason: "Admin enabled PAPER deployment" })}>Enable Paper</Button>
+              <Button variant="outline" className="rounded-xl" onClick={() => void updateDeploymentGate({ is_deployable_paper: false, reason: "Admin disabled PAPER deployment" })}>Disable Paper</Button>
+              <Button variant="outline" className="rounded-xl" onClick={() => void updateDeploymentGate({ is_deployable_demo: true, reason: "Admin enabled MT5 DEMO deployment" })}>Enable Demo</Button>
+              <Button variant="outline" className="rounded-xl" onClick={() => void updateDeploymentGate({ is_deployable_demo: false, reason: "Admin disabled MT5 DEMO deployment" })}>Disable Demo</Button>
+              <Button variant="outline" className="rounded-xl" onClick={() => void updateDeploymentGate({ is_live_approved: true, reason: "Admin marked live approved but global live execution remains blocked" })}>Mark Live Approved</Button>
+              <Button variant="outline" className="rounded-xl" onClick={() => void updateDeploymentGate({ is_live_approved: false, reason: "Admin locked live deployment" })}>Lock Live</Button>
+            </div>
+            <p className="text-xs text-muted-foreground">LIVE trading remains globally blocked even if this strategy is marked live approved.</p>
+          </CardContent>
+        </Card>
+
 
         <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
           <CardHeader><CardTitle className="text-base">Strategy Config Presets</CardTitle><CardDescription>Quick-start engine settings for common trading styles.</CardDescription></CardHeader>

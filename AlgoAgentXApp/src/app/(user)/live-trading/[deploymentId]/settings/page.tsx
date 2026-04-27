@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { PageShell } from "@/components/ui/PageShell";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
+import type { BrokerAccount } from "@/types/live-trading";
 
 export default function LiveDeploymentSettingsPage() {
   const { deploymentId } = useParams<{ deploymentId: string }>();
@@ -17,16 +18,40 @@ export default function LiveDeploymentSettingsPage() {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ name: "", instrument: "", timeframe: "", capital: 100000, risk_per_trade: 0.01, rr_ratio: 2, price_risk_pct: 0.002, max_daily_loss: 5000, max_trades_per_day: 10, max_open_positions: 1, allow_short: true, auto_trade_enabled: false });
+  const [brokers, setBrokers] = useState<BrokerAccount[]>([]);
+  const [form, setForm] = useState({
+    name: "",
+    instrument: "",
+    timeframe: "",
+    mode: "PAPER" as "PAPER" | "DEMO",
+    broker_account_id: "" as string,
+    capital: 100000,
+    risk_per_trade: 0.01,
+    rr_ratio: 2,
+    price_risk_pct: 0.002,
+    max_daily_loss: 5000,
+    max_trades_per_day: 10,
+    max_open_positions: 1,
+    allow_short: true,
+    auto_trade_enabled: false,
+  });
+
+  const connectedDemoBrokers = useMemo(() => brokers.filter((broker) => broker.mode === "DEMO" && broker.status === "CONNECTED"), [brokers]);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const row = await liveTradingApi.getDeployment(deploymentId);
+        const [row, brokerRows] = await Promise.all([
+          liveTradingApi.getDeployment(deploymentId),
+          liveTradingApi.listBrokerAccounts(),
+        ]);
+        setBrokers(brokerRows);
         setForm({
           name: row.name,
           instrument: row.instrument,
           timeframe: row.timeframe,
+          mode: (row.mode === "DEMO" ? "DEMO" : "PAPER") as "PAPER" | "DEMO",
+          broker_account_id: row.broker_account_id || "",
           capital: Number(row.capital),
           risk_per_trade: Number(row.risk_per_trade),
           rr_ratio: Number(row.rr_ratio),
@@ -45,9 +70,13 @@ export default function LiveDeploymentSettingsPage() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (form.mode === "DEMO" && !form.broker_account_id) {
+      showToast("DEMO mode requires a connected MT5 demo broker", "error");
+      return;
+    }
     try {
       setSaving(true);
-      await liveTradingApi.updateDeployment(deploymentId, form);
+      await liveTradingApi.updateDeployment(deploymentId, { ...form, broker_account_id: form.broker_account_id || null });
       showToast("Deployment settings updated", "success");
       router.push(`/live-trading/${deploymentId}`);
     } catch (error: any) { showToast(error.message || "Failed to update settings", "error"); }
@@ -56,12 +85,17 @@ export default function LiveDeploymentSettingsPage() {
 
   return (
     <PageShell>
-      <PageHeader title="Deployment Settings" subtitle="Edit risk and deployment configuration." actions={<Link href={`/live-trading/${deploymentId}`}><Button variant="outline" className="gap-2 border-white/10 bg-white/5 text-white hover:bg-white/10"><ArrowLeft className="h-4 w-4" />Back</Button></Link>} />
+      <PageHeader title="Deployment Settings" subtitle="Edit broker, mode, risk, and deployment configuration." actions={<Link href={`/live-trading/${deploymentId}`}><Button variant="outline" className="gap-2 border-white/10 bg-white/5 text-white hover:bg-white/10"><ArrowLeft className="h-4 w-4" />Back</Button></Link>} />
       <GlassCard className="p-6" hoverEffect={false}>
         {loading ? <p className="text-purple-100">Loading settings...</p> : (
           <form onSubmit={submit} className="space-y-6">
+            <div className="rounded-xl border border-lime-300/20 bg-lime-300/10 p-4 text-sm text-lime-100">
+              PAPER can run without broker. DEMO requires your connected MT5 demo account.
+            </div>
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
               <label className="space-y-2 text-sm text-purple-100">Name<input className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
+              <label className="space-y-2 text-sm text-purple-100">Mode<select className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-white outline-none" value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value as "PAPER" | "DEMO", broker_account_id: e.target.value === "PAPER" ? "" : form.broker_account_id })}><option value="PAPER">PAPER</option><option value="DEMO">DEMO / MT5</option></select></label>
+              <label className="space-y-2 text-sm text-purple-100">MT5 Demo Broker<select disabled={form.mode !== "DEMO"} className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-white outline-none disabled:opacity-50" value={form.broker_account_id} onChange={(e) => setForm({ ...form, broker_account_id: e.target.value })}><option value="">Select connected broker</option>{connectedDemoBrokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.account_label} • {broker.login_id} • {broker.server_name}</option>)}</select></label>
               <label className="space-y-2 text-sm text-purple-100">Instrument<input className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.instrument} onChange={(e) => setForm({ ...form, instrument: e.target.value.toUpperCase() })} /></label>
               <label className="space-y-2 text-sm text-purple-100">Timeframe<input className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.timeframe} onChange={(e) => setForm({ ...form, timeframe: e.target.value.toUpperCase() })} /></label>
               <label className="space-y-2 text-sm text-purple-100">Capital<input type="number" className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.capital} onChange={(e) => setForm({ ...form, capital: Number(e.target.value) })} /></label>

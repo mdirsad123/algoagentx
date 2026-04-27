@@ -229,6 +229,18 @@ def _serialize_strategy(
         "createdAt": row.created_at.isoformat() if row.created_at else None,
         "updatedAt": row.updated_at.isoformat() if getattr(row, "updated_at", None) else None,
         "lastUpdated": row.updated_at.isoformat() if getattr(row, "updated_at", None) else (row.created_at.isoformat() if row.created_at else None),
+        "lifecycle_status": getattr(row, "lifecycle_status", None) or "DRAFT",
+        "lifecycleStatus": getattr(row, "lifecycle_status", None) or "DRAFT",
+        "is_deployable_paper": bool(getattr(row, "is_deployable_paper", False)),
+        "isDeployablePaper": bool(getattr(row, "is_deployable_paper", False)),
+        "is_deployable_demo": bool(getattr(row, "is_deployable_demo", False)),
+        "isDeployableDemo": bool(getattr(row, "is_deployable_demo", False)),
+        "is_live_approved": bool(getattr(row, "is_live_approved", False)),
+        "isLiveApproved": bool(getattr(row, "is_live_approved", False)),
+        "verified_at": row.verified_at.isoformat() if getattr(row, "verified_at", None) else None,
+        "verifiedAt": row.verified_at.isoformat() if getattr(row, "verified_at", None) else None,
+        "sandbox_passed_at": row.sandbox_passed_at.isoformat() if getattr(row, "sandbox_passed_at", None) else None,
+        "sandboxPassedAt": row.sandbox_passed_at.isoformat() if getattr(row, "sandbox_passed_at", None) else None,
     }
 
     if include_visibility:

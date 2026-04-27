@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Info } from "lucide-react";
+import { ArrowLeft, Info, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -30,6 +30,9 @@ const defaults = {
   auto_trade_enabled: false,
 };
 
+const isPaperReady = (s: StrategyCatalogItem) => Boolean(s.isDeployablePaper ?? s.is_deployable_paper);
+const isDemoReady = (s: StrategyCatalogItem) => Boolean(s.isDeployableDemo ?? s.is_deployable_demo);
+
 export default function NewLiveDeploymentPage() {
   const router = useRouter();
   const { showToast } = useToast();
@@ -39,7 +42,11 @@ export default function NewLiveDeploymentPage() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(defaults);
 
-  const demoBrokers = useMemo(() => brokers.filter((b) => b.mode === "DEMO" || b.mode === "PAPER"), [brokers]);
+  const connectedDemoBrokers = useMemo(() => brokers.filter((b) => b.mode === "DEMO" && b.status === "CONNECTED"), [brokers]);
+  const deployableStrategies = useMemo(
+    () => strategies.filter((strategy) => (form.mode === "DEMO" ? isDemoReady(strategy) : isPaperReady(strategy))),
+    [strategies, form.mode],
+  );
 
   useEffect(() => {
     const load = async () => {
@@ -48,7 +55,6 @@ export default function NewLiveDeploymentPage() {
         const [strategyRows, brokerRows] = await Promise.all([liveTradingApi.listStrategies(), liveTradingApi.listBrokerAccounts()]);
         setStrategies(strategyRows);
         setBrokers(brokerRows);
-        if (strategyRows[0]) setForm((prev) => ({ ...prev, strategy_id: strategyRows[0].id, name: `${strategyRows[0].name} Live Deployment` }));
       } catch (error: any) {
         showToast(error.message || "Failed to load form data", "error");
       } finally {
@@ -58,8 +64,23 @@ export default function NewLiveDeploymentPage() {
     load();
   }, []);
 
+  useEffect(() => {
+    const first = deployableStrategies[0];
+    if (!deployableStrategies.some((strategy) => strategy.id === form.strategy_id)) {
+      setForm((prev) => ({
+        ...prev,
+        strategy_id: first?.id || "",
+        name: first ? `${first.name} Live Deployment` : prev.name,
+      }));
+    }
+  }, [deployableStrategies, form.strategy_id]);
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (!form.strategy_id) {
+      showToast("No deployable strategy found for selected mode", "error");
+      return;
+    }
     if (form.mode === "DEMO" && !form.broker_account_id) {
       showToast("Broker account is required for DEMO mode", "error");
       return;
@@ -83,26 +104,32 @@ export default function NewLiveDeploymentPage() {
     <PageShell>
       <PageHeader
         title="Create Live Deployment"
-        subtitle="Deploy a published strategy in PAPER or DEMO mode. LIVE mode stays blocked until demo validation."
+        subtitle="Only admin-approved strategies can be deployed to PAPER or MT5 DEMO. LIVE mode remains locked."
         actions={<Link href="/live-trading"><Button variant="outline" className="gap-2 border-white/10 bg-white/5 text-white hover:bg-white/10"><ArrowLeft className="h-4 w-4" />Back</Button></Link>}
       />
 
       <GlassCard className="p-6" hoverEffect={false}>
         {loading ? (
-          <p className="text-purple-100">Loading strategies and broker accounts...</p>
+          <p className="text-purple-100">Loading deployable strategies and broker accounts...</p>
         ) : (
           <form onSubmit={submit} className="space-y-6">
             <div className="rounded-xl border border-lime-400/20 bg-lime-400/10 p-4 text-sm text-lime-100">
-              <div className="flex gap-2"><Info className="mt-0.5 h-4 w-4" /><span>Only published strategies are shown. Live mode will be enabled after demo validation.</span></div>
+              <div className="flex gap-2"><ShieldCheck className="mt-0.5 h-4 w-4" /><span>PAPER mode shows only Paper Ready strategies. DEMO mode shows only Demo Ready strategies.</span></div>
             </div>
+
+            {!deployableStrategies.length && (
+              <div className="rounded-xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm text-amber-100">
+                No deployable strategy found. Run verification/sandbox and ask admin to enable deployment.
+              </div>
+            )}
 
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
               <label className="space-y-2 text-sm text-purple-100">Deployment name<input required className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
-              <label className="space-y-2 text-sm text-purple-100">Published strategy<select required className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none" value={form.strategy_id} onChange={(e) => setForm({ ...form, strategy_id: e.target.value })}>{strategies.length === 0 && <option value="">No published strategies found</option>}{strategies.map((strategy) => <option key={strategy.id} value={strategy.id}>{strategy.name}</option>)}</select></label>
+              <label className="space-y-2 text-sm text-purple-100">Deployable strategy<select required className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none" value={form.strategy_id} onChange={(e) => setForm({ ...form, strategy_id: e.target.value })}>{deployableStrategies.length === 0 && <option value="">No deployable strategy found</option>}{deployableStrategies.map((strategy) => <option key={strategy.id} value={strategy.id}>{strategy.name} • {form.mode === "DEMO" ? "Demo Ready" : "Paper Ready"}</option>)}</select></label>
               <label className="space-y-2 text-sm text-purple-100">Instrument<input required className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.instrument} onChange={(e) => setForm({ ...form, instrument: e.target.value.toUpperCase() })} /></label>
               <label className="space-y-2 text-sm text-purple-100">Timeframe<select className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none" value={form.timeframe} onChange={(e) => setForm({ ...form, timeframe: e.target.value })}>{["M5", "M15", "M30", "H1", "H4", "D1"].map((tf) => <option key={tf} value={tf}>{tf}</option>)}</select></label>
-              <label className="space-y-2 text-sm text-purple-100">Mode<select className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none" value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value as "PAPER" | "DEMO" })}><option value="PAPER">PAPER</option><option value="DEMO">DEMO</option><option value="LIVE" disabled>LIVE - Live mode will be enabled after demo validation.</option></select></label>
-              <label className="space-y-2 text-sm text-purple-100">Broker account {form.mode === "DEMO" && <span className="text-lime-300">*</span>}<select className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none" value={form.broker_account_id} onChange={(e) => setForm({ ...form, broker_account_id: e.target.value })}><option value="">{form.mode === "DEMO" ? "Select broker account" : "Optional"}</option>{demoBrokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.account_label} • {broker.mode}</option>)}</select></label>
+              <label className="space-y-2 text-sm text-purple-100">Mode<select className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none" value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value as "PAPER" | "DEMO", broker_account_id: e.target.value === "PAPER" ? "" : form.broker_account_id })}><option value="PAPER">PAPER</option><option value="DEMO">DEMO / MT5</option><option value="LIVE" disabled>LIVE - disabled until final production review</option></select></label>
+              <label className="space-y-2 text-sm text-purple-100">Broker account {form.mode === "DEMO" && <span className="text-lime-300">*</span>}<select disabled={form.mode !== "DEMO"} className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none disabled:opacity-50" value={form.broker_account_id} onChange={(e) => setForm({ ...form, broker_account_id: e.target.value })}><option value="">{form.mode === "DEMO" ? "Select connected MT5 demo broker" : "Optional"}</option>{connectedDemoBrokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.account_label} • {broker.login_id} • {broker.server_name}</option>)}</select></label>
               <label className="space-y-2 text-sm text-purple-100">Capital<input type="number" className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.capital} onChange={(e) => setForm({ ...form, capital: Number(e.target.value) })} /></label>
               <label className="space-y-2 text-sm text-purple-100">Risk per trade<input type="number" step="0.001" className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.risk_per_trade} onChange={(e) => setForm({ ...form, risk_per_trade: Number(e.target.value) })} /></label>
               <label className="space-y-2 text-sm text-purple-100">RR ratio<input type="number" step="0.1" className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.rr_ratio} onChange={(e) => setForm({ ...form, rr_ratio: Number(e.target.value) })} /></label>

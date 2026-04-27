@@ -40,6 +40,14 @@ type StrategyItem = {
   profitFactor?: number | null;
   lastUpdated?: string | null;
   createdAt?: string | null;
+  lifecycle_status?: string | null;
+  lifecycleStatus?: string | null;
+  is_deployable_paper?: boolean;
+  isDeployablePaper?: boolean;
+  is_deployable_demo?: boolean;
+  isDeployableDemo?: boolean;
+  is_live_approved?: boolean;
+  isLiveApproved?: boolean;
 };
 
 type StrategyRequestItem = {
@@ -357,6 +365,21 @@ export default function StrategiesPage() {
       )}
     </div>
   );
+  const renderDeploymentBadges = (strategy: StrategyItem) => {
+    const paperReady = Boolean(strategy.isDeployablePaper ?? strategy.is_deployable_paper);
+    const demoReady = Boolean(strategy.isDeployableDemo ?? strategy.is_deployable_demo);
+    const liveApproved = Boolean(strategy.isLiveApproved ?? strategy.is_live_approved);
+    return (
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Badge className="border-sky-500/30 bg-sky-500/10 text-sky-200">Backtest Ready</Badge>
+        {paperReady ? <Badge className="border-emerald-500/30 bg-emerald-500/10 text-emerald-200">Paper Ready</Badge> : null}
+        {demoReady ? <Badge className="border-lime-500/30 bg-lime-500/10 text-lime-200">Demo Ready</Badge> : null}
+        <Badge className={liveApproved ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-border/60 bg-card/40 text-muted-foreground"}>
+          {liveApproved ? "Live Approved" : "Live Locked"}
+        </Badge>
+      </div>
+    );
+  };
 
   const renderStrategyCard = (strategy: StrategyItem, mode: "template" | "my") => {
     const visibility = (strategy.visibility || "PRIVATE").toUpperCase();
@@ -386,6 +409,7 @@ export default function StrategiesPage() {
           </div>
 
           {renderMetaBadges(strategy)}
+          {renderDeploymentBadges(strategy)}
 
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
             {renderMetric("Win Rate", metricValue(strategy.winRate, { suffix: "%", decimals: 2 }))}

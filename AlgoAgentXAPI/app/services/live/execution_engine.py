@@ -13,6 +13,7 @@ from .paper_broker import fill_market_order
 from .pnl_service import create_equity_point, to_decimal
 from .position_service import close_position, get_open_positions, open_position
 from .risk_manager import validate_signal_for_execution
+from .trading_safety import LIVE_DISABLED_MESSAGE, check_execution_safety, mark_heartbeat
 
 
 def _round(value: Decimal, places: str = "0.00000001") -> Decimal:
@@ -197,9 +198,18 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
 
     if deployment.mode == "LIVE":
         signal.status = "REJECTED"
-        signal.rejection_reason = "LIVE trading is not enabled yet"
+        signal.rejection_reason = LIVE_DISABLED_MESSAGE
         await _log(db, deployment, "RISK_REJECTED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id)})
         return None
+
+    safety = await check_execution_safety(db, deployment, signal)
+    if not safety.allowed:
+        signal.status = "REJECTED"
+        signal.rejection_reason = safety.reason
+        await _log(db, deployment, "SAFETY_REJECTED", safety.reason or "Safety rejected", "WARNING", {"signal_id": str(signal.id)})
+        return None
+
+    await mark_heartbeat(db, deployment)
 
     risk = await validate_signal_for_execution(db, deployment, signal)
     if not risk.allowed:

@@ -53,6 +53,7 @@ const adminMenuItems = [
   { icon: Database, label: "Market Data", href: "/admin/market-data" },
   { icon: TrendingUp, label: "Backtests", href: "/admin/backtests" },
   { icon: Activity, label: "Live Trading", href: "/admin/live-trading" },
+  { icon: Shield, label: "Live Settings", href: "/admin/live-settings" },
   { icon: Shield, label: "Support Tickets", href: "/admin/support-tickets" },
 ];
 
