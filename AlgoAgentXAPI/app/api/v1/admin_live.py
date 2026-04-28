@@ -14,6 +14,7 @@ from ...core.dependencies import get_admin_user, get_db
 from ...db.models import (
     AdminLiveAction,
     BrokerAccount,
+    BrokerOrderEvent,
     LiveEquityPoint,
     LiveOrder,
     LivePosition,
@@ -23,9 +24,10 @@ from ...db.models import (
     StrategyDeployment,
     User,
 )
-from ...schemas.live_trading import LiveEquityPointOut, LiveOrderOut, LivePositionOut, LiveSignalOut, LiveTradeLogOut
+from ...schemas.live_trading import BrokerOrderEventOut, LiveEquityPointOut, LiveOrderOut, LivePositionOut, LiveSignalOut, LiveTradeLogOut
 from ...utils.api_response import success_response
 from ...services.live.strategy_runner import run_strategy_for_deployment
+from ...services.live.broker_sync_service import clamp_live_sync_interval, sync_deployment_broker_state
 from ...services.live.trading_safety import get_platform_trading_settings
 from .live_common import dump_list, dump_one
 
@@ -39,6 +41,10 @@ class AdminLiveActionRequest(BaseModel):
 
 class AdminRunStrategyRequest(BaseModel):
     execute: bool = True
+
+
+class LiveSyncSettingsIn(BaseModel):
+    interval_seconds: Optional[int] = Field(default=None, ge=1, le=3600)
 
 
 class AdminLiveActionOut(BaseModel):
@@ -139,6 +145,19 @@ def _deployment_safe(row: StrategyDeployment) -> dict[str, Any]:
         "max_open_positions": row.max_open_positions,
         "allow_short": row.allow_short,
         "auto_trade_enabled": row.auto_trade_enabled,
+        "auto_runner_enabled": getattr(row, "auto_runner_enabled", False),
+        "last_runner_at": getattr(row, "last_runner_at", None),
+        "last_processed_candle_time": getattr(row, "last_processed_candle_time", None),
+        "last_broker_sync_at": getattr(row, "last_broker_sync_at", None),
+        "live_sync_enabled": getattr(row, "live_sync_enabled", False),
+        "live_sync_interval_seconds": getattr(row, "live_sync_interval_seconds", 10),
+        "last_live_sync_at": getattr(row, "last_live_sync_at", None),
+        "live_sync_error_count": getattr(row, "live_sync_error_count", 0),
+        "live_sync_last_error": getattr(row, "live_sync_last_error", None),
+        "live_approved": getattr(row, "live_approved", False),
+        "live_approved_at": getattr(row, "live_approved_at", None),
+        "runner_error_count": getattr(row, "runner_error_count", 0),
+        "runner_last_error": getattr(row, "runner_last_error", None),
         "last_signal_at": row.last_signal_at,
         "last_heartbeat_at": row.last_heartbeat_at,
         "heartbeat_stale": bool(row.last_heartbeat_at and (datetime.now(timezone.utc) - row.last_heartbeat_at).total_seconds() > 180),
@@ -201,6 +220,7 @@ async def _detail_summary(db: AsyncSession, deployment_id: UUID) -> dict[str, An
     recent_logs = (await db.execute(select(LiveTradeLog).where(LiveTradeLog.deployment_id == row.id).order_by(LiveTradeLog.created_at.desc()).limit(80))).scalars().all()
     recent_equity = (await db.execute(select(LiveEquityPoint).where(LiveEquityPoint.deployment_id == row.id).order_by(LiveEquityPoint.timestamp.desc()).limit(80))).scalars().all()
     audit_actions = (await db.execute(select(AdminLiveAction).where(AdminLiveAction.deployment_id == row.id).order_by(AdminLiveAction.created_at.desc()).limit(80))).scalars().all()
+    broker_events = (await db.execute(select(BrokerOrderEvent).where(BrokerOrderEvent.deployment_id == row.id).order_by(BrokerOrderEvent.created_at.desc()).limit(80))).scalars().all()
 
     return {
         "deployment": _deployment_safe(row),
@@ -214,6 +234,7 @@ async def _detail_summary(db: AsyncSession, deployment_id: UUID) -> dict[str, An
         "recent_logs": dump_list(LiveTradeLogOut, recent_logs),
         "recent_equity_points": dump_list(LiveEquityPointOut, recent_equity),
         "admin_audit_actions": dump_list(AdminLiveActionOut, audit_actions),
+        "recent_broker_events": dump_list(BrokerOrderEventOut, broker_events),
     }
 
 
@@ -318,6 +339,20 @@ async def list_admin_live_deployments(
             "mode": row.mode,
             "status": row.status,
             "auto_trade_enabled": row.auto_trade_enabled,
+            "auto_runner_enabled": getattr(row, "auto_runner_enabled", False),
+            "last_runner_at": getattr(row, "last_runner_at", None),
+            "last_processed_candle_time": getattr(row, "last_processed_candle_time", None),
+        "last_broker_sync_at": getattr(row, "last_broker_sync_at", None),
+            "live_sync_enabled": getattr(row, "live_sync_enabled", False),
+            "live_sync_interval_seconds": getattr(row, "live_sync_interval_seconds", 10),
+            "last_live_sync_at": getattr(row, "last_live_sync_at", None),
+            "live_sync_error_count": getattr(row, "live_sync_error_count", 0),
+            "live_sync_last_error": getattr(row, "live_sync_last_error", None),
+            "live_approved": getattr(row, "live_approved", False),
+            "live_approved_at": getattr(row, "live_approved_at", None),
+            "runner_error_count": getattr(row, "runner_error_count", 0),
+            "runner_last_error": getattr(row, "runner_last_error", None),
+            "runner_stale": bool(getattr(row, "auto_runner_enabled", False) and row.status == "RUNNING" and (not getattr(row, "last_runner_at", None) or (datetime.now(timezone.utc) - row.last_runner_at).total_seconds() > 180)),
             "last_signal_at": row.last_signal_at,
             "last_heartbeat_at": row.last_heartbeat_at,
             "heartbeat_stale": bool(row.last_heartbeat_at and (datetime.now(timezone.utc) - row.last_heartbeat_at).total_seconds() > 180),
@@ -328,7 +363,7 @@ async def list_admin_live_deployments(
         })
 
     settings = await get_platform_trading_settings(db)
-    return success_response({"summary": totals, "rows": result, "settings": {"paper_trading_enabled": settings.paper_trading_enabled, "demo_trading_enabled": settings.demo_trading_enabled, "live_trading_enabled": settings.live_trading_enabled, "global_kill_switch": settings.global_kill_switch, "max_global_demo_orders_per_day": settings.max_global_demo_orders_per_day, "max_user_demo_orders_per_day": settings.max_user_demo_orders_per_day}})
+    return success_response({"summary": totals, "rows": result, "settings": {"paper_trading_enabled": settings.paper_trading_enabled, "demo_trading_enabled": settings.demo_trading_enabled, "live_trading_enabled": settings.live_trading_enabled, "global_kill_switch": settings.global_kill_switch, "broker_auto_sync_enabled": getattr(settings, "broker_auto_sync_enabled", True), "min_broker_sync_interval_seconds": getattr(settings, "min_broker_sync_interval_seconds", 5), "default_broker_sync_interval_seconds": getattr(settings, "default_broker_sync_interval_seconds", 10), "max_broker_sync_interval_seconds": getattr(settings, "max_broker_sync_interval_seconds", 300), "max_global_demo_orders_per_day": settings.max_global_demo_orders_per_day, "max_user_demo_orders_per_day": settings.max_user_demo_orders_per_day}})
 
 
 @router.get("/deployments/{deployment_id}")
@@ -338,6 +373,54 @@ async def get_admin_live_deployment_detail(
     current_user: dict = Depends(get_admin_user),
 ):
     return success_response(await _detail_summary(db, deployment_id))
+
+
+@router.post("/deployments/{deployment_id}/sync-broker")
+async def admin_sync_deployment_broker(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
+    try:
+        result = await sync_deployment_broker_state(db, deployment_id)
+        detail = await _detail_summary(db, deployment_id)
+        return success_response({"sync": result, "detail": detail}, "Broker sync completed")
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+async def _set_admin_live_sync(db: AsyncSession, deployment_id: UUID, enabled: bool, interval_seconds: int | None, current_user: dict) -> dict[str, Any]:
+    row = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    settings = await get_platform_trading_settings(db)
+    row.live_sync_interval_seconds = clamp_live_sync_interval(settings, interval_seconds or getattr(row, "live_sync_interval_seconds", None))
+    row.live_sync_enabled = enabled
+    if enabled:
+        row.live_sync_error_count = 0
+        row.live_sync_last_error = None
+    await _write_admin_action(db, admin_user_id=_admin_id(current_user), deployment=row, action="ENABLE_LIVE_SYNC" if enabled else "DISABLE_LIVE_SYNC", reason=None, metadata_json={"interval_seconds": row.live_sync_interval_seconds})
+    await db.commit()
+    return await _detail_summary(db, deployment_id)
+
+
+@router.post("/deployments/{deployment_id}/live-sync/enable")
+async def admin_enable_live_sync(deployment_id: UUID, payload: LiveSyncSettingsIn | None = None, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
+    return success_response(await _set_admin_live_sync(db, deployment_id, True, payload.interval_seconds if payload else None, current_user), "Live broker auto-sync enabled")
+
+
+@router.post("/deployments/{deployment_id}/live-sync/disable")
+async def admin_disable_live_sync(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
+    return success_response(await _set_admin_live_sync(db, deployment_id, False, None, current_user), "Live broker auto-sync disabled")
+
+
+@router.patch("/deployments/{deployment_id}/live-sync/settings")
+async def admin_update_live_sync_settings(deployment_id: UUID, payload: LiveSyncSettingsIn, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
+    row = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    settings = await get_platform_trading_settings(db)
+    row.live_sync_interval_seconds = clamp_live_sync_interval(settings, payload.interval_seconds)
+    await _write_admin_action(db, admin_user_id=_admin_id(current_user), deployment=row, action="CHANGE_LIVE_SYNC_INTERVAL", reason=None, metadata_json={"interval_seconds": row.live_sync_interval_seconds})
+    await db.commit()
+    return success_response(await _detail_summary(db, deployment_id), "Live broker auto-sync interval updated")
 
 
 @router.post("/deployments/{deployment_id}/run-strategy-once")

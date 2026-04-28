@@ -15,6 +15,82 @@ export interface AdminMetrics {
   orders?: { total: number; recent: any[] };
 }
 
+export interface AdminDashboardSummary {
+  users: {
+    total_users: number;
+    active_users: number;
+    admin_users: number;
+    new_users_today: number;
+    new_users_7d: number;
+  };
+  billing: {
+    total_revenue: number;
+    paid_revenue: number;
+    refunded_amount: number;
+    failed_amount: number;
+    total_orders: number;
+    paid_orders: number;
+    failed_orders: number;
+    refunded_orders: number;
+    active_subscriptions: number;
+    expired_subscriptions: number;
+    total_credits_issued: number;
+    total_credits_used: number;
+  };
+  strategies: {
+    total_strategies: number;
+    published_strategies: number;
+    private_strategies: number;
+    pending_strategy_requests: number;
+    approved_strategy_requests: number;
+    rejected_strategy_requests: number;
+  };
+  backtests: {
+    total_backtests: number;
+    completed_backtests: number;
+    failed_backtests: number;
+    running_backtests: number;
+    backtests_today: number;
+    backtests_7d: number;
+  };
+  brokers: {
+    total_broker_accounts: number;
+    connected_broker_accounts: number;
+    failed_broker_accounts: number;
+    broker_breakdown: any[];
+  };
+  live_trading: {
+    total_deployments: number;
+    running_deployments: number;
+    paused_deployments: number;
+    stopped_deployments: number;
+    live_sync_enabled_users: number;
+    approval_required_users: number;
+    orders_today: number;
+    orders_total: number;
+    successful_orders: number;
+    failed_orders: number;
+    open_positions: number;
+  };
+  system: {
+    market_data_symbols: number;
+    market_data_rows: number;
+    last_market_data_sync: string | null;
+    latest_execution_log_at: string | null;
+    api_health: string;
+  };
+  recent: {
+    recent_users: any[];
+    recent_payments: any[];
+    recent_orders: any[];
+    recent_backtests: any[];
+    recent_live_deployments: any[];
+    recent_broker_connections: any[];
+    recent_strategy_requests: any[];
+  };
+  generated_at?: string;
+}
+
 export interface BacktestPricingDateRangeBucket {
   max_days: number | null;
   multiplier: number;
@@ -677,6 +753,9 @@ export interface AdminPricingPlanPayload {
 }
 
 export const adminApi = {
+  getDashboardSummary: async (): Promise<AdminDashboardSummary> =>
+    unwrap(await axiosInstance.get("/api/v1/admin/dashboard/summary")),
+
   getMetrics: async (): Promise<AdminMetrics> =>
     unwrap(await axiosInstance.get("/api/v1/admin/metrics")),
 

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -45,10 +46,40 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("[REDIS] Unavailable - using fallback background execution")
 
+    runner_task = None
+    broker_sync_task = None
+    if settings.live_runner_enabled:
+        from .services.live.auto_runner_service import auto_runner_loop
+        runner_task = asyncio.create_task(auto_runner_loop())
+        logger.info("[LIVE_RUNNER] Background auto runner enabled")
+    else:
+        logger.info("[LIVE_RUNNER] Background auto runner disabled")
+
+    if getattr(settings, "live_broker_sync_enabled", True):
+        from .services.live.broker_sync_service import broker_sync_loop
+        broker_sync_task = asyncio.create_task(broker_sync_loop())
+        logger.info("[BROKER_SYNC] Background live broker sync loop enabled")
+    else:
+        logger.info("[BROKER_SYNC] Background live broker sync loop disabled")
+
     logger.info("=" * 60)
-    yield
-    logger.info("Shutting down AlgoAgentX API...")
-    await redis_manager.close()
+    try:
+        yield
+    finally:
+        logger.info("Shutting down AlgoAgentX API...")
+        if runner_task is not None:
+            runner_task.cancel()
+            try:
+                await runner_task
+            except asyncio.CancelledError:
+                pass
+        if broker_sync_task is not None:
+            broker_sync_task.cancel()
+            try:
+                await broker_sync_task
+            except asyncio.CancelledError:
+                pass
+        await redis_manager.close()
 
 
 app = FastAPI(

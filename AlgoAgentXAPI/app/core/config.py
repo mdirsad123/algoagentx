@@ -39,6 +39,17 @@ class Settings(BaseSettings):
     # Auth
     auth_service_url: Optional[str] = None  # For centralized auth if needed
 
+    # Upstox OAuth Configuration
+    upstox_client_id: Optional[str] = None
+    upstox_client_secret: Optional[str] = None
+    upstox_redirect_uri: Optional[str] = None
+
+    # Live auto strategy runner
+    live_runner_enabled: bool = Field(default=False, description="Enable background live strategy auto runner")
+    live_runner_interval_seconds: int = Field(default=60, description="Auto runner loop interval in seconds")
+    live_broker_sync_enabled: bool = Field(default=True, description="Enable background broker auto sync loop")
+    live_broker_sync_loop_seconds: int = Field(default=5, description="Broker auto sync scheduler loop interval in seconds")
+
     # Razorpay Payment Configuration
     razorpay_key_id: Optional[str] = None
     razorpay_key_secret: Optional[str] = None

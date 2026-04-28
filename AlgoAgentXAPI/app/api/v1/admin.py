@@ -634,6 +634,273 @@ async def get_admin_metrics(
         "generated_at": datetime.utcnow().isoformat()
     })
 
+# -----------------------------------------------------------------------------
+# Admin dashboard command-center helpers (safe aggregate reads)
+# -----------------------------------------------------------------------------
+
+async def _admin_table_exists(db: AsyncSession, table_name: str) -> bool:
+    try:
+        bind = db.get_bind()
+        dialect = bind.dialect.name if bind is not None else ""
+        if dialect == "sqlite":
+            result = await db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"), {"table_name": table_name})
+            return result.scalar() is not None
+        result = await db.execute(text("SELECT to_regclass(:table_name)"), {"table_name": table_name})
+        return result.scalar() is not None
+    except Exception:
+        await db.rollback()
+        return False
+
+
+async def _admin_safe_scalar(db: AsyncSession, sql: str, params: Optional[dict[str, Any]] = None, default: Any = 0) -> Any:
+    try:
+        result = await db.execute(text(sql), params or {})
+        value = result.scalar()
+        return default if value is None else value
+    except Exception:
+        await db.rollback()
+        return default
+
+
+async def _admin_safe_rows(db: AsyncSession, sql: str, params: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
+    try:
+        result = await db.execute(text(sql), params or {})
+        return [{key: _serialize(value) for key, value in dict(row._mapping).items()} for row in result.fetchall()]
+    except Exception:
+        await db.rollback()
+        return []
+
+
+def _admin_serialize_row(row: Any) -> dict[str, Any]:
+    try:
+        raw = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
+    except Exception:
+        return {}
+    return {key: _serialize(value) for key, value in raw.items()}
+
+
+# Keep datetimes JSON-safe for dashboard payloads.
+def _admin_iso(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+@router.get("/dashboard/summary")
+async def get_admin_dashboard_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_admin_user),
+):
+    now = datetime.utcnow()
+
+    async def has_table(name: str) -> bool:
+        return await _admin_table_exists(db, name)
+
+    async def has_col(table: str, column: str) -> bool:
+        return await table_has_column(db, table, column)
+
+    # Users
+    total_users = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM users", default=0) if await has_table("users") else 0)
+    if await has_col("users", "is_active"):
+        active_users = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM users WHERE COALESCE(is_active, true) = true", default=total_users))
+    else:
+        active_users = total_users
+    admin_users = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM users WHERE LOWER(COALESCE(role, '')) = 'admin'", default=0) if await has_table("users") else 0)
+    new_users_today = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM users WHERE created_at::date = CURRENT_DATE", default=0) if await has_col("users", "created_at") else 0)
+    new_users_7d = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM users WHERE created_at >= (NOW() - INTERVAL '7 days')", default=0) if await has_col("users", "created_at") else 0)
+
+    # Billing and credits
+    payment_table = "payments" if await has_table("payments") else None
+    orders_table = "billing_orders" if await has_table("billing_orders") else None
+    paid_status_sql = "('paid','captured','success','succeeded')"
+    refunded_status_sql = "('refunded','refund','partially_refunded')"
+    failed_status_sql = "('failed','cancelled','canceled')"
+
+    total_revenue = float(await _admin_safe_scalar(db, f"SELECT COALESCE(SUM(amount_inr),0) FROM {payment_table} WHERE LOWER(COALESCE(status,'')) IN {paid_status_sql}", default=0) if payment_table else 0)
+    paid_revenue = total_revenue
+    refunded_amount = float(await _admin_safe_scalar(db, f"SELECT COALESCE(SUM(amount_inr),0) FROM {payment_table} WHERE LOWER(COALESCE(status,'')) IN {refunded_status_sql}", default=0) if payment_table else 0)
+    failed_amount = float(await _admin_safe_scalar(db, f"SELECT COALESCE(SUM(amount_inr),0) FROM {payment_table} WHERE LOWER(COALESCE(status,'')) IN {failed_status_sql}", default=0) if payment_table else 0)
+
+    if orders_table:
+        total_orders = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM billing_orders", default=0))
+        paid_orders = int(await _admin_safe_scalar(db, f"SELECT COUNT(*) FROM billing_orders WHERE LOWER(COALESCE(status,'')) IN {paid_status_sql}", default=0))
+        failed_orders = int(await _admin_safe_scalar(db, f"SELECT COUNT(*) FROM billing_orders WHERE LOWER(COALESCE(status,'')) IN {failed_status_sql}", default=0))
+        refunded_orders = int(await _admin_safe_scalar(db, f"SELECT COUNT(*) FROM billing_orders WHERE LOWER(COALESCE(status,'')) IN {refunded_status_sql}", default=0))
+    elif payment_table:
+        total_orders = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM payments", default=0))
+        paid_orders = int(await _admin_safe_scalar(db, f"SELECT COUNT(*) FROM payments WHERE LOWER(COALESCE(status,'')) IN {paid_status_sql}", default=0))
+        failed_orders = int(await _admin_safe_scalar(db, f"SELECT COUNT(*) FROM payments WHERE LOWER(COALESCE(status,'')) IN {failed_status_sql}", default=0))
+        refunded_orders = int(await _admin_safe_scalar(db, f"SELECT COUNT(*) FROM payments WHERE LOWER(COALESCE(status,'')) IN {refunded_status_sql}", default=0))
+    else:
+        total_orders = paid_orders = failed_orders = refunded_orders = 0
+
+    active_subscriptions = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM user_subscriptions WHERE LOWER(COALESCE(status,'')) = 'active'", default=0) if await has_table("user_subscriptions") else 0)
+    expired_subscriptions = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM user_subscriptions WHERE LOWER(COALESCE(status,'')) IN ('expired','cancelled','canceled','inactive')", default=0) if await has_table("user_subscriptions") else 0)
+
+    if await has_table("credit_transactions"):
+        total_credits_issued = float(await _admin_safe_scalar(db, "SELECT COALESCE(SUM(amount),0) FROM credit_transactions WHERE LOWER(transaction_type::text) IN ('credit','refund')", default=0))
+        total_credits_used = float(await _admin_safe_scalar(db, "SELECT COALESCE(SUM(amount),0) FROM credit_transactions WHERE LOWER(transaction_type::text) = 'debit'", default=0))
+    else:
+        total_credits_issued = total_credits_used = 0
+
+    # Strategies and requests
+    total_strategies = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM strategies", default=0) if await has_table("strategies") else 0)
+    published_strategies = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM strategies WHERE UPPER(COALESCE(visibility,'')) = 'PUBLIC' OR UPPER(COALESCE(lifecycle_status,'')) = 'PUBLISHED'", default=0) if await has_table("strategies") else 0)
+    private_strategies = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM strategies WHERE UPPER(COALESCE(visibility,'')) <> 'PUBLIC' AND UPPER(COALESCE(lifecycle_status,'')) <> 'PUBLISHED'", default=0) if await has_table("strategies") else 0)
+    if await has_table("strategy_requests"):
+        pending_strategy_requests = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM strategy_requests WHERE UPPER(COALESCE(status,'')) IN ('PENDING','UNDER_DEVELOPMENT','NEEDS_CLARIFICATION')", default=0))
+        approved_strategy_requests = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM strategy_requests WHERE UPPER(COALESCE(status,'')) IN ('APPROVED','DEPLOYED')", default=0))
+        rejected_strategy_requests = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM strategy_requests WHERE UPPER(COALESCE(status,'')) = 'REJECTED'", default=0))
+    else:
+        pending_strategy_requests = approved_strategy_requests = rejected_strategy_requests = 0
+
+    # Backtests
+    backtest_table = "performance_metrics" if await has_table("performance_metrics") else "backtests" if await has_table("backtests") else None
+    if backtest_table:
+        total_backtests = int(await _admin_safe_scalar(db, f"SELECT COUNT(*) FROM {backtest_table}", default=0))
+        completed_backtests = int(await _admin_safe_scalar(db, f"SELECT COUNT(*) FROM {backtest_table} WHERE LOWER(COALESCE(status,'')) IN ('completed','success','done')", default=0))
+        failed_backtests = int(await _admin_safe_scalar(db, f"SELECT COUNT(*) FROM {backtest_table} WHERE LOWER(COALESCE(status,'')) IN ('failed','error')", default=0))
+        running_backtests = int(await _admin_safe_scalar(db, f"SELECT COUNT(*) FROM {backtest_table} WHERE LOWER(COALESCE(status,'')) IN ('running','queued','pending','processing')", default=0))
+        backtests_today = int(await _admin_safe_scalar(db, f"SELECT COUNT(*) FROM {backtest_table} WHERE created_at::date = CURRENT_DATE", default=0) if await has_col(backtest_table, "created_at") else 0)
+        backtests_7d = int(await _admin_safe_scalar(db, f"SELECT COUNT(*) FROM {backtest_table} WHERE created_at >= (NOW() - INTERVAL '7 days')", default=0) if await has_col(backtest_table, "created_at") else 0)
+    else:
+        total_backtests = completed_backtests = failed_backtests = running_backtests = backtests_today = backtests_7d = 0
+
+    # Broker accounts
+    if await has_table("broker_accounts"):
+        total_broker_accounts = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM broker_accounts", default=0))
+        connected_broker_accounts = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM broker_accounts WHERE UPPER(COALESCE(status,'')) IN ('CONNECTED','ACTIVE','READY')", default=0))
+        failed_broker_accounts = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM broker_accounts WHERE UPPER(COALESCE(status,'')) IN ('FAILED','ERROR','DISCONNECTED')", default=0))
+        broker_breakdown = [_admin_serialize_row(row) for row in await _admin_safe_rows(db, "SELECT COALESCE(broker_name, broker_code, 'Unknown') AS broker, COUNT(*)::int AS total, SUM(CASE WHEN UPPER(COALESCE(status,'')) IN ('CONNECTED','ACTIVE','READY') THEN 1 ELSE 0 END)::int AS connected FROM broker_accounts GROUP BY COALESCE(broker_name, broker_code, 'Unknown') ORDER BY total DESC LIMIT 8")]
+    else:
+        total_broker_accounts = connected_broker_accounts = failed_broker_accounts = 0
+        broker_breakdown = []
+
+    # Live trading
+    if await has_table("strategy_deployments"):
+        total_deployments = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM strategy_deployments", default=0))
+        running_deployments = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM strategy_deployments WHERE UPPER(COALESCE(status,'')) IN ('RUNNING','ACTIVE','STARTED')", default=0))
+        paused_deployments = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM strategy_deployments WHERE UPPER(COALESCE(status,'')) = 'PAUSED'", default=0))
+        stopped_deployments = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM strategy_deployments WHERE UPPER(COALESCE(status,'')) IN ('STOPPED','DRAFT','INACTIVE')", default=0))
+        live_sync_enabled_users = int(await _admin_safe_scalar(db, "SELECT COUNT(DISTINCT user_id) FROM strategy_deployments WHERE COALESCE(live_sync_enabled,false) = true", default=0)) if await has_col("strategy_deployments", "live_sync_enabled") else 0
+        approval_required_users = int(await _admin_safe_scalar(db, "SELECT COUNT(DISTINCT user_id) FROM strategy_deployments WHERE COALESCE(live_approved,false) = false", default=0)) if await has_col("strategy_deployments", "live_approved") else 0
+    else:
+        total_deployments = running_deployments = paused_deployments = stopped_deployments = live_sync_enabled_users = approval_required_users = 0
+
+    if await has_table("live_orders"):
+        orders_today = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM live_orders WHERE created_at::date = CURRENT_DATE", default=0))
+        orders_total = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM live_orders", default=0))
+        successful_orders = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM live_orders WHERE UPPER(COALESCE(status,'')) IN ('FILLED','SUCCESS','PLACED','EXECUTED')", default=0))
+        failed_live_orders = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM live_orders WHERE UPPER(COALESCE(status,'')) IN ('FAILED','REJECTED','ERROR')", default=0))
+    else:
+        orders_today = orders_total = successful_orders = failed_live_orders = 0
+    open_positions = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM live_positions WHERE UPPER(COALESCE(status,'')) = 'OPEN'", default=0) if await has_table("live_positions") else 0)
+
+    # System health
+    market_data_symbols = 0
+    market_data_rows = 0
+    last_market_data_sync = None
+    if await has_table("market_data"):
+        market_data_rows = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM market_data", default=0))
+        market_data_symbols = int(await _admin_safe_scalar(db, "SELECT COUNT(DISTINCT instrument_id) FROM market_data", default=0))
+        last_market_data_sync = await _admin_safe_scalar(db, "SELECT MAX(timestamp) FROM market_data", default=None)
+    elif await has_table("live_market_candles"):
+        market_data_rows = int(await _admin_safe_scalar(db, "SELECT COUNT(*) FROM live_market_candles", default=0))
+        market_data_symbols = int(await _admin_safe_scalar(db, "SELECT COUNT(DISTINCT symbol) FROM live_market_candles", default=0))
+        last_market_data_sync = await _admin_safe_scalar(db, "SELECT MAX(candle_time) FROM live_market_candles", default=None)
+    latest_execution_log_at = await _admin_safe_scalar(db, "SELECT MAX(created_at) FROM live_trade_logs", default=None) if await has_table("live_trade_logs") else None
+
+    # Recent data
+    recent_users = [_admin_serialize_row(row) for row in await _admin_safe_rows(db, "SELECT id::text, email, fullname, role, created_at FROM users ORDER BY created_at DESC LIMIT 5")]
+    recent_payments = [_admin_serialize_row(row) for row in await _admin_safe_rows(db, "SELECT p.id::text, p.user_id::text, u.email AS user_email, u.fullname AS user_name, p.amount_inr AS amount, p.currency, p.status, p.purpose, p.created_at FROM payments p LEFT JOIN users u ON u.id::text = p.user_id::text ORDER BY p.created_at DESC LIMIT 5") if payment_table]
+    if orders_table:
+        recent_orders = [_admin_serialize_row(row) for row in await _admin_safe_rows(db, "SELECT o.id::text, o.user_id::text, u.email AS user_email, u.fullname AS user_name, o.billing_order_id AS order_number, o.amount_inr AS amount, o.currency, o.status, o.purpose, o.created_at FROM billing_orders o LEFT JOIN users u ON u.id::text = o.user_id::text ORDER BY o.created_at DESC LIMIT 5")]
+    elif payment_table:
+        recent_orders = [_admin_serialize_row(row) for row in await _admin_safe_rows(db, "SELECT p.id::text, p.user_id::text, u.email AS user_email, u.fullname AS user_name, COALESCE(p.razorpay_order_id, p.id::text) AS order_number, p.amount_inr AS amount, p.currency, p.status, p.purpose, p.created_at FROM payments p LEFT JOIN users u ON u.id::text = p.user_id::text ORDER BY p.created_at DESC LIMIT 5")]
+    else:
+        recent_orders = []
+    recent_backtests = [_admin_serialize_row(row) for row in await _admin_safe_rows(db, f"SELECT b.id::text, b.user_id::text, u.email AS user_email, s.name AS strategy_name, b.status, b.return_pct, b.net_profit, b.created_at FROM {backtest_table} b LEFT JOIN users u ON u.id::text = b.user_id::text LEFT JOIN strategies s ON s.id::text = b.strategy_id::text ORDER BY b.created_at DESC LIMIT 5") if backtest_table]
+    recent_live_deployments = [_admin_serialize_row(row) for row in await _admin_safe_rows(db, "SELECT d.id::text, d.user_id::text, u.email AS user_email, d.name, d.instrument, d.mode, d.status, d.created_at FROM strategy_deployments d LEFT JOIN users u ON u.id::text = d.user_id::text ORDER BY d.created_at DESC LIMIT 5") if await has_table("strategy_deployments")]
+    recent_broker_connections = [_admin_serialize_row(row) for row in await _admin_safe_rows(db, "SELECT b.id::text, b.user_id::text, u.email AS user_email, b.broker_name, b.account_label, b.mode, b.status, b.last_connected_at, b.created_at FROM broker_accounts b LEFT JOIN users u ON u.id::text = b.user_id::text ORDER BY COALESCE(b.last_connected_at, b.created_at) DESC LIMIT 5") if await has_table("broker_accounts")]
+    recent_strategy_requests = [_admin_serialize_row(row) for row in await _admin_safe_rows(db, "SELECT r.id::text, r.user_id::text, u.email AS user_email, r.title, r.strategy_type, r.market, r.timeframe, r.status, r.created_at FROM strategy_requests r LEFT JOIN users u ON u.id::text = r.user_id::text ORDER BY r.created_at DESC LIMIT 5") if await has_table("strategy_requests")]
+
+    return success_response({
+        "users": {
+            "total_users": total_users,
+            "active_users": active_users,
+            "admin_users": admin_users,
+            "new_users_today": new_users_today,
+            "new_users_7d": new_users_7d,
+        },
+        "billing": {
+            "total_revenue": total_revenue,
+            "paid_revenue": paid_revenue,
+            "refunded_amount": refunded_amount,
+            "failed_amount": failed_amount,
+            "total_orders": total_orders,
+            "paid_orders": paid_orders,
+            "failed_orders": failed_orders,
+            "refunded_orders": refunded_orders,
+            "active_subscriptions": active_subscriptions,
+            "expired_subscriptions": expired_subscriptions,
+            "total_credits_issued": int(total_credits_issued),
+            "total_credits_used": int(total_credits_used),
+        },
+        "strategies": {
+            "total_strategies": total_strategies,
+            "published_strategies": published_strategies,
+            "private_strategies": private_strategies,
+            "pending_strategy_requests": pending_strategy_requests,
+            "approved_strategy_requests": approved_strategy_requests,
+            "rejected_strategy_requests": rejected_strategy_requests,
+        },
+        "backtests": {
+            "total_backtests": total_backtests,
+            "completed_backtests": completed_backtests,
+            "failed_backtests": failed_backtests,
+            "running_backtests": running_backtests,
+            "backtests_today": backtests_today,
+            "backtests_7d": backtests_7d,
+        },
+        "brokers": {
+            "total_broker_accounts": total_broker_accounts,
+            "connected_broker_accounts": connected_broker_accounts,
+            "failed_broker_accounts": failed_broker_accounts,
+            "broker_breakdown": broker_breakdown,
+        },
+        "live_trading": {
+            "total_deployments": total_deployments,
+            "running_deployments": running_deployments,
+            "paused_deployments": paused_deployments,
+            "stopped_deployments": stopped_deployments,
+            "live_sync_enabled_users": live_sync_enabled_users,
+            "approval_required_users": approval_required_users,
+            "orders_today": orders_today,
+            "orders_total": orders_total,
+            "successful_orders": successful_orders,
+            "failed_orders": failed_live_orders,
+            "open_positions": open_positions,
+        },
+        "system": {
+            "market_data_symbols": market_data_symbols,
+            "market_data_rows": market_data_rows,
+            "last_market_data_sync": _admin_iso(last_market_data_sync),
+            "latest_execution_log_at": _admin_iso(latest_execution_log_at),
+            "api_health": "ok",
+        },
+        "recent": {
+            "recent_users": recent_users,
+            "recent_payments": recent_payments,
+            "recent_orders": recent_orders,
+            "recent_backtests": recent_backtests,
+            "recent_live_deployments": recent_live_deployments,
+            "recent_broker_connections": recent_broker_connections,
+            "recent_strategy_requests": recent_strategy_requests,
+        },
+        "generated_at": now.isoformat(),
+    })
+
 
 @router.get("/users")
 async def get_admin_users(

@@ -7,9 +7,10 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db.models import LiveOrder, LivePosition, LiveSignal, LiveTradeLog, StrategyDeployment
+from ...db.models import BrokerAccount, LiveOrder, LivePosition, LiveSignal, LiveTradeLog, PlatformTradingSettings, StrategyDeployment
 from .pnl_service import to_decimal
 from .position_service import get_open_positions
+from ..brokers.factory import get_broker_code
 
 
 @dataclass
@@ -99,3 +100,51 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
         return RiskResult(False, "Max open positions reached")
 
     return RiskResult(True, action="OPEN")
+
+
+async def validate_upstox_order_rules(db: AsyncSession, deployment: StrategyDeployment, signal: LiveSignal, qty: Decimal, price: Decimal) -> RiskResult:
+    broker = None
+    if deployment.broker_account_id:
+        broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
+    if broker is None or get_broker_code(broker) != "UPSTOX":
+        return RiskResult(True)
+
+    settings = (await db.execute(select(PlatformTradingSettings).limit(1))).scalar_one_or_none()
+    if not settings or not bool(getattr(settings, "upstox_order_execution_enabled", False)):
+        return RiskResult(False, "Admin has not enabled Upstox order execution")
+    if not bool(getattr(deployment, "upstox_order_confirmed", False)):
+        return RiskResult(False, "User confirmation is required before Upstox real order execution")
+    if broker.status != "CONNECTED":
+        return RiskResult(False, "Upstox broker account must be CONNECTED")
+    if not (getattr(deployment, "instrument_key", None) or getattr(deployment, "broker_symbol", None)):
+        return RiskResult(False, "Upstox instrument_key/broker_symbol is required")
+
+    # Basic NSE market-hours guard in IST. Keeps automated orders out of closed market by default.
+    now_utc = datetime.now(timezone.utc)
+    now_ist = now_utc.astimezone(timezone.utc).replace()
+    # Avoid extra timezone deps: IST = UTC + 5:30.
+    ist_minutes = (now_utc.hour * 60 + now_utc.minute + 330) % (24 * 60)
+    market_open = 9 * 60 + 15
+    market_close = 15 * 60 + 30
+    weekday = (now_utc.date().weekday())
+    if weekday >= 5 or ist_minutes < market_open or ist_minutes > market_close:
+        return RiskResult(False, "Upstox orders are allowed only during Indian market hours 09:15-15:30 IST")
+
+    product = str(getattr(deployment, "product_type", "MIS") or "MIS").upper()
+    if product in {"DELIVERY", "CNC", "D"} and signal.signal_type == "SELL":
+        open_positions = await get_open_positions(db, deployment.id)
+        has_long = any(p.side == "LONG" for p in open_positions)
+        if not has_long:
+            return RiskResult(False, "Delivery/CNC short sell is disabled by default")
+    if signal.signal_type == "SELL" and not deployment.allow_short:
+        return RiskResult(False, "Short selling is disabled for this deployment")
+
+    max_qty = to_decimal(getattr(deployment, "max_quantity", None), "0")
+    if max_qty > 0 and qty > max_qty:
+        return RiskResult(False, f"Quantity {qty} exceeds max quantity {max_qty}")
+    max_value = to_decimal(getattr(deployment, "max_order_value", None), "0")
+    if max_value > 0 and (qty * price) > max_value:
+        return RiskResult(False, f"Order value {qty * price} exceeds max order value {max_value}")
+    if qty != qty.to_integral_value():
+        return RiskResult(False, "Upstox equity quantity must be a whole number")
+    return RiskResult(True)

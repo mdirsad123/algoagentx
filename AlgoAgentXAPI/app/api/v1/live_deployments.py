@@ -5,19 +5,22 @@ from datetime import datetime, time, timezone
 from decimal import Decimal
 from uuid import UUID
 
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_current_user, get_db
-from ...db.models import BrokerAccount, LiveEquityPoint, LiveOrder, LivePosition, LiveSignal, LiveTradeLog, StrategyDeployment
-from ...schemas.live_trading import LiveOrderOut, LivePositionOut, LiveSignalOut, LiveTradeLogOut, ManualDeploymentSignalIn, RunStrategyOnceIn, StrategyDeploymentCreate, StrategyDeploymentOut, StrategyDeploymentUpdate
-from ...services.brokers.factory import get_broker_adapter
+from ...db.models import BrokerAccount, BrokerOrderEvent, LiveEquityPoint, LiveOrder, LivePosition, LiveSignal, LiveTradeLog, StrategyDeployment
+from ...schemas.live_trading import BrokerOrderEventOut, LiveOrderOut, LivePositionOut, LiveSignalOut, LiveTradeLogOut, ManualDeploymentSignalIn, RunStrategyOnceIn, StrategyDeploymentCreate, StrategyDeploymentOut, StrategyDeploymentUpdate
+from ...services.brokers.factory import get_broker_adapter, get_broker_code
 from ...services.live.execution_engine import execute_signal
 from ...services.live.pnl_service import to_decimal
-from ...services.live.mt5_candle_service import get_candle_snapshot, refresh_deployment_candles
+from ...services.live.broker_candle_service import get_candle_snapshot, refresh_deployment_candles
 from ...services.live.strategy_runner import run_strategy_for_deployment
-from ...services.live.trading_safety import LIVE_DISABLED_MESSAGE, check_platform_mode_allowed, mark_heartbeat
+from ...services.live.auto_runner_service import run_deployment_if_due
+from ...services.live.broker_sync_service import clamp_live_sync_interval, sync_deployment_broker_state
+from ...services.live.trading_safety import LIVE_DISABLED_MESSAGE, check_platform_mode_allowed, get_platform_trading_settings, mark_heartbeat
 from ...utils.api_response import success_response
 from .live_common import (
     block_live_mode,
@@ -33,6 +36,10 @@ from .live_common import (
 )
 
 router = APIRouter()
+
+
+class LiveSyncSettingsIn(BaseModel):
+    interval_seconds: int | None = Field(default=None, ge=1, le=3600)
 
 
 def _ensure_tradingview_secret(row: StrategyDeployment) -> None:
@@ -100,8 +107,239 @@ async def _recent(db: AsyncSession, model, deployment_id: UUID, limit: int = 20)
     return list(result.scalars().all())
 
 
+def _symbol_key(value: object) -> str:
+    return str(value or "").strip().upper().replace(".", "").replace("_", "").replace("-", "")
+
+
+def _symbols_match(requested: object, actual: object) -> bool:
+    req = _symbol_key(requested)
+    act = _symbol_key(actual)
+    if not req or not act:
+        return False
+    return act == req or act.startswith(req) or req.startswith(act)
+
+
+def _mt5_position_side(position: dict) -> str:
+    try:
+        return "LONG" if int(position.get("type", 0)) == 0 else "SHORT"
+    except Exception:
+        return "LONG"
+
+
+def _mt5_position_time(position: dict) -> datetime:
+    value = position.get("time") or position.get("time_msc")
+    try:
+        if value is not None:
+            ivalue = int(value)
+            if ivalue > 10_000_000_000:
+                ivalue = int(ivalue / 1000)
+            return datetime.fromtimestamp(ivalue, tz=timezone.utc)
+    except Exception:
+        pass
+    return datetime.now(timezone.utc)
+
+
+async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, broker_row: BrokerAccount | None) -> dict | None:
+    """Refresh DEMO account/position/PnL from brokers that support position sync."""
+    if row.mode != "DEMO" or broker_row is None or broker_row.status != "CONNECTED":
+        return None
+    broker_code = get_broker_code(broker_row)
+    if broker_code != "MT5":
+        return None
+
+    adapter = get_broker_adapter(broker_row)
+    account_info = await adapter.get_account_info()
+    if account_info.get("connected"):
+        broker_row.last_connected_at = datetime.now(timezone.utc)
+        broker_row.status = "CONNECTED"
+        broker_row.metadata_json = {
+            **(broker_row.metadata_json or {}),
+            "last_test": {
+                "connected": True,
+                "message": account_info.get("message"),
+                "account_login": account_info.get("account_login"),
+                "server": account_info.get("server"),
+                "balance": account_info.get("balance"),
+                "equity": account_info.get("equity"),
+                "currency": account_info.get("currency"),
+            },
+            "safe_message": account_info.get("message"),
+            "provider": broker_row.broker_name,
+        }
+
+    raw_positions = []
+    if hasattr(adapter, "get_positions"):
+        raw_positions = await adapter.get_positions(row.instrument)
+    raw_positions = [p for p in (raw_positions or []) if isinstance(p, dict) and not (p.get("success") is False)]
+
+    since = row.started_at or row.created_at or datetime.now(timezone.utc)
+    deals_pnl = {"realized_pnl": "0", "deal_count": 0}
+    if hasattr(adapter, "get_deals_pnl"):
+        deals_pnl = await adapter.get_deals_pnl(row.instrument, since=since)
+
+    db_open_positions = (await db.execute(
+        select(LivePosition).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN")
+    )).scalars().all()
+    matched_db_ids: set[str] = set()
+    changed = False
+
+    for broker_pos in raw_positions:
+        actual_symbol = str(broker_pos.get("symbol") or row.instrument)
+        side = _mt5_position_side(broker_pos)
+        qty = _dec(broker_pos.get("volume"), "0")
+        avg_entry = _dec(broker_pos.get("price_open"), "0")
+        current_price = _dec(broker_pos.get("price_current"), str(avg_entry))
+        profit = _dec(broker_pos.get("profit"), "0")
+        sl = _as_money(broker_pos.get("sl"))
+        tp = _as_money(broker_pos.get("tp"))
+
+        existing = next((p for p in db_open_positions if str(p.id) not in matched_db_ids and p.side == side and _symbols_match(p.symbol, actual_symbol)), None)
+        if existing is None:
+            existing = LivePosition(
+                deployment_id=row.id,
+                user_id=row.user_id,
+                broker_account_id=row.broker_account_id,
+                symbol=actual_symbol,
+                side=side,
+                qty=qty,
+                avg_entry_price=avg_entry,
+                current_price=current_price,
+                stop_loss=sl,
+                target=tp,
+                unrealized_pnl=profit,
+                realized_pnl=Decimal("0"),
+                status="OPEN",
+                opened_at=_mt5_position_time(broker_pos),
+            )
+            db.add(existing)
+            await db.flush()
+            db_open_positions.append(existing)
+            changed = True
+        else:
+            for field, value in {
+                "symbol": actual_symbol,
+                "broker_account_id": row.broker_account_id,
+                "qty": qty,
+                "avg_entry_price": avg_entry,
+                "current_price": current_price,
+                "stop_loss": sl,
+                "target": tp,
+                "unrealized_pnl": profit,
+            }.items():
+                if getattr(existing, field) != value:
+                    setattr(existing, field, value)
+                    changed = True
+        matched_db_ids.add(str(existing.id))
+
+    now = datetime.now(timezone.utc)
+    for db_pos in db_open_positions:
+        if str(db_pos.id) not in matched_db_ids:
+            db_pos.status = "CLOSED"
+            db_pos.closed_at = db_pos.closed_at or now
+            db_pos.unrealized_pnl = Decimal("0")
+            changed = True
+
+    if changed:
+        await _write_log(db, row, "BROKER_POSITION_SYNCED", "MT5 DEMO positions synced from broker", "INFO", {"broker_open_positions": len(raw_positions), "symbol": row.instrument})
+        await db.flush()
+
+    unrealized = sum((_dec(p.get("profit"), "0") for p in raw_positions), Decimal("0"))
+    realized = _dec(deals_pnl.get("realized_pnl"), "0") if isinstance(deals_pnl, dict) else Decimal("0")
+    # Persist broker account snapshot and position reconciliation before summary metrics are queried.
+    await db.commit()
+    return {
+        "account_info": account_info,
+        "open_positions_count": len(raw_positions),
+        "unrealized_pnl": unrealized,
+        "realized_pnl": realized,
+        "today_pnl": realized + unrealized,
+        "position_rows": raw_positions,
+        "deals_pnl": deals_pnl,
+    }
+
+
+async def _sync_upstox_broker_state(db: AsyncSession, row: StrategyDeployment, broker_row: BrokerAccount | None) -> dict | None:
+    if row.mode != "DEMO" or broker_row is None or broker_row.status != "CONNECTED" or get_broker_code(broker_row) != "UPSTOX":
+        return None
+    adapter = get_broker_adapter(broker_row)
+    raw_orders = await adapter.get_orders() if hasattr(adapter, "get_orders") else []
+    raw_positions = await adapter.get_positions() if hasattr(adapter, "get_positions") else []
+    if raw_orders and isinstance(raw_orders[0], dict) and raw_orders[0].get("success") is False:
+        await _write_log(db, row, "UPSTOX_SYNC_WARNING", raw_orders[0].get("message") or "Could not fetch Upstox orders", "WARNING")
+        raw_orders = []
+    if raw_positions and isinstance(raw_positions[0], dict) and raw_positions[0].get("success") is False:
+        await _write_log(db, row, "UPSTOX_SYNC_WARNING", raw_positions[0].get("message") or "Could not fetch Upstox positions", "WARNING")
+        raw_positions = []
+
+    def norm_status(value: object) -> str:
+        v = str(value or "").lower()
+        if v in {"complete", "completed", "filled"}: return "FILLED"
+        if v in {"cancelled", "canceled"}: return "CANCELLED"
+        if v in {"rejected", "failed"}: return "REJECTED"
+        if v: return "PLACED"
+        return "PENDING"
+
+    changed = False
+    for broker_order in raw_orders:
+        if not isinstance(broker_order, dict):
+            continue
+        broker_order_id = str(broker_order.get("order_id") or broker_order.get("orderId") or "")
+        if not broker_order_id:
+            continue
+        existing = (await db.execute(select(LiveOrder).where(LiveOrder.deployment_id == row.id, LiveOrder.broker_order_id == broker_order_id))).scalar_one_or_none()
+        if existing is not None:
+            existing.status = norm_status(broker_order.get("status") or broker_order.get("order_status"))
+            if broker_order.get("average_price") not in (None, ""):
+                existing.executed_price = _dec(broker_order.get("average_price"), str(existing.executed_price or existing.entry_price or 0))
+            existing.raw_response = {**(existing.raw_response or {}), "broker_sync": broker_order}
+            changed = True
+
+    db_open_positions = (await db.execute(select(LivePosition).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN"))).scalars().all()
+    matched: set[str] = set()
+    for pos in raw_positions:
+        if not isinstance(pos, dict):
+            continue
+        qty = _dec(pos.get("quantity") or pos.get("net_quantity") or pos.get("day_buy_quantity") or 0, "0")
+        if qty == 0:
+            continue
+        instrument_key = str(pos.get("instrument_token") or pos.get("instrument_key") or pos.get("tradingsymbol") or row.instrument_key or row.instrument)
+        side = "LONG" if qty > 0 else "SHORT"
+        qty_abs = abs(qty)
+        avg = _dec(pos.get("average_price") or pos.get("buy_price") or pos.get("sell_price") or 0, "0")
+        ltp = _dec(pos.get("last_price") or pos.get("ltp") or avg, str(avg))
+        pnl = _dec(pos.get("pnl") or pos.get("unrealised") or pos.get("unrealized_pnl") or 0, "0")
+        existing = next((p for p in db_open_positions if str(p.id) not in matched and _symbols_match(p.symbol, instrument_key) and p.side == side), None)
+        if existing is None:
+            existing = LivePosition(deployment_id=row.id, user_id=row.user_id, broker_account_id=row.broker_account_id, symbol=instrument_key, side=side, qty=qty_abs, avg_entry_price=avg, current_price=ltp, unrealized_pnl=pnl, realized_pnl=Decimal("0"), status="OPEN", opened_at=datetime.now(timezone.utc))
+            db.add(existing)
+            await db.flush()
+            db_open_positions.append(existing)
+        else:
+            existing.qty = qty_abs
+            existing.avg_entry_price = avg
+            existing.current_price = ltp
+            existing.unrealized_pnl = pnl
+            existing.broker_account_id = row.broker_account_id
+        matched.add(str(existing.id))
+        changed = True
+
+    if changed:
+        await _write_log(db, row, "UPSTOX_BROKER_SYNCED", "Upstox broker orders/positions synced", "INFO", {"orders": len(raw_orders), "positions": len(raw_positions)})
+        await db.flush()
+    return {"orders_count": len(raw_orders), "positions_count": len(raw_positions), "position_rows": raw_positions}
+
+
 async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
     day_start = datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
+
+    broker = None
+    broker_metrics = None
+    if row.broker_account_id:
+        broker_row = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == row.broker_account_id))).scalar_one_or_none()
+        broker = _broker_safe(broker_row)
+        broker_metrics = await _refresh_demo_broker_state(db, row, broker_row)
+        if broker_metrics is not None and broker_row is not None:
+            broker = _broker_safe(broker_row)
 
     realized = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == row.id))).scalar())
     unrealized = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.unrealized_pnl), 0)).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN"))).scalar())
@@ -124,10 +362,11 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
     latest_engine_signal = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == row.id, LiveSignal.source == "ENGINE").order_by(LiveSignal.created_at.desc()).limit(1))).scalar_one_or_none()
     latest_runner_log = (await db.execute(select(LiveTradeLog).where(LiveTradeLog.deployment_id == row.id, LiveTradeLog.event_type.ilike("RUNNER_%")).order_by(LiveTradeLog.created_at.desc()).limit(1))).scalar_one_or_none()
 
-    broker = None
-    if row.broker_account_id:
-        broker_row = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == row.broker_account_id))).scalar_one_or_none()
-        broker = _broker_safe(broker_row)
+    if broker_metrics is not None:
+        realized = _dec(broker_metrics.get("realized_pnl"), str(realized))
+        unrealized = _dec(broker_metrics.get("unrealized_pnl"), str(unrealized))
+        today_pnl = _dec(broker_metrics.get("today_pnl"), str(today_pnl))
+        open_positions_count = int(broker_metrics.get("open_positions_count") or 0)
 
     currency = broker.get("currency") if isinstance(broker, dict) else None
     # DEMO deployments should display MT5 account balance/equity/currency when a broker is linked.
@@ -147,10 +386,35 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
             "strategy_id": row.strategy_id,
             "strategy_name": _strategy_name(row),
             "instrument": row.instrument,
+            "broker_symbol": getattr(row, "broker_symbol", None),
+            "instrument_key": getattr(row, "instrument_key", None),
+            "exchange": getattr(row, "exchange", None),
+            "segment": getattr(row, "segment", None),
+            "product_type": getattr(row, "product_type", "MIS"),
+            "order_variety": getattr(row, "order_variety", "REGULAR"),
+            "quantity_mode": getattr(row, "quantity_mode", "RISK_BASED"),
+            "fixed_quantity": getattr(row, "fixed_quantity", None),
+            "max_quantity": getattr(row, "max_quantity", None),
+            "max_order_value": getattr(row, "max_order_value", None),
+            "square_off_time": getattr(row, "square_off_time", None),
+            "upstox_order_confirmed": getattr(row, "upstox_order_confirmed", False),
             "timeframe": row.timeframe,
             "mode": row.mode,
             "status": row.status,
             "auto_trade_enabled": row.auto_trade_enabled,
+            "auto_runner_enabled": getattr(row, "auto_runner_enabled", False),
+            "last_runner_at": getattr(row, "last_runner_at", None),
+            "last_processed_candle_time": getattr(row, "last_processed_candle_time", None),
+            "last_broker_sync_at": getattr(row, "last_broker_sync_at", None),
+            "live_sync_enabled": getattr(row, "live_sync_enabled", False),
+            "live_sync_interval_seconds": getattr(row, "live_sync_interval_seconds", 10),
+            "last_live_sync_at": getattr(row, "last_live_sync_at", None),
+            "live_sync_error_count": getattr(row, "live_sync_error_count", 0),
+            "live_sync_last_error": getattr(row, "live_sync_last_error", None),
+            "live_approved": getattr(row, "live_approved", False),
+            "live_approved_at": getattr(row, "live_approved_at", None),
+            "runner_error_count": getattr(row, "runner_error_count", 0),
+            "runner_last_error": getattr(row, "runner_last_error", None),
             "last_signal_at": row.last_signal_at,
             "last_heartbeat_at": row.last_heartbeat_at,
             "heartbeat_stale": bool(row.last_heartbeat_at and (datetime.now(timezone.utc) - row.last_heartbeat_at).total_seconds() > 180),
@@ -174,13 +438,29 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
             "signals_count_today": signals_count_today,
             "total_orders": total_orders,
             "total_signals": total_signals,
+            "source": "MT5" if broker_metrics is not None else "DATABASE",
+            "broker_synced": bool(broker_metrics is not None),
+            "broker_deal_count": (broker_metrics or {}).get("deals_pnl", {}).get("deal_count") if isinstance((broker_metrics or {}).get("deals_pnl"), dict) else None,
         },
         "runner": {
-            "last_run_at": latest_runner_log.created_at if latest_runner_log else None,
+            "last_run_at": getattr(row, "last_runner_at", None) or (latest_runner_log.created_at if latest_runner_log else None),
+            "last_processed_candle_time": getattr(row, "last_processed_candle_time", None),
+            "last_broker_sync_at": getattr(row, "last_broker_sync_at", None),
+            "live_sync_enabled": getattr(row, "live_sync_enabled", False),
+            "live_sync_interval_seconds": getattr(row, "live_sync_interval_seconds", 10),
+            "last_live_sync_at": getattr(row, "last_live_sync_at", None),
+            "live_sync_error_count": getattr(row, "live_sync_error_count", 0),
+            "live_sync_last_error": getattr(row, "live_sync_last_error", None),
+            "auto_runner_enabled": getattr(row, "auto_runner_enabled", False),
+            "runner_error_count": getattr(row, "runner_error_count", 0),
+            "runner_last_error": getattr(row, "runner_last_error", None),
             "last_candle_time": latest_engine_signal.candle_time if latest_engine_signal else None,
             "last_signal": latest_engine_signal.signal_type if latest_engine_signal else None,
             "latest_runner_log": latest_runner_log.message if latest_runner_log else None,
             "latest_runner_status": latest_runner_log.level if latest_runner_log else None,
+            "latest_order_status": latest_order.status if latest_order else None,
+            "latest_order_error": latest_order.error_message if latest_order else None,
+            "latest_broker_order_id": latest_order.broker_order_id if latest_order else None,
         },
         "latest_signal": dump_one(LiveSignalOut, latest_signal) if latest_signal else None,
         "latest_order": dump_one(LiveOrderOut, latest_order) if latest_order else None,
@@ -205,7 +485,7 @@ async def create_deployment(payload: StrategyDeploymentCreate, db: AsyncSession 
     block_live_mode(payload.mode)
     await get_deployable_strategy_or_400(db, payload.strategy_id, payload.mode)
     if payload.mode == "DEMO" and not payload.broker_account_id:
-        raise HTTPException(status_code=400, detail="DEMO mode requires an MT5 demo broker account")
+        raise HTTPException(status_code=400, detail="DEMO mode requires a connected broker account")
     await _validate_broker_for_user(db, payload.broker_account_id, current_user)
     row = StrategyDeployment(user_id=user_id_from(current_user), status="DRAFT", **payload.model_dump())
     _ensure_tradingview_secret(row)
@@ -256,6 +536,80 @@ async def get_deployment_broker_status(deployment_id: UUID, db: AsyncSession = D
     await db.refresh(broker)
     return success_response({"connected": connected, "message": info.get("message"), "broker": _broker_safe(broker), "account_info": {k: v for k, v in info.items() if k != "raw"}})
 
+
+@router.post("/{deployment_id}/sync-broker")
+async def sync_deployment_broker(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    try:
+        result = await sync_deployment_broker_state(db, deployment_id)
+        return success_response(result, f"{result.get('provider_code', 'Broker')} broker synced")
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/{deployment_id}/broker-events")
+async def list_deployment_broker_events(deployment_id: UUID, limit: int = 50, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    rows = (await db.execute(
+        select(BrokerOrderEvent)
+        .where(BrokerOrderEvent.deployment_id == deployment_id)
+        .order_by(BrokerOrderEvent.created_at.desc())
+        .limit(max(1, min(int(limit or 50), 200)))
+    )).scalars().all()
+    return success_response(dump_list(BrokerOrderEventOut, rows))
+
+
+
+async def _set_live_sync(db: AsyncSession, row: StrategyDeployment, enabled: bool, interval_seconds: int | None = None) -> StrategyDeployment:
+    settings = await get_platform_trading_settings(db)
+    row.live_sync_interval_seconds = clamp_live_sync_interval(settings, interval_seconds or getattr(row, "live_sync_interval_seconds", None))
+    row.live_sync_enabled = enabled
+    if enabled:
+        row.live_sync_error_count = 0
+        row.live_sync_last_error = None
+    await _write_log(db, row, "LIVE_SYNC_ENABLED" if enabled else "LIVE_SYNC_DISABLED", f"Live broker auto-sync {'enabled' if enabled else 'disabled'}", metadata={"interval_seconds": row.live_sync_interval_seconds})
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+@router.post("/{deployment_id}/live-sync/enable")
+async def enable_deployment_live_sync(deployment_id: UUID, payload: LiveSyncSettingsIn | None = None, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    return success_response(dump_one(StrategyDeploymentOut, await _set_live_sync(db, row, True, (payload.interval_seconds if payload else None))), "Live broker auto-sync enabled")
+
+
+@router.post("/{deployment_id}/live-sync/disable")
+async def disable_deployment_live_sync(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    return success_response(dump_one(StrategyDeploymentOut, await _set_live_sync(db, row, False)), "Live broker auto-sync disabled")
+
+
+@router.patch("/{deployment_id}/live-sync/settings")
+async def update_deployment_live_sync_settings(deployment_id: UUID, payload: LiveSyncSettingsIn, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    settings = await get_platform_trading_settings(db)
+    row.live_sync_interval_seconds = clamp_live_sync_interval(settings, payload.interval_seconds)
+    await _write_log(db, row, "LIVE_SYNC_INTERVAL_CHANGED", "Live broker auto-sync interval changed", metadata={"interval_seconds": row.live_sync_interval_seconds})
+    await db.commit()
+    await db.refresh(row)
+    return success_response(dump_one(StrategyDeploymentOut, row), "Live broker auto-sync interval updated")
+
+
+@router.get("/{deployment_id}/live-sync/status")
+async def get_deployment_live_sync_status(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    settings = await get_platform_trading_settings(db)
+    return success_response({
+        "live_sync_enabled": bool(getattr(row, "live_sync_enabled", False)),
+        "live_sync_interval_seconds": int(getattr(row, "live_sync_interval_seconds", 10) or 10),
+        "last_live_sync_at": getattr(row, "last_live_sync_at", None),
+        "last_broker_sync_at": getattr(row, "last_broker_sync_at", None),
+        "live_sync_error_count": int(getattr(row, "live_sync_error_count", 0) or 0),
+        "live_sync_last_error": getattr(row, "live_sync_last_error", None),
+        "platform_auto_sync_enabled": bool(getattr(settings, "broker_auto_sync_enabled", True)),
+    })
 
 @router.post("/{deployment_id}/manual-signal")
 async def create_deployment_manual_signal(deployment_id: UUID, payload: ManualDeploymentSignalIn, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -317,16 +671,45 @@ async def run_live_strategy_once(deployment_id: UUID, payload: RunStrategyOnceIn
     result = await run_strategy_for_deployment(db, deployment_id, execute=(payload.execute if payload else True))
     return success_response(result, result.get("message") or "Strategy runner completed")
 
+@router.post("/{deployment_id}/auto-runner/enable")
+async def enable_deployment_auto_runner(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    row.auto_runner_enabled = True
+    row.runner_error_count = 0
+    row.runner_last_error = None
+    await _write_log(db, row, "AUTO_RUNNER_ENABLED", "Auto runner enabled")
+    await db.commit()
+    await db.refresh(row)
+    return success_response(dump_one(StrategyDeploymentOut, row), "Auto runner enabled")
+
+
+@router.post("/{deployment_id}/auto-runner/disable")
+async def disable_deployment_auto_runner(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    row.auto_runner_enabled = False
+    await _write_log(db, row, "AUTO_RUNNER_DISABLED", "Auto runner disabled")
+    await db.commit()
+    await db.refresh(row)
+    return success_response(dump_one(StrategyDeploymentOut, row), "Auto runner disabled")
+
+
+@router.post("/{deployment_id}/auto-runner/run-now")
+async def run_deployment_auto_runner_now(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    result = await run_deployment_if_due(db, deployment_id)
+    return success_response(result, result.get("message") or result.get("reason") or "Auto runner checked")
+
+
 @router.post("/{deployment_id}/refresh-candles")
-async def refresh_deployment_mt5_candles(deployment_id: UUID, count: int = 300, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    # Access check first; candle service then validates linked MT5 DEMO broker and stores real MT5 rates only.
+async def refresh_deployment_broker_candles(deployment_id: UUID, count: int = 300, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Access check first; candle service validates linked broker and stores rates in live_market_candles.
     await get_deployment_or_404(db, deployment_id, current_user)
     result = await refresh_deployment_candles(db, deployment_id, count=count)
-    return success_response(result, f"Stored {result.get('upserted_count', 0)} MT5 candles")
+    return success_response(result, f"Stored {result.get('upserted_count', 0)} broker candles")
 
 
 @router.get("/{deployment_id}/candles")
-async def get_deployment_mt5_candles(deployment_id: UUID, limit: int = 300, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def get_deployment_broker_candles(deployment_id: UUID, limit: int = 300, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     await get_deployment_or_404(db, deployment_id, current_user)
     result = await get_candle_snapshot(db, deployment_id, limit=limit)
     return success_response(result)
@@ -350,7 +733,7 @@ async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpda
         block_live_mode(values["mode"])
         await get_deployable_strategy_or_400(db, row.strategy_id, values["mode"])
         if values["mode"] == "DEMO" and not values.get("broker_account_id", row.broker_account_id):
-            raise HTTPException(status_code=400, detail="DEMO mode requires an MT5 demo broker account")
+            raise HTTPException(status_code=400, detail="DEMO mode requires a connected broker account")
     if "broker_account_id" in values:
         await _validate_broker_for_user(db, values["broker_account_id"], current_user)
     update_from_payload(row, payload, exclude={"status"})
@@ -370,10 +753,10 @@ async def start_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_d
     await get_deployable_strategy_or_400(db, row.strategy_id, row.mode)
     if row.mode == "DEMO":
         if row.broker_account_id is None:
-            raise HTTPException(status_code=400, detail="DEMO mode requires a connected MT5 demo broker account")
+            raise HTTPException(status_code=400, detail="DEMO mode requires a connected broker account")
         broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == row.broker_account_id))).scalar_one_or_none()
         if broker is None or broker.status != "CONNECTED":
-            raise HTTPException(status_code=400, detail="DEMO mode requires a CONNECTED MT5 broker account. Go to Brokers and click Test Connection first.")
+            raise HTTPException(status_code=400, detail="DEMO mode requires a CONNECTED broker account. Go to Brokers and click Test Connection first.")
     now = datetime.now(timezone.utc)
     row.status = "RUNNING"
     row.started_at = now

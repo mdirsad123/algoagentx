@@ -28,6 +28,11 @@ class BrokerOrderRequest:
     target: Optional[Decimal] = None
     deviation: int = 20
     comment: str = "AlgoAgentX Demo"
+    max_lot: Optional[Decimal] = None
+    product_type: Optional[str] = None
+    order_variety: Optional[str] = None
+    instrument_key: Optional[str] = None
+    tag: Optional[str] = None
 
 
 @dataclass
@@ -64,3 +69,6 @@ class BrokerAdapter:
 
     async def get_rates(self, symbol: str, timeframe: str, count: int = 300) -> list[dict[str, Any]]:
         raise NotImplementedError
+
+    async def get_symbols(self, query: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        return []

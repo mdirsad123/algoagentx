@@ -8,16 +8,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db.models import BrokerAccount, LiveOrder, LiveSignal, LiveTradeLog, StrategyDeployment
 from ..brokers.base import BrokerOrderRequest
-from ..brokers.factory import get_broker_adapter
+from ..brokers.factory import get_broker_adapter, get_broker_code
 from .paper_broker import fill_market_order
 from .pnl_service import create_equity_point, to_decimal
 from .position_service import close_position, get_open_positions, open_position
-from .risk_manager import validate_signal_for_execution
+from .risk_manager import validate_signal_for_execution, validate_upstox_order_rules
 from .trading_safety import LIVE_DISABLED_MESSAGE, check_execution_safety, mark_heartbeat
+from .live_approval_service import check_live_execution_gate
 
 
 def _round(value: Decimal, places: str = "0.00000001") -> Decimal:
     return value.quantize(Decimal(places), rounding=ROUND_DOWN)
+
+
+def _result_volume(result, fallback: Decimal) -> Decimal:
+    raw = getattr(result, "raw_response", None) or {}
+    try:
+        request = raw.get("request") if isinstance(raw, dict) else {}
+        if isinstance(request, dict) and request.get("volume") not in (None, ""):
+            return to_decimal(request.get("volume"), str(fallback))
+        volume_debug = raw.get("volume_debug") if isinstance(raw, dict) else {}
+        if isinstance(volume_debug, dict) and volume_debug.get("normalized_volume") not in (None, ""):
+            return to_decimal(volume_debug.get("normalized_volume"), str(fallback))
+    except Exception:
+        pass
+    return fallback
 
 
 def calculate_entry_plan(deployment: StrategyDeployment, signal_type: str, price: Decimal) -> tuple[str, Decimal, Decimal, Decimal]:
@@ -37,8 +52,11 @@ def calculate_entry_plan(deployment: StrategyDeployment, signal_type: str, price
 
     risk_amount = capital * risk_per_trade
     price_risk = abs(price - stop_loss)
-    qty = Decimal("0") if price_risk <= 0 else risk_amount / price_risk
-    return side, _round(qty), _round(stop_loss), _round(target)
+    if str(getattr(deployment, "quantity_mode", "RISK_BASED") or "RISK_BASED").upper() == "FIXED_QTY":
+        qty = to_decimal(getattr(deployment, "fixed_quantity", None), "0")
+    else:
+        qty = Decimal("0") if price_risk <= 0 else risk_amount / price_risk
+    return side, _round(qty, "1") if str(getattr(deployment, "quantity_mode", "") or "").upper() == "FIXED_QTY" else _round(qty), _round(stop_loss), _round(target)
 
 
 async def _log(db: AsyncSession, deployment: StrategyDeployment, event_type: str, message: str, level: str = "INFO", metadata: Optional[dict] = None) -> None:
@@ -120,7 +138,9 @@ async def _execute_demo_entry(
         stop_loss=stop_loss,
         target=target,
         comment="AlgoAgentX Demo",
+        max_lot=getattr(deployment, "mt5_demo_max_lot", None),
     ))
+    actual_qty = _result_volume(result, qty)
 
     order = LiveOrder(
         deployment_id=deployment.id,
@@ -131,7 +151,7 @@ async def _execute_demo_entry(
         symbol=signal.symbol,
         side=order_side,
         order_type="MARKET",
-        qty=qty,
+        qty=actual_qty,
         entry_price=price,
         executed_price=result.executed_price if result.success else None,
         stop_loss=stop_loss,
@@ -151,7 +171,7 @@ async def _execute_demo_entry(
 
     executed_price = result.executed_price or price
     await _log(db, deployment, "BROKER_ORDER_FILLED", "MT5 demo market order filled/placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id})
-    await open_position(db, deployment, signal.symbol, position_side, qty, executed_price, stop_loss, target)
+    await open_position(db, deployment, signal.symbol, position_side, actual_qty, executed_price, stop_loss, target)
     signal.status = "EXECUTED"
     return order
 
@@ -159,12 +179,19 @@ async def _execute_demo_entry(
 async def _execute_demo_close(db: AsyncSession, deployment: StrategyDeployment, signal: LiveSignal, position, price: Decimal) -> LiveOrder:
     close_side = "SELL" if position.side == "LONG" else "BUY"
     if not deployment.broker_account_id:
-        return await _create_error_order(db, deployment, signal, close_side, to_decimal(position.qty), price, "DEMO close requires broker account")
+        signal.status = "REJECTED"
+        signal.rejection_reason = "DEMO close requires broker account"
+        return await _create_error_order(db, deployment, signal, close_side, to_decimal(position.qty), price, signal.rejection_reason)
     broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
     if broker is None or broker.status != "CONNECTED":
-        return await _create_error_order(db, deployment, signal, close_side, to_decimal(position.qty), price, "DEMO close requires CONNECTED broker account")
+        signal.status = "REJECTED"
+        signal.rejection_reason = "DEMO close requires CONNECTED broker account"
+        return await _create_error_order(db, deployment, signal, close_side, to_decimal(position.qty), price, signal.rejection_reason)
     adapter = get_broker_adapter(broker)
+    await _log(db, deployment, "BROKER_CLOSE_STARTED", "MT5 demo close order send started", metadata={"signal_id": str(signal.id), "position_id": str(position.id), "symbol": position.symbol})
     result = await adapter.close_position(position.symbol, position.side, to_decimal(position.qty))
+    actual_qty = _result_volume(result, to_decimal(position.qty))
+
     order = LiveOrder(
         deployment_id=deployment.id,
         signal_id=signal.id,
@@ -174,7 +201,7 @@ async def _execute_demo_close(db: AsyncSession, deployment: StrategyDeployment, 
         symbol=position.symbol,
         side=close_side,
         order_type="MARKET",
-        qty=to_decimal(position.qty),
+        qty=actual_qty,
         entry_price=price,
         executed_price=result.executed_price if result.success else None,
         status="FILLED" if result.success else "ERROR",
@@ -185,11 +212,111 @@ async def _execute_demo_close(db: AsyncSession, deployment: StrategyDeployment, 
     await db.flush()
     if result.success:
         await close_position(db, deployment, position, result.executed_price or price, reason=f"{signal.signal_type} signal")
-        await _log(db, deployment, "BROKER_POSITION_CLOSED", "MT5 demo position close order filled/placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id)})
+        signal.status = "EXECUTED"
+        await _log(db, deployment, "BROKER_POSITION_CLOSED", "MT5 demo position close order filled/placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id})
     else:
         signal.status = "ERROR"
         signal.rejection_reason = result.message
-        await _log(db, deployment, "BROKER_CLOSE_ERROR", result.message, "ERROR", {"signal_id": str(signal.id), "position_id": str(position.id)})
+        await _log(db, deployment, "BROKER_CLOSE_ERROR", result.message, "ERROR", {"signal_id": str(signal.id), "position_id": str(position.id), "order_id": str(order.id)})
+    return order
+
+
+async def _execute_upstox_entry(
+    db: AsyncSession,
+    deployment: StrategyDeployment,
+    signal: LiveSignal,
+    order_side: str,
+    position_side: str,
+    qty: Decimal,
+    price: Decimal,
+    stop_loss: Decimal,
+    target: Decimal,
+) -> LiveOrder:
+    broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
+    if broker is None or broker.status != "CONNECTED":
+        msg = "Upstox execution requires CONNECTED broker account"
+        signal.status = "REJECTED"
+        signal.rejection_reason = msg
+        return await _create_error_order(db, deployment, signal, order_side, qty, price, msg, stop_loss=stop_loss, target=target)
+
+    risk = await validate_upstox_order_rules(db, deployment, signal, qty, price)
+    if not risk.allowed:
+        signal.status = "REJECTED"
+        signal.rejection_reason = risk.reason
+        return await _create_error_order(db, deployment, signal, order_side, qty, price, risk.reason or "Upstox risk rejected", stop_loss=stop_loss, target=target)
+
+    instrument_key = getattr(deployment, "instrument_key", None) or getattr(deployment, "broker_symbol", None) or signal.symbol
+    adapter = get_broker_adapter(broker)
+    await _log(db, deployment, "UPSTOX_ORDER_STARTED", "Upstox order send started", metadata={"instrument_key": instrument_key, "signal_id": str(signal.id), "side": order_side, "qty": str(qty)})
+    result = await adapter.place_market_order(BrokerOrderRequest(
+        symbol=signal.symbol,
+        instrument_key=instrument_key,
+        side=order_side,
+        qty=qty,
+        price=price,
+        stop_loss=stop_loss,
+        target=target,
+        product_type=getattr(deployment, "product_type", "MIS"),
+        order_variety=getattr(deployment, "order_variety", "REGULAR"),
+        tag=f"AAX-{str(deployment.id)[:8]}",
+    ))
+    status = result.status if result.success else "ERROR"
+    order = LiveOrder(
+        deployment_id=deployment.id, signal_id=signal.id, user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
+        broker_order_id=result.broker_order_id, symbol=instrument_key, side=order_side, order_type="MARKET", qty=qty, entry_price=price,
+        executed_price=result.executed_price if result.success else None, stop_loss=stop_loss, target=target, status=status,
+        error_message=None if result.success else result.message, raw_response=result.raw_response,
+    )
+    db.add(order)
+    await db.flush()
+    if not result.success:
+        signal.status = "ERROR"
+        signal.rejection_reason = result.message
+        await _log(db, deployment, "UPSTOX_ORDER_ERROR", result.message, "ERROR", {"signal_id": str(signal.id), "order_id": str(order.id)})
+        return order
+
+    signal.status = "EXECUTED"
+    executed_price = result.executed_price or price
+    await open_position(db, deployment, instrument_key, position_side, qty, executed_price, stop_loss, target)
+    await _log(db, deployment, "UPSTOX_ORDER_PLACED", "Upstox order placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id, "status": status})
+    return order
+
+
+async def _execute_upstox_close(db: AsyncSession, deployment: StrategyDeployment, signal: LiveSignal, position, price: Decimal) -> LiveOrder:
+    close_side = "SELL" if position.side == "LONG" else "BUY"
+    broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
+    if broker is None or broker.status != "CONNECTED":
+        msg = "Upstox close requires CONNECTED broker account"
+        signal.status = "REJECTED"
+        signal.rejection_reason = msg
+        return await _create_error_order(db, deployment, signal, close_side, to_decimal(position.qty), price, msg)
+
+    risk = await validate_upstox_order_rules(db, deployment, signal, to_decimal(position.qty), price)
+    if not risk.allowed:
+        signal.status = "REJECTED"
+        signal.rejection_reason = risk.reason
+        return await _create_error_order(db, deployment, signal, close_side, to_decimal(position.qty), price, risk.reason or "Upstox close rejected")
+
+    adapter = get_broker_adapter(broker)
+    result = await adapter.place_market_order(BrokerOrderRequest(
+        symbol=position.symbol, instrument_key=position.symbol, side=close_side, qty=to_decimal(position.qty), price=price, product_type=getattr(deployment, "product_type", "MIS"), tag=f"AAX-EXIT-{str(deployment.id)[:8]}"
+    ))
+    order = LiveOrder(
+        deployment_id=deployment.id, signal_id=signal.id, user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
+        broker_order_id=result.broker_order_id, symbol=position.symbol, side=close_side, order_type="MARKET", qty=to_decimal(position.qty),
+        entry_price=price, executed_price=result.executed_price if result.success else None, status=result.status if result.success else "ERROR",
+        error_message=None if result.success else result.message, raw_response=result.raw_response,
+    )
+    db.add(order)
+    await db.flush()
+    if result.success:
+        await close_position(db, deployment, position, result.executed_price or price, reason=f"{signal.signal_type} signal")
+        signal.status = "EXECUTED"
+        await _log(db, deployment, "UPSTOX_POSITION_CLOSE_PLACED", "Upstox close order placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id})
+    else:
+        signal.status = "ERROR"
+        signal.rejection_reason = result.message
+        await _log(db, deployment, "UPSTOX_CLOSE_ERROR", result.message, "ERROR", {"signal_id": str(signal.id), "order_id": str(order.id)})
     return order
 
 
@@ -197,9 +324,16 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
     await _log(db, deployment, "EXECUTION_STARTED", f"{deployment.mode} execution started for {signal.signal_type}", metadata={"signal_id": str(signal.id)})
 
     if deployment.mode == "LIVE":
+        gate = await check_live_execution_gate(db, deployment)
+        if not gate.allowed:
+            signal.status = "REJECTED"
+            signal.rejection_reason = gate.reason or LIVE_DISABLED_MESSAGE
+            await _log(db, deployment, "LIVE_EXECUTION_BLOCKED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id), "approval_gate": True})
+            return None
+        # Final production connector intentionally remains blocked until provider-specific LIVE execution is certified.
         signal.status = "REJECTED"
         signal.rejection_reason = LIVE_DISABLED_MESSAGE
-        await _log(db, deployment, "RISK_REJECTED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id)})
+        await _log(db, deployment, "LIVE_EXECUTION_BLOCKED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id), "final_connector_gate": True})
         return None
 
     safety = await check_execution_safety(db, deployment, signal)
@@ -235,8 +369,15 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
                 latest_order = await fill_market_order(db, deployment, signal, exit_side, to_decimal(position.qty), price, action="EXIT")
                 await close_position(db, deployment, position, price, reason=f"{signal.signal_type} signal")
             elif deployment.mode == "DEMO":
-                latest_order = await _execute_demo_close(db, deployment, signal, position, price)
+                broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none() if deployment.broker_account_id else None
+                if broker is not None and get_broker_code(broker) == "UPSTOX":
+                    latest_order = await _execute_upstox_close(db, deployment, signal, position, price)
+                else:
+                    latest_order = await _execute_demo_close(db, deployment, signal, position, price)
         await create_equity_point(db, deployment)
+        if latest_order is not None and latest_order.status == "ERROR":
+            await _log(db, deployment, "EXECUTION_ABORTED", "Entry skipped because MT5 position close failed", "ERROR", {"signal_id": str(signal.id), "order_id": str(latest_order.id)})
+            return latest_order
         if risk.action == "CLOSE_ONLY":
             if signal.status not in {"ERROR", "REJECTED"}:
                 signal.status = "EXECUTED"
@@ -255,7 +396,11 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
             await open_position(db, deployment, signal.symbol, position_side, qty, price, stop_loss, target)
             signal.status = "EXECUTED"
         elif deployment.mode == "DEMO":
-            latest_order = await _execute_demo_entry(db, deployment, signal, order_side, position_side, qty, price, stop_loss, target)
+            broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none() if deployment.broker_account_id else None
+            if broker is not None and get_broker_code(broker) == "UPSTOX":
+                latest_order = await _execute_upstox_entry(db, deployment, signal, order_side, position_side, qty, price, stop_loss, target)
+            else:
+                latest_order = await _execute_demo_entry(db, deployment, signal, order_side, position_side, qty, price, stop_loss, target)
         await create_equity_point(db, deployment)
         return latest_order
 

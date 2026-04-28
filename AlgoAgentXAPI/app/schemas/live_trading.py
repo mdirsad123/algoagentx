@@ -28,15 +28,101 @@ class LiveBaseModel(BaseModel):
         orm_mode = True
 
 
+
+class BrokerProviderBase(LiveBaseModel):
+    code: str = Field(..., min_length=2, max_length=50)
+    name: str = Field(..., min_length=2, max_length=255)
+    market_type: str = Field(default="MULTI", max_length=50)
+    auth_type: str = Field(default="PASSWORD", max_length=50)
+    supports_paper: bool = True
+    supports_demo: bool = False
+    supports_live: bool = False
+    supports_market_data: bool = False
+    supports_orders: bool = False
+    supports_websocket: bool = False
+    is_enabled: bool = True
+    admin_notes: Optional[str] = None
+    config_schema: Optional[dict[str, Any]] = None
+
+    @field_validator("code", "market_type", "auth_type")
+    @classmethod
+    def normalize_provider_enums(cls, value: str):
+        return _upper(value) or value
+
+
+class BrokerProviderCreate(BrokerProviderBase):
+    pass
+
+
+class BrokerProviderUpdate(LiveBaseModel):
+    code: Optional[str] = None
+    name: Optional[str] = None
+    market_type: Optional[str] = None
+    auth_type: Optional[str] = None
+    supports_paper: Optional[bool] = None
+    supports_demo: Optional[bool] = None
+    supports_live: Optional[bool] = None
+    supports_market_data: Optional[bool] = None
+    supports_orders: Optional[bool] = None
+    supports_websocket: Optional[bool] = None
+    is_enabled: Optional[bool] = None
+    admin_notes: Optional[str] = None
+    config_schema: Optional[dict[str, Any]] = None
+
+    @field_validator("code", "market_type", "auth_type")
+    @classmethod
+    def normalize_provider_update_enums(cls, value: Optional[str]):
+        return _upper(value) if value is not None else value
+
+
+class BrokerProviderOut(BrokerProviderBase):
+    id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+class UpstoxBrokerAccountCreate(LiveBaseModel):
+    account_label: str = Field(default="Upstox India", min_length=2, max_length=255)
+    client_id: str = Field(..., min_length=5, max_length=255)
+    client_secret: str = Field(..., min_length=5, max_length=2000)
+    redirect_uri: str = Field(default="http://localhost:8000/api/v1/broker-accounts/upstox/callback", min_length=10, max_length=1000)
+    redirect_after: str = Field(default="/brokers", max_length=500)
+
+
+class UpstoxConnectUrlOut(LiveBaseModel):
+    auth_url: str
+    state: str
+    broker_account_id: Optional[UUID] = None
+
+
+class BrokerOAuthStateOut(LiveBaseModel):
+    id: UUID
+    user_id: UUID
+    broker_provider_code: str
+    broker_account_id: Optional[UUID] = None
+    state: str
+    redirect_after: Optional[str] = None
+    expires_at: datetime
+    consumed_at: Optional[datetime] = None
+    created_at: datetime
+
+
 class BrokerAccountCreate(LiveBaseModel):
+    broker_provider_id: Optional[UUID] = None
     broker_name: str = Field(default="MT5", max_length=50)
+    broker_code: Optional[str] = None
+    auth_type: Optional[str] = None
     account_label: str = Field(..., min_length=2, max_length=255)
     mode: str = Field(default="DEMO")
     status: str = Field(default="DISCONNECTED")
     server_name: Optional[str] = None
     login_id: Optional[str] = None
+    oauth_client_id: Optional[str] = None
+    encrypted_client_secret: Optional[str] = None
+    oauth_redirect_uri: Optional[str] = None
     encrypted_password: Optional[str] = None
     encrypted_token: Optional[str] = None
+    encrypted_refresh_token: Optional[str] = None
+    token_expires_at: Optional[datetime] = None
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("mode", "status")
@@ -50,14 +136,22 @@ class BrokerAccountCreate(LiveBaseModel):
 
 
 class BrokerAccountUpdate(LiveBaseModel):
+    broker_provider_id: Optional[UUID] = None
     broker_name: Optional[str] = None
+    broker_code: Optional[str] = None
+    auth_type: Optional[str] = None
     account_label: Optional[str] = None
     mode: Optional[str] = None
     status: Optional[str] = None
     server_name: Optional[str] = None
     login_id: Optional[str] = None
+    oauth_client_id: Optional[str] = None
+    encrypted_client_secret: Optional[str] = None
+    oauth_redirect_uri: Optional[str] = None
     encrypted_password: Optional[str] = None
     encrypted_token: Optional[str] = None
+    encrypted_refresh_token: Optional[str] = None
+    token_expires_at: Optional[datetime] = None
     metadata_json: Optional[dict[str, Any]] = None
     last_connected_at: Optional[datetime] = None
 
@@ -76,13 +170,19 @@ class BrokerAccountUpdate(LiveBaseModel):
 class BrokerAccountOut(LiveBaseModel):
     id: UUID
     user_id: UUID
+    broker_provider_id: Optional[UUID] = None
     broker_name: str
+    broker_code: Optional[str] = None
+    auth_type: Optional[str] = None
     account_label: str
     mode: str
     status: str
     server_name: Optional[str] = None
     login_id: Optional[str] = None
+    oauth_client_id: Optional[str] = None
+    oauth_redirect_uri: Optional[str] = None
     metadata_json: dict[str, Any] = Field(default_factory=dict)
+    token_expires_at: Optional[datetime] = None
     last_connected_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -93,6 +193,10 @@ class StrategyDeploymentCreate(LiveBaseModel):
     broker_account_id: Optional[UUID] = None
     name: str = Field(..., min_length=2, max_length=255)
     instrument: str = Field(..., min_length=1, max_length=100)
+    broker_symbol: Optional[str] = None
+    instrument_key: Optional[str] = None
+    exchange: Optional[str] = None
+    segment: Optional[str] = None
     timeframe: str = Field(..., min_length=1, max_length=50)
     mode: str = Field(default="PAPER")
     capital: Decimal = Decimal("100000")
@@ -104,6 +208,16 @@ class StrategyDeploymentCreate(LiveBaseModel):
     max_open_positions: int = 1
     allow_short: bool = True
     auto_trade_enabled: bool = False
+    auto_runner_enabled: bool = False
+    mt5_demo_max_lot: Optional[Decimal] = None
+    product_type: str = "MIS"
+    order_variety: str = "REGULAR"
+    quantity_mode: str = "RISK_BASED"
+    fixed_quantity: Optional[Decimal] = None
+    max_quantity: Optional[Decimal] = None
+    max_order_value: Optional[Decimal] = None
+    square_off_time: Optional[str] = None
+    upstox_order_confirmed: bool = False
     tradingview_secret: Optional[str] = None
 
     @field_validator("mode")
@@ -119,6 +233,10 @@ class StrategyDeploymentUpdate(LiveBaseModel):
     broker_account_id: Optional[UUID] = None
     name: Optional[str] = None
     instrument: Optional[str] = None
+    broker_symbol: Optional[str] = None
+    instrument_key: Optional[str] = None
+    exchange: Optional[str] = None
+    segment: Optional[str] = None
     timeframe: Optional[str] = None
     mode: Optional[str] = None
     status: Optional[str] = None
@@ -131,6 +249,16 @@ class StrategyDeploymentUpdate(LiveBaseModel):
     max_open_positions: Optional[int] = None
     allow_short: Optional[bool] = None
     auto_trade_enabled: Optional[bool] = None
+    auto_runner_enabled: Optional[bool] = None
+    mt5_demo_max_lot: Optional[Decimal] = None
+    product_type: Optional[str] = None
+    order_variety: Optional[str] = None
+    quantity_mode: Optional[str] = None
+    fixed_quantity: Optional[Decimal] = None
+    max_quantity: Optional[Decimal] = None
+    max_order_value: Optional[Decimal] = None
+    square_off_time: Optional[str] = None
+    upstox_order_confirmed: Optional[bool] = None
     tradingview_secret: Optional[str] = None
 
     @field_validator("mode", "status")
@@ -152,6 +280,10 @@ class StrategyDeploymentOut(LiveBaseModel):
     broker_account_id: Optional[UUID] = None
     name: str
     instrument: str
+    broker_symbol: Optional[str] = None
+    instrument_key: Optional[str] = None
+    exchange: Optional[str] = None
+    segment: Optional[str] = None
     timeframe: str
     mode: str
     status: str
@@ -164,6 +296,28 @@ class StrategyDeploymentOut(LiveBaseModel):
     max_open_positions: int
     allow_short: bool
     auto_trade_enabled: bool
+    auto_runner_enabled: bool = False
+    last_runner_at: Optional[datetime] = None
+    last_processed_candle_time: Optional[datetime] = None
+    last_broker_sync_at: Optional[datetime] = None
+    live_sync_enabled: bool = False
+    live_sync_interval_seconds: int = 10
+    last_live_sync_at: Optional[datetime] = None
+    live_sync_error_count: int = 0
+    live_sync_last_error: Optional[str] = None
+    live_approved: bool = False
+    live_approved_at: Optional[datetime] = None
+    runner_error_count: int = 0
+    runner_last_error: Optional[str] = None
+    mt5_demo_max_lot: Optional[Decimal] = None
+    product_type: Optional[str] = "MIS"
+    order_variety: Optional[str] = "REGULAR"
+    quantity_mode: Optional[str] = "RISK_BASED"
+    fixed_quantity: Optional[Decimal] = None
+    max_quantity: Optional[Decimal] = None
+    max_order_value: Optional[Decimal] = None
+    square_off_time: Optional[str] = None
+    upstox_order_confirmed: Optional[bool] = False
     tradingview_secret: Optional[str] = None
     webhook_url: str = "/api/v1/webhooks/tradingview"
     example_payload: dict[str, Any] = Field(default_factory=dict)
@@ -218,6 +372,18 @@ class LiveSignalOut(LiveBaseModel):
     raw_payload: dict[str, Any] = Field(default_factory=dict)
     status: str
     rejection_reason: Optional[str] = None
+    created_at: datetime
+
+
+class BrokerOrderEventOut(LiveBaseModel):
+    id: UUID
+    broker_provider_code: str
+    broker_account_id: Optional[UUID] = None
+    deployment_id: Optional[UUID] = None
+    broker_order_id: Optional[str] = None
+    event_type: str
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+    processed: bool = False
     created_at: datetime
 
 
@@ -350,11 +516,16 @@ class RunStrategyOnceIn(LiveBaseModel):
 class RunStrategyOnceOut(LiveBaseModel):
     success: bool
     deployment_id: str
+    strategy_name: Optional[str] = None
     latest_candle_time: Optional[datetime] = None
     signal: Optional[str] = None
     executed: bool = False
     order_id: Optional[str] = None
+    broker_order_id: Optional[str] = None
     signal_id: Optional[str] = None
     duplicate: bool = False
     message: str
     latest_runner_log: Optional[str] = None
+    order_status: Optional[str] = None
+    error_message: Optional[str] = None
+    symbol: Optional[str] = None

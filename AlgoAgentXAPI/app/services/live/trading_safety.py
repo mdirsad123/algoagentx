@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db.models import BrokerAccount, LiveOrder, LiveSignal, LiveTradeLog, PlatformTradingSettings, StrategyDeployment
 
-LIVE_DISABLED_MESSAGE = "Live trading is disabled until final production review."
+LIVE_DISABLED_MESSAGE = "Live trading is disabled until final production review and admin approval."
 
 
 @dataclass
@@ -27,6 +27,10 @@ async def get_platform_trading_settings(db: AsyncSession) -> PlatformTradingSett
         demo_trading_enabled=True,
         live_trading_enabled=False,
         global_kill_switch=False,
+        broker_auto_sync_enabled=True,
+        min_broker_sync_interval_seconds=5,
+        default_broker_sync_interval_seconds=10,
+        max_broker_sync_interval_seconds=300,
     )
     db.add(row)
     await db.flush()
@@ -53,7 +57,7 @@ async def check_platform_mode_allowed(db: AsyncSession, mode: str) -> SafetyDeci
     mode = (mode or "").upper()
     if settings.global_kill_switch:
         return SafetyDecision(False, "Global kill switch is ON. Trading execution is paused for all deployments.")
-    if mode == "LIVE":
+    if mode == "LIVE" and not settings.live_trading_enabled:
         return SafetyDecision(False, LIVE_DISABLED_MESSAGE)
     if mode == "PAPER" and not settings.paper_trading_enabled:
         return SafetyDecision(False, "Paper trading is disabled by platform trading settings.")

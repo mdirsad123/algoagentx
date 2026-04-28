@@ -6,14 +6,20 @@ export type PositionSide = "LONG" | "SHORT";
 
 export interface BrokerAccount {
   id: string;
+  broker_provider_id?: string | null;
   user_id?: string;
   broker_name: string;
+  broker_code?: string | null;
+  auth_type?: string | null;
   account_label: string;
   mode: LiveMode;
   status: BrokerStatus;
   server_name?: string | null;
   login_id?: string | null;
+  oauth_client_id?: string | null;
+  oauth_redirect_uri?: string | null;
   metadata_json?: Record<string, unknown>;
+  token_expires_at?: string | null;
   last_connected_at?: string | null;
   created_at?: string;
   updated_at?: string;
@@ -59,6 +65,21 @@ export interface BrokerTestResponse {
   connection: BrokerConnectionResult;
 }
 
+export interface BrokerSymbol {
+  symbol: string;
+  name?: string;
+  path?: string | null;
+  description?: string | null;
+  visible?: boolean | string | null;
+  trade_mode?: number | string | null;
+  volume_min?: number | string | null;
+  volume_max?: number | string | null;
+  volume_step?: number | string | null;
+  success?: boolean;
+  message?: string;
+  [key: string]: unknown;
+}
+
 export interface BrokerMt5Position {
   ticket?: number | string;
   symbol?: string;
@@ -74,14 +95,21 @@ export interface BrokerMt5Position {
 }
 
 export interface BrokerAccountPayload {
+  broker_provider_id?: string | null;
   broker_name?: string;
+  broker_code?: string | null;
+  auth_type?: string | null;
   account_label: string;
   mode: LiveMode;
   status?: BrokerStatus;
   server_name?: string | null;
   login_id?: string | null;
+  oauth_client_id?: string | null;
+  encrypted_client_secret?: string | null;
+  oauth_redirect_uri?: string | null;
   encrypted_password?: string | null;
   encrypted_token?: string | null;
+  encrypted_refresh_token?: string | null;
   metadata_json?: Record<string, unknown>;
 }
 
@@ -117,6 +145,18 @@ export interface StrategyDeployment {
   broker_account_id?: string | null;
   name: string;
   instrument: string;
+  broker_symbol?: string | null;
+  instrument_key?: string | null;
+  exchange?: string | null;
+  segment?: string | null;
+  product_type?: string | null;
+  order_variety?: string | null;
+  quantity_mode?: string | null;
+  fixed_quantity?: number | string | null;
+  max_quantity?: number | string | null;
+  max_order_value?: number | string | null;
+  square_off_time?: string | null;
+  upstox_order_confirmed?: boolean;
   timeframe: string;
   mode: LiveMode;
   status: DeploymentStatus;
@@ -129,6 +169,29 @@ export interface StrategyDeployment {
   max_open_positions: number;
   allow_short: boolean;
   auto_trade_enabled: boolean;
+  auto_runner_enabled?: boolean;
+  last_runner_at?: string | null;
+  last_processed_candle_time?: string | null;
+  last_broker_sync_at?: string | null;
+  live_sync_enabled?: boolean;
+  live_sync_interval_seconds?: number;
+  last_live_sync_at?: string | null;
+  live_sync_error_count?: number;
+  live_sync_last_error?: string | null;
+  live_approved?: boolean;
+  live_approved_at?: string | null;
+  runner_error_count?: number;
+  runner_last_error?: string | null;
+  runner_stale?: boolean;
+  mt5_demo_max_lot?: number | string | null;
+  product_type?: string | null;
+  order_variety?: string | null;
+  quantity_mode?: string | null;
+  fixed_quantity?: number | string | null;
+  max_quantity?: number | string | null;
+  max_order_value?: number | string | null;
+  square_off_time?: string | null;
+  upstox_order_confirmed?: boolean;
   tradingview_secret?: string | null;
   webhook_url?: string;
   example_payload?: Record<string, unknown>;
@@ -145,6 +208,18 @@ export interface DeploymentPayload {
   broker_account_id?: string | null;
   name: string;
   instrument: string;
+  broker_symbol?: string | null;
+  instrument_key?: string | null;
+  exchange?: string | null;
+  segment?: string | null;
+  product_type?: string | null;
+  order_variety?: string | null;
+  quantity_mode?: string | null;
+  fixed_quantity?: number | string | null;
+  max_quantity?: number | string | null;
+  max_order_value?: number | string | null;
+  square_off_time?: string | null;
+  upstox_order_confirmed?: boolean;
   timeframe: string;
   mode: "PAPER" | "DEMO";
   capital: number;
@@ -156,6 +231,29 @@ export interface DeploymentPayload {
   max_open_positions: number;
   allow_short: boolean;
   auto_trade_enabled: boolean;
+  auto_runner_enabled?: boolean;
+  last_runner_at?: string | null;
+  last_processed_candle_time?: string | null;
+  last_broker_sync_at?: string | null;
+  live_sync_enabled?: boolean;
+  live_sync_interval_seconds?: number;
+  last_live_sync_at?: string | null;
+  live_sync_error_count?: number;
+  live_sync_last_error?: string | null;
+  live_approved?: boolean;
+  live_approved_at?: string | null;
+  runner_error_count?: number;
+  runner_last_error?: string | null;
+  runner_stale?: boolean;
+  mt5_demo_max_lot?: number | string | null;
+  product_type?: string | null;
+  order_variety?: string | null;
+  quantity_mode?: string | null;
+  fixed_quantity?: number | string | null;
+  max_quantity?: number | string | null;
+  max_order_value?: number | string | null;
+  square_off_time?: string | null;
+  upstox_order_confirmed?: boolean;
   tradingview_secret?: string | null;
 }
 
@@ -175,6 +273,19 @@ export interface LiveSignal {
   reason?: string | null;
   status: string;
   rejection_reason?: string | null;
+  created_at?: string;
+}
+
+
+export interface BrokerOrderEvent {
+  id: string;
+  broker_provider_code: string;
+  broker_account_id?: string | null;
+  deployment_id?: string | null;
+  broker_order_id?: string | null;
+  event_type: string;
+  raw_payload?: Record<string, unknown>;
+  processed: boolean;
   created_at?: string;
 }
 
@@ -247,6 +358,9 @@ export interface LiveDeploymentSummaryMetrics {
   signals_count_today: number;
   total_orders: number;
   total_signals: number;
+  source?: string;
+  broker_synced?: boolean;
+  broker_deal_count?: number | null;
 }
 
 export interface LiveDeploymentSummaryDeployment {
@@ -255,10 +369,36 @@ export interface LiveDeploymentSummaryDeployment {
   strategy_id: string;
   strategy_name: string;
   instrument: string;
+  broker_symbol?: string | null;
+  instrument_key?: string | null;
+  exchange?: string | null;
+  segment?: string | null;
+  product_type?: string | null;
+  order_variety?: string | null;
+  quantity_mode?: string | null;
+  fixed_quantity?: number | string | null;
+  max_quantity?: number | string | null;
+  max_order_value?: number | string | null;
+  square_off_time?: string | null;
+  upstox_order_confirmed?: boolean;
   timeframe: string;
   mode: LiveMode;
   status: DeploymentStatus;
   auto_trade_enabled: boolean;
+  auto_runner_enabled?: boolean;
+  last_runner_at?: string | null;
+  last_processed_candle_time?: string | null;
+  last_broker_sync_at?: string | null;
+  live_sync_enabled?: boolean;
+  live_sync_interval_seconds?: number;
+  last_live_sync_at?: string | null;
+  live_sync_error_count?: number;
+  live_sync_last_error?: string | null;
+  live_approved?: boolean;
+  live_approved_at?: string | null;
+  runner_error_count?: number;
+  runner_last_error?: string | null;
+  runner_stale?: boolean;
   last_signal_at?: string | null;
   last_heartbeat_at?: string | null;
   webhook_url?: string;
@@ -311,6 +451,20 @@ export interface AdminLiveDeploymentRow {
   mode: LiveMode;
   status: DeploymentStatus;
   auto_trade_enabled: boolean;
+  auto_runner_enabled?: boolean;
+  last_runner_at?: string | null;
+  last_processed_candle_time?: string | null;
+  last_broker_sync_at?: string | null;
+  live_sync_enabled?: boolean;
+  live_sync_interval_seconds?: number;
+  last_live_sync_at?: string | null;
+  live_sync_error_count?: number;
+  live_sync_last_error?: string | null;
+  live_approved?: boolean;
+  live_approved_at?: string | null;
+  runner_error_count?: number;
+  runner_last_error?: string | null;
+  runner_stale?: boolean;
   last_signal_at?: string | null;
   last_heartbeat_at?: string | null;
   open_positions_count: number;
@@ -377,6 +531,7 @@ export interface AdminLiveDeploymentDetail {
   recent_logs?: LiveTradeLog[];
   recent_equity_points?: LiveEquityPoint[];
   admin_audit_actions?: AdminLiveAuditAction[];
+  recent_broker_events?: BrokerOrderEvent[];
 }
 
 export interface LiveEquityPoint {
@@ -415,6 +570,8 @@ export interface LiveCandleSnapshot {
   source: string;
   symbol: string;
   resolved_symbol?: string | null;
+  broker_symbol?: string | null;
+  instrument_key?: string | null;
   timeframe: string;
   requested_count?: number;
   stored_count: number;
@@ -430,19 +587,40 @@ export interface StrategyRunnerInfo {
   last_signal?: string | null;
   latest_runner_log?: string | null;
   latest_runner_status?: string | null;
+  latest_order_status?: string | null;
+  latest_order_error?: string | null;
+  latest_broker_order_id?: string | null;
+  auto_runner_enabled?: boolean;
+  last_processed_candle_time?: string | null;
+  last_broker_sync_at?: string | null;
+  live_sync_enabled?: boolean;
+  live_sync_interval_seconds?: number;
+  last_live_sync_at?: string | null;
+  live_sync_error_count?: number;
+  live_sync_last_error?: string | null;
+  live_approved?: boolean;
+  live_approved_at?: string | null;
+  runner_error_count?: number;
+  runner_last_error?: string | null;
+  runner_stale?: boolean;
 }
 
 export interface RunStrategyResponse {
   success: boolean;
   deployment_id: string;
+  strategy_name?: string | null;
   latest_candle_time?: string | null;
   signal?: SignalType | string | null;
   executed: boolean;
   order_id?: string | null;
+  broker_order_id?: string | null;
   signal_id?: string | null;
   duplicate?: boolean;
   message: string;
   latest_runner_log?: string | null;
+  order_status?: string | null;
+  error_message?: string | null;
+  symbol?: string | null;
 }
 
 export interface PlatformTradingSettings {
@@ -453,6 +631,11 @@ export interface PlatformTradingSettings {
   global_kill_switch: boolean;
   max_global_demo_orders_per_day?: number | null;
   max_user_demo_orders_per_day?: number | null;
+  upstox_order_execution_enabled?: boolean;
+  broker_auto_sync_enabled?: boolean;
+  min_broker_sync_interval_seconds?: number;
+  default_broker_sync_interval_seconds?: number;
+  max_broker_sync_interval_seconds?: number;
   updated_by?: string | null;
   updated_at?: string | null;
 }
@@ -464,9 +647,82 @@ export interface PlatformTradingSettingsPayload {
   global_kill_switch?: boolean;
   max_global_demo_orders_per_day?: number | null;
   max_user_demo_orders_per_day?: number | null;
+  upstox_order_execution_enabled?: boolean;
+  broker_auto_sync_enabled?: boolean;
+  min_broker_sync_interval_seconds?: number;
+  default_broker_sync_interval_seconds?: number;
+  max_broker_sync_interval_seconds?: number;
 }
 
 // Optional safety fields added by Phase 11.
 export interface AdminLiveDeploymentListResponseWithSettings extends AdminLiveDeploymentListResponse {
   settings?: PlatformTradingSettings;
+}
+
+export interface BrokerProvider {
+  id: string;
+  code: string;
+  name: string;
+  market_type: "FOREX" | "INDIAN_EQUITY" | "CRYPTO" | "MULTI" | string;
+  auth_type: "PASSWORD" | "OAUTH2" | "API_KEY" | string;
+  supports_paper: boolean;
+  supports_demo: boolean;
+  supports_live: boolean;
+  supports_market_data: boolean;
+  supports_orders: boolean;
+  supports_websocket: boolean;
+  is_enabled: boolean;
+  admin_notes?: string | null;
+  config_schema?: Record<string, unknown> | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface BrokerProviderPayload {
+  code: string;
+  name: string;
+  market_type: string;
+  auth_type: string;
+  supports_paper?: boolean;
+  supports_demo?: boolean;
+  supports_live?: boolean;
+  supports_market_data?: boolean;
+  supports_orders?: boolean;
+  supports_websocket?: boolean;
+  is_enabled?: boolean;
+  admin_notes?: string | null;
+  config_schema?: Record<string, unknown> | null;
+}
+
+
+export interface LiveSyncStatus {
+  live_sync_enabled: boolean;
+  live_sync_interval_seconds: number;
+  last_live_sync_at?: string | null;
+  last_broker_sync_at?: string | null;
+  live_sync_error_count: number;
+  live_sync_last_error?: string | null;
+  platform_auto_sync_enabled: boolean;
+}
+
+export interface LiveTradingApproval {
+  id: string;
+  user_id: string;
+  user_name?: string | null;
+  user_email?: string | null;
+  broker_account_id?: string | null;
+  broker_name?: string | null;
+  broker_mode?: string | null;
+  broker_status?: string | null;
+  approved_by?: string | null;
+  approved_by_email?: string | null;
+  status: "PENDING" | "APPROVED" | "REJECTED" | "REVOKED" | string;
+  approved_markets?: string[];
+  max_daily_loss?: number | string | null;
+  max_order_value?: number | string | null;
+  max_trades_per_day?: number | null;
+  notes?: string | null;
+  risk_disclaimer_accepted_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }

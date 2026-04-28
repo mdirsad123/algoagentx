@@ -58,6 +58,11 @@ export default function AdminLiveSettingsPage() {
         global_kill_switch: settings.global_kill_switch,
         max_global_demo_orders_per_day: settings.max_global_demo_orders_per_day ?? null,
         max_user_demo_orders_per_day: settings.max_user_demo_orders_per_day ?? null,
+        upstox_order_execution_enabled: Boolean(settings.upstox_order_execution_enabled),
+        broker_auto_sync_enabled: Boolean(settings.broker_auto_sync_enabled),
+        min_broker_sync_interval_seconds: Number(settings.min_broker_sync_interval_seconds || 5),
+        default_broker_sync_interval_seconds: Number(settings.default_broker_sync_interval_seconds || 10),
+        max_broker_sync_interval_seconds: Number(settings.max_broker_sync_interval_seconds || 300),
       });
       setSettings(saved);
       showToast("Live trading safety settings saved", "success");
@@ -119,8 +124,21 @@ export default function AdminLiveSettingsPage() {
             <div className="mt-5 grid grid-cols-1 gap-4">
               <ToggleRow label="Paper Trading" description="Allow PAPER simulated execution for user deployments." checked={settings.paper_trading_enabled} onChange={(v) => patch("paper_trading_enabled", v)} />
               <ToggleRow label="MT5 Demo Trading" description="Allow DEMO market orders through connected MT5 demo accounts." checked={settings.demo_trading_enabled} onChange={(v) => patch("demo_trading_enabled", v)} />
+              <ToggleRow label="Upstox Order Execution" description="Allow gated Upstox order placement for confirmed user deployments. Keep OFF until you are ready for real broker orders." checked={Boolean(settings.upstox_order_execution_enabled)} onChange={(v) => patch("upstox_order_execution_enabled", v)} />
               <ToggleRow label="Live Trading" description="Disabled until final production, legal and risk review." checked={false} disabled onChange={() => {}} />
               <ToggleRow label="Global Kill Switch" description="Immediately block every new PAPER and DEMO order before execution." checked={settings.global_kill_switch} onChange={(v) => patch("global_kill_switch", v)} />
+            </div>
+          </GlassCard>
+
+          <GlassCard className="p-6" hoverEffect={false}>
+            <h2 className="text-xl font-bold text-lime-300">Broker Auto Sync Control</h2>
+            <div className="mt-5 grid grid-cols-1 gap-4">
+              <ToggleRow label="Broker Auto Sync Enabled" description="Allow deployment-level automatic broker order/position sync. Individual deployments remain OFF by default." checked={Boolean(settings.broker_auto_sync_enabled)} onChange={(v) => patch("broker_auto_sync_enabled", v)} />
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <label className="text-sm text-purple-100">Minimum sync interval seconds<input type="number" min={5} max={300} value={settings.min_broker_sync_interval_seconds ?? 5} onChange={(e) => patch("min_broker_sync_interval_seconds", Number(e.target.value))} className="mt-2 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-3 text-white outline-none focus:border-lime-300" /></label>
+                <label className="text-sm text-purple-100">Default sync interval seconds<input type="number" min={5} max={300} value={settings.default_broker_sync_interval_seconds ?? 10} onChange={(e) => patch("default_broker_sync_interval_seconds", Number(e.target.value))} className="mt-2 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-3 text-white outline-none focus:border-lime-300" /></label>
+                <label className="text-sm text-purple-100">Maximum sync interval seconds<input type="number" min={5} max={300} value={settings.max_broker_sync_interval_seconds ?? 300} onChange={(e) => patch("max_broker_sync_interval_seconds", Number(e.target.value))} className="mt-2 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-3 text-white outline-none focus:border-lime-300" /></label>
+              </div>
             </div>
           </GlassCard>
 

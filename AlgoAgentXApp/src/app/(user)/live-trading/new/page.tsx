@@ -16,6 +16,10 @@ const defaults = {
   name: "",
   strategy_id: "",
   instrument: "XAUUSD",
+  broker_symbol: "",
+  instrument_key: "",
+  exchange: "",
+  segment: "",
   timeframe: "M15",
   mode: "PAPER" as "PAPER" | "DEMO",
   broker_account_id: "",
@@ -43,6 +47,9 @@ export default function NewLiveDeploymentPage() {
   const [form, setForm] = useState(defaults);
 
   const connectedDemoBrokers = useMemo(() => brokers.filter((b) => b.mode === "DEMO" && b.status === "CONNECTED"), [brokers]);
+  const selectedBroker = useMemo(() => brokers.find((b) => b.id === form.broker_account_id), [brokers, form.broker_account_id]);
+  const selectedProvider = ((selectedBroker?.broker_name || selectedBroker?.broker_code || "") as string).toUpperCase();
+  const isUpstox = selectedProvider === "UPSTOX";
   const deployableStrategies = useMemo(
     () => strategies.filter((strategy) => (form.mode === "DEMO" ? isDemoReady(strategy) : isPaperReady(strategy))),
     [strategies, form.mode],
@@ -85,11 +92,19 @@ export default function NewLiveDeploymentPage() {
       showToast("Broker account is required for DEMO mode", "error");
       return;
     }
+    if (form.mode === "DEMO" && isUpstox && !(form.instrument_key || form.broker_symbol)) {
+      showToast("Upstox deployment requires instrument key / broker symbol, for example NSE_EQ|INE002A01018", "error");
+      return;
+    }
     try {
       setSaving(true);
       const created = await liveTradingApi.createDeployment({
         ...form,
         broker_account_id: form.mode === "DEMO" ? form.broker_account_id : form.broker_account_id || null,
+        broker_symbol: form.broker_symbol || (!isUpstox ? form.instrument_key : "") || null,
+        instrument_key: form.instrument_key || null,
+        exchange: form.exchange || null,
+        segment: form.segment || null,
       });
       showToast("Deployment created", "success");
       router.push(`/live-trading/${created.id}`);
@@ -104,7 +119,7 @@ export default function NewLiveDeploymentPage() {
     <PageShell>
       <PageHeader
         title="Create Live Deployment"
-        subtitle="Only admin-approved strategies can be deployed to PAPER or MT5 DEMO. LIVE mode remains locked."
+        subtitle="Only admin-approved strategies can be deployed to PAPER or DEMO. MT5 executes demo orders; Upstox market data is snapshot-only in this phase. LIVE mode remains locked."
         actions={<Link href="/live-trading"><Button variant="outline" className="gap-2 border-white/10 bg-white/5 text-white hover:bg-white/10"><ArrowLeft className="h-4 w-4" />Back</Button></Link>}
       />
 
@@ -128,8 +143,10 @@ export default function NewLiveDeploymentPage() {
               <label className="space-y-2 text-sm text-purple-100">Deployable strategy<select required className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none" value={form.strategy_id} onChange={(e) => setForm({ ...form, strategy_id: e.target.value })}>{deployableStrategies.length === 0 && <option value="">No deployable strategy found</option>}{deployableStrategies.map((strategy) => <option key={strategy.id} value={strategy.id}>{strategy.name} • {form.mode === "DEMO" ? "Demo Ready" : "Paper Ready"}</option>)}</select></label>
               <label className="space-y-2 text-sm text-purple-100">Instrument<input required className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.instrument} onChange={(e) => setForm({ ...form, instrument: e.target.value.toUpperCase() })} /></label>
               <label className="space-y-2 text-sm text-purple-100">Timeframe<select className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none" value={form.timeframe} onChange={(e) => setForm({ ...form, timeframe: e.target.value })}>{["M5", "M15", "M30", "H1", "H4", "D1"].map((tf) => <option key={tf} value={tf}>{tf}</option>)}</select></label>
-              <label className="space-y-2 text-sm text-purple-100">Mode<select className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none" value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value as "PAPER" | "DEMO", broker_account_id: e.target.value === "PAPER" ? "" : form.broker_account_id })}><option value="PAPER">PAPER</option><option value="DEMO">DEMO / MT5</option><option value="LIVE" disabled>LIVE - disabled until final production review</option></select></label>
-              <label className="space-y-2 text-sm text-purple-100">Broker account {form.mode === "DEMO" && <span className="text-lime-300">*</span>}<select disabled={form.mode !== "DEMO"} className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none disabled:opacity-50" value={form.broker_account_id} onChange={(e) => setForm({ ...form, broker_account_id: e.target.value })}><option value="">{form.mode === "DEMO" ? "Select connected MT5 demo broker" : "Optional"}</option>{connectedDemoBrokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.account_label} • {broker.login_id} • {broker.server_name}</option>)}</select></label>
+              <label className="space-y-2 text-sm text-purple-100">Broker symbol / Upstox instrument key<input className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" placeholder="MT5: XAUUSD | Upstox: NSE_EQ|INE002A01018" value={form.instrument_key} onChange={(e) => setForm({ ...form, instrument_key: e.target.value.trim() })} /></label>
+              <label className="space-y-2 text-sm text-purple-100">Exchange<input className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" placeholder="NSE_EQ / NSE_FO" value={form.exchange} onChange={(e) => setForm({ ...form, exchange: e.target.value.toUpperCase() })} /></label>
+              <label className="space-y-2 text-sm text-purple-100">Mode<select className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none" value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value as "PAPER" | "DEMO", broker_account_id: e.target.value === "PAPER" ? "" : form.broker_account_id })}><option value="PAPER">PAPER</option><option value="DEMO">DEMO / Broker</option><option value="LIVE" disabled>LIVE - disabled until final production review</option></select></label>
+              <label className="space-y-2 text-sm text-purple-100">Broker account {form.mode === "DEMO" && <span className="text-lime-300">*</span>}<select disabled={form.mode !== "DEMO"} className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-white outline-none disabled:opacity-50" value={form.broker_account_id} onChange={(e) => setForm({ ...form, broker_account_id: e.target.value })}><option value="">{form.mode === "DEMO" ? "Select connected demo broker" : "Optional"}</option>{connectedDemoBrokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.account_label} • {(broker.broker_name || broker.broker_code || "BROKER").toUpperCase()} • {broker.login_id || broker.server_name || "connected"}</option>)}</select></label>
               <label className="space-y-2 text-sm text-purple-100">Capital<input type="number" className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.capital} onChange={(e) => setForm({ ...form, capital: Number(e.target.value) })} /></label>
               <label className="space-y-2 text-sm text-purple-100">Risk per trade<input type="number" step="0.001" className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.risk_per_trade} onChange={(e) => setForm({ ...form, risk_per_trade: Number(e.target.value) })} /></label>
               <label className="space-y-2 text-sm text-purple-100">RR ratio<input type="number" step="0.1" className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.rr_ratio} onChange={(e) => setForm({ ...form, rr_ratio: Number(e.target.value) })} /></label>
@@ -138,6 +155,7 @@ export default function NewLiveDeploymentPage() {
               <label className="space-y-2 text-sm text-purple-100">Max trades per day<input type="number" className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.max_trades_per_day} onChange={(e) => setForm({ ...form, max_trades_per_day: Number(e.target.value) })} /></label>
               <label className="space-y-2 text-sm text-purple-100">Max open positions<input type="number" className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.max_open_positions} onChange={(e) => setForm({ ...form, max_open_positions: Number(e.target.value) })} /></label>
             </div>
+            {isUpstox && <div className="rounded-xl border border-cyan-400/25 bg-cyan-400/10 p-4 text-sm text-cyan-100">Upstox snapshot requires the Upstox instrument_key. Example Reliance: NSE_EQ|INE002A01018. Orders remain disabled for Upstox in Phase 15.</div>}
 
             <div className="flex flex-wrap gap-4 rounded-xl border border-white/10 bg-white/5 p-4">
               <label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={form.allow_short} onChange={(e) => setForm({ ...form, allow_short: e.target.checked })} />Allow short</label>

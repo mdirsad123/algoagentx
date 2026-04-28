@@ -23,6 +23,11 @@ class PlatformTradingSettingsIn(BaseModel):
     global_kill_switch: Optional[bool] = None
     max_global_demo_orders_per_day: Optional[int] = Field(default=None, ge=0)
     max_user_demo_orders_per_day: Optional[int] = Field(default=None, ge=0)
+    upstox_order_execution_enabled: Optional[bool] = None
+    broker_auto_sync_enabled: Optional[bool] = None
+    min_broker_sync_interval_seconds: Optional[int] = Field(default=None, ge=5, le=300)
+    default_broker_sync_interval_seconds: Optional[int] = Field(default=None, ge=5, le=300)
+    max_broker_sync_interval_seconds: Optional[int] = Field(default=None, ge=5, le=300)
 
 
 def _admin_id(current_user: dict) -> UUID:
@@ -38,6 +43,11 @@ def _out(row: PlatformTradingSettings) -> dict:
         "global_kill_switch": bool(row.global_kill_switch),
         "max_global_demo_orders_per_day": row.max_global_demo_orders_per_day,
         "max_user_demo_orders_per_day": row.max_user_demo_orders_per_day,
+        "upstox_order_execution_enabled": bool(getattr(row, "upstox_order_execution_enabled", False)),
+        "broker_auto_sync_enabled": bool(getattr(row, "broker_auto_sync_enabled", True)),
+        "min_broker_sync_interval_seconds": int(getattr(row, "min_broker_sync_interval_seconds", 5) or 5),
+        "default_broker_sync_interval_seconds": int(getattr(row, "default_broker_sync_interval_seconds", 10) or 10),
+        "max_broker_sync_interval_seconds": int(getattr(row, "max_broker_sync_interval_seconds", 300) or 300),
         "updated_by": str(row.updated_by) if row.updated_by else None,
         "updated_at": row.updated_at,
     }
@@ -56,6 +66,14 @@ async def update_live_settings(payload: PlatformTradingSettingsIn, db: AsyncSess
     values = payload.model_dump(exclude_unset=True)
     if values.get("live_trading_enabled"):
         values["live_trading_enabled"] = False
+    if "min_broker_sync_interval_seconds" in values:
+        values["min_broker_sync_interval_seconds"] = max(5, min(300, int(values["min_broker_sync_interval_seconds"] or 5)))
+    if "max_broker_sync_interval_seconds" in values:
+        values["max_broker_sync_interval_seconds"] = max(5, min(300, int(values["max_broker_sync_interval_seconds"] or 300)))
+    if "default_broker_sync_interval_seconds" in values:
+        min_s = int(values.get("min_broker_sync_interval_seconds") or getattr(row, "min_broker_sync_interval_seconds", 5) or 5)
+        max_s = int(values.get("max_broker_sync_interval_seconds") or getattr(row, "max_broker_sync_interval_seconds", 300) or 300)
+        values["default_broker_sync_interval_seconds"] = max(min_s, min(max_s, int(values["default_broker_sync_interval_seconds"] or 10)))
     for key, value in values.items():
         setattr(row, key, value)
     row.updated_by = _admin_id(current_user)
