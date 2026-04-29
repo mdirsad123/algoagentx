@@ -169,15 +169,16 @@ export default function LandingPage() {
   ];
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[#070816] text-white">
+    <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_15%_10%,rgba(168,85,247,0.34),transparent_32%),radial-gradient(circle_at_85%_18%,rgba(16,185,129,0.22),transparent_30%),radial-gradient(circle_at_50%_95%,rgba(236,72,153,0.22),transparent_35%),linear-gradient(135deg,#17112b_0%,#161b2f_42%,#10251f_100%)] text-white">
       <div className="pointer-events-none fixed inset-0 -z-10">
-        <div className="absolute left-1/2 top-0 h-[540px] w-[900px] -translate-x-1/2 rounded-full bg-purple-600/25 blur-3xl" />
-        <div className="absolute right-[-10%] top-[18%] h-[420px] w-[420px] rounded-full bg-fuchsia-500/20 blur-3xl" />
-        <div className="absolute bottom-0 left-[-10%] h-[420px] w-[420px] rounded-full bg-indigo-500/20 blur-3xl" />
-        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:64px_64px] [mask-image:radial-gradient(circle_at_top,black,transparent_72%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.055)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.055)_1px,transparent_1px)] bg-[size:72px_72px] opacity-45 [mask-image:radial-gradient(circle_at_top,black,transparent_78%)]" />
+        <div className="absolute left-[8%] top-[8%] h-[360px] w-[360px] rounded-full bg-purple-400/25 blur-3xl" />
+        <div className="absolute right-[8%] top-[14%] h-[360px] w-[360px] rounded-full bg-emerald-400/20 blur-3xl" />
+        <div className="absolute bottom-[8%] left-[35%] h-[420px] w-[420px] rounded-full bg-fuchsia-400/18 blur-3xl" />
+        <div className="absolute inset-0 bg-white/[0.025]" />
       </div>
 
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-[#070816]/70 backdrop-blur-2xl">
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-white/15 bg-[#17112b]/55 shadow-lg shadow-purple-950/10 backdrop-blur-2xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <Link href="/" className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-500 via-fuchsia-500 to-pink-500 shadow-lg shadow-purple-500/30">
@@ -250,7 +251,7 @@ export default function LandingPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {["EMA 9/20 Scalper", "RSI Reversal", "Breakout Swing"].map((name, index) => (
-                <div key={name} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <div key={name} className="rounded-2xl border border-white/10 bg-white/[0.08] p-4">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-semibold text-white">{name}</p>
@@ -321,7 +322,7 @@ export default function LandingPage() {
             <div>{sectionLabel("How it works")}<h2 className="mt-4 text-3xl font-bold sm:text-5xl">Move from idea to controlled deployment.</h2><p className="mt-5 text-slate-300">Keep research, broker connection, live approvals, and reporting inside one production workflow.</p></div>
             <div className="space-y-4">
               {steps.map((step, index) => (
-                <div key={step.title} className="flex gap-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+                <div key={step.title} className="flex gap-4 rounded-2xl border border-white/10 bg-white/[0.08] p-4">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-500 font-bold">{index + 1}</div>
                   <div><p className="font-semibold text-white">{step.title}</p><p className="mt-1 text-sm text-slate-400">{step.description}</p></div>
                 </div>
@@ -380,7 +381,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <footer className="border-t border-white/10 bg-black/20">
+      <footer className="border-t border-white/10 bg-white/[0.08]">
         <div className="mx-auto grid max-w-7xl gap-8 px-4 py-10 sm:px-6 md:grid-cols-4 lg:px-8">
           <div><div className="flex items-center gap-3"><Rocket className="h-6 w-6 text-purple-200" /><span className="font-bold">AlgoAgentX</span></div><p className="mt-4 text-sm text-slate-400">Professional AI algo trading, backtesting, broker deployment, and SaaS controls.</p></div>
           <div><p className="font-semibold">Product</p><div className="mt-3 space-y-2 text-sm text-slate-400"><a className="block hover:text-white" href="#features">Features</a><a className="block hover:text-white" href="#pricing">Pricing</a><a className="block hover:text-white" href="#brokers">Brokers</a></div></div>
