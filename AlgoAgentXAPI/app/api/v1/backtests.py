@@ -318,6 +318,113 @@ async def _quote_backtest_cost(
     )
 
 
+
+async def _get_market_data_availability_guard(
+    db: AsyncSession,
+    instrument_id: int,
+    timeframe: str,
+    start_date: date,
+    end_date: date,
+) -> dict:
+    requested_start = datetime.combine(start_date, time.min)
+    requested_end = datetime.combine(end_date, time.max)
+
+    overall = (
+        await db.execute(
+            select(
+                func.min(MarketData.timestamp).label("available_start"),
+                func.max(MarketData.timestamp).label("available_end"),
+                func.count().label("total_count"),
+            ).where(
+                MarketData.instrument_id == instrument_id,
+                MarketData.timeframe == timeframe,
+            )
+        )
+    ).first()
+
+    ranged = (
+        await db.execute(
+            select(
+                func.min(MarketData.timestamp).label("range_start"),
+                func.max(MarketData.timestamp).label("range_end"),
+                func.count().label("record_count"),
+            ).where(
+                MarketData.instrument_id == instrument_id,
+                MarketData.timeframe == timeframe,
+                MarketData.timestamp >= requested_start,
+                MarketData.timestamp <= requested_end,
+            )
+        )
+    ).first()
+
+    available_start = getattr(overall, "available_start", None) if overall else None
+    available_end = getattr(overall, "available_end", None) if overall else None
+    range_start = getattr(ranged, "range_start", None) if ranged else None
+    range_end = getattr(ranged, "range_end", None) if ranged else None
+    record_count = int(getattr(ranged, "record_count", 0) or 0) if ranged else 0
+
+    missing_before = bool(record_count > 0 and range_start and range_start > requested_start)
+    missing_after = bool(record_count > 0 and range_end and range_end < requested_end)
+    blocked = record_count <= 0 or missing_before or missing_after
+
+    if record_count <= 0:
+        message = (
+            "Market data is not available for selected instrument/timeframe/date range. "
+            "Please contact admin or select another range."
+        )
+    elif blocked:
+        message = (
+            "Market data coverage is incomplete for selected instrument/timeframe/date range. "
+            "Ask admin to import or refresh market data before running this backtest."
+        )
+    else:
+        message = "Market data coverage is available for the selected range."
+
+    return {
+        "available": not blocked,
+        "blocked": blocked,
+        "message": message,
+        "instrument_id": instrument_id,
+        "timeframe": timeframe,
+        "requested_start": requested_start,
+        "requested_end": requested_end,
+        "requested_start_iso": requested_start.isoformat(),
+        "requested_end_iso": requested_end.isoformat(),
+        "available_start": range_start,
+        "available_end": range_end,
+        "available_start_iso": range_start.isoformat() if range_start else None,
+        "available_end_iso": range_end.isoformat() if range_end else None,
+        "dataset_start_iso": available_start.isoformat() if available_start else None,
+        "dataset_end_iso": available_end.isoformat() if available_end else None,
+        "missing_before": missing_before,
+        "missing_after": missing_after,
+        "record_count": record_count,
+    }
+
+
+def _raise_market_data_unavailable(availability: dict) -> None:
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "code": "MARKET_DATA_UNAVAILABLE",
+            "message": availability.get("message") or (
+                "Market data is not available for selected instrument/timeframe/date range. "
+                "Please contact admin or select another range."
+            ),
+            "available_start": availability.get("available_start_iso"),
+            "available_end": availability.get("available_end_iso"),
+            "dataset_start": availability.get("dataset_start_iso"),
+            "dataset_end": availability.get("dataset_end_iso"),
+            "requested_start": availability.get("requested_start_iso"),
+            "requested_end": availability.get("requested_end_iso"),
+            "missing_before": bool(availability.get("missing_before")),
+            "missing_after": bool(availability.get("missing_after")),
+            "record_count": int(availability.get("record_count") or 0),
+            "action": "Ask admin to import market data for this instrument/timeframe/date range.",
+        },
+    )
+
+
 async def _get_backtest_debit_map(db: AsyncSession, backtest_ids: list[str]) -> dict[str, dict]:
     if not backtest_ids:
         return {}
@@ -926,28 +1033,39 @@ async def get_data_availability(
         )
 
     requested_count = None
+    range_min = None
+    range_max = None
+    missing_before = False
+    missing_after = False
+    coverage_status = "AVAILABLE"
+    message = "Market data is available."
+
     if start_date and end_date:
-        start_dt = datetime.combine(start_date, time.min)
-        end_dt = datetime.combine(end_date, time.max)
-        requested_count = (
-            await db.execute(
-                select(func.count()).select_from(MarketData).where(
-                    MarketData.instrument_id == instrument_id,
-                    MarketData.timeframe == timeframe,
-                    MarketData.timestamp >= start_dt,
-                    MarketData.timestamp <= end_dt,
-                )
-            )
-        ).scalar() or 0
+        guard = await _get_market_data_availability_guard(db, instrument_id, timeframe, start_date, end_date)
+        requested_count = guard["record_count"]
+        range_min = guard.get("available_start")
+        range_max = guard.get("available_end")
+        missing_before = bool(guard.get("missing_before"))
+        missing_after = bool(guard.get("missing_after"))
+        coverage_status = "BLOCKED" if guard.get("blocked") else "AVAILABLE"
+        message = str(guard.get("message") or message)
 
     return success_response(
         {
             "instrument_id": instrument_id,
             "timeframe": timeframe,
-            "available": True,
+            "available": coverage_status == "AVAILABLE",
+            "coverage_status": coverage_status,
+            "message": message,
             "candle_count": _to_int(summary.count),
             "min_timestamp": summary.min_ts.isoformat() if summary.min_ts else None,
             "max_timestamp": summary.max_ts.isoformat() if summary.max_ts else None,
+            "available_start": range_min.isoformat() if range_min else None,
+            "available_end": range_max.isoformat() if range_max else None,
+            "requested_start": datetime.combine(start_date, time.min).isoformat() if start_date else None,
+            "requested_end": datetime.combine(end_date, time.max).isoformat() if end_date else None,
+            "missing_before": missing_before,
+            "missing_after": missing_after,
             "requested_candle_count": _to_int(requested_count, 0),
         }
     )
@@ -1012,19 +1130,15 @@ async def run_backtest(
     if not instrument:
         raise HTTPException(status_code=404, detail="Instrument not found")
 
-    availability = (
-        await db.execute(
-            select(func.count()).select_from(MarketData).where(
-                MarketData.instrument_id == payload.instrument_id,
-                MarketData.timeframe == payload.timeframe,
-                MarketData.timestamp >= datetime.combine(payload.start_date, time.min),
-                MarketData.timestamp <= datetime.combine(payload.end_date, time.max),
-            )
-        )
-    ).scalar() or 0
-
-    if availability <= 0:
-        raise HTTPException(status_code=400, detail="No market data available for requested filters")
+    availability = await _get_market_data_availability_guard(
+        db,
+        instrument_id=payload.instrument_id,
+        timeframe=payload.timeframe,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+    )
+    if availability.get("blocked"):
+        _raise_market_data_unavailable(availability)
 
     plan_code = str(entitlements.get("plan_code") or "").upper() if entitlements else None
     estimate = await _quote_backtest_cost(

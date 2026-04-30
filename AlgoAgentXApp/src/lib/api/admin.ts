@@ -552,6 +552,8 @@ export interface AdminMarketDataInstrument {
   exchange: string;
   market: string;
   instrument_type?: string | null;
+  broker_symbol?: string | null;
+  upstox_instrument_key?: string | null;
 }
 
 export interface AdminMarketDataCatalog {
@@ -576,11 +578,18 @@ export interface AdminMarketDataDataset {
   timeframe: string;
   first_candle_at?: string | null;
   last_candle_at?: string | null;
+  latest_candle_at?: string | null;
   latest_candle_date?: string | null;
   total_records: number;
+  record_count?: number;
   freshness_status: MarketDataFreshnessStatus;
+  status?: "FRESH" | "WARNING" | "STALE" | "NO_DATA";
   freshness_age_hours?: number | null;
-  expected_fresh_hours: number;
+  expected_freshness_status?: "FRESH" | "WARNING" | "STALE" | "NO_DATA";
+  expected_fresh_hours?: number | null;
+  warning_after_hours?: number | null;
+  missing_from_date?: string | null;
+  market_rule?: string | null;
   is_stale: boolean;
 }
 
@@ -650,6 +659,84 @@ export interface AdminMarketDataJobEnqueueResponse {
   pipeline_ready: boolean;
   message: string;
   payload: Record<string, any>;
+}
+
+export interface AdminMarketDataFetchPayload {
+  provider: string;
+  instrument_id: number;
+  symbol: string;
+  instrument_key?: string;
+  broker_account_id?: string;
+  timeframe: string;
+  start_date: string;
+  end_date: string;
+  dry_run?: boolean;
+}
+
+export interface AdminMarketDataImportSummary {
+  total_input_rows?: number;
+  valid_rows?: number;
+  invalid_rows?: number;
+  duplicate_rows?: number;
+  inserted_rows?: number;
+  updated_rows?: number;
+  skipped_rows?: number;
+  min_timestamp?: string | null;
+  max_timestamp?: string | null;
+  errors_sample?: any[];
+  errors?: any[];
+  [key: string]: any;
+}
+
+export interface AdminMarketDataFetchResponse {
+  provider: string;
+  symbol: string;
+  instrument_key?: string | null;
+  instrument_id: number;
+  timeframe: string;
+  start_date?: string;
+  end_date?: string;
+  dry_run?: boolean;
+  saved?: boolean;
+  note?: string;
+  summary: AdminMarketDataImportSummary;
+}
+
+export interface AdminMarketDataRefreshMissingPayload {
+  provider: string;
+  instrument_id: number;
+  symbol: string;
+  instrument_key?: string;
+  broker_account_id?: string;
+  timeframe: string;
+  end_date?: string;
+  dry_run?: boolean;
+}
+
+export interface AdminMarketDataRefreshMissingResponse extends AdminMarketDataFetchResponse {
+  latest_existing_candle_at?: string;
+  refresh_start_date?: string;
+  refresh_end_date?: string;
+}
+
+
+export interface AdminMarketDataCsvUploadPayload {
+  instrument_id: number;
+  timeframe: string;
+  source?: string;
+  dry_run?: boolean;
+  file: File;
+}
+
+export interface AdminMarketDataCsvUploadResponse {
+  status: string;
+  job_id?: string | null;
+  instrument_id: number;
+  timeframe: string;
+  source: string;
+  dry_run: boolean;
+  filename?: string | null;
+  summary: AdminMarketDataImportSummary;
 }
 
 export interface AdminStrategyCreatePayload {
@@ -1077,6 +1164,29 @@ export const adminApi = {
 
   triggerMarketDataRefresh: async (payload: AdminMarketDataRefreshPayload): Promise<AdminMarketDataJobEnqueueResponse> =>
     unwrap(await axiosInstance.post("/api/v1/admin/market-data/hooks/refresh", payload)),
+
+  fetchMarketDataPreview: async (payload: AdminMarketDataFetchPayload): Promise<AdminMarketDataFetchResponse> =>
+    unwrap(await axiosInstance.post("/api/v1/admin/market-data/fetch-preview", payload)),
+
+  fetchMarketDataImport: async (payload: AdminMarketDataFetchPayload): Promise<AdminMarketDataFetchResponse> =>
+    unwrap(await axiosInstance.post("/api/v1/admin/market-data/fetch-import", payload)),
+
+  refreshMissingMarketData: async (payload: AdminMarketDataRefreshMissingPayload): Promise<AdminMarketDataRefreshMissingResponse> =>
+    unwrap(await axiosInstance.post("/api/v1/admin/market-data/refresh-missing", payload)),
+
+  uploadMarketDataCsv: async (payload: AdminMarketDataCsvUploadPayload): Promise<AdminMarketDataCsvUploadResponse> => {
+    const formData = new FormData();
+    formData.append("instrument_id", String(payload.instrument_id));
+    formData.append("timeframe", payload.timeframe);
+    formData.append("source", payload.source || "CSV");
+    formData.append("dry_run", String(Boolean(payload.dry_run)));
+    formData.append("file", payload.file);
+    return unwrap(
+      await axiosInstance.post("/api/v1/admin/market-data/upload-csv", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      }),
+    );
+  },
 
   getPricingPlans: async (): Promise<AdminPricingPlan[]> =>
     unwrap(await axiosInstance.get("/api/v1/admin/pricing/plans")),

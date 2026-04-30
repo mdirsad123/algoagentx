@@ -43,7 +43,7 @@ class MarketDataDataset(BaseModel):
     total_records: int
     freshness_status: FreshnessStatus
     freshness_age_hours: float | None = None
-    expected_fresh_hours: int
+    expected_fresh_hours: float | None = None
     is_stale: bool
 
 

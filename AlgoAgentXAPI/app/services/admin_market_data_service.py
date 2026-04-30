@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -33,7 +33,7 @@ class AdminMarketDataService:
         "1w": 10080,
     }
 
-    _MARKET_DATA_JOB_TYPES = ["market_data_import", "market_data_upload", "market_data_refresh"]
+    _MARKET_DATA_JOB_TYPES = ["market_data_import", "market_data_upload", "market_data_refresh", "CSV_UPLOAD"]
 
     @staticmethod
     def _safe_json_loads(payload: str | None) -> dict[str, Any]:
@@ -84,24 +84,133 @@ class AdminMarketDataService:
         return value.astimezone(timezone.utc)
 
     @staticmethod
-    def _freshness_for(last_candle_at: datetime | None, timeframe: str, stale_after_hours: int) -> tuple[str, float | None, int, bool]:
-        expected_from_tf = AdminMarketDataService._normalize_timeframe_to_hours(timeframe)
-        expected_fresh_hours = max(1, min(stale_after_hours, max(expected_from_tf, 1) * 3))
+    def _normalize_market(exchange: str | None, market: str | None, symbol: str | None = None) -> str:
+        raw = " ".join([str(exchange or ""), str(market or ""), str(symbol or "")]).upper()
+        if any(token in raw for token in ("CRYPTO", "BINANCE", "BTC", "ETH", "USDT")):
+            return "CRYPTO"
+        if any(token in raw for token in ("FOREX", "FX", "MT5", "XAU", "XAG", "USD", "EUR", "GBP", "JPY")):
+            return "FOREX"
+        if any(token in raw for token in ("NSE", "BSE", "INDIAN", "EQUITY", "NIFTY", "BANKNIFTY")):
+            return "INDIAN_EQUITY"
+        return "GENERIC"
+
+    @staticmethod
+    def _previous_weekday(value: datetime) -> datetime:
+        current = value
+        while current.weekday() >= 5:
+            current = current - timedelta(days=1)
+        return current
+
+    @staticmethod
+    def _latest_expected_time(market_rule: str, timeframe: str, now: datetime) -> datetime:
+        tf = (timeframe or "").strip().lower()
+        if market_rule == "CRYPTO":
+            return now
+
+        if market_rule == "FOREX":
+            # Forex is treated as 24x5. On weekends, expect the last Friday candle.
+            expected = AdminMarketDataService._previous_weekday(now)
+            if expected.weekday() == 4 and now.weekday() >= 5:
+                return expected.replace(hour=23, minute=59, second=0, microsecond=0)
+            return expected
+
+        if market_rule == "INDIAN_EQUITY":
+            # Keep this intentionally simple: weekdays only, normal NSE close around 15:30 IST.
+            expected = AdminMarketDataService._previous_weekday(now)
+            if tf == "1d":
+                return expected.replace(hour=15, minute=30, second=0, microsecond=0)
+            return expected
+
+        return now
+
+    @staticmethod
+    def _freshness_for(
+        last_candle_at: datetime | None,
+        timeframe: str,
+        exchange: str | None = None,
+        market: str | None = None,
+        symbol: str | None = None,
+    ) -> dict[str, Any]:
+        tf = (timeframe or "").strip().lower()
+        market_rule = AdminMarketDataService._normalize_market(exchange, market, symbol)
 
         if last_candle_at is None:
-            return "no_data", None, expected_fresh_hours, True
+            return {
+                "freshness_status": "no_data",
+                "status": "NO_DATA",
+                "freshness_age_hours": None,
+                "expected_freshness_status": "NO_DATA",
+                "expected_fresh_hours": None,
+                "warning_after_hours": None,
+                "missing_from_date": None,
+                "is_stale": True,
+                "market_rule": market_rule,
+            }
 
         now = AdminMarketDataService._utc_now()
-        normalized_last = AdminMarketDataService._as_utc(last_candle_at)
-        if normalized_last is None:
-            return "no_data", None, expected_fresh_hours, True
+        latest = AdminMarketDataService._as_utc(last_candle_at)
+        if latest is None:
+            return {
+                "freshness_status": "no_data",
+                "status": "NO_DATA",
+                "freshness_age_hours": None,
+                "expected_freshness_status": "NO_DATA",
+                "expected_fresh_hours": None,
+                "warning_after_hours": None,
+                "missing_from_date": None,
+                "is_stale": True,
+                "market_rule": market_rule,
+            }
 
-        age_hours = max((now - normalized_last).total_seconds() / 3600.0, 0.0)
-        if age_hours <= expected_fresh_hours:
-            return "fresh", round(age_hours, 2), expected_fresh_hours, False
-        if age_hours <= expected_fresh_hours * 2:
-            return "warning", round(age_hours, 2), expected_fresh_hours, False
-        return "stale", round(age_hours, 2), expected_fresh_hours, True
+        expected_latest = AdminMarketDataService._latest_expected_time(market_rule, tf, now)
+        age_hours = max((expected_latest - latest).total_seconds() / 3600.0, 0.0)
+
+        if tf == "5m":
+            fresh_after_hours, warning_after_hours = 0.5, 24
+        elif tf == "15m":
+            fresh_after_hours, warning_after_hours = 1, 24
+        elif tf in {"1h", "60m"}:
+            fresh_after_hours, warning_after_hours = 3, 48
+        elif tf == "1d":
+            if latest.date() >= expected_latest.date():
+                status = "fresh"
+            elif age_hours <= 24 * 7:
+                status = "warning"
+            else:
+                status = "stale"
+            return {
+                "freshness_status": status,
+                "status": status.upper(),
+                "freshness_age_hours": round(age_hours, 2),
+                "expected_freshness_status": status.upper(),
+                "expected_fresh_hours": 24,
+                "warning_after_hours": 24 * 7,
+                "missing_from_date": latest.isoformat() if status in {"warning", "stale"} else None,
+                "is_stale": status == "stale",
+                "market_rule": market_rule,
+            }
+        else:
+            base_hours = AdminMarketDataService._normalize_timeframe_to_hours(tf)
+            fresh_after_hours, warning_after_hours = max(1, base_hours * 3), max(24, base_hours * 6)
+
+        if age_hours <= fresh_after_hours:
+            status = "fresh"
+        elif age_hours <= warning_after_hours:
+            status = "warning"
+        else:
+            status = "stale"
+
+        return {
+            "freshness_status": status,
+            "status": status.upper(),
+            "freshness_age_hours": round(age_hours, 2),
+            "expected_freshness_status": status.upper(),
+            "expected_fresh_hours": fresh_after_hours,
+            "warning_after_hours": warning_after_hours,
+            "missing_from_date": latest.isoformat() if status in {"warning", "stale"} else None,
+            "is_stale": status == "stale",
+            "market_rule": market_rule,
+        }
 
     @staticmethod
     async def get_catalog(db: AsyncSession) -> dict[str, Any]:
@@ -174,26 +283,29 @@ class AdminMarketDataService:
         rows = (await db.execute(stmt)).all()
         items = []
         for row in rows:
-            status, age_hours, expected_hours, is_stale = AdminMarketDataService._freshness_for(
+            freshness = AdminMarketDataService._freshness_for(
                 row.last_candle_at,
                 row.timeframe,
-                stale_after_hours,
+                row.exchange,
+                row.market,
+                row.instrument_symbol,
             )
+            total_records = int(row.total_records or 0)
             items.append(
                 {
                     "instrument_id": row.instrument_id,
                     "instrument_symbol": row.instrument_symbol,
+                    "instrument": row.instrument_symbol,
                     "exchange": row.exchange,
                     "market": row.market,
                     "timeframe": row.timeframe,
                     "first_candle_at": row.first_candle_at,
                     "last_candle_at": row.last_candle_at,
+                    "latest_candle_at": row.last_candle_at,
                     "latest_candle_date": row.last_candle_at.date().isoformat() if row.last_candle_at else None,
-                    "total_records": int(row.total_records or 0),
-                    "freshness_status": status,
-                    "freshness_age_hours": age_hours,
-                    "expected_fresh_hours": expected_hours,
-                    "is_stale": is_stale,
+                    "total_records": total_records,
+                    "record_count": total_records,
+                    **freshness,
                 }
             )
 

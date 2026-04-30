@@ -440,7 +440,7 @@ export default function BacktestPage() {
 
       const warnings: string[] = [];
       if (!availabilityData.available || (availabilityData.requested_candle_count || 0) <= 0) {
-        warnings.push("No candles are available for the selected date range. Please adjust filters.");
+        warnings.push(availabilityData.message || "Data unavailable. Ask admin to import market data for this instrument/timeframe/date range.");
       }
       if (availabilityData.requested_candle_count > 100000) {
         warnings.push("Large candle scope detected. Execution may be slower and cost more credits.");
@@ -502,7 +502,7 @@ export default function BacktestPage() {
     }
 
     if (!previewData.availability?.available || (previewData.availability.requested_candle_count || 0) <= 0) {
-      setRunError("Cannot run backtest without data coverage in the selected range.");
+      setRunError(previewData.availability?.message || "Data unavailable. Ask admin to import market data for this instrument/timeframe/date range.");
       return;
     }
 
@@ -562,8 +562,19 @@ export default function BacktestPage() {
           walletBalance: safeNumber(detail.wallet_balance, 0),
           includedBalance: safeNumber(detail.included_balance, 0),
         });
+      } else {
+        setInsufficientCreditsHint(null);
       }
-      setRunError(formatErrorMessage(parsed));
+
+      if (detail && typeof detail === "object" && detail.code === "MARKET_DATA_UNAVAILABLE") {
+        const coverage = [
+          detail.record_count !== undefined ? `Records found: ${detail.record_count}` : null,
+          detail.available_start && detail.available_end ? `Available: ${new Date(detail.available_start).toLocaleString()} to ${new Date(detail.available_end).toLocaleString()}` : null,
+        ].filter(Boolean).join(" · ");
+        setRunError(`${detail.message || "Data unavailable. Ask admin to import market data for this instrument/timeframe/date range."}${coverage ? `\n${coverage}` : ""}`);
+      } else {
+        setRunError(formatErrorMessage(parsed));
+      }
     } finally {
       setIsRunning(false);
     }
@@ -973,20 +984,22 @@ export default function BacktestPage() {
 
       {runError && (
         <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-          <div>{runError}</div>
+          <div className="whitespace-pre-line">{runError}</div>
           {insufficientCreditsHint && (
             <div className="mt-2 text-xs text-rose-100/90">
               Needed: {formatNumber(insufficientCreditsHint.needed || 0, 0)} credits · Included: {formatNumber(insufficientCreditsHint.includedBalance || 0, 0)} · Wallet: {formatNumber(insufficientCreditsHint.walletBalance || 0, 0)}
             </div>
           )}
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button asChild variant="outline" size="sm" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">
-              <Link href="/pricing">Upgrade Plan</Link>
-            </Button>
-            <Button asChild variant="outline" size="sm" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">
-              <Link href="/credits">Top-up Credits</Link>
-            </Button>
-          </div>
+          {insufficientCreditsHint && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button asChild variant="outline" size="sm" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">
+                <Link href="/pricing">Upgrade Plan</Link>
+              </Button>
+              <Button asChild variant="outline" size="sm" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">
+                <Link href="/credits">Top-up Credits</Link>
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
