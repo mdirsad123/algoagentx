@@ -11,13 +11,14 @@ from .credit_transactions import CreditTransaction, CreditTransactionType
 from .plans import Plan
 from .user_subscriptions import UserSubscription
 from .user_credits import UserCredit
+from .user_settings import UserSettings
 from .payments import Payment
 from .notifications import Notification
 from .strategy_requests import StrategyRequest
 from .screener_news import ScreenerNews
 from .screener_announcements import ScreenerAnnouncements
 from .screener_runs import ScreenerRuns
-from .support_tickets import SupportTicket, SupportTicketReply
+from .support_tickets import SupportTicket, SupportTicketMessage, SupportTicketAttachment, SupportTicketReply
 from .backtest_pricing_rule_sets import BacktestPricingRuleSet
 from .billing_orders import BillingOrder
 from .billing_webhook_events import BillingWebhookEvent
@@ -57,6 +58,7 @@ __all__ = [
     "Plan",
     "UserSubscription",
     "UserCredit",
+    "UserSettings",
     "Payment",
     "Notification",
     "StrategyRequest",
@@ -64,6 +66,8 @@ __all__ = [
     "ScreenerAnnouncements",
     "ScreenerRuns",
     "SupportTicket",
+    "SupportTicketMessage",
+    "SupportTicketAttachment",
     "SupportTicketReply",
     "BacktestPricingRuleSet",
     "BillingOrder",

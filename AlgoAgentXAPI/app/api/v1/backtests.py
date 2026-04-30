@@ -37,6 +37,7 @@ from ...schemas.backtests import BacktestCostPreviewRequest, BacktestRunRequest
 from ...services.backtest_service import BacktestService
 from ...services.credits.management import CreditManagementService
 from ...services.metrics import MetricsCalculator
+from ...services.notification_service import NotificationService
 from ...services.pricing.backtest_pricing_service import BacktestPricingService
 from ...utils.api_response import success_response
 
@@ -1184,6 +1185,24 @@ async def run_backtest(
         job.completed_at = datetime.utcnow()
         await db.commit()
 
+        try:
+            await NotificationService.create_notification(
+                db,
+                user_id=str(current_user["user_id"]),
+                title="Backtest completed",
+                message=f"{service_response.strategy_name} backtest completed on {service_response.instrument_symbol} ({service_response.timeframe}).",
+                notification_type="BACKTEST_COMPLETED",
+                severity="success",
+                entity_type="backtest",
+                entity_id=str(backtest_id),
+                action_url=f"/backtest-history?backtestId={backtest_id}",
+                metadata={"job_id": str(job_id), "net_profit": _to_float(metrics.get("net_profit")), "total_trades": _to_int(service_response.total_trades)},
+                auto_commit=True,
+            )
+        except Exception:
+            await db.rollback()
+            logger.exception("Failed to create backtest completion notification for %s", backtest_id)
+
         return success_response(
             {
                 "job_id": job_id,
@@ -1265,6 +1284,23 @@ async def run_backtest(
                 )
             )
             await db.commit()
+            try:
+                await NotificationService.create_notification(
+                    db,
+                    user_id=str(current_user["user_id"]),
+                    title="Backtest failed",
+                    message="Your backtest could not be completed. Please review the error and try again.",
+                    notification_type="BACKTEST_FAILED",
+                    severity="error",
+                    entity_type="backtest_job",
+                    entity_id=str(job_id),
+                    action_url="/backtest",
+                    metadata={"job_id": str(job_id), "error": str(exc)},
+                    auto_commit=True,
+                )
+            except Exception:
+                await db.rollback()
+                logger.exception("Failed to create backtest failure notification for job %s", job_id)
         except Exception:
             await db.rollback()
             logger.exception("Failed to persist failed job status for job %s", job_id)

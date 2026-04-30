@@ -2327,7 +2327,7 @@ async def trigger_market_data_upload(
     )
 
 
-@router.get('/support-tickets')
+@router.get('/support-tickets-legacy')
 async def get_admin_support_tickets(skip: int = 0, limit: int = Query(20, ge=1, le=100), status: Optional[str] = None, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     stmt = select(SupportTicket, User.email, User.fullname).join(User, User.id == SupportTicket.user_id).order_by(SupportTicket.created_at.desc()).offset(skip).limit(limit)
     count_stmt = select(func.count()).select_from(SupportTicket)
@@ -2343,7 +2343,7 @@ async def get_admin_support_tickets(skip: int = 0, limit: int = Query(20, ge=1, 
     return success_response({'items': items, 'total': total, 'skip': skip, 'limit': limit}, 'No data found' if not items else None)
 
 
-@router.patch('/support-tickets/{ticket_id}')
+@router.patch('/support-tickets-legacy/{ticket_id}')
 async def update_admin_support_ticket(ticket_id: str, payload: TicketStatusUpdateRequest, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     ticket = (await db.execute(select(SupportTicket).where(cast(SupportTicket.id, String) == str(ticket_id)))).scalar_one_or_none()
     if not ticket:
@@ -2353,7 +2353,7 @@ async def update_admin_support_ticket(ticket_id: str, payload: TicketStatusUpdat
     return success_response({}, 'Ticket updated successfully')
 
 
-@router.post('/support-tickets/{ticket_id}/reply')
+@router.post('/support-tickets-legacy/{ticket_id}/reply')
 async def reply_admin_support_ticket(ticket_id: str, payload: TicketReplyRequest, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     ticket = (await db.execute(select(SupportTicket).where(cast(SupportTicket.id, String) == str(ticket_id)))).scalar_one_or_none()
     if not ticket:

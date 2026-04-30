@@ -1,0 +1,14 @@
+ File "D:\Stock_market\algoagentx\AlgoAgentXAPI\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "D:\Stock_market\algoagentx\AlgoAgentXAPI\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 2366, in _handle_dbapi_exception
+    raise exc_info[1].with_traceback(exc_info[2])
+  File "D:\Stock_market\algoagentx\AlgoAgentXAPI\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+  File "D:\Stock_market\algoagentx\AlgoAgentXAPI\.venv\Lib\site-packages\sqlalchemy\engine\default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "D:\Stock_market\algoagentx\AlgoAgentXAPI\.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+  File "D:\Stock_market\algoagentx\AlgoAgentXAPI\.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py", line 123, in await_only
+    raise exc.MissingGreenlet(
+sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)
+INFO:     127.0.0.1:53582 - "GET /api/v1/admin/support-tickets?skip=0&limit=20 HTTP/1.1" 500 Internal Server Error

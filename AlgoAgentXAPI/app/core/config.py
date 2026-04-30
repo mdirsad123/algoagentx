@@ -26,11 +26,19 @@ class Settings(BaseSettings):
     jwt_refresh_token_key: str = "lM0Y9gpK1TSzpreSDJgrjqnXY9qOvog5"
     jwt_algorithm: str = "HS256"
 
-    # SMTP (for notifications)
-    smtp_email: str = "mdirsadtech7305@gmail.com"
-    smtp_password: str = "ippq cczp hwkn jyrl"
-    smtp_host: str = "smtp.gmail.com"
+    # SMTP / Email notifications (do not hardcode credentials; use .env)
+    smtp_enabled: bool = False
+    smtp_host: str = ""
     smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = "AlgoAgentX"
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
+    smtp_timeout_seconds: int = 10
+    # Backward compatibility for older modules/env names
+    smtp_email: str = ""
     admin_notify_emails: str = ""  # Comma-separated list of admin emails
 
     # Base URL

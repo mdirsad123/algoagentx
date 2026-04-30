@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,7 +15,7 @@ from ...schemas import UserCreate, UserLogin
 router = APIRouter()
 
 @router.post("/login")
-async def login(login_data: UserLogin):
+async def login(login_data: UserLogin, request: Request):
     """
     Authenticate user and return JWT token
     """
@@ -87,6 +87,17 @@ async def login(login_data: UserLogin):
                 settings.jwt_secret_key,
                 algorithm=settings.jwt_algorithm
             )
+
+            try:
+                from app.services.email_service import send_login_alert
+                await send_login_alert(
+                    db,
+                    user,
+                    request.client.host if request.client else None,
+                    request.headers.get("user-agent"),
+                )
+            except Exception as email_exc:
+                logger.warning(f"[AUTH] Login alert email skipped: {email_exc}")
 
             return {
                 "access_token": token,

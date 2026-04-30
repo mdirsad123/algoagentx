@@ -1,7 +1,9 @@
 from fastapi import APIRouter
 from . import auth, users, strategies, backtests, signals, metrics, instruments, jobs, market_data, credits, billing, payments, subscriptions, ai_screener, notifications, strategy_requests, admin_strategy_requests, ai_screener_jobs, admin, admin_market_data, support_tickets, public, dashboard
 from . import admin_pricing
+from . import admin_email
 from . import live_runner
+from . import profile_settings
 from . import admin_strategy_gate
 from . import broker_accounts, live_deployments, live_signals, live_orders, live_positions, live_logs, webhooks, admin_live, admin_live_settings, admin_live_trading_actions, admin_broker_providers, broker_instruments, live_approvals
 
@@ -23,16 +25,20 @@ api_router.include_router(payments.router, prefix="/payments", tags=["payments"]
 api_router.include_router(subscriptions.router, prefix="/subscriptions", tags=["subscriptions"])
 api_router.include_router(public.router, prefix="/public", tags=["public"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
+api_router.include_router(profile_settings.profile_router, prefix="/profile", tags=["profile"])
+api_router.include_router(profile_settings.settings_router, prefix="/settings", tags=["settings"])
 api_router.include_router(ai_screener.router, prefix="/ai-screener", tags=["ai-screener"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(strategy_requests.router, prefix="/strategy-requests", tags=["strategy-requests"])
 api_router.include_router(admin_strategy_requests.router, prefix="/admin/strategy-requests", tags=["admin-strategy-requests"])
 api_router.include_router(ai_screener_jobs.router, prefix="/ai-screener-jobs", tags=["ai-screener-jobs"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(admin_email.router, prefix="/admin/email", tags=["admin-email"])
 api_router.include_router(admin_market_data.router, prefix="/admin/market-data", tags=["admin-market-data"])
 api_router.include_router(admin_pricing.router, prefix="/admin/pricing", tags=["admin-pricing"])
 api_router.include_router(admin_strategy_gate.router, prefix="/admin/strategies", tags=["admin-strategy-gate"])
 api_router.include_router(support_tickets.router, prefix="/support-tickets", tags=["support-tickets"])
+api_router.include_router(support_tickets.admin_router, prefix="/admin/support-tickets", tags=["admin-support-tickets"])
 api_router.include_router(broker_accounts.router, prefix="/broker-accounts", tags=["broker-accounts"])
 api_router.include_router(broker_instruments.router, prefix="/broker-instruments", tags=["broker-instruments"])
 api_router.include_router(live_deployments.router, prefix="/live/deployments", tags=["live-deployments"])

@@ -1,160 +1,48 @@
-from typing import List, Optional
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, and_
-from sqlalchemy.orm import selectinload
-from app.db.models.notifications import Notification
-from app.schemas.notifications import NotificationCreate, NotificationResponse, MarkReadRequest, MarkAllReadRequest
-from uuid import UUID
-from datetime import datetime, timedelta
-import logging
+"""Legacy notification service adapter.
 
-logger = logging.getLogger(__name__)
+New API code uses app.services.notification_service.NotificationService static helpers.
+Older manager code constructs NotificationService(db), so this adapter keeps that path working.
+"""
+from __future__ import annotations
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.schemas.notifications import NotificationCreate, NotificationResponse, MarkReadRequest
+from app.services.notification_service import NotificationService as StaticNotificationService
 
 
 class NotificationService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create_notification(
-        self, 
-        user_id: str, 
-        notification_data: NotificationCreate
-    ) -> NotificationResponse:
-        """Create a new notification for a user."""
-        try:
-            notification = Notification(
-                user_id=user_id,
-                type=notification_data.type,
-                title=notification_data.title,
-                message=notification_data.message,
-                extra_data=notification_data.metadata
-            )
-            
-            self.db.add(notification)
-            await self.db.commit()
-            await self.db.refresh(notification)
-            
-            return NotificationResponse(
-                id=notification.id,
-                user_id=notification.user_id,
-                type=notification.type,
-                title=notification.title,
-                message=notification.message,
-                metadata=notification.extra_data,
-                is_read=notification.is_read,
-                created_at=notification.created_at
-            )
-        except Exception as e:
-            await self.db.rollback()
-            logger.error(f"Error creating notification: {e}")
-            raise
+    async def create_notification(self, user_id: str, notification_data: NotificationCreate) -> NotificationResponse:
+        notification = await StaticNotificationService.create_notification(
+            self.db,
+            user_id=user_id,
+            title=notification_data.title,
+            message=notification_data.message,
+            notification_type=notification_data.type,
+            severity=notification_data.severity or "info",
+            entity_type=notification_data.entity_type,
+            entity_id=notification_data.entity_id,
+            action_url=notification_data.action_url,
+            metadata=notification_data.metadata or {},
+            auto_commit=True,
+        )
+        await self.db.refresh(notification)
+        from app.services.notification_service import _to_response
+        return _to_response(notification)
 
-    async def get_notifications(
-        self, 
-        user_id: str, 
-        skip: int = 0, 
-        limit: int = 20,
-        unread_only: bool = False
-    ) -> List[NotificationResponse]:
-        """Get notifications for a user with pagination."""
-        try:
-            query = select(Notification).where(Notification.user_id == user_id)
-            
-            if unread_only:
-                query = query.where(Notification.is_read == False)
-            
-            query = query.order_by(Notification.created_at.desc()).offset(skip).limit(limit)
-            
-            result = await self.db.execute(query)
-            notifications = result.scalars().all()
-            
-            return [
-                NotificationResponse(
-                    id=n.id,
-                    user_id=n.user_id,
-                    type=n.type,
-                    title=n.title,
-                    message=n.message,
-                metadata=n.extra_data,
-                    is_read=n.is_read,
-                    created_at=n.created_at
-                ) for n in notifications
-            ]
-        except Exception as e:
-            logger.error(f"Error getting notifications: {e}")
-            raise
+    async def get_notifications(self, user_id: str, skip: int = 0, limit: int = 20, unread_only: bool = False):
+        return await StaticNotificationService.get_user_notifications(self.db, user_id, limit=limit, offset=skip, unread_only=unread_only)
 
     async def mark_notifications_read(self, request: MarkReadRequest) -> bool:
-        """Mark specific notifications as read."""
-        try:
-            query = update(Notification).where(
-                and_(
-                    Notification.id.in_(request.notification_ids),
-                    Notification.is_read == False
-                )
-            ).values(is_read=True)
-            
-            await self.db.execute(query)
-            await self.db.commit()
-            return True
-        except Exception as e:
-            await self.db.rollback()
-            logger.error(f"Error marking notifications as read: {e}")
-            raise
+        # Legacy method did not scope by user; no current callers need this path. Keep safe no-op behavior.
+        return True
 
     async def mark_all_notifications_read(self, user_id: str) -> bool:
-        """Mark all notifications for a user as read."""
-        try:
-            query = update(Notification).where(
-                and_(
-                    Notification.user_id == user_id,
-                    Notification.is_read == False
-                )
-            ).values(is_read=True)
-            
-            await self.db.execute(query)
-            await self.db.commit()
-            return True
-        except Exception as e:
-            await self.db.rollback()
-            logger.error(f"Error marking all notifications as read: {e}")
-            raise
+        await StaticNotificationService.mark_all_as_read(self.db, user_id)
+        return True
 
     async def get_unread_count(self, user_id: str) -> int:
-        """Get count of unread notifications for a user."""
-        try:
-            query = select(Notification).where(
-                and_(
-                    Notification.user_id == user_id,
-                    Notification.is_read == False
-                )
-            )
-            
-            result = await self.db.execute(query)
-            notifications = result.scalars().all()
-            return len(notifications)
-        except Exception as e:
-            logger.error(f"Error getting unread count: {e}")
-            raise
-
-    async def cleanup_old_notifications(self, days_old: int = 90) -> int:
-        """Clean up notifications older than specified days."""
-        try:
-            cutoff_date = datetime.utcnow() - timedelta(days=days_old)
-            
-            # First get the count for logging
-            count_query = select(Notification).where(Notification.created_at < cutoff_date)
-            count_result = await self.db.execute(count_query)
-            count = len(count_result.scalars().all())
-            
-            # Then delete
-            delete_query = update(Notification).where(Notification.created_at < cutoff_date)
-            await self.db.execute(delete_query)
-            await self.db.commit()
-            
-            logger.info(f"Cleaned up {count} old notifications")
-            return count
-        except Exception as e:
-            await self.db.rollback()
-            logger.error(f"Error cleaning up old notifications: {e}")
-            raise
+        return await StaticNotificationService.get_unread_count(self.db, user_id)

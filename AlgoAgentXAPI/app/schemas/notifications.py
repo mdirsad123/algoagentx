@@ -1,14 +1,19 @@
-from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, Optional
 from uuid import UUID
+
+from pydantic import BaseModel, Field
 
 
 class NotificationBase(BaseModel):
-    type: str = Field(..., description="Notification type (CREDITS_LOW, PAYMENT_SUCCESS, BACKTEST_DONE, SUBSCRIPTION_EXPIRE_SOON, ERROR, STRATEGY_REQUEST, STRATEGY_DEPLOYED)")
-    title: str = Field(..., description="Notification title")
-    message: str = Field(..., description="Notification message")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional context data")
+    type: str = Field(..., description="Notification type")
+    title: str
+    message: str
+    severity: str = "info"
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    action_url: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class NotificationCreate(NotificationBase):
@@ -16,7 +21,7 @@ class NotificationCreate(NotificationBase):
 
 
 class NotificationUpdate(BaseModel):
-    is_read: bool = Field(..., description="Whether the notification has been read")
+    is_read: bool
 
 
 class NotificationResponse(NotificationBase):
@@ -24,13 +29,18 @@ class NotificationResponse(NotificationBase):
     user_id: str
     is_read: bool
     created_at: datetime
+    read_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
 
 
+class UnreadCountResponse(BaseModel):
+    unread_count: int
+
+
 class MarkReadRequest(BaseModel):
-    notification_ids: list[UUID] = Field(..., description="List of notification IDs to mark as read")
+    notification_ids: list[UUID]
 
 
 class MarkAllReadRequest(BaseModel):

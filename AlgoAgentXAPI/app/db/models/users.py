@@ -20,5 +20,6 @@ class User(Base):
 
 
     # Relationships
-    support_tickets = relationship("SupportTicket", back_populates="user", cascade="all, delete-orphan")
+    support_tickets = relationship("SupportTicket", foreign_keys="SupportTicket.user_id", back_populates="user", cascade="all, delete-orphan")
     support_replies = relationship("SupportTicketReply", back_populates="user")
+    support_messages = relationship("SupportTicketMessage", foreign_keys="SupportTicketMessage.sender_id", back_populates="sender")
