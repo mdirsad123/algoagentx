@@ -244,12 +244,8 @@ export default function BacktestPage() {
         messages.push("End date must be after start date.");
       }
 
-      if (limits?.max_date_range_days) {
-        const diffDays = Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
-        if (Number.isFinite(diffDays) && diffDays > limits.max_date_range_days) {
-          messages.push(`Date range exceeds your plan limit (${limits.max_date_range_days} days).`);
-        }
-      }
+      // BF-1A: Date range is credit-based now. max_date_range_days is kept
+      // only as a soft preview warning, not as a hard execution blocker.
     }
 
     return messages;
@@ -439,8 +435,14 @@ export default function BacktestPage() {
       }));
 
       const warnings: string[] = [];
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      const diffDays = Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+      if (limits?.max_date_range_days && Number.isFinite(diffDays) && diffDays > limits.max_date_range_days) {
+        warnings.push("Large date range selected. Preview will estimate candle count, runtime, and credit cost.");
+      }
       if (!availabilityData.available || (availabilityData.requested_candle_count || 0) <= 0) {
-        warnings.push(availabilityData.message || "Data unavailable. Ask admin to import market data for this instrument/timeframe/date range.");
+        warnings.push(availabilityData.message || "Market data is missing for this instrument/timeframe/date range. Ask admin to import missing candles.");
       }
       if (availabilityData.requested_candle_count > 100000) {
         warnings.push("Large candle scope detected. Execution may be slower and cost more credits.");
@@ -467,6 +469,7 @@ export default function BacktestPage() {
     selectedTimeframe,
     startDate,
     endDate,
+    limits,
     validationErrors,
   ]);
 
@@ -502,7 +505,7 @@ export default function BacktestPage() {
     }
 
     if (!previewData.availability?.available || (previewData.availability.requested_candle_count || 0) <= 0) {
-      setRunError(previewData.availability?.message || "Data unavailable. Ask admin to import market data for this instrument/timeframe/date range.");
+      setRunError(previewData.availability?.message || "Market data is missing for this instrument/timeframe/date range. Ask admin to import missing candles.");
       return;
     }
 

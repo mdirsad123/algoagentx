@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 from sqlalchemy import select
+from sqlalchemy.orm import load_only
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Instrument, MarketData, Strategy
@@ -124,6 +125,7 @@ class BacktestService:
         rows = (
             await db.execute(
                 select(MarketData)
+                .options(load_only(MarketData.timestamp, MarketData.open, MarketData.high, MarketData.low, MarketData.close, MarketData.volume))
                 .where(
                     MarketData.instrument_id == instrument_id,
                     MarketData.timeframe == timeframe,

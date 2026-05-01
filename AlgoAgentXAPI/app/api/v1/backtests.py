@@ -76,6 +76,22 @@ def _as_uuid(value: str) -> UUID:
     return UUID(str(value))
 
 
+def _parse_date_param(value, field_name: str = "date") -> date | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    raw = str(value).strip()
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    raise HTTPException(status_code=422, detail=f"Invalid {field_name}. Use yyyy-mm-dd or dd-mm-yyyy.")
+
+
 def _ensure_aware_datetime(value):
     if value is None:
         return None
@@ -329,6 +345,12 @@ async def _get_market_data_availability_guard(
     requested_start = datetime.combine(start_date, time.min)
     requested_end = datetime.combine(end_date, time.max)
 
+    instrument = await db.get(Instrument, instrument_id)
+    symbol = str(getattr(instrument, "symbol", "") or "").upper()
+    market = str(getattr(instrument, "market", "") or "").upper()
+    is_forex_like = market == "FOREX" or any(token in symbol for token in ["XAU", "XAG", "EUR", "GBP", "JPY", "USD"])
+    boundary_tolerance_days = 3 if is_forex_like else 1
+
     overall = (
         await db.execute(
             select(
@@ -359,28 +381,46 @@ async def _get_market_data_availability_guard(
 
     available_start = getattr(overall, "available_start", None) if overall else None
     available_end = getattr(overall, "available_end", None) if overall else None
+    total_count = int(getattr(overall, "total_count", 0) or 0) if overall else 0
     range_start = getattr(ranged, "range_start", None) if ranged else None
     range_end = getattr(ranged, "range_end", None) if ranged else None
     record_count = int(getattr(ranged, "record_count", 0) or 0) if ranged else 0
 
-    missing_before = bool(record_count > 0 and range_start and range_start > requested_start)
-    missing_after = bool(record_count > 0 and range_end and range_end < requested_end)
-    blocked = record_count <= 0 or missing_before or missing_after
+    range_start_date = range_start.date() if range_start else None
+    range_end_date = range_end.date() if range_end else None
+    dataset_start_date = available_start.date() if available_start else None
+    dataset_end_date = available_end.date() if available_end else None
 
-    if record_count <= 0:
-        message = (
-            "Market data is not available for selected instrument/timeframe/date range. "
-            "Please contact admin or select another range."
-        )
+    missing_before = False
+    missing_after = False
+    if record_count > 0 and range_start_date:
+        missing_before = (range_start_date - start_date).days > boundary_tolerance_days
+    elif dataset_start_date:
+        missing_before = (dataset_start_date - start_date).days > boundary_tolerance_days
+
+    if record_count > 0 and range_end_date:
+        missing_after = (end_date - range_end_date).days > boundary_tolerance_days
+    elif dataset_end_date:
+        missing_after = (end_date - dataset_end_date).days > boundary_tolerance_days
+
+    dataset_missing = total_count <= 0 or available_start is None or available_end is None
+    blocked = dataset_missing or record_count <= 0 or missing_before or missing_after
+
+    if dataset_missing:
+        message = "Market data is missing for this instrument/timeframe/date range. Ask admin to import missing candles."
+        status_value = "error"
+    elif record_count <= 0:
+        message = "Market data is missing for this instrument/timeframe/date range. Ask admin to import missing candles."
+        status_value = "error"
     elif blocked:
-        message = (
-            "Market data coverage is incomplete for selected instrument/timeframe/date range. "
-            "Ask admin to import or refresh market data before running this backtest."
-        )
+        message = "Market data is missing for this instrument/timeframe/date range. Ask admin to import missing candles."
+        status_value = "error"
     else:
-        message = "Market data coverage is available for the selected range."
+        message = "Market data available for selected range."
+        status_value = "ok"
 
     return {
+        "status": status_value,
         "available": not blocked,
         "blocked": blocked,
         "message": message,
@@ -399,6 +439,9 @@ async def _get_market_data_availability_guard(
         "missing_before": missing_before,
         "missing_after": missing_after,
         "record_count": record_count,
+        "total_count": total_count,
+        "boundary_tolerance_days": boundary_tolerance_days,
+        "is_forex_like": is_forex_like,
     }
 
 
@@ -408,8 +451,8 @@ def _raise_market_data_unavailable(availability: dict) -> None:
         detail={
             "code": "MARKET_DATA_UNAVAILABLE",
             "message": availability.get("message") or (
-                "Market data is not available for selected instrument/timeframe/date range. "
-                "Please contact admin or select another range."
+                "Market data is missing for this instrument/timeframe/date range. "
+                "Ask admin to import missing candles."
             ),
             "available_start": availability.get("available_start_iso"),
             "available_end": availability.get("available_end_iso"),
@@ -420,7 +463,7 @@ def _raise_market_data_unavailable(availability: dict) -> None:
             "missing_before": bool(availability.get("missing_before")),
             "missing_after": bool(availability.get("missing_after")),
             "record_count": int(availability.get("record_count") or 0),
-            "action": "Ask admin to import market data for this instrument/timeframe/date range.",
+            "action": "Ask admin to import missing candles for this instrument/timeframe/date range.",
         },
     )
 
@@ -1005,10 +1048,13 @@ async def get_backtest_timeframes(
 async def get_data_availability(
     instrument_id: int,
     timeframe: str,
-    start_date: date | None = None,
-    end_date: date | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
+    parsed_start_date = _parse_date_param(start_date, "start_date")
+    parsed_end_date = _parse_date_param(end_date, "end_date")
+
     summary = (
         await db.execute(
             select(
@@ -1024,8 +1070,13 @@ async def get_data_availability(
             {
                 "instrument_id": instrument_id,
                 "timeframe": timeframe,
+                "status": "error",
                 "available": False,
+                "coverage_status": "BLOCKED",
+                "message": "Market data is missing for this instrument/timeframe/date range. Ask admin to import missing candles.",
                 "candle_count": 0,
+                "total_candles": 0,
+                "matched_candles": 0,
                 "min_timestamp": None,
                 "max_timestamp": None,
                 "requested_candle_count": 0,
@@ -1038,10 +1089,10 @@ async def get_data_availability(
     missing_before = False
     missing_after = False
     coverage_status = "AVAILABLE"
-    message = "Market data is available."
+    message = "Market data available for selected range."
 
-    if start_date and end_date:
-        guard = await _get_market_data_availability_guard(db, instrument_id, timeframe, start_date, end_date)
+    if parsed_start_date and parsed_end_date:
+        guard = await _get_market_data_availability_guard(db, instrument_id, timeframe, parsed_start_date, parsed_end_date)
         requested_count = guard["record_count"]
         range_min = guard.get("available_start")
         range_max = guard.get("available_end")
@@ -1054,16 +1105,19 @@ async def get_data_availability(
         {
             "instrument_id": instrument_id,
             "timeframe": timeframe,
+            "status": "ok" if coverage_status == "AVAILABLE" else "error",
             "available": coverage_status == "AVAILABLE",
             "coverage_status": coverage_status,
             "message": message,
             "candle_count": _to_int(summary.count),
+            "total_candles": _to_int(summary.count),
+            "matched_candles": _to_int(requested_count, 0),
             "min_timestamp": summary.min_ts.isoformat() if summary.min_ts else None,
             "max_timestamp": summary.max_ts.isoformat() if summary.max_ts else None,
             "available_start": range_min.isoformat() if range_min else None,
             "available_end": range_max.isoformat() if range_max else None,
-            "requested_start": datetime.combine(start_date, time.min).isoformat() if start_date else None,
-            "requested_end": datetime.combine(end_date, time.max).isoformat() if end_date else None,
+            "requested_start": datetime.combine(parsed_start_date, time.min).isoformat() if parsed_start_date else None,
+            "requested_end": datetime.combine(parsed_end_date, time.max).isoformat() if parsed_end_date else None,
             "missing_before": missing_before,
             "missing_after": missing_after,
             "requested_candle_count": _to_int(requested_count, 0),

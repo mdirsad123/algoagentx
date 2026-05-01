@@ -2,8 +2,25 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+
+
+
+def _parse_backtest_date(value):
+    """Accept HTML yyyy-mm-dd plus legacy dd-mm-yyyy/dd/mm/yyyy payloads safely."""
+    if isinstance(value, date):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str):
+        raw = value.strip()
+        for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(raw, fmt).date()
+            except ValueError:
+                continue
+    return value
 
 class PerformanceMetricBase(BaseModel):
     user_id: str
@@ -49,6 +66,11 @@ class BacktestRunRequest(BaseModel):
     capital: Decimal = Field(..., gt=0)
     save_result: bool = True
 
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def parse_date_inputs(cls, value):
+        return _parse_backtest_date(value)
+
 
 class BacktestCostPreviewRequest(BaseModel):
     strategy_id: Optional[str] = None
@@ -57,6 +79,11 @@ class BacktestCostPreviewRequest(BaseModel):
     start_date: date
     end_date: date
     capital: Optional[Decimal] = None
+
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def parse_date_inputs(cls, value):
+        return _parse_backtest_date(value)
 
 
 class TradeData(BaseModel):

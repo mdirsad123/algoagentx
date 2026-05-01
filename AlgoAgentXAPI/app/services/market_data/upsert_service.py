@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any
 
-from sqlalchemy import and_, func, select, tuple_
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,25 +13,35 @@ from .types import CandleImportSummary
 from .validator import validate_and_prepare_candles
 
 
+def _chunked(values: Sequence[Any], size: int) -> list[Sequence[Any]]:
+    safe_size = max(int(size or 1000), 1)
+    return [values[index : index + safe_size] for index in range(0, len(values), safe_size)]
+
+
 async def _count_existing_rows(
     db: AsyncSession,
     *,
     instrument_id: int,
     timeframe: str,
     timestamps: list,
+    batch_size: int = 1000,
 ) -> int:
     if not timestamps:
         return 0
-    result = await db.execute(
-        select(func.count())
-        .select_from(MarketData)
-        .where(
-            MarketData.instrument_id == instrument_id,
-            MarketData.timeframe == timeframe,
-            MarketData.timestamp.in_(timestamps),
+
+    total = 0
+    for batch in _chunked(timestamps, batch_size):
+        result = await db.execute(
+            select(func.count())
+            .select_from(MarketData)
+            .where(
+                MarketData.instrument_id == instrument_id,
+                MarketData.timeframe == timeframe,
+                MarketData.timestamp.in_(list(batch)),
+            )
         )
-    )
-    return int(result.scalar() or 0)
+        total += int(result.scalar() or 0)
+    return total
 
 
 async def upsert_market_data_candles(
@@ -43,17 +53,12 @@ async def upsert_market_data_candles(
     source: str | None = None,
     dry_run: bool = False,
     commit: bool = False,
+    batch_size: int = 1000,
 ) -> CandleImportSummary:
     """Normalize, validate, dedupe, and safely upsert market_data candles.
 
-    This function is intentionally provider-agnostic. It accepts mapping-like rows
-    from CSV, MT5, Upstox, Binance, or future broker adapters.
-
-    Notes:
-    - Existing `market_data` currently has no source/provider column, so `source`
-      is accepted for forward compatibility but not persisted yet.
-    - Primary key/upsert target is instrument_id + timeframe + timestamp.
-    - If `commit=False` (default), caller controls the transaction.
+    Large intraday imports are executed in chunks so 5m MT5/Upstox imports do
+    not create one giant INSERT..ON CONFLICT statement that can timeout.
     """
     if not timeframe or not str(timeframe).strip():
         raise ValueError("timeframe is required")
@@ -78,6 +83,7 @@ async def upsert_market_data_candles(
         instrument_id=instrument_id,
         timeframe=timeframe,
         timestamps=timestamps,
+        batch_size=batch_size,
     )
 
     if dry_run:
@@ -88,20 +94,22 @@ async def upsert_market_data_candles(
 
     values = [candle.to_insert_dict(instrument_id=instrument_id, timeframe=timeframe.strip()) for candle in prepared]
     table = MarketData.__table__
-    insert_stmt = pg_insert(table).values(values)
-    update_columns = {
-        "open": insert_stmt.excluded.open,
-        "high": insert_stmt.excluded.high,
-        "low": insert_stmt.excluded.low,
-        "close": insert_stmt.excluded.close,
-        "volume": insert_stmt.excluded.volume,
-    }
-    upsert_stmt = insert_stmt.on_conflict_do_update(
-        index_elements=[table.c.instrument_id, table.c.timeframe, table.c.timestamp],
-        set_=update_columns,
-    )
 
-    await db.execute(upsert_stmt)
+    for batch in _chunked(values, batch_size):
+        insert_stmt = pg_insert(table).values(list(batch))
+        update_columns = {
+            "open": insert_stmt.excluded.open,
+            "high": insert_stmt.excluded.high,
+            "low": insert_stmt.excluded.low,
+            "close": insert_stmt.excluded.close,
+            "volume": insert_stmt.excluded.volume,
+        }
+        upsert_stmt = insert_stmt.on_conflict_do_update(
+            index_elements=[table.c.instrument_id, table.c.timeframe, table.c.timestamp],
+            set_=update_columns,
+        )
+        await db.execute(upsert_stmt)
+
     if commit:
         await db.commit()
 

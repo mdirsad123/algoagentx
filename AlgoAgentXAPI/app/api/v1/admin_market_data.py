@@ -501,7 +501,7 @@ async def fetch_market_data_preview(
         )
 
     start_dt = _as_utc_datetime(request.start_date)
-    end_dt = _as_utc_datetime(request.end_date)
+    end_dt = _as_utc_end_datetime(request.end_date)
     if end_dt <= start_dt:
         raise HTTPException(status_code=400, detail="end_date must be greater than start_date")
 
@@ -564,7 +564,7 @@ async def fetch_market_data_import(
         )
 
     start_dt = _as_utc_datetime(request.start_date)
-    end_dt = _as_utc_datetime(request.end_date)
+    end_dt = _as_utc_end_datetime(request.end_date)
     if end_dt <= start_dt:
         raise HTTPException(status_code=400, detail="end_date must be greater than start_date")
 

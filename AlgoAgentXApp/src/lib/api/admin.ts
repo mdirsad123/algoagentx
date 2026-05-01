@@ -1166,13 +1166,13 @@ export const adminApi = {
     unwrap(await axiosInstance.post("/api/v1/admin/market-data/hooks/refresh", payload)),
 
   fetchMarketDataPreview: async (payload: AdminMarketDataFetchPayload): Promise<AdminMarketDataFetchResponse> =>
-    unwrap(await axiosInstance.post("/api/v1/admin/market-data/fetch-preview", payload)),
+    unwrap(await axiosInstance.post("/api/v1/admin/market-data/fetch-preview", payload, { timeout: 120000 })),
 
   fetchMarketDataImport: async (payload: AdminMarketDataFetchPayload): Promise<AdminMarketDataFetchResponse> =>
-    unwrap(await axiosInstance.post("/api/v1/admin/market-data/fetch-import", payload)),
+    unwrap(await axiosInstance.post("/api/v1/admin/market-data/fetch-import", payload, { timeout: 120000 })),
 
   refreshMissingMarketData: async (payload: AdminMarketDataRefreshMissingPayload): Promise<AdminMarketDataRefreshMissingResponse> =>
-    unwrap(await axiosInstance.post("/api/v1/admin/market-data/refresh-missing", payload)),
+    unwrap(await axiosInstance.post("/api/v1/admin/market-data/refresh-missing", payload, { timeout: 120000 })),
 
   uploadMarketDataCsv: async (payload: AdminMarketDataCsvUploadPayload): Promise<AdminMarketDataCsvUploadResponse> => {
     const formData = new FormData();
@@ -1184,6 +1184,7 @@ export const adminApi = {
     return unwrap(
       await axiosInstance.post("/api/v1/admin/market-data/upload-csv", formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        timeout: 120000,
       }),
     );
   },
