@@ -5,8 +5,6 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
-
-
 def _parse_backtest_date(value):
     """Accept HTML yyyy-mm-dd plus legacy dd-mm-yyyy/dd/mm/yyyy payloads safely."""
     if isinstance(value, date):
@@ -21,6 +19,32 @@ def _parse_backtest_date(value):
             except ValueError:
                 continue
     return value
+
+
+class BacktestAdvancedFilters(BaseModel):
+    enabled: bool = False
+    days_of_week: List[str] = Field(default_factory=list)
+    session: str = "ALL"
+    custom_start_time: Optional[str] = None
+    custom_end_time: Optional[str] = None
+    timezone: str = "Asia/Kolkata"
+
+    @field_validator("days_of_week", mode="before")
+    @classmethod
+    def normalize_days(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value.upper()]
+        if isinstance(value, list):
+            return [str(day).upper() for day in value if str(day or "").strip()]
+        return value
+
+    @field_validator("session", mode="before")
+    @classmethod
+    def normalize_session(cls, value):
+        return str(value or "ALL").upper()
+
 
 class PerformanceMetricBase(BaseModel):
     user_id: str
@@ -65,6 +89,7 @@ class BacktestRunRequest(BaseModel):
     end_date: date
     capital: Decimal = Field(..., gt=0)
     save_result: bool = True
+    advanced_filters: Optional[BacktestAdvancedFilters] = None
 
     @field_validator("start_date", "end_date", mode="before")
     @classmethod
@@ -79,6 +104,7 @@ class BacktestCostPreviewRequest(BaseModel):
     start_date: date
     end_date: date
     capital: Optional[Decimal] = None
+    advanced_filters: Optional[BacktestAdvancedFilters] = None
 
     @field_validator("start_date", "end_date", mode="before")
     @classmethod
@@ -145,6 +171,11 @@ class BacktestHistoryItem(BaseModel):
     status: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    advanced_filters: Optional[dict[str, Any]] = None
+    filter_summary: Optional[str] = None
+    candles_before_filter: Optional[int] = None
+    candles_after_filter: Optional[int] = None
+    filter_reduction_pct: Optional[float] = None
 
 
 class BacktestPagination(BaseModel):

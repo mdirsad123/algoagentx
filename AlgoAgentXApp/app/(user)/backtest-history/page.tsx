@@ -133,6 +133,18 @@ const humanize = (value: string) =>
     .replace(/\b\w/g, (match) => match.toUpperCase())
     .trim();
 
+
+const formatFilterSummary = (item: Pick<BacktestHistoryItem, "filter_summary" | "advanced_filters">): string => {
+  if (item.filter_summary && item.filter_summary.trim()) return item.filter_summary;
+  const filters = item.advanced_filters;
+  if (!filters || !filters.enabled) return "Advanced filters not used";
+  const days = filters.days_of_week?.length ? filters.days_of_week.map(humanize).join(", ") : "All days";
+  const session = filters.session === "CUSTOM"
+    ? `${filters.custom_start_time || "—"}-${filters.custom_end_time || "—"} ${filters.timezone || "Asia/Kolkata"}`
+    : `${humanize(filters.session || "ALL")} Session`;
+  return `${days} · ${session.replace("All Session", "All sessions")}`;
+};
+
 const computeReturnPercent = (item: BacktestHistoryItem): number | null => {
   const initial = safeNumber(item.initial_capital, NaN);
   const final = safeNumber(item.final_capital, NaN);
@@ -883,6 +895,7 @@ export default function BacktestHistoryPage() {
                       <TableHead className="text-right">Sharpe</TableHead>
                       <TableHead className="text-right">Drawdown</TableHead>
                       <TableHead className="text-right">Trades</TableHead>
+                      <TableHead>Filters</TableHead>
                       <TableHead>Created</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
@@ -893,7 +906,7 @@ export default function BacktestHistoryPage() {
                     {loading
                       ? Array.from({ length: 6 }).map((_, idx) => (
                           <TableRow key={`skeleton-${idx}`} className="border-border/30 hover:bg-transparent">
-                            <TableCell colSpan={13} className="py-4">
+                            <TableCell colSpan={14} className="py-4">
                               <div className="h-6 animate-pulse rounded-lg bg-card/40" />
                             </TableCell>
                           </TableRow>
@@ -921,6 +934,11 @@ export default function BacktestHistoryPage() {
                               <TableCell className="text-right">{formatNumber(item.sharpe_ratio, 2)}</TableCell>
                               <TableCell className="text-right">{formatPercentAuto(item.max_drawdown)}</TableCell>
                               <TableCell className="text-right">{formatNumber(item.total_trades, 0)}</TableCell>
+                              <TableCell>
+                                <span className="inline-flex max-w-[220px] rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary">
+                                  {formatFilterSummary(item)}
+                                </span>
+                              </TableCell>
                               <TableCell>{formatDateTime(item.created_at)}</TableCell>
                               <TableCell>
                                 <span className={`inline-flex rounded-full border px-2 py-1 text-xs ${statusTone(item.status)}`}>
@@ -1002,6 +1020,10 @@ export default function BacktestHistoryPage() {
                           <p className="text-muted-foreground">Win Rate</p>
                           <p className="font-medium text-foreground">{formatPercentAuto(item.win_rate)}</p>
                         </div>
+                      </div>
+
+                      <div className="mt-3 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-primary">
+                        {formatFilterSummary(item)}
                       </div>
 
                       <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">

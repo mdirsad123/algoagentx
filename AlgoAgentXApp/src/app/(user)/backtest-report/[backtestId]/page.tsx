@@ -77,6 +77,23 @@ const downloadCsv = (filename: string, headers: string[], rows: Array<Array<unkn
   downloadBlob(filename, blob);
 };
 
+const humanize = (value?: string | null): string =>
+  String(value || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase())
+    .trim();
+
+const formatFilterSummary = (summary: BacktestDetailResponse["summary"]): string => {
+  if (summary.filter_summary && summary.filter_summary.trim()) return summary.filter_summary;
+  const filters = summary.advanced_filters;
+  if (!filters || !filters.enabled) return "Advanced filters were not used for this run.";
+  const days = filters.days_of_week?.length ? filters.days_of_week.map(humanize).join(", ") : "All days";
+  const session = filters.session === "CUSTOM"
+    ? `${filters.custom_start_time || "—"}-${filters.custom_end_time || "—"} ${filters.timezone || "Asia/Kolkata"}`
+    : `${humanize(filters.session || "ALL")} Session`;
+  return `${days} · ${session.replace("All Session", "All sessions")}`;
+};
+
 export default function BacktestReportPage() {
   const params = useParams<{ backtestId: string }>();
   const router = useRouter();
@@ -239,6 +256,50 @@ export default function BacktestReportPage() {
           </CardContent>
         </Card>
       </section>
+
+
+      <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <CardHeader>
+          <CardTitle>Advanced Filters Used</CardTitle>
+          <CardDescription>Saved filter scope for this exact backtest run.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {summary.advanced_filters?.enabled ? (
+            <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2 xl:grid-cols-3">
+              <div className="rounded-xl border border-primary/30 bg-primary/10 p-3">
+                <p className="text-xs text-muted-foreground">Summary</p>
+                <p className="mt-1 font-medium text-primary">{formatFilterSummary(summary)}</p>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-card/20 p-3">
+                <p className="text-xs text-muted-foreground">Days</p>
+                <p className="mt-1 text-foreground">{summary.advanced_filters.days_of_week?.length ? summary.advanced_filters.days_of_week.map(humanize).join(", ") : "All days"}</p>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-card/20 p-3">
+                <p className="text-xs text-muted-foreground">Session</p>
+                <p className="mt-1 text-foreground">{humanize(summary.advanced_filters.session || "ALL")}</p>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-card/20 p-3">
+                <p className="text-xs text-muted-foreground">Custom Time Window</p>
+                <p className="mt-1 text-foreground">{summary.advanced_filters.custom_start_time && summary.advanced_filters.custom_end_time ? `${summary.advanced_filters.custom_start_time} → ${summary.advanced_filters.custom_end_time}` : "Not used"}</p>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-card/20 p-3">
+                <p className="text-xs text-muted-foreground">Timezone</p>
+                <p className="mt-1 text-foreground">{summary.advanced_filters.timezone || "Asia/Kolkata"}</p>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-card/20 p-3">
+                <p className="text-xs text-muted-foreground">Filter Impact</p>
+                <p className="mt-1 text-foreground">
+                  {formatNumber(summary.candles_before_filter, 0)} → {formatNumber(summary.candles_after_filter, 0)} candles · {formatPercent(summary.filter_reduction_pct)} reduction
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-border/40 bg-card/20 p-4 text-sm text-muted-foreground">
+              Advanced filters were not used for this run.
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">

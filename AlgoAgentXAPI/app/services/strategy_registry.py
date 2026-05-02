@@ -60,7 +60,16 @@ def resolve_strategy(strategy_id: str | None, strategy_name: str | None, db_para
     key = None
     if "trendline" in haystack:
         key = "simple_trendline"
-    elif "stock burner" in haystack or ("ema" in haystack and "200" in haystack):
+    elif (
+        "stock burner" in haystack
+        or "ema 9/20" in haystack
+        or "ema 9 20" in haystack
+        or "9/20" in haystack
+        or ("ema" in haystack and "920" in haystack)
+        or ("ema" in haystack and "9" in haystack and "20" in haystack)
+        or ("ema" in haystack and "trend momentum" in haystack)
+        or ("ema" in haystack and "200" in haystack)
+    ):
         key = "stock_burner_ema_920"
     elif "tce" in haystack or "trend continuation" in haystack:
         key = "trend_continuation_tce"

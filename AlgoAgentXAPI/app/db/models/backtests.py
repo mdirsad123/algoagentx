@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Date, Numeric, Integer, ForeignKey, DateTime, Index
+from sqlalchemy import Column, String, Date, Numeric, Integer, ForeignKey, DateTime, Index, Text, JSON
 from sqlalchemy.orm import deferred
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.sql import func
@@ -33,6 +33,11 @@ class PerformanceMetric(Base):
     avg_win = Column(Numeric, nullable=True)
     avg_loss = Column(Numeric, nullable=True)
     expectancy = Column(Numeric, nullable=True)
+    advanced_filters = Column(JSON, nullable=True)
+    filter_summary = Column(Text, nullable=True)
+    candles_before_filter = Column(Integer, nullable=True)
+    candles_after_filter = Column(Integer, nullable=True)
+    filter_reduction_pct = Column(Numeric, nullable=True)
     status = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = deferred(Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=True))

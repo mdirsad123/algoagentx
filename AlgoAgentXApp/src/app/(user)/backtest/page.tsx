@@ -15,6 +15,7 @@ import {
   Loader2,
   Play,
   RefreshCcw,
+  SlidersHorizontal,
   Wallet,
 } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -36,6 +37,7 @@ import { parseApiError, formatErrorMessage } from "@/lib/api/error";
 import {
   backtestsApi,
   type BacktestDetailResponse,
+  type AdvancedBacktestFilters,
   type BacktestRunResponse,
   type CostPreviewResponse,
   type DataAvailabilityResponse,
@@ -49,6 +51,38 @@ type ParameterField = {
   valueType: "string" | "number" | "boolean";
   value: string;
 };
+
+
+type SessionOption = "ALL" | "ASIAN" | "LONDON" | "NEW_YORK" | "CUSTOM";
+
+type DayOption = {
+  value: string;
+  label: string;
+  short: string;
+};
+
+const DAY_OPTIONS: DayOption[] = [
+  { value: "MONDAY", label: "Monday", short: "Mon" },
+  { value: "TUESDAY", label: "Tuesday", short: "Tue" },
+  { value: "WEDNESDAY", label: "Wednesday", short: "Wed" },
+  { value: "THURSDAY", label: "Thursday", short: "Thu" },
+  { value: "FRIDAY", label: "Friday", short: "Fri" },
+  { value: "SATURDAY", label: "Saturday", short: "Sat" },
+  { value: "SUNDAY", label: "Sunday", short: "Sun" },
+];
+
+const SESSION_OPTIONS: Array<{ value: SessionOption; label: string }> = [
+  { value: "ALL", label: "All Sessions" },
+  { value: "ASIAN", label: "Asian Session" },
+  { value: "LONDON", label: "London Session" },
+  { value: "NEW_YORK", label: "New York Session" },
+  { value: "CUSTOM", label: "Custom Time Window" },
+];
+
+const DEFAULT_TIMEZONE = "Asia/Kolkata";
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+const isValidTimeValue = (value: string): boolean => TIME_PATTERN.test((value || "").trim());
 
 const META_PARAMETER_KEYS = new Set([
   "performance_metrics",
@@ -188,6 +222,13 @@ export default function BacktestPage() {
 
   const [parameterValues, setParameterValues] = useState<Record<string, string>>({});
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
+  const [advancedFiltersEnabled, setAdvancedFiltersEnabled] = useState(false);
+  const [selectedDays, setSelectedDays] = useState<string[]>([]);
+  const [selectedSession, setSelectedSession] = useState<SessionOption>("ALL");
+  const [customStartTime, setCustomStartTime] = useState("17:00");
+  const [customEndTime, setCustomEndTime] = useState("21:00");
+  const [advancedTimezone, setAdvancedTimezone] = useState(DEFAULT_TIMEZONE);
 
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [availability, setAvailability] = useState<DataAvailabilityResponse | null>(null);
@@ -211,6 +252,43 @@ export default function BacktestPage() {
 
   const parameterFields = useMemo(() => extractStrategyParameterFields(selectedStrategy), [selectedStrategy]);
 
+
+  const advancedFilterPayload = useMemo<AdvancedBacktestFilters | undefined>(() => {
+    if (!advancedFiltersEnabled) return { enabled: false };
+
+    return {
+      enabled: true,
+      days_of_week: selectedDays,
+      session: selectedSession,
+      custom_start_time: selectedSession === "CUSTOM" ? customStartTime : null,
+      custom_end_time: selectedSession === "CUSTOM" ? customEndTime : null,
+      timezone: advancedTimezone || DEFAULT_TIMEZONE,
+    };
+  }, [advancedFiltersEnabled, selectedDays, selectedSession, customStartTime, customEndTime, advancedTimezone]);
+
+  const advancedFilterSignature = useMemo(
+    () => JSON.stringify(advancedFilterPayload || { enabled: false }),
+    [advancedFilterPayload],
+  );
+
+  const activeFilterSummary = useMemo(() => {
+    if (!advancedFiltersEnabled) return "Advanced filters disabled";
+
+    const dayText = selectedDays.length
+      ? DAY_OPTIONS.filter((day) => selectedDays.includes(day.value)).map((day) => day.label).join(", ")
+      : "All days";
+    const sessionLabel = SESSION_OPTIONS.find((item) => item.value === selectedSession)?.label || "All Sessions";
+    const sessionText = selectedSession === "CUSTOM"
+      ? `${customStartTime || "--:--"}-${customEndTime || "--:--"} ${advancedTimezone || DEFAULT_TIMEZONE}`
+      : sessionLabel;
+
+    return `${dayText} · ${sessionText}`;
+  }, [advancedFiltersEnabled, selectedDays, selectedSession, customStartTime, customEndTime, advancedTimezone]);
+
+  const toggleTradingDay = useCallback((day: string) => {
+    setSelectedDays((prev) => (prev.includes(day) ? prev.filter((item) => item !== day) : [...prev, day]));
+  }, []);
+
   useEffect(() => {
     const nextValues: Record<string, string> = {};
     parameterFields.forEach((field) => {
@@ -221,10 +299,10 @@ export default function BacktestPage() {
 
   const requestSignature = useMemo(
     () =>
-      [selectedStrategyId, selectedInstrumentId, selectedTimeframe, startDate, endDate, initialCapital]
+      [selectedStrategyId, selectedInstrumentId, selectedTimeframe, startDate, endDate, initialCapital, advancedFilterSignature]
         .map((item) => (item ?? "").toString().trim())
         .join("|"),
-    [selectedStrategyId, selectedInstrumentId, selectedTimeframe, startDate, endDate, initialCapital],
+    [selectedStrategyId, selectedInstrumentId, selectedTimeframe, startDate, endDate, initialCapital, advancedFilterSignature],
   );
 
   const validationErrors = useMemo(() => {
@@ -248,8 +326,26 @@ export default function BacktestPage() {
       // only as a soft preview warning, not as a hard execution blocker.
     }
 
+    if (advancedFiltersEnabled && selectedSession === "CUSTOM") {
+      if (!isValidTimeValue(customStartTime) || !isValidTimeValue(customEndTime)) {
+        messages.push("Custom time window must use valid HH:mm start and end times.");
+      }
+    }
+
     return messages;
-  }, [selectedStrategyId, selectedInstrumentId, selectedTimeframe, startDate, endDate, initialCapital, limits]);
+  }, [
+    selectedStrategyId,
+    selectedInstrumentId,
+    selectedTimeframe,
+    startDate,
+    endDate,
+    initialCapital,
+    limits,
+    advancedFiltersEnabled,
+    selectedSession,
+    customStartTime,
+    customEndTime,
+  ]);
 
   const isReadyForRun = validationErrors.length === 0;
 
@@ -420,6 +516,7 @@ export default function BacktestPage() {
           start_date: startDate,
           end_date: endDate,
           capital: safeNumber(initialCapital, 0),
+          advanced_filters: advancedFilterPayload,
         }),
       ]);
 
@@ -444,11 +541,17 @@ export default function BacktestPage() {
       if (!availabilityData.available || (availabilityData.requested_candle_count || 0) <= 0) {
         warnings.push(availabilityData.message || "Market data is missing for this instrument/timeframe/date range. Ask admin to import missing candles.");
       }
-      if (availabilityData.requested_candle_count > 100000) {
+      const backendWarnings = Array.isArray(costData.warnings) ? costData.warnings.filter(Boolean) : [];
+      warnings.push(...backendWarnings);
+      const filteredCount = costData.data_coverage?.filtered_candles ?? availabilityData.requested_candle_count;
+      if (filteredCount > 100000) {
         warnings.push("Large candle scope detected. Execution may be slower and cost more credits.");
       }
-      if (!costData.can_run) {
+      if (costData.cost_feasible === false) {
         warnings.push("Insufficient credits for this run. Reduce scope or add credits.");
+      }
+      if (costData.can_run === false && costData.cost_feasible !== false) {
+        warnings.push("Preview is not feasible for this filter scope. Review the filtered candle count before running.");
       }
       setPreviewWarnings(warnings);
 
@@ -471,6 +574,7 @@ export default function BacktestPage() {
     endDate,
     limits,
     validationErrors,
+    advancedFilterPayload,
   ]);
 
   const loadResultDetail = useCallback(async (backtestId: string) => {
@@ -510,12 +614,20 @@ export default function BacktestPage() {
     }
 
     if (!previewData.cost?.can_run) {
-      setRunError("Insufficient credit balance for this run. Adjust scope or add credits.");
-      setInsufficientCreditsHint({
-        needed: safeNumber(previewData.cost?.total_cost, 0),
-        walletBalance: safeNumber(previewData.cost?.balances?.wallet_balance, 0),
-        includedBalance: safeNumber(previewData.cost?.balances?.included_balance, 0),
-      });
+      if (previewData.cost?.cost_feasible === false) {
+        setRunError("Insufficient credit balance for this run. Adjust scope or add credits.");
+        setInsufficientCreditsHint({
+          needed: safeNumber(previewData.cost?.total_cost, 0),
+          walletBalance: safeNumber(previewData.cost?.balances?.wallet_balance, 0),
+          includedBalance: safeNumber(previewData.cost?.balances?.included_balance, 0),
+        });
+      } else {
+        setInsufficientCreditsHint(null);
+        setRunError(
+          previewData.cost?.warnings?.[0] ||
+            "Preview is not feasible for this filter scope. Increase the range or relax advanced filters before running.",
+        );
+      }
       return;
     }
 
@@ -529,6 +641,7 @@ export default function BacktestPage() {
         end_date: endDate,
         capital: safeNumber(initialCapital, 0),
         save_result: true,
+        advanced_filters: advancedFilterPayload,
       });
 
       setRunResponse(response);
@@ -597,6 +710,7 @@ export default function BacktestPage() {
     startDate,
     endDate,
     validationErrors,
+    advancedFilterPayload,
   ]);
 
   const resultSummary = useMemo(() => {
@@ -604,7 +718,13 @@ export default function BacktestPage() {
     return runResponse?.result || null;
   }, [resultDetail, runResponse]);
 
+  const previewCoverage = costPreview?.data_coverage;
   const requestedCandleCount = availability?.requested_candle_count || 0;
+  const candlesBeforeFilters = previewCoverage?.total_candles ?? requestedCandleCount;
+  const candlesAfterFilters = previewCoverage?.filtered_candles ?? candlesBeforeFilters;
+  const candlesRemovedByFilters = previewCoverage?.candles_removed ?? Math.max(candlesBeforeFilters - candlesAfterFilters, 0);
+  const filterReductionPct = previewCoverage?.filter_reduction_pct ?? 0;
+  const previewFilterSummary = costPreview?.advanced_filters?.summary || activeFilterSummary;
   const estimatedCost = costPreview?.total_cost ?? null;
   const totalAvailableCredits = creditSnapshot?.totalAvailable ?? null;
   const subscriptionCredits = creditSnapshot?.includedBalance ?? 0;
@@ -614,7 +734,8 @@ export default function BacktestPage() {
     .join(" → ");
   const postRunBalance =
     totalAvailableCredits !== null && estimatedCost !== null ? Math.max(totalAvailableCredits - estimatedCost, 0) : null;
-  const isCreditInsufficient = Boolean(costPreview && !costPreview.can_run);
+  const isCreditInsufficient = Boolean(costPreview && costPreview.cost_feasible === false);
+  const isPreviewNotFeasible = Boolean(costPreview && costPreview.can_run === false);
 
   const equityChartRows = useMemo(
     () =>
@@ -832,6 +953,151 @@ export default function BacktestPage() {
           <div className="rounded-xl border border-border/50 bg-card/20">
             <button
               type="button"
+              onClick={() => setAdvancedFiltersOpen((prev) => !prev)}
+              className="flex w-full items-center justify-between px-4 py-3 text-left"
+            >
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 rounded-xl border border-primary/30 bg-primary/10 p-2 text-primary">
+                  <SlidersHorizontal className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">Advanced Filters</p>
+                  <p className="text-xs text-muted-foreground">
+                    Optional filters to test strategy performance by weekday, session, or intraday time window.
+                  </p>
+                </div>
+              </div>
+              {advancedFiltersOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+            </button>
+
+            {advancedFiltersOpen && (
+              <div className="space-y-4 border-t border-border/50 px-4 pb-4 pt-4">
+                <div className="flex flex-col gap-3 rounded-xl border border-border/40 bg-card/20 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Enable Advanced Filters</p>
+                    <p className="text-xs text-muted-foreground">Disabled by default. Existing backtests stay unchanged.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAdvancedFiltersEnabled((prev) => !prev)}
+                    className={`relative inline-flex h-7 w-14 items-center rounded-full border transition ${
+                      advancedFiltersEnabled
+                        ? "border-primary/60 bg-primary/80"
+                        : "border-border/70 bg-card/30"
+                    }`}
+                    aria-pressed={advancedFiltersEnabled}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 rounded-full bg-white shadow transition ${
+                        advancedFiltersEnabled ? "translate-x-7" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className={advancedFiltersEnabled ? "space-y-4" : "pointer-events-none space-y-4 opacity-55"}>
+                  <div className="space-y-2">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <Label className="text-muted-foreground">Trading Days</Label>
+                        <p className="text-xs text-muted-foreground">Choose All Days or select specific weekdays.</p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant={selectedDays.length === 0 ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setSelectedDays([])}
+                        className="w-fit rounded-xl"
+                      >
+                        All Days
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {DAY_OPTIONS.map((day) => {
+                        const selected = selectedDays.includes(day.value);
+                        return (
+                          <button
+                            key={day.value}
+                            type="button"
+                            onClick={() => toggleTradingDay(day.value)}
+                            className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                              selected
+                                ? "border-primary/60 bg-primary/20 text-primary-foreground shadow"
+                                : "border-border/60 bg-card/20 text-muted-foreground hover:bg-card/40 hover:text-foreground"
+                            }`}
+                          >
+                            {day.short}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label className="text-muted-foreground">Session</Label>
+                      <Select value={selectedSession} onValueChange={(value) => setSelectedSession(value as SessionOption)}>
+                        <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground data-[placeholder]:text-muted-foreground">
+                          <SelectValue placeholder="Select session" />
+                        </SelectTrigger>
+                        <SelectContent className="z-[90] rounded-xl border-border/60 bg-[#34135c] text-foreground">
+                          {SESSION_OPTIONS.map((session) => (
+                            <SelectItem key={session.value} value={session.value}>
+                              {session.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Session presets are mainly useful for Forex/Crypto. NSE instruments use exchange hours.
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Active Filter Summary</p>
+                      <p className="mt-2 text-sm font-medium text-foreground">{activeFilterSummary}</p>
+                    </div>
+                  </div>
+
+                  {selectedSession === "CUSTOM" && (
+                    <div className="grid grid-cols-1 gap-4 rounded-xl border border-border/50 bg-card/20 p-4 md:grid-cols-3">
+                      <div className="space-y-2">
+                        <Label className="text-muted-foreground">Start Time</Label>
+                        <Input
+                          type="time"
+                          value={customStartTime}
+                          onChange={(event) => setCustomStartTime(event.target.value)}
+                          className="rounded-xl border-border/50 bg-card/20 text-foreground"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-muted-foreground">End Time</Label>
+                        <Input
+                          type="time"
+                          value={customEndTime}
+                          onChange={(event) => setCustomEndTime(event.target.value)}
+                          className="rounded-xl border-border/50 bg-card/20 text-foreground"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-muted-foreground">Timezone</Label>
+                        <Input
+                          value={advancedTimezone}
+                          onChange={(event) => setAdvancedTimezone(event.target.value || DEFAULT_TIMEZONE)}
+                          placeholder="Asia/Kolkata"
+                          className="rounded-xl border-border/50 bg-card/20 text-foreground placeholder:text-muted-foreground"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-border/50 bg-card/20">
+            <button
+              type="button"
               onClick={() => setAdvancedOpen((prev) => !prev)}
               className="flex w-full items-center justify-between px-4 py-3 text-left"
             >
@@ -912,9 +1178,9 @@ export default function BacktestPage() {
             </div>
 
             <div className="rounded-xl border border-border/50 bg-card/20 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">Requested Candles</p>
-              <p className="mt-2 text-lg font-semibold text-foreground">{requestedCandleCount ? formatNumber(requestedCandleCount, 0) : "—"}</p>
-              <p className="mt-1 text-xs text-muted-foreground">Larger scopes increase runtime and credit usage.</p>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Candles After Filters</p>
+              <p className="mt-2 text-lg font-semibold text-foreground">{candlesAfterFilters ? formatNumber(candlesAfterFilters, 0) : "—"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Before filters: {candlesBeforeFilters ? formatNumber(candlesBeforeFilters, 0) : "—"}</p>
             </div>
 
             <div className="rounded-xl border border-border/50 bg-card/20 p-4">
@@ -927,6 +1193,26 @@ export default function BacktestPage() {
               </p>
             </div>
           </div>
+
+          {costPreview && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Candles Before Filters</p>
+                <p className="mt-2 text-lg font-semibold text-foreground">{formatNumber(candlesBeforeFilters, 0)}</p>
+                <p className="mt-1 text-xs text-muted-foreground">Raw candles matched by instrument, timeframe, and date range.</p>
+              </div>
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Filter Reduction</p>
+                <p className="mt-2 text-lg font-semibold text-foreground">{formatPercent(filterReductionPct)}</p>
+                <p className="mt-1 text-xs text-muted-foreground">Removed {formatNumber(candlesRemovedByFilters, 0)} candles.</p>
+              </div>
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Active Filters</p>
+                <p className="mt-2 text-sm font-semibold text-foreground">{previewFilterSummary}</p>
+                <p className="mt-1 text-xs text-muted-foreground">Preview cost is based on filtered candles when enabled.</p>
+              </div>
+            </div>
+          )}
 
           {previewError && (
             <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
@@ -975,11 +1261,17 @@ export default function BacktestPage() {
             <Button
               type="button"
               onClick={() => void runBacktest()}
-              disabled={isRunning || isPreviewing || !isReadyForRun || isCreditInsufficient}
+              disabled={isRunning || isPreviewing || !isReadyForRun || isPreviewNotFeasible}
               className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-              {isRunning ? "Running Backtest..." : isCreditInsufficient ? "Insufficient Credits" : "Run Backtest"}
+              {isRunning
+                ? "Running Backtest..."
+                : isCreditInsufficient
+                  ? "Insufficient Credits"
+                  : isPreviewNotFeasible
+                    ? "Preview Not Feasible"
+                    : "Run Backtest"}
             </Button>
           </div>
         </CardContent>

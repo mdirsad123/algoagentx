@@ -408,6 +408,8 @@ class BacktestPricingService:
         premium_multiplier: Decimal | float | int = Decimal("1.00"),
         use_actual_candle_count: bool = False,
         plan_code: str | None = None,
+        candle_count_override: int | None = None,
+        candle_count_mode_override: str | None = None,
     ) -> dict[str, Any]:
         if start_date >= end_date:
             raise ValueError("start_date must be before end_date")
@@ -419,7 +421,10 @@ class BacktestPricingService:
         date_range_multiplier = cls._pick_tier_multiplier(range_days, rules["date_range_buckets"], "max_days")
         timeframe_multiplier = cls._pick_tier_multiplier(timeframe_minutes, rules["timeframe_multipliers"], "max_minutes")
 
-        if use_actual_candle_count and instrument_id is not None:
+        if candle_count_override is not None:
+            candle_count = max(int(candle_count_override or 0), 0)
+            candle_count_mode = str(candle_count_mode_override or "override")
+        elif use_actual_candle_count and instrument_id is not None:
             candle_count = await cls._actual_candle_count(db, instrument_id, timeframe, start_date, end_date)
             candle_count_mode = "actual"
         else:

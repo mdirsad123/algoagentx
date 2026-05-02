@@ -34,11 +34,12 @@ from ...db.models import (
     Trade,
 )
 from ...schemas.backtests import BacktestCostPreviewRequest, BacktestRunRequest
-from ...services.backtest_service import BacktestService
+from ...services.backtest_service import BacktestError, BacktestService
 from ...services.credits.management import CreditManagementService
 from ...services.metrics import MetricsCalculator
 from ...services.notification_service import NotificationService
 from ...services.pricing.backtest_pricing_service import BacktestPricingService
+from ...services.backtest_advanced_filters import apply_advanced_filters, build_filter_summary
 from ...utils.api_response import success_response
 
 router = APIRouter()
@@ -62,6 +63,83 @@ def _to_int(value, default: int = 0) -> int:
     except Exception:
         return default
 
+
+
+
+def _advanced_filters_to_json(value) -> dict | None:
+    if value is None or not bool(getattr(value, "enabled", False)):
+        return None
+    try:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, dict):
+            return value
+    except Exception:
+        return None
+    return None
+
+
+def _filter_meta_from_impact(impact: dict | None, payload_filters=None) -> dict:
+    filters_json = _advanced_filters_to_json(payload_filters)
+    if not impact and not filters_json:
+        return {
+            "advanced_filters": None,
+            "filter_summary": None,
+            "candles_before_filter": None,
+            "candles_after_filter": None,
+            "filter_reduction_pct": None,
+        }
+
+    return {
+        "advanced_filters": filters_json,
+        "filter_summary": (impact or {}).get("summary") or (build_filter_summary(payload_filters) if filters_json else None),
+        "candles_before_filter": _to_int((impact or {}).get("total_candles_before_filter"), None),
+        "candles_after_filter": _to_int((impact or {}).get("total_candles_after_filter"), None),
+        "filter_reduction_pct": _to_float((impact or {}).get("filter_reduction_pct"), None),
+    }
+
+
+async def _get_backtest_filter_meta(db: AsyncSession, backtest_id: str) -> dict:
+    columns = [
+        "advanced_filters",
+        "filter_summary",
+        "candles_before_filter",
+        "candles_after_filter",
+        "filter_reduction_pct",
+    ]
+    available = []
+    for column in columns:
+        if await _column_exists(db, "performance_metrics", column):
+            available.append(column)
+    if not available:
+        return _filter_meta_from_impact(None, None)
+
+    select_sql = ", ".join(available)
+    try:
+        result = await db.execute(
+            text(f"SELECT {select_sql} FROM performance_metrics WHERE id::text = :backtest_id LIMIT 1"),
+            {"backtest_id": str(backtest_id)},
+        )
+        row = result.mappings().first()
+        if not row:
+            return _filter_meta_from_impact(None, None)
+        data = dict(row)
+        advanced_filters = data.get("advanced_filters")
+        if isinstance(advanced_filters, str):
+            try:
+                advanced_filters = json.loads(advanced_filters)
+            except Exception:
+                advanced_filters = None
+        return {
+            "advanced_filters": advanced_filters,
+            "filter_summary": data.get("filter_summary"),
+            "candles_before_filter": _to_int(data.get("candles_before_filter"), None),
+            "candles_after_filter": _to_int(data.get("candles_after_filter"), None),
+            "filter_reduction_pct": _to_float(data.get("filter_reduction_pct"), None),
+        }
+    except Exception as exc:
+        logger.warning("Unable to load advanced filter metadata for backtest %s: %s", backtest_id, exc)
+        return _filter_meta_from_impact(None, None)
 
 def _decimal(value, fallback: Decimal = Decimal("0")) -> Decimal:
     try:
@@ -92,14 +170,26 @@ def _parse_date_param(value, field_name: str = "date") -> date | None:
     raise HTTPException(status_code=422, detail=f"Invalid {field_name}. Use yyyy-mm-dd or dd-mm-yyyy.")
 
 
+from zoneinfo import ZoneInfo
+
+MARKET_DATA_TZ = ZoneInfo("Asia/Kolkata")
+
+
 def _ensure_aware_datetime(value):
+    """
+    Market candle timestamps in DB are stored as IST local time.
+    Do NOT treat naive candle timestamps as UTC.
+    """
     if value is None:
         return None
+
     ts = pd.Timestamp(value)
+
     if ts.tzinfo is None:
-        ts = ts.tz_localize("UTC")
+        ts = ts.tz_localize(MARKET_DATA_TZ)
     else:
-        ts = ts.tz_convert("UTC")
+        ts = ts.tz_convert(MARKET_DATA_TZ)
+
     return ts.to_pydatetime()
 
 
@@ -315,6 +405,8 @@ async def _quote_backtest_cost(
     start_date: date,
     end_date: date,
     use_actual_candle_count: bool,
+    candle_count_override: int | None = None,
+    candle_count_mode_override: str | None = None,
 ) -> dict:
     strategy_parameters = None
     if strategy_id:
@@ -331,8 +423,60 @@ async def _quote_backtest_cost(
         strategy_parameters=strategy_parameters,
         use_actual_candle_count=use_actual_candle_count,
         plan_code=plan_code,
+        candle_count_override=candle_count_override,
+        candle_count_mode_override=candle_count_mode_override,
     )
 
+
+
+
+async def _advanced_filter_preview(
+    db: AsyncSession,
+    *,
+    instrument_id: int | None,
+    timeframe: str,
+    start_date: date,
+    end_date: date,
+    advanced_filters,
+) -> dict | None:
+    """Calculate AF-2 preview details using the same filter path as actual runs."""
+    if instrument_id is None or advanced_filters is None or not bool(getattr(advanced_filters, "enabled", False)):
+        return None
+
+    market_data_df = await BacktestService._fetch_market_data(db, instrument_id, timeframe, start_date, end_date)
+    instrument_symbol, instrument_market = await BacktestService._get_instrument_details(db, instrument_id)
+    _, impact = apply_advanced_filters(
+        market_data_df,
+        advanced_filters,
+        timeframe=timeframe,
+        instrument_symbol=instrument_symbol,
+        instrument_market=instrument_market,
+    )
+
+    filters = impact.get("filters") or {}
+    before_count = _to_int(impact.get("total_candles_before_filter"), 0)
+    after_count = _to_int(impact.get("total_candles_after_filter"), before_count)
+    removed = _to_int(impact.get("candles_removed"), max(before_count - after_count, 0))
+    warnings = list(impact.get("warnings") or [])
+
+    return {
+        "enabled": True,
+        "days_of_week": filters.get("days_of_week") or [],
+        "session": filters.get("session") or "ALL",
+        "custom_start_time": filters.get("custom_start_time"),
+        "custom_end_time": filters.get("custom_end_time"),
+        "timezone": filters.get("timezone") or "Asia/Kolkata",
+        "summary": build_filter_summary(advanced_filters),
+        "status": impact.get("status") or "ok",
+        "total_candles_before_filter": before_count,
+        "total_candles_after_filter": after_count,
+        "candles_removed": removed,
+        "filter_reduction_pct": float(impact.get("filter_reduction_pct") or 0.0),
+        "minimum_candles_required": _to_int(impact.get("minimum_candles_required"), 0),
+        "warning": impact.get("warning"),
+        "warnings": warnings,
+        "raw_impact": impact,
+    }
 
 
 async def _get_market_data_availability_guard(
@@ -545,6 +689,8 @@ async def _serialize_summary(
             await db.execute(select(Instrument.symbol).where(Instrument.id == row.instrument_id))
         ).scalar_one_or_none()
 
+    filter_meta = await _get_backtest_filter_meta(db, str(row.id))
+
     return {
         "id": str(row.id),
         "strategy_id": row.strategy_id,
@@ -574,6 +720,15 @@ async def _serialize_summary(
         "avg_win": _to_float(getattr(row, "avg_win", None), None),
         "avg_loss": _to_float(getattr(row, "avg_loss", None), None),
         "expectancy": _to_float(getattr(row, "expectancy", None), None),
+        # asyncpg expects JSON/JSONB values passed through raw text() SQL to be
+        # JSON-encoded strings. Passing a Python dict here raises:
+        #   dict object has no attribute encode
+        # Keep reads backward-compatible by decoding strings in _get_backtest_filter_meta().
+        "advanced_filters": json.dumps(filter_meta.get("advanced_filters")) if filter_meta.get("advanced_filters") is not None else None,
+        "filter_summary": filter_meta.get("filter_summary"),
+        "candles_before_filter": filter_meta.get("candles_before_filter"),
+        "candles_after_filter": filter_meta.get("candles_after_filter"),
+        "filter_reduction_pct": filter_meta.get("filter_reduction_pct"),
     }
 
 
@@ -592,6 +747,8 @@ async def _save_backtest_payload(
     total_trades = int(service_response.total_trades or 0)
     winning_trades = int(round(total_trades * float(win_rate))) if total_trades > 0 else 0
     losing_trades = max(total_trades - winning_trades, 0)
+
+    filter_meta = _filter_meta_from_impact(service_response.advanced_filter_impact, payload.advanced_filters)
 
     insert_values = {
         "id": backtest_id,
@@ -616,6 +773,13 @@ async def _save_backtest_payload(
         "avg_win": _decimal(metrics.get("avg_win")),
         "avg_loss": _decimal(metrics.get("avg_loss")),
         "expectancy": _decimal(metrics.get("expectancy")),
+        # asyncpg JSONB raw text() inserts require a JSON-encoded string, not a Python dict.
+        # Without this, advanced filter runs fail with: dict object has no attribute encode.
+        "advanced_filters": json.dumps(filter_meta.get("advanced_filters")) if filter_meta.get("advanced_filters") is not None else None,
+        "filter_summary": filter_meta.get("filter_summary"),
+        "candles_before_filter": filter_meta.get("candles_before_filter"),
+        "candles_after_filter": filter_meta.get("candles_after_filter"),
+        "filter_reduction_pct": _decimal(filter_meta.get("filter_reduction_pct"), Decimal("0")) if filter_meta.get("filter_reduction_pct") is not None else None,
         "status": "completed",
     }
 
@@ -789,6 +953,10 @@ def _build_detail_export_frames(detail: dict):
         ["Total Trades", summary.get("total_trades")],
         ["Winning Trades", summary.get("winning_trades")],
         ["Losing Trades", summary.get("losing_trades")],
+        ["Advanced Filters", summary.get("filter_summary") or "Not used"],
+        ["Candles Before Filter", summary.get("candles_before_filter")],
+        ["Candles After Filter", summary.get("candles_after_filter")],
+        ["Filter Reduction %", summary.get("filter_reduction_pct")],
         ["Created At", summary.get("created_at")],
     ]
     metrics_df = pd.DataFrame(metrics_rows, columns=["Metric", "Value"])
@@ -987,6 +1155,7 @@ async def get_backtest_config(
     ).scalars().all()
 
     try:
+
         capacity = await CreditManagementService.get_credit_capacity(db, str(user_id), for_update=False)
     except Exception:
         capacity = {
@@ -1133,6 +1302,22 @@ async def preview_backtest_cost(
     entitlements: dict = Depends(get_user_entitlements),
 ):
     plan_code = str(entitlements.get("plan_code") or "").upper() if entitlements else None
+
+    advanced_filter_preview = await _advanced_filter_preview(
+        db,
+        instrument_id=payload.instrument_id,
+        timeframe=payload.timeframe,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        advanced_filters=payload.advanced_filters,
+    )
+
+    filtered_candle_override = None
+    candle_count_mode_override = None
+    if advanced_filter_preview is not None:
+        filtered_candle_override = _to_int(advanced_filter_preview.get("total_candles_after_filter"), 0)
+        candle_count_mode_override = "filtered_actual"
+
     estimate = await _quote_backtest_cost(
         db,
         plan_code=plan_code,
@@ -1141,32 +1326,86 @@ async def preview_backtest_cost(
         timeframe=payload.timeframe,
         start_date=payload.start_date,
         end_date=payload.end_date,
-        use_actual_candle_count=False,
+        use_actual_candle_count=bool(payload.instrument_id),
+        candle_count_override=filtered_candle_override,
+        candle_count_mode_override=candle_count_mode_override,
     )
 
     capacity = await CreditManagementService.get_credit_capacity(db, str(current_user["user_id"]), for_update=False)
     total_available = int(capacity.get("total_available") or 0)
-    return success_response(
-        {
-            "total_cost": estimate["total_cost"],
-            "breakdown": estimate["breakdown"],
-            "pricing_rule_set": {
-                "id": estimate.get("breakdown", {}).get("rule_set_id"),
-                "name": estimate.get("breakdown", {}).get("rule_set_name"),
-                "version": estimate.get("breakdown", {}).get("pricing_version"),
-            },
-            "current_balance": float(total_available),
+    can_run = float(total_available) >= estimate["total_cost"]
+
+    warnings: list[str] = []
+    if advanced_filter_preview is not None:
+        warnings.extend([str(item) for item in advanced_filter_preview.get("warnings") or [] if str(item).strip()])
+
+    before_count = _to_int(
+        advanced_filter_preview.get("total_candles_before_filter") if advanced_filter_preview else estimate.get("breakdown", {}).get("candle_count"),
+        0,
+    )
+    after_count = _to_int(
+        advanced_filter_preview.get("total_candles_after_filter") if advanced_filter_preview else before_count,
+        before_count,
+    )
+    removed = _to_int(
+        advanced_filter_preview.get("candles_removed") if advanced_filter_preview else 0,
+        0,
+    )
+    reduction_pct = float(
+        advanced_filter_preview.get("filter_reduction_pct") if advanced_filter_preview else 0.0
+        or 0.0
+    )
+
+    data_coverage = {
+        "status": (advanced_filter_preview or {}).get("status", "ok"),
+        "range_start": payload.start_date.isoformat(),
+        "range_end": payload.end_date.isoformat(),
+        "total_candles": before_count,
+        "filtered_candles": after_count,
+        "candles_removed": removed,
+        "filter_reduction_pct": reduction_pct,
+    }
+
+    response_payload = {
+        "instrument_id": payload.instrument_id,
+        "timeframe": payload.timeframe,
+        "date_range": {
+            "start_date": payload.start_date.isoformat(),
+            "end_date": payload.end_date.isoformat(),
+        },
+        "total_cost": estimate["total_cost"],
+        "estimated_run_cost": estimate["total_cost"],
+        "breakdown": estimate["breakdown"],
+        "pricing_rule_set": {
+            "id": estimate.get("breakdown", {}).get("rule_set_id"),
+            "name": estimate.get("breakdown", {}).get("rule_set_name"),
+            "version": estimate.get("breakdown", {}).get("pricing_version"),
+        },
+        "current_balance": float(total_available),
+        "wallet_balance": int(capacity.get("wallet_balance") or 0),
+        "included_balance": int(capacity.get("included_balance") or 0),
+        "balances": {
             "wallet_balance": int(capacity.get("wallet_balance") or 0),
             "included_balance": int(capacity.get("included_balance") or 0),
-            "balances": {
-                "wallet_balance": int(capacity.get("wallet_balance") or 0),
-                "included_balance": int(capacity.get("included_balance") or 0),
-                "total_available": int(capacity.get("total_available") or 0),
-            },
-            "subscription_state": capacity.get("subscription_state"),
-            "can_run": float(total_available) >= estimate["total_cost"],
-        }
-    )
+            "total_available": int(capacity.get("total_available") or 0),
+        },
+        "subscription_state": capacity.get("subscription_state"),
+        "can_run": can_run and data_coverage["status"] != "error",
+        "cost_feasible": can_run,
+        "data_coverage": data_coverage,
+        "advanced_filters": advanced_filter_preview or {
+            "enabled": False,
+            "summary": "Advanced filters disabled",
+            "total_candles_before_filter": before_count,
+            "total_candles_after_filter": before_count,
+            "candles_removed": 0,
+            "filter_reduction_pct": 0.0,
+            "warnings": [],
+        },
+        "warnings": warnings,
+    }
+
+    return success_response(response_payload)
 
 
 @router.post("/run", status_code=status.HTTP_202_ACCEPTED)
@@ -1195,6 +1434,20 @@ async def run_backtest(
         _raise_market_data_unavailable(availability)
 
     plan_code = str(entitlements.get("plan_code") or "").upper() if entitlements else None
+    advanced_filter_preview = await _advanced_filter_preview(
+        db,
+        instrument_id=payload.instrument_id,
+        timeframe=payload.timeframe,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        advanced_filters=payload.advanced_filters,
+    )
+    filtered_candle_override = None
+    candle_count_mode_override = None
+    if advanced_filter_preview is not None:
+        filtered_candle_override = _to_int(advanced_filter_preview.get("total_candles_after_filter"), 0)
+        candle_count_mode_override = "filtered_actual"
+
     estimate = await _quote_backtest_cost(
         db,
         plan_code=plan_code,
@@ -1204,8 +1457,11 @@ async def run_backtest(
         start_date=payload.start_date,
         end_date=payload.end_date,
         use_actual_candle_count=True,
+        candle_count_override=filtered_candle_override,
+        candle_count_mode_override=candle_count_mode_override,
     )
     cost = Decimal(str(estimate["total_cost"]))
+
 
     capacity = await CreditManagementService.get_credit_capacity(db, str(current_user["user_id"]), for_update=False)
     total_available = int(capacity.get("total_available") or 0)
@@ -1226,7 +1482,6 @@ async def run_backtest(
                 },
             },
         )
-
     if not await _column_exists(db, "job_status", "debit_txn_id"):
         raise HTTPException(
             status_code=500,
@@ -1290,6 +1545,7 @@ async def run_backtest(
             start_date=payload.start_date,
             end_date=payload.end_date,
             initial_capital=payload.capital,
+            advanced_filters=payload.advanced_filters,
         )
 
         trade_df = _trade_df_from_service(service_response)
@@ -1343,6 +1599,8 @@ async def run_backtest(
             "included_debit_transaction_id": str(included_txn.id) if included_txn is not None else None,
             "debit_transaction_id": str(debit_txn.id) if debit_txn is not None else None,
             "pricing": estimate.get("breakdown", {}),
+            "advanced_filters": _filter_meta_from_impact(service_response.advanced_filter_impact, payload.advanced_filters),
+            "advanced_filter_impact": service_response.advanced_filter_impact,
             "saved": True,
         }
 
@@ -1396,6 +1654,9 @@ async def run_backtest(
             },
             "Backtest completed successfully",
         )
+    except BacktestError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
     except ValueError as exc:
         await db.rollback()
         raise HTTPException(

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Instrument, MarketData, Strategy
 from ..services.strategy_registry import resolve_strategy
+from ..services.backtest_advanced_filters import apply_advanced_filters, build_filter_summary
 from engine.backtest_engine import BacktestParams, BacktestResult, run_backtest_engine
 
 
@@ -40,6 +41,7 @@ class BacktestServiceResponse:
     start_date: date
     end_date: date
     initial_capital: Decimal
+    advanced_filter_impact: dict[str, Any] | None = None
 
     @property
     def final_capital(self) -> Decimal:
@@ -76,6 +78,7 @@ class BacktestService:
         start_date: date,
         end_date: date,
         initial_capital: Decimal = Decimal("100000"),
+        advanced_filters: Any | None = None,
     ) -> BacktestServiceResponse:
         if start_date >= end_date:
             raise InvalidDateRangeError(f"Start date {start_date} must be before end date {end_date}")
@@ -86,8 +89,22 @@ class BacktestService:
                 f"No market data found for instrument {instrument_id}, timeframe {timeframe}, period {start_date} to {end_date}"
             )
 
-        strategy_class, strategy_params, strategy_name = await BacktestService._get_strategy_details(db, strategy_id)
         instrument_symbol, instrument_market = await BacktestService._get_instrument_details(db, instrument_id)
+        market_data_df, advanced_filter_impact = apply_advanced_filters(
+            market_data_df,
+            advanced_filters,
+            timeframe=timeframe,
+            instrument_symbol=instrument_symbol,
+            instrument_market=instrument_market,
+        )
+        if advanced_filter_impact is not None:
+            advanced_filter_impact["summary"] = build_filter_summary(advanced_filters)
+        if market_data_df.empty:
+            raise MarketDataNotFoundError(
+                "Advanced filters removed all candles. Please widen the day/session/time filters."
+            )
+
+        strategy_class, strategy_params, strategy_name = await BacktestService._get_strategy_details(db, strategy_id)
 
         backtest_params = BacktestParams(
             initial_capital=float(initial_capital),
@@ -110,6 +127,7 @@ class BacktestService:
             start_date=start_date,
             end_date=end_date,
             initial_capital=Decimal(str(initial_capital)),
+            advanced_filter_impact=advanced_filter_impact,
         )
 
     @staticmethod
@@ -139,9 +157,12 @@ class BacktestService:
         if not rows:
             return pd.DataFrame()
 
+        # Preserve DB candle timestamp exactly.
+        # Do not strip tzinfo here: MT5 candles are UTC instants in DB, and
+        # frontend/report should convert/display the same instant consistently.
         df = pd.DataFrame([
             {
-                "Date": pd.to_datetime((row.timestamp.replace(tzinfo=None) if getattr(row.timestamp, 'tzinfo', None) else row.timestamp)),
+                "Date": pd.to_datetime(row.timestamp),
                 "Open": float(row.open),
                 "High": float(row.high),
                 "Low": float(row.low),
