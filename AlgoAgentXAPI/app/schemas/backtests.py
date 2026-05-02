@@ -121,6 +121,15 @@ class TradeData(BaseModel):
     exit_price: Optional[Decimal] = None
     pnl: Optional[Decimal] = None
     exit_type: Optional[str] = None
+    stop_loss: Optional[Decimal] = None
+    target: Optional[Decimal] = None
+    risk_points: Optional[Decimal] = None
+    reward_points: Optional[Decimal] = None
+    rr_ratio: Optional[Decimal] = None
+    risk_amount: Optional[Decimal] = None
+    reward_amount: Optional[Decimal] = None
+    r_multiple: Optional[Decimal] = None
+    signal_reason: Optional[str] = None
 
 
 class EquityPoint(BaseModel):

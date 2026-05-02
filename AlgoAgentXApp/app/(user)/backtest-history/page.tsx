@@ -421,7 +421,7 @@ export default function BacktestHistoryPage() {
 
     downloadCsv(
       `backtest-trades-${selectedRun.id}.csv`,
-      ["Entry Time", "Exit Time", "Side", "Quantity", "Entry Price", "Exit Price", "PnL", "Exit Type"],
+      ["Entry Time", "Exit Time", "Side", "Quantity", "Entry Price", "Exit Price", "Stop Loss", "Target / TP", "Risk Points", "Reward Points", "RR Ratio", "Risk Amount", "Reward Amount", "R Multiple", "PnL", "Exit Type", "Signal Reason"],
       detail.trades.map((trade) => [
         trade.entry_time || "",
         trade.exit_time || "",
@@ -429,8 +429,17 @@ export default function BacktestHistoryPage() {
         trade.quantity ?? "",
         trade.entry_price ?? "",
         trade.exit_price ?? "",
+        trade.stop_loss ?? "",
+        trade.target ?? "",
+        trade.risk_points ?? "",
+        trade.reward_points ?? "",
+        trade.rr_ratio ?? "",
+        trade.risk_amount ?? "",
+        trade.reward_amount ?? "",
+        trade.r_multiple ?? "",
         trade.pnl ?? "",
         trade.exit_type || "",
+        trade.signal_reason || "",
       ]),
     );
   };

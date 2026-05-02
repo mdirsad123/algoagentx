@@ -17,6 +17,15 @@ class Trade(Base):
     exit_price = Column(Numeric)
     pnl = Column(Numeric)
     exit_type = Column(String)
+    stop_loss = Column(Numeric, nullable=True)
+    target = Column(Numeric, nullable=True)
+    risk_points = Column(Numeric, nullable=True)
+    reward_points = Column(Numeric, nullable=True)
+    rr_ratio = Column(Numeric, nullable=True)
+    risk_amount = Column(Numeric, nullable=True)
+    reward_amount = Column(Numeric, nullable=True)
+    r_multiple = Column(Numeric, nullable=True)
+    signal_reason = Column(String, nullable=True)
 
     # Index for analytics
     __table_args__ = (

@@ -40,6 +40,12 @@ const formatPercent = (value: number | null | undefined): string => {
   return `${formatNumber(display, 2)}%`;
 };
 
+const formatRMultiple = (value: number | null | undefined): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${formatNumber(value, 2)}R`;
+};
+
 const formatDateTime = (value?: string | null): string => {
   if (!value) return "—";
   const parsed = new Date(value);
@@ -151,7 +157,7 @@ export default function BacktestReportPage() {
     if (!detail?.trades?.length || !backtestId) return;
     downloadCsv(
       `backtest-${backtestId}-trades.csv`,
-      ["Entry Time", "Exit Time", "Side", "Quantity", "Entry Price", "Exit Price", "PnL", "Exit Type"],
+      ["Entry Time", "Exit Time", "Side", "Quantity", "Entry Price", "Exit Price", "Stop Loss", "Target / TP", "Risk Points", "Reward Points", "RR Ratio", "Risk Amount", "Reward Amount", "R Multiple", "PnL", "Exit Type", "Signal Reason"],
       detail.trades.map((trade) => [
         trade.entry_time || "",
         trade.exit_time || "",
@@ -159,8 +165,17 @@ export default function BacktestReportPage() {
         trade.quantity ?? "",
         trade.entry_price ?? "",
         trade.exit_price ?? "",
+        trade.stop_loss ?? "",
+        trade.target ?? "",
+        trade.risk_points ?? "",
+        trade.reward_points ?? "",
+        trade.rr_ratio ?? "",
+        trade.risk_amount ?? "",
+        trade.reward_amount ?? "",
+        trade.r_multiple ?? "",
         trade.pnl ?? "",
         trade.exit_type || "",
+        trade.signal_reason || "",
       ]),
     );
   };
@@ -338,10 +353,10 @@ export default function BacktestReportPage() {
           <CardHeader><CardTitle>Trade List</CardTitle><CardDescription>{detail.trades.length} trades captured for this report.</CardDescription></CardHeader>
           <CardContent>
             <div className="max-h-[520px] overflow-auto rounded-lg border border-border/40">
-              <table className="w-full text-sm">
+              <table className="min-w-[1500px] w-full text-sm">
                 <thead className="sticky top-0 bg-card/90 text-left text-muted-foreground">
                   <tr>
-                    <th className="px-3 py-2">Entry</th><th className="px-3 py-2">Exit</th><th className="px-3 py-2">Side</th><th className="px-3 py-2">Qty</th><th className="px-3 py-2">Entry Price</th><th className="px-3 py-2">Exit Price</th><th className="px-3 py-2">PnL</th><th className="px-3 py-2">Exit Type</th>
+                    <th className="px-3 py-2">Entry</th><th className="px-3 py-2">Exit</th><th className="px-3 py-2">Side</th><th className="px-3 py-2">Qty</th><th className="px-3 py-2">Entry Price</th><th className="px-3 py-2">Exit Price</th><th className="px-3 py-2">Stop Loss</th><th className="px-3 py-2">Target / TP</th><th className="px-3 py-2">Risk Pts</th><th className="px-3 py-2">Reward Pts</th><th className="px-3 py-2">RR</th><th className="px-3 py-2">Risk ₹</th><th className="px-3 py-2">Reward ₹</th><th className="px-3 py-2">R</th><th className="px-3 py-2">PnL</th><th className="px-3 py-2">Exit Type</th><th className="px-3 py-2">Signal Reason</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -353,11 +368,20 @@ export default function BacktestReportPage() {
                       <td className="px-3 py-2 text-foreground">{formatNumber(safeNumber(trade.quantity, 0), 0)}</td>
                       <td className="px-3 py-2 text-foreground">{formatNumber(safeNumber(trade.entry_price, 0), 2)}</td>
                       <td className="px-3 py-2 text-foreground">{formatNumber(safeNumber(trade.exit_price, 0), 2)}</td>
+                      <td className="px-3 py-2 text-rose-200">{formatNumber(safeNumber(trade.stop_loss, 0), 2)}</td>
+                      <td className="px-3 py-2 text-emerald-200">{formatNumber(safeNumber(trade.target, 0), 2)}</td>
+                      <td className="px-3 py-2 text-foreground">{formatNumber(safeNumber(trade.risk_points, 0), 2)}</td>
+                      <td className="px-3 py-2 text-foreground">{formatNumber(safeNumber(trade.reward_points, 0), 2)}</td>
+                      <td className="px-3 py-2 text-foreground">{formatNumber(safeNumber(trade.rr_ratio, 0), 2)}</td>
+                      <td className="px-3 py-2 text-rose-200">{formatCurrency(safeNumber(trade.risk_amount, 0))}</td>
+                      <td className="px-3 py-2 text-emerald-200">{formatCurrency(safeNumber(trade.reward_amount, 0))}</td>
+                      <td className={`px-3 py-2 font-semibold ${safeNumber(trade.r_multiple, 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatRMultiple(safeNumber(trade.r_multiple, 0))}</td>
                       <td className={`px-3 py-2 ${safeNumber(trade.pnl, 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatCurrency(safeNumber(trade.pnl, 0))}</td>
                       <td className="px-3 py-2 text-muted-foreground">{trade.exit_type || "—"}</td>
+                      <td className="max-w-[260px] px-3 py-2 text-muted-foreground">{trade.signal_reason || "—"}</td>
                     </tr>
                   )) : (
-                    <tr><td className="px-3 py-6 text-center text-muted-foreground" colSpan={8}>No trade rows are available for this run.</td></tr>
+                    <tr><td className="px-3 py-6 text-center text-muted-foreground" colSpan={17}>No trade rows are available for this run.</td></tr>
                   )}
                 </tbody>
               </table>

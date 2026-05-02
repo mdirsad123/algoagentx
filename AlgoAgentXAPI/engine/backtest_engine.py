@@ -31,6 +31,13 @@ class Trade:
     result: str
     capital_after_trade: float
     exit_reason: str
+    risk_points: float = 0.0
+    reward_points: float = 0.0
+    rr_ratio: float = 0.0
+    risk_amount: float = 0.0
+    reward_amount: float = 0.0
+    r_multiple: float = 0.0
+    signal_reason: Optional[str] = None
 
 
 @dataclass
@@ -121,6 +128,7 @@ def run_backtest_engine(
     stop_loss: Optional[float] = None
     target: Optional[float] = None
     quantity = 0.0
+    entry_signal_reason: Optional[str] = None
 
     # i is current execution candle. signal_row is previous candle, already closed.
     for i in range(1, len(df)):
@@ -163,6 +171,12 @@ def run_backtest_engine(
 
             if exit_price is not None:
                 pnl = (float(exit_price) - float(entry_price)) * position * quantity
+                risk_points = abs(float(entry_price) - float(stop_loss))
+                reward_points = abs(float(target) - float(entry_price))
+                rr_ratio = (reward_points / risk_points) if risk_points > 0 else 0.0
+                risk_amount = risk_points * float(quantity)
+                reward_amount = reward_points * float(quantity)
+                r_multiple = (float(pnl) / risk_amount) if risk_amount > 0 else 0.0
                 capital += pnl
                 trades.append(
                     Trade(
@@ -178,6 +192,13 @@ def run_backtest_engine(
                         result="WIN" if pnl > 0 else "LOSS" if pnl < 0 else "BREAKEVEN",
                         capital_after_trade=float(capital),
                         exit_reason=str(reason),
+                        risk_points=float(risk_points),
+                        reward_points=float(reward_points),
+                        rr_ratio=float(rr_ratio),
+                        risk_amount=float(risk_amount),
+                        reward_amount=float(reward_amount),
+                        r_multiple=float(r_multiple),
+                        signal_reason=entry_signal_reason,
                     )
                 )
                 position = 0
@@ -186,6 +207,7 @@ def run_backtest_engine(
                 stop_loss = None
                 target = None
                 quantity = 0.0
+                entry_signal_reason = None
 
         # -----------------------------
         # ENTRY after exit. Previous candle signal => current candle open.
@@ -200,6 +222,9 @@ def run_backtest_engine(
                 stop_loss = strategy_sl
             else:
                 stop_loss = entry_price * (1 - backtest_params.price_risk_pct) if position == 1 else entry_price * (1 + backtest_params.price_risk_pct)
+
+            raw_reason = signal_row.get("signal_reason") if "signal_reason" in signal_row.index else None
+            entry_signal_reason = None if raw_reason is None or pd.isna(raw_reason) else str(raw_reason)
 
             if (position == 1 and stop_loss >= entry_price) or (position == -1 and stop_loss <= entry_price):
                 position = 0
@@ -222,7 +247,15 @@ def run_backtest_engine(
                 equity_curve.append(capital)
                 continue
 
-            target = entry_price + (risk_per_unit * backtest_params.rr_ratio) if position == 1 else entry_price - (risk_per_unit * backtest_params.rr_ratio)
+            strategy_target = _safe_float(signal_row.get("strategy_target"), None)
+            if backtest_params.use_strategy_sl_tp and strategy_target is not None and strategy_target > 0:
+                valid_target = (position == 1 and strategy_target > entry_price) or (position == -1 and strategy_target < entry_price)
+                target = strategy_target if valid_target else None
+            else:
+                target = None
+            if target is None:
+                target = entry_price + (risk_per_unit * backtest_params.rr_ratio) if position == 1 else entry_price - (risk_per_unit * backtest_params.rr_ratio)
+
             risk_amount = capital * backtest_params.capital_risk_pct
             quantity = risk_amount / risk_per_unit
 

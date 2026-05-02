@@ -370,6 +370,222 @@ async def _resolve_backtest_fk_value(db: AsyncSession, table_name: str, backtest
     return backtest_id
 
 
+def _uuid_or_bigint_for_column(meta: dict):
+    """Return a safe primary-key value for legacy trades schemas.
+
+    Some AlgoAgentX databases were created with trades.id as BIGINT while other
+    migrations used UUID/TEXT.  The report must not lose the entire trade list
+    because one legacy id type differs, so generate the id based on the real DB
+    column type instead of the SQLAlchemy model assumption.
+    """
+    data_type = str(meta.get("data_type") or meta.get("udt_name") or "").lower()
+    udt_name = str(meta.get("udt_name") or "").lower()
+    if udt_name == "uuid" or data_type == "uuid":
+        return uuid4()
+    if any(token in data_type for token in ["bigint", "integer", "smallint", "int"]):
+        return int(uuid4().int % 9_000_000_000_000_000_000)
+    return str(uuid4())
+
+
+def _default_trade_value(
+    column_name: str,
+    meta: dict,
+    *,
+    backtest_id: str,
+    trades_fk_value,
+    user_id: str,
+    payload: BacktestRunRequest,
+    trade,
+):
+    """Safe fallback for NOT NULL legacy columns on the trades table."""
+    name = str(column_name).lower()
+    udt_name = str(meta.get("udt_name") or "").lower()
+    data_type = str(meta.get("data_type") or udt_name or "").lower()
+
+    if name == "id":
+        return _uuid_or_bigint_for_column(meta)
+    if name == "backtest_id":
+        return trades_fk_value
+    if name == "user_id":
+        return _as_uuid(user_id) if udt_name == "uuid" else str(user_id)
+    if name == "strategy_id":
+        return _as_uuid(payload.strategy_id) if udt_name == "uuid" else str(payload.strategy_id)
+    if name == "instrument_id":
+        return payload.instrument_id
+    if name in {"created_at", "updated_at"} or "time" in data_type:
+        if name in {"entry_time", "entry_datetime", "opened_at", "open_time"}:
+            return _ensure_aware_datetime(getattr(trade, "entry_datetime", None))
+        if name in {"exit_time", "exit_datetime", "closed_at", "close_time"}:
+            return _ensure_aware_datetime(getattr(trade, "exit_datetime", None))
+        return datetime.utcnow()
+    if name == "side":
+        return str(getattr(trade, "direction", "") or "")
+    if name in {"direction", "trade_side"}:
+        return str(getattr(trade, "direction", "") or "")
+    if name == "symbol":
+        return ""
+    if name == "timeframe":
+        return payload.timeframe
+    if name in {"qty", "quantity", "volume", "lots", "lot_size"}:
+        return int(_to_float(getattr(trade, "quantity", 0), 0))
+    if name in {"entry_price", "open_price"}:
+        return _decimal(getattr(trade, "entry_price", 0))
+    if name in {"exit_price", "close_price"}:
+        return _decimal(getattr(trade, "exit_price", 0))
+    if name in {"pnl", "profit", "net_pnl"}:
+        return _decimal(getattr(trade, "pnl", 0))
+    if name in {"exit_type", "exit_reason", "status"}:
+        return str(getattr(trade, "exit_reason", "closed") or "closed")
+    if any(token in data_type for token in ["numeric", "decimal", "double", "real", "float"]):
+        return Decimal("0")
+    if any(token in data_type for token in ["bigint", "integer", "smallint", "int"]):
+        return 0
+    if data_type == "date":
+        return payload.start_date
+    if "bool" in data_type:
+        return False
+    if udt_name == "uuid":
+        return uuid4()
+    return ""
+
+
+def _build_trade_insert_values(
+    trade_columns_meta: list[dict],
+    *,
+    base_values: dict,
+    backtest_id: str,
+    trades_fk_value,
+    user_id: str,
+    payload: BacktestRunRequest,
+    trade,
+) -> dict:
+    """Build a DB-compatible trade insert row.
+
+    This keeps Phase 1 compatible with old AlgoAgentX DBs that have extra
+    NOT NULL columns on trades. Without this, the insert fails silently inside
+    the nested transaction and the report shows 0 trades while equity/PnL exist.
+    """
+    final_values = {}
+    meta_by_column = {meta["column_name"]: meta for meta in trade_columns_meta}
+    for column, meta in meta_by_column.items():
+        if column in base_values:
+            final_values[column] = base_values[column]
+            continue
+        if str(meta.get("is_nullable", "YES")).upper() == "NO" and not meta.get("column_default"):
+            fallback = _default_trade_value(
+                column,
+                meta,
+                backtest_id=backtest_id,
+                trades_fk_value=trades_fk_value,
+                user_id=user_id,
+                payload=payload,
+                trade=trade,
+            )
+            if fallback is not None:
+                final_values[column] = fallback
+    return final_values
+
+
+def _trade_transparency_values(trade) -> dict:
+    entry_price = _to_float(getattr(trade, "entry_price", None), 0.0)
+    exit_price = _to_float(getattr(trade, "exit_price", None), 0.0)
+    stop_loss = _to_float(getattr(trade, "stop_loss", None), 0.0)
+    target = _to_float(getattr(trade, "target", None), 0.0)
+    quantity = _to_float(getattr(trade, "quantity", None), 0.0)
+    pnl = _to_float(getattr(trade, "pnl", None), 0.0)
+    risk_points = _to_float(getattr(trade, "risk_points", None), 0.0) or abs(entry_price - stop_loss)
+    reward_points = _to_float(getattr(trade, "reward_points", None), 0.0) or abs(target - entry_price)
+    rr_ratio = _to_float(getattr(trade, "rr_ratio", None), 0.0) or ((reward_points / risk_points) if risk_points > 0 else 0.0)
+    risk_amount = _to_float(getattr(trade, "risk_amount", None), 0.0) or (risk_points * quantity)
+    reward_amount = _to_float(getattr(trade, "reward_amount", None), 0.0) or (reward_points * quantity)
+    r_multiple = _to_float(getattr(trade, "r_multiple", None), 0.0) or ((pnl / risk_amount) if risk_amount > 0 else 0.0)
+    return {
+        "stop_loss": stop_loss or None,
+        "target": target or None,
+        "risk_points": risk_points or None,
+        "reward_points": reward_points or None,
+        "rr_ratio": rr_ratio or None,
+        "risk_amount": risk_amount or None,
+        "reward_amount": reward_amount or None,
+        "r_multiple": r_multiple,
+        "signal_reason": getattr(trade, "signal_reason", None),
+    }
+
+
+
+def _trade_json_from_service(service_response) -> list[dict]:
+    """Return complete trade rows as JSON-safe data for report fallback.
+
+    Some deployed databases still have legacy constraints on the trades table.
+    Even when the dedicated trades insert fails, the report must not lose trade
+    visibility, so we also persist a compact copy in performance_metrics.trade_details.
+    """
+    rows: list[dict] = []
+    for trade in (getattr(getattr(service_response, "result", None), "trades", None) or []):
+        risk_values = _trade_transparency_values(trade)
+        rows.append({
+            "entry_time": getattr(trade, "entry_datetime", None).isoformat() if getattr(trade, "entry_datetime", None) else None,
+            "exit_time": getattr(trade, "exit_datetime", None).isoformat() if getattr(trade, "exit_datetime", None) else None,
+            "side": getattr(trade, "direction", None),
+            "quantity": _to_int(getattr(trade, "quantity", 0)),
+            "entry_price": _to_float(getattr(trade, "entry_price", None), None),
+            "exit_price": _to_float(getattr(trade, "exit_price", None), None),
+            "pnl": _to_float(getattr(trade, "pnl", None), None),
+            "exit_type": getattr(trade, "exit_reason", None),
+            **{key: (_to_float(value, None) if key != "signal_reason" else value) for key, value in risk_values.items()},
+        })
+    return rows
+
+
+def _normalise_trade_detail_rows(value) -> list[dict]:
+    """Decode trade_details JSONB/text into report-compatible rows."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            return []
+    if not isinstance(value, list):
+        return []
+    rows: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        row["quantity"] = _to_int(row.get("quantity"))
+        for key in ["entry_price", "exit_price", "stop_loss", "target", "risk_points", "reward_points", "rr_ratio", "risk_amount", "reward_amount", "r_multiple", "pnl"]:
+            row[key] = _to_float(row.get(key), None)
+        if not row.get("risk_points") or not row.get("reward_points") or not row.get("risk_amount"):
+            row.update(_risk_values_from_row(row))
+        rows.append(row)
+    return rows
+
+def _risk_values_from_row(row: dict) -> dict:
+    entry_price = _to_float(row.get("entry_price"), 0.0)
+    stop_loss = _to_float(row.get("stop_loss"), 0.0)
+    target = _to_float(row.get("target"), 0.0)
+    quantity = _to_float(row.get("quantity"), 0.0)
+    pnl = _to_float(row.get("pnl"), 0.0)
+    risk_points = _to_float(row.get("risk_points"), 0.0) or (abs(entry_price - stop_loss) if stop_loss else 0.0)
+    reward_points = _to_float(row.get("reward_points"), 0.0) or (abs(target - entry_price) if target else 0.0)
+    rr_ratio = _to_float(row.get("rr_ratio"), 0.0) or ((reward_points / risk_points) if risk_points > 0 else 0.0)
+    risk_amount = _to_float(row.get("risk_amount"), 0.0) or (risk_points * quantity)
+    reward_amount = _to_float(row.get("reward_amount"), 0.0) or (reward_points * quantity)
+    r_multiple = _to_float(row.get("r_multiple"), 0.0) or ((pnl / risk_amount) if risk_amount > 0 else 0.0)
+    return {
+        "stop_loss": _to_float(row.get("stop_loss"), None),
+        "target": _to_float(row.get("target"), None),
+        "risk_points": risk_points if risk_points else None,
+        "reward_points": reward_points if reward_points else None,
+        "rr_ratio": rr_ratio if rr_ratio else None,
+        "risk_amount": risk_amount if risk_amount else None,
+        "reward_amount": reward_amount if reward_amount else None,
+        "r_multiple": r_multiple if risk_amount else None,
+        "signal_reason": row.get("signal_reason"),
+    }
+
+
 def _trade_df_from_service(service_response) -> pd.DataFrame:
     if not service_response.result.trades:
         return pd.DataFrame(columns=["entry_time", "exit_time", "pnl"])
@@ -780,6 +996,7 @@ async def _save_backtest_payload(
         "candles_before_filter": filter_meta.get("candles_before_filter"),
         "candles_after_filter": filter_meta.get("candles_after_filter"),
         "filter_reduction_pct": _decimal(filter_meta.get("filter_reduction_pct"), Decimal("0")) if filter_meta.get("filter_reduction_pct") is not None else None,
+        "trade_details": json.dumps(_trade_json_from_service(service_response)),
         "status": "completed",
     }
 
@@ -879,24 +1096,39 @@ async def _save_backtest_payload(
     if service_response.result.trades:
         try:
             async with db.begin_nested():
+                trade_columns_meta = await _table_columns_meta(db, "trades")
+                trade_columns = {meta["column_name"] for meta in trade_columns_meta}
                 for trade in service_response.result.trades:
-                    db.add(
-                        Trade(
-                            id=int(uuid4().int % 9_000_000_000_000_000_000),
-                            backtest_id=trades_fk_value,
-                            instrument_id=payload.instrument_id,
-                            entry_time=_ensure_aware_datetime(trade.entry_datetime),
-                            exit_time=_ensure_aware_datetime(trade.exit_datetime),
-                            side=trade.direction,
-                            quantity=int(_to_float(trade.quantity, 0.0)),
-                            entry_price=_decimal(trade.entry_price),
-                            exit_price=_decimal(trade.exit_price),
-                            pnl=_decimal(trade.pnl),
-                            exit_type=trade.exit_reason,
-                        )
+                    base_values = {
+                        "id": _uuid_or_bigint_for_column(next((meta for meta in trade_columns_meta if meta["column_name"] == "id"), {"data_type": "bigint", "udt_name": "int8"})),
+                        "backtest_id": trades_fk_value,
+                        "instrument_id": payload.instrument_id,
+                        "entry_time": _ensure_aware_datetime(trade.entry_datetime),
+                        "exit_time": _ensure_aware_datetime(trade.exit_datetime),
+                        "side": trade.direction,
+                        "quantity": int(_to_float(trade.quantity, 0.0)),
+                        "entry_price": _decimal(trade.entry_price),
+                        "exit_price": _decimal(trade.exit_price),
+                        "pnl": _decimal(trade.pnl),
+                        "exit_type": trade.exit_reason,
+                    }
+                    base_values.update({key: (_decimal(value) if isinstance(value, (int, float)) else value) for key, value in _trade_transparency_values(trade).items()})
+                    insert_trade_values = _build_trade_insert_values(
+                        trade_columns_meta,
+                        base_values={key: value for key, value in base_values.items() if key in trade_columns},
+                        backtest_id=backtest_id,
+                        trades_fk_value=trades_fk_value,
+                        user_id=user_id,
+                        payload=payload,
+                        trade=trade,
                     )
+                    if not insert_trade_values:
+                        continue
+                    columns_sql = ", ".join(insert_trade_values.keys())
+                    values_sql = ", ".join(f":{column}" for column in insert_trade_values.keys())
+                    await db.execute(text(f"INSERT INTO trades ({columns_sql}) VALUES ({values_sql})"), insert_trade_values)
         except Exception as exc:
-            logger.warning("Failed to persist trades for backtest %s: %s", backtest_id, exc)
+            logger.exception("Failed to persist trades for backtest %s. Report will use performance_metrics.trade_details fallback when available. Error: %s", backtest_id, exc)
 
     if service_response.result.equity_curve:
         try:
@@ -1872,29 +2104,53 @@ async def get_backtest_detail(
     pnl_data = []
 
     try:
-        trades = (
-            await db.execute(
-                select(Trade)
-                .where(cast(Trade.backtest_id, String) == str(backtest_id))
-                .order_by(Trade.entry_time.asc())
-            )
-        ).scalars().all()
-        trades_data = [
-            {
-                "id": str(t.id),
-                "entry_time": t.entry_time.isoformat() if t.entry_time else None,
-                "exit_time": t.exit_time.isoformat() if t.exit_time else None,
-                "side": t.side,
-                "quantity": _to_int(t.quantity),
-                "entry_price": _to_float(t.entry_price),
-                "exit_price": _to_float(t.exit_price),
-                "pnl": _to_float(t.pnl),
-                "exit_type": t.exit_type,
-            }
-            for t in trades
-        ]
+        trade_columns = [meta["column_name"] for meta in await _table_columns_meta(db, "trades")]
+        if trade_columns:
+            wanted = [
+                "id", "entry_time", "exit_time", "side", "quantity", "entry_price", "exit_price", "pnl", "exit_type",
+                "stop_loss", "target", "risk_points", "reward_points", "rr_ratio", "risk_amount", "reward_amount", "r_multiple", "signal_reason",
+            ]
+            select_columns = [column for column in wanted if column in trade_columns]
+            select_sql = ", ".join(select_columns)
+            rows = (
+                await db.execute(
+                    text(f"SELECT {select_sql} FROM trades WHERE backtest_id::text = :backtest_id ORDER BY entry_time ASC"),
+                    {"backtest_id": str(backtest_id)},
+                )
+            ).mappings().all()
+            for row_map in rows:
+                row_dict = dict(row_map)
+                risk_values = _risk_values_from_row(row_dict)
+                trades_data.append(
+                    {
+                        "id": str(row_dict.get("id")) if row_dict.get("id") is not None else None,
+                        "entry_time": row_dict.get("entry_time").isoformat() if row_dict.get("entry_time") else None,
+                        "exit_time": row_dict.get("exit_time").isoformat() if row_dict.get("exit_time") else None,
+                        "side": row_dict.get("side"),
+                        "quantity": _to_int(row_dict.get("quantity")),
+                        "entry_price": _to_float(row_dict.get("entry_price")),
+                        "exit_price": _to_float(row_dict.get("exit_price")),
+                        "pnl": _to_float(row_dict.get("pnl")),
+                        "exit_type": row_dict.get("exit_type"),
+                        **risk_values,
+                    }
+                )
     except Exception as exc:
         logger.warning("Unable to load trades for backtest %s: %s", backtest_id, exc)
+
+    if not trades_data:
+        try:
+            if await _column_exists(db, "performance_metrics", "trade_details"):
+                fallback_row = (
+                    await db.execute(
+                        text("SELECT trade_details FROM performance_metrics WHERE id::text = :backtest_id LIMIT 1"),
+                        {"backtest_id": str(backtest_id)},
+                    )
+                ).mappings().first()
+                if fallback_row:
+                    trades_data = _normalise_trade_detail_rows(fallback_row.get("trade_details"))
+        except Exception as exc:
+            logger.warning("Unable to load fallback trade_details for backtest %s: %s", backtest_id, exc)
 
     try:
         equity_rows = (

@@ -433,6 +433,15 @@ export interface AdminStrategySandboxResult {
     exit_price?: number;
     pnl?: number;
     exit_type?: string;
+    stop_loss?: number | null;
+    target?: number | null;
+    risk_points?: number | null;
+    reward_points?: number | null;
+    rr_ratio?: number | null;
+    risk_amount?: number | null;
+    reward_amount?: number | null;
+    r_multiple?: number | null;
+    signal_reason?: string | null;
   }>;
   equity_curve: Array<{ timestamp?: string; equity: number }>;
   pnl_calendar: Array<{ date?: string; pnl: number }>;
