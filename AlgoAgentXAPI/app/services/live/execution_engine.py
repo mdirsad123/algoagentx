@@ -147,8 +147,9 @@ async def _execute_demo_entry(
 
     adapter = get_broker_adapter(broker)
     await _log(db, deployment, "BROKER_EXECUTION_STARTED", "MT5 demo order send started", metadata={"broker_account_id": str(broker.id), "signal_id": str(signal.id), "sizing": sizing_metadata or {}})
+    broker_symbol = getattr(deployment, "broker_symbol", None) or signal.symbol
     result = await adapter.place_market_order(BrokerOrderRequest(
-        symbol=signal.symbol,
+        symbol=broker_symbol,
         side=order_side,
         qty=qty,
         price=price,
@@ -165,7 +166,7 @@ async def _execute_demo_entry(
         user_id=deployment.user_id,
         broker_account_id=deployment.broker_account_id,
         broker_order_id=result.broker_order_id,
-        symbol=signal.symbol,
+        symbol=broker_symbol,
         side=order_side,
         order_type="MARKET",
         qty=actual_qty,
@@ -202,7 +203,7 @@ async def _execute_demo_entry(
 
     executed_price = result.executed_price or price
     await _log(db, deployment, "BROKER_ORDER_FILLED", "MT5 demo market order filled/placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id, "sizing": sizing_metadata or {}})
-    await open_position(db, deployment, signal.symbol, position_side, actual_qty, executed_price, stop_loss, target)
+    await open_position(db, deployment, broker_symbol, position_side, actual_qty, executed_price, stop_loss, target)
     signal.status = "EXECUTED"
     return order
 
@@ -430,6 +431,13 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
             return latest_order
 
     if signal.signal_type in {"BUY", "SELL"}:
+        current_open_positions = await get_open_positions(db, deployment.id)
+        max_open_positions = int(getattr(deployment, "max_open_positions", 1) or 1)
+        if len(current_open_positions) >= max_open_positions:
+            signal.status = "REJECTED"
+            signal.rejection_reason = "Max open positions reached."
+            await _log(db, deployment, "MAX_OPEN_POSITIONS_REACHED", "Max open positions reached. New signal skipped.", "WARNING", {"signal_id": str(signal.id), "open_positions": len(current_open_positions), "max_open_positions": max_open_positions})
+            return latest_order
         broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none() if deployment.broker_account_id else None
         broker_code = get_broker_code(broker) if broker is not None else ("PAPER" if deployment.mode == "PAPER" else "MT5")
         preview = await build_live_order_preview(
@@ -439,9 +447,9 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
             symbol=signal.symbol or deployment.instrument,
             side=signal.signal_type,
             entry_price=price,
-            stop_loss=None,
             runtime_config=None,
             strict_instrument=deployment.mode in {"DEMO", "LIVE"},
+            preview_mode="AUTO_LIVE_SIGNAL",
         )
         if preview.get("validation_status") != "OK":
             # PAPER may keep legacy behavior when an old deployment has no instrument master; DEMO/LIVE never fallback.

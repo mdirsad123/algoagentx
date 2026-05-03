@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db.models import Instrument, Strategy, StrategyDeployment, StrategyRuntimePreset
+from ...db.models import Instrument, Strategy, StrategyDeployment, StrategyRuntimePreset, LiveMarketCandle
 from ..brokers.factory import get_broker_code
 from ..trading.risk_engine import calculate_position_size
 from ..trading.runtime_config_service import deep_merge_runtime_config, resolve_runtime_config, validate_runtime_config
 from .pnl_service import to_decimal
 from ..trading.guardrails import validate_instrument_spec, MAX_BACKTEST_RISK_PERCENT, RISK_ENGINE_VERSION
+from ..live_trading.live_sl_tp_service import calculate_live_entry_plan
 
 LOT_STYLE_MODES = {"LOTS"}
 QTY_STYLE_MODES = {"SHARES", "UNITS", "CONTRACTS"}
@@ -55,11 +57,73 @@ def _instrument_spec(row: Instrument) -> dict[str, Any]:
         "is_tradeable_live", "is_active",
     ]
     data = {key: _plain(getattr(row, key, None)) for key in keys}
-    data["quantity_mode"] = str(data.get("quantity_mode") or "SHARES").upper()
+    if data.get("quantity_mode"):
+        data["quantity_mode"] = str(data.get("quantity_mode")).upper()
     data["account_currency"] = data.get("account_currency")
-    data["currency_symbol"] = data.get("currency_symbol") or ("₹" if data.get("account_currency") == "INR" else "$" if data.get("account_currency") == "USD" else None)
+    if data.get("currency_symbol") is None and data.get("account_currency"):
+        data["currency_symbol"] = "₹" if data.get("account_currency") == "INR" else "$" if data.get("account_currency") == "USD" else None
     data["pip_size"] = data.get("pip_size") or data.get("tick_size")
+    data["source"] = "Instrument Master"
     return data
+
+
+def _missing_instrument_fields(spec: dict[str, Any] | None, *, live: bool = True) -> list[str]:
+    spec = spec or {}
+    missing: list[str] = []
+
+    def add(field: str) -> None:
+        if field not in missing:
+            missing.append(field)
+
+    def blank(value: Any) -> bool:
+        return value is None or value == ""
+
+    if not spec:
+        return ["instrument_master_record", "account_currency", "quantity_mode", "broker_symbol", "tick_size", "is_tradeable_live", "min_step_size"]
+
+    mode = str(spec.get("quantity_mode") or "").upper()
+    if blank(spec.get("account_currency")):
+        add("account_currency")
+    if blank(spec.get("quantity_mode")) or mode not in {"LOTS", "SHARES", "UNITS", "CONTRACTS"}:
+        add("quantity_mode")
+    if blank(spec.get("broker_symbol")):
+        add("broker_symbol")
+    if _float(spec.get("tick_size"), None) is None or float(_float(spec.get("tick_size"), 0) or 0) <= 0:
+        add("tick_size")
+    if live and spec.get("is_tradeable_live") is not True:
+        add("is_tradeable_live")
+
+    if mode == "LOTS":
+        if _float(spec.get("tick_value_per_lot"), None) is None or float(_float(spec.get("tick_value_per_lot"), 0) or 0) <= 0:
+            add("tick_value_per_lot")
+        if _float(spec.get("lot_step"), None) is None or float(_float(spec.get("lot_step"), 0) or 0) <= 0:
+            add("lot_step")
+        if _float(spec.get("min_lot"), None) is None or float(_float(spec.get("min_lot"), 0) or 0) <= 0:
+            add("min_lot")
+    elif mode in {"SHARES", "UNITS", "CONTRACTS"}:
+        if _float(spec.get("quantity_step"), None) is None or float(_float(spec.get("quantity_step"), 0) or 0) <= 0:
+            add("quantity_step")
+        if _float(spec.get("min_quantity"), None) is None or float(_float(spec.get("min_quantity"), 0) or 0) <= 0:
+            add("min_quantity")
+    else:
+        add("min_step_size")
+    return missing
+
+
+def _instrument_not_ready_payload(symbol: str | None, side: str, spec: dict[str, Any] | None, missing_fields: list[str]) -> dict[str, Any]:
+    sym = str(symbol or "Selected instrument").strip().upper() or "Selected instrument"
+    message = f"{sym} is not ready for live trading. Configure account currency, quantity mode, broker symbol, min/step size, and live enabled in Market Master."
+    return {
+        "validation_status": "REJECTED",
+        "status": "REJECTED",
+        "reason": "Instrument not ready",
+        "rejected_reason": message,
+        "instrument_not_ready_message": message,
+        "missing_fields": missing_fields,
+        "symbol": symbol,
+        "side": side,
+        "instrument_spec_snapshot": spec or {"symbol": symbol, "source": "Missing"},
+    }
 
 
 async def find_live_instrument_spec(db: AsyncSession, *, instrument_id: int | None = None, symbol: str | None = None) -> tuple[Instrument | None, dict[str, Any] | None]:
@@ -129,20 +193,107 @@ async def resolve_live_runtime_config(
     return resolve_runtime_config(strategy=strategy, instrument=instrument, user_override=merged_override, strategy_preset=preset)
 
 
-def _derive_sl_tp(side: str, entry_price: Decimal, stop_loss: Decimal | None, runtime_config: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, str | None]:
+async def _latest_candles(db: AsyncSession, deployment: StrategyDeployment | None, symbol: str | None, timeframe: str | None, limit: int = 120) -> list[LiveMarketCandle]:
+    stmt = select(LiveMarketCandle).order_by(LiveMarketCandle.candle_time.desc()).limit(limit)
+    if deployment is not None:
+        stmt = stmt.where(LiveMarketCandle.deployment_id == deployment.id)
+    else:
+        if symbol:
+            stmt = stmt.where(func.upper(LiveMarketCandle.symbol) == str(symbol).upper())
+        if timeframe:
+            stmt = stmt.where(LiveMarketCandle.timeframe == timeframe)
+    rows = list((await db.execute(stmt)).scalars().all())
+    rows.reverse()
+    return rows
+
+
+def _normalize_symbol(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _timeframe_stale_seconds(timeframe: str | None) -> int:
+    tf = str(timeframe or "").strip().upper()
+    mapping = {"M1": 60, "1M": 60, "M5": 300, "5M": 300, "M15": 900, "15M": 900, "M30": 1800, "30M": 1800, "H1": 3600, "1H": 3600, "D1": 86400, "1D": 86400}
+    return mapping.get(tf, 900) * 6
+
+
+def _latest_price_sanity_warnings(deployment: StrategyDeployment | None, candle: LiveMarketCandle | None, instrument_spec: dict[str, Any] | None, price: Decimal) -> list[str]:
+    warnings: list[str] = []
+    if candle is None:
+        return warnings
+    candle_symbol = _normalize_symbol(getattr(candle, "symbol", None))
+    deploy_symbol = _normalize_symbol(getattr(deployment, "instrument", None) if deployment else None)
+    broker_symbol = _normalize_symbol(getattr(deployment, "broker_symbol", None) if deployment else None) or _normalize_symbol((instrument_spec or {}).get("broker_symbol"))
+    allowed = {x for x in [deploy_symbol, broker_symbol, _normalize_symbol((instrument_spec or {}).get("symbol"))] if x}
+    if candle_symbol and allowed and candle_symbol not in allowed:
+        warnings.append(f"Latest candle symbol {candle_symbol} does not match selected deployment symbol {deploy_symbol or broker_symbol}. Confirm broker symbol and candle source.")
+    if price <= 0:
+        warnings.append("Latest price is not positive. Refresh candles before preview/execution.")
+    candle_time = getattr(candle, "candle_time", None)
+    if isinstance(candle_time, datetime):
+        ct = candle_time if candle_time.tzinfo else candle_time.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - ct).total_seconds()
+        stale_after = _timeframe_stale_seconds(getattr(deployment, "timeframe", None) if deployment else None)
+        if age > stale_after:
+            warnings.append("Latest candle looks stale for this timeframe. Refresh candles before auto trading.")
+    asset = _normalize_symbol((instrument_spec or {}).get("asset_class"))
+    sym = deploy_symbol or broker_symbol or candle_symbol
+    if (asset == "METAL" or sym.startswith("XAUUSD")) and price > 0 and (price < Decimal("1000") or price > Decimal("10000")):
+        warnings.append("Latest price looks unusual for XAUUSD. Confirm broker symbol and market data source.")
+    return warnings
+
+
+def _atr(candles: list[LiveMarketCandle], period: int) -> Decimal | None:
+    if len(candles) < period + 1:
+        return None
+    trs: list[Decimal] = []
+    recent = candles[-(period + 1):]
+    for prev, cur in zip(recent, recent[1:]):
+        high = _dec(getattr(cur, "high", None), "0")
+        low = _dec(getattr(cur, "low", None), "0")
+        prev_close = _dec(getattr(prev, "close", None), "0")
+        trs.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+    if not trs:
+        return None
+    return sum(trs, Decimal("0")) / Decimal(len(trs))
+
+
+def _derive_sl_tp_from_candles(side: str, entry_price: Decimal, stop_loss: Decimal | None, runtime_config: dict[str, Any], candles: list[LiveMarketCandle] | None = None) -> tuple[Decimal | None, Decimal | None, str | None]:
     sl_tp = runtime_config.get("sl_tp") or {}
     rr = _dec(sl_tp.get("rr_ratio"), "2")
+    sl_mode = str(sl_tp.get("sl_mode") or "FIXED_PERCENT").upper().replace(" ", "_")
+    if sl_mode == "STRATEGY_SUGGESTED":
+        sl_mode = "FIXED_PERCENT"
     if stop_loss is None or stop_loss <= 0:
-        pct = _dec(sl_tp.get("fixed_price_risk_pct"), "0.002")
-        if pct <= 0:
-            return None, None, "stop_loss is required or fixed_price_risk_pct must be greater than 0."
-        stop_loss = entry_price * (Decimal("1") - pct) if side == "BUY" else entry_price * (Decimal("1") + pct)
+        if sl_mode == "ATR":
+            period = int(_float(sl_tp.get("atr_period"), 14) or 14)
+            multiplier = _dec(sl_tp.get("atr_multiplier"), "2")
+            atr_value = _atr(candles or [], period)
+            if atr_value is None or atr_value <= 0:
+                return None, None, "Stop loss could not be calculated because ATR needs more candles. Try Fixed Percent SL or refresh candles."
+            distance = atr_value * multiplier
+            stop_loss = entry_price - distance if side == "BUY" else entry_price + distance
+        elif sl_mode == "SWING":
+            lookback = int(_float(sl_tp.get("swing_lookback"), 10) or 10)
+            if len(candles or []) < lookback:
+                return None, None, "Stop loss could not be calculated because Swing SL needs more candles. Try Fixed Percent SL or refresh candles."
+            recent = (candles or [])[-lookback:]
+            stop_loss = min(_dec(c.low, "0") for c in recent) if side == "BUY" else max(_dec(c.high, "0") for c in recent)
+        else:
+            pct = _dec(sl_tp.get("fixed_price_risk_pct"), "0.002")
+            if pct <= 0:
+                return None, None, "Stop loss could not be calculated. Fixed Percent SL must be greater than 0."
+            stop_loss = entry_price * (Decimal("1") - pct) if side == "BUY" else entry_price * (Decimal("1") + pct)
     if side == "BUY" and stop_loss >= entry_price:
-        return stop_loss, None, "BUY stop_loss must be below entry_price."
+        return stop_loss, None, "BUY stop loss must be below entry price."
     if side == "SELL" and stop_loss <= entry_price:
-        return stop_loss, None, "SELL stop_loss must be above entry_price."
+        return stop_loss, None, "SELL stop loss must be above entry price."
     risk_distance = abs(entry_price - stop_loss)
     target = entry_price + risk_distance * rr if side == "BUY" else entry_price - risk_distance * rr
+    if side == "BUY" and target <= entry_price:
+        return stop_loss, target, "BUY target must be above entry price."
+    if side == "SELL" and target >= entry_price:
+        return stop_loss, target, "SELL target must be below entry price."
     return stop_loss, target, None
 
 
@@ -192,6 +343,7 @@ async def build_live_order_preview(
     strategy_id: str | None = None,
     strategy_preset_id: str | None = None,
     strict_instrument: bool = True,
+    preview_mode: str = "MANUAL",
 ) -> dict[str, Any]:
     side = str(side or "BUY").upper()
     if side not in {"BUY", "SELL"}:
@@ -200,23 +352,32 @@ async def build_live_order_preview(
     resolved_symbol = symbol or (getattr(deployment, "instrument", None) if deployment else None)
     instrument_row, instrument_spec = await find_live_instrument_spec(db, instrument_id=instrument_id, symbol=resolved_symbol)
     if instrument_spec is None:
-        reason = "Instrument spec missing. Configure Instrument Master before live/demo order sizing."
-        return {"validation_status": "REJECTED", "status": "REJECTED", "rejected_reason": reason, "symbol": resolved_symbol, "side": side}
+        return _instrument_not_ready_payload(
+            resolved_symbol,
+            side,
+            None,
+            ["instrument_master_record", "account_currency", "quantity_mode", "broker_symbol", "tick_size", "is_tradeable_live", "min_step_size"],
+        )
 
+    missing_fields = _missing_instrument_fields(instrument_spec, live=True)
     spec_validation = validate_instrument_spec(instrument_spec, live=True)
-    if not spec_validation.get("valid"):
-        return {
-            "validation_status": "REJECTED",
-            "status": "REJECTED",
-            "rejected_reason": " ".join(spec_validation.get("errors") or []),
-            "symbol": resolved_symbol,
-            "side": side,
-            "instrument_spec_snapshot": instrument_spec,
-        }
+    if missing_fields or not spec_validation.get("valid"):
+        # Keep toast/banner short. Full field-level detail is rendered in the Instrument Readiness card.
+        return _instrument_not_ready_payload(resolved_symbol, side, instrument_spec, missing_fields)
+
+    candles: list[LiveMarketCandle] = []
+    latest_price: Decimal | None = None
+    auto_mode = str(preview_mode or "MANUAL").upper() == "AUTO_LATEST_PRICE"
+    if auto_mode:
+        candles = await _latest_candles(db, deployment, resolved_symbol, getattr(deployment, "timeframe", None) if deployment else None)
+        if not candles:
+            return {"validation_status": "REJECTED", "status": "REJECTED", "rejected_reason": "No latest candle found. Refresh candles before auto preview.", "symbol": resolved_symbol, "side": side, "instrument_spec_snapshot": instrument_spec, "mode": "AUTO_LATEST_PRICE"}
+        latest_price = _dec(candles[-1].close, "0")
+        entry_price = latest_price
 
     entry = _dec(entry_price if entry_price is not None else 0, "0")
     if entry <= 0:
-        return {"validation_status": "REJECTED", "status": "REJECTED", "rejected_reason": "entry_price or market price is required.", "symbol": resolved_symbol, "side": side, "instrument_spec_snapshot": instrument_spec}
+        return {"validation_status": "REJECTED", "status": "REJECTED", "rejected_reason": "entry_price or latest market price is required.", "symbol": resolved_symbol, "side": side, "instrument_spec_snapshot": instrument_spec}
 
     config = await resolve_live_runtime_config(db, deployment=deployment, instrument=instrument_row, user_override=runtime_config or {}, strategy_id=strategy_id, strategy_preset_id=strategy_preset_id)
     config_validation = validate_runtime_config(config)
@@ -243,21 +404,36 @@ async def build_live_order_preview(
             "instrument_spec_snapshot": instrument_spec,
         }
 
-    if stop_loss in (None, ""):
+    if deployment is not None and not candles:
+        candles = await _latest_candles(db, deployment, resolved_symbol, getattr(deployment, "timeframe", None), limit=120)
+    latest_candle = candles[-1] if candles else None
+    price_warnings = _latest_price_sanity_warnings(deployment, latest_candle, instrument_spec, entry)
+
+    entry_plan = calculate_live_entry_plan(
+        candles=candles,
+        side=side,
+        entry_price=entry,
+        runtime_config=config,
+        instrument_spec=instrument_spec,
+        strategy_stop_loss=stop_loss if stop_loss not in (None, "") else None,
+    )
+    if entry_plan.get("status") != "OK":
         return {
             "validation_status": "REJECTED",
             "status": "REJECTED",
-            "rejected_reason": "Stop loss is required for live/demo order sizing.",
+            "rejected_reason": entry_plan.get("rejected_reason") or "Stop loss could not be calculated.",
             "symbol": resolved_symbol,
             "side": side,
             "entry_price": float(entry),
+            "stop_loss": entry_plan.get("stop_loss"),
+            "target": entry_plan.get("target"),
+            "latest_price_warnings": price_warnings,
+            "entry_plan": entry_plan,
             "runtime_config_snapshot": config,
             "instrument_spec_snapshot": instrument_spec,
         }
-
-    sl, target, sl_error = _derive_sl_tp(side, entry, _dec(stop_loss, "0") if stop_loss not in (None, "") else None, config)
-    if sl_error:
-        return {"validation_status": "REJECTED", "status": "REJECTED", "rejected_reason": sl_error, "symbol": resolved_symbol, "side": side, "entry_price": float(entry), "stop_loss": float(sl) if sl is not None else None, "runtime_config_snapshot": config, "instrument_spec_snapshot": instrument_spec}
+    sl = _dec(entry_plan.get("stop_loss"), "0")
+    target = _dec(entry_plan.get("target"), "0")
 
     size = calculate_position_size(
         entry_price=float(entry),
@@ -289,6 +465,8 @@ async def build_live_order_preview(
             "target": float(target) if target is not None else None,
             "quantity_mode": quantity_mode,
             "risk_engine": size,
+            "latest_price_warnings": price_warnings,
+            "entry_plan": entry_plan,
             "runtime_config_snapshot": config,
             "instrument_spec_snapshot": instrument_spec,
         }
@@ -348,8 +526,11 @@ async def build_live_order_preview(
         "risk_amount": size.get("risk_amount"),
         "actual_risk_amount": size.get("actual_risk_amount"),
         "entry_price": float(entry),
+        "latest_price": float(latest_price or entry),
+        "preview_mode": "AUTO_LATEST_PRICE" if auto_mode else "MANUAL",
         "stop_loss": float(sl) if sl is not None else None,
         "target": float(target) if target is not None else None,
+        "expected_reward_amount": (float(size.get("actual_risk_amount") or 0) * float((config.get("sl_tp") or {}).get("rr_ratio") or 0)) if size.get("actual_risk_amount") is not None else None,
         "account_currency": instrument_spec.get("account_currency"),
         "currency_symbol": instrument_spec.get("currency_symbol"),
         "asset_class": instrument_spec.get("asset_class"),
@@ -357,6 +538,10 @@ async def build_live_order_preview(
         "instrument_spec_snapshot": instrument_spec,
         "risk_engine": size,
         "risk_engine_version": RISK_ENGINE_VERSION,
+        "entry_plan": entry_plan,
+        "latest_price_warnings": price_warnings,
         "risk_metadata": risk_metadata,
+        "broker_symbol": order_payload.get("symbol"),
+        "broker_payload_preview": order_payload,
         "broker_order_payload_preview": order_payload,
     }

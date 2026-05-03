@@ -20,6 +20,7 @@ router = APIRouter()
 
 class LiveOrderPreviewIn(BaseModel):
     deployment_id: Optional[UUID] = None
+    mode: str = Field(default="MANUAL")
     strategy_id: Optional[str] = None
     strategy_preset_id: Optional[str] = None
     instrument_id: Optional[int] = None
@@ -52,6 +53,7 @@ async def preview_live_order(payload: LiveOrderPreviewIn, db: AsyncSession = Dep
         side=payload.side,
         entry_price=payload.entry_price or payload.market_price,
         stop_loss=payload.stop_loss,
+        preview_mode=payload.mode,
         runtime_config=payload.runtime_config,
         strategy_id=payload.strategy_id,
         strategy_preset_id=payload.strategy_preset_id,

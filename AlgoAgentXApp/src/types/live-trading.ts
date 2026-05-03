@@ -80,6 +80,40 @@ export interface BrokerSymbol {
   [key: string]: unknown;
 }
 
+
+export interface MarketInstrument {
+  id?: number | string;
+  symbol: string;
+  name?: string | null;
+  exchange?: string | null;
+  market?: string | null;
+  instrument_type?: string | null;
+  asset_class?: string | null;
+  base_currency?: string | null;
+  quote_currency?: string | null;
+  account_currency?: string | null;
+  currency_symbol?: string | null;
+  price_unit_name?: string | null;
+  quantity_mode?: string | null;
+  contract_size?: number | string | null;
+  tick_size?: number | string | null;
+  tick_value_per_lot?: number | string | null;
+  pip_size?: number | string | null;
+  min_quantity?: number | string | null;
+  max_quantity?: number | string | null;
+  quantity_step?: number | string | null;
+  min_lot?: number | string | null;
+  max_lot?: number | string | null;
+  lot_step?: number | string | null;
+  lot_size?: number | string | null;
+  price_precision?: number | string | null;
+  quantity_precision?: number | string | null;
+  broker_symbol?: string | null;
+  is_tradeable_live?: boolean | null;
+  is_active?: boolean | null;
+  [key: string]: unknown;
+}
+
 export interface BrokerMt5Position {
   ticket?: number | string;
   symbol?: string;
@@ -406,6 +440,23 @@ export interface LiveDeploymentSummaryDeployment {
   example_payload?: Record<string, unknown>;
 }
 
+
+export interface BrokerSyncSummary {
+  mode?: string;
+  managed_by?: string;
+  last_broker_sync_at?: string | null;
+  last_live_sync_at?: string | null;
+  live_sync_enabled?: boolean;
+  live_sync_interval_seconds?: number;
+  live_sync_error_count?: number;
+  live_sync_last_error?: string | null;
+  broker_connection_status?: string | null;
+  open_broker_positions?: number | null;
+  local_tracked_positions?: number | null;
+  sync_mismatch_warning?: boolean;
+  latest_sync_error?: string | null;
+}
+
 export interface LiveDeploymentSummary {
   deployment?: LiveDeploymentSummaryDeployment;
   broker?: SafeBrokerStatus | null;
@@ -416,6 +467,8 @@ export interface LiveDeploymentSummary {
   recent_orders?: LiveOrder[];
   recent_signals?: LiveSignal[];
   recent_logs?: LiveTradeLog[];
+  position_events?: LiveTradeLog[];
+  broker_sync?: BrokerSyncSummary | null;
   runner?: StrategyRunnerInfo | null;
   status?: string;
   mode?: string;
@@ -426,6 +479,26 @@ export interface LiveDeploymentSummary {
   orders_count_today?: number;
   signals_count_today?: number;
   equity?: number | string;
+}
+
+
+export type LiveReadinessStatus = "READY" | "NOT_READY" | "WARNING";
+export type LiveReadinessCheckStatus = "PASS" | "FAIL" | "WARNING";
+
+export interface LiveReadinessCheck {
+  key: string;
+  label: string;
+  status: LiveReadinessCheckStatus;
+  message: string;
+  action_label?: string | null;
+  action_href?: string | null;
+}
+
+export interface LiveReadiness {
+  overall_status: LiveReadinessStatus;
+  ready_to_auto_trade: boolean;
+  summary: string;
+  checks: LiveReadinessCheck[];
 }
 
 export interface ManualSignalResponse {
@@ -603,6 +676,69 @@ export interface StrategyRunnerInfo {
   runner_error_count?: number;
   runner_last_error?: string | null;
   runner_stale?: boolean;
+  last_entry_plan?: Record<string, unknown> | null;
+  last_risk_preview?: Record<string, unknown> | null;
+  last_execution_decision?: string | null;
+}
+
+export interface FullDryTestStep {
+  name: string;
+  status: "PASS" | "FAIL" | "WARNING" | string;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
+export interface FullDryTestResponse {
+  success: boolean;
+  deployment_id: string;
+  strategy_name?: string | null;
+  latest_candle_time?: string | null;
+  signal?: SignalType | string | null;
+  steps: FullDryTestStep[];
+  entry_plan?: Record<string, unknown> | null;
+  risk_preview?: Record<string, unknown> | null;
+  duplicate?: boolean;
+  final_action: "HOLD" | "WOULD_PLACE_PAPER_ORDER" | "WOULD_PLACE_DEMO_ORDER" | "REJECTED" | string;
+  message: string;
+}
+
+
+export interface FinalQaCheck {
+  key: string;
+  label: string;
+  status: "PASS" | "WARNING" | "FAIL" | string;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
+export interface FinalQaResult {
+  overall_status: "PASS" | "WARNING" | "FAIL" | string;
+  summary: string;
+  checks: FinalQaCheck[];
+  deployment_id?: string;
+  mode?: string;
+  last_results?: Record<string, unknown>;
+  debug_summary?: Record<string, unknown>;
+}
+
+export interface QaOrderTestResult {
+  status: string;
+  message?: string;
+  order_id?: string | null;
+  position_id?: string | null;
+  broker_order_id?: string | null;
+  side?: string;
+  lot_or_quantity?: number | string;
+  lot_or_quantity_sent?: number | string;
+  entry?: number | string;
+  SL?: number | string;
+  TP?: number | string;
+  risk?: number | string | null;
+  risk_estimate?: number | string | null;
+  expected_reward?: number | string | null;
+  warning?: string | null;
+  broker_response?: Record<string, unknown>;
+  preview?: Record<string, unknown>;
 }
 
 export interface RunStrategyResponse {
@@ -732,6 +868,9 @@ export interface LiveOrderPreview {
   validation_status?: string;
   status?: string;
   rejected_reason?: string | null;
+  reason?: string | null;
+  missing_fields?: string[];
+  instrument_not_ready_message?: string | null;
   broker?: string;
   symbol?: string;
   side?: string;
@@ -741,10 +880,15 @@ export interface LiveOrderPreview {
   risk_amount?: number | string | null;
   actual_risk_amount?: number | string | null;
   entry_price?: number | string | null;
+  latest_price?: number | string | null;
+  preview_mode?: string | null;
   stop_loss?: number | string | null;
   target?: number | string | null;
+  expected_reward_amount?: number | string | null;
   account_currency?: string | null;
   currency_symbol?: string | null;
+  broker_symbol?: string | null;
+  broker_payload_preview?: Record<string, unknown>;
   broker_order_payload_preview?: Record<string, unknown>;
   risk_engine?: Record<string, unknown>;
   instrument_spec_snapshot?: Record<string, unknown>;

@@ -17,10 +17,13 @@ from ...services.brokers.factory import get_broker_adapter, get_broker_code
 from ...services.live.execution_engine import execute_signal
 from ...services.live.pnl_service import to_decimal
 from ...services.live.broker_candle_service import get_candle_snapshot, refresh_deployment_candles
-from ...services.live.strategy_runner import run_strategy_for_deployment
+from ...services.live.strategy_runner import run_strategy_for_deployment, run_full_dry_test_for_deployment
 from ...services.live.auto_runner_service import run_deployment_if_due
 from ...services.live.broker_sync_service import clamp_live_sync_interval, sync_deployment_broker_state
 from ...services.live.trading_safety import LIVE_DISABLED_MESSAGE, check_platform_mode_allowed, get_platform_trading_settings, mark_heartbeat
+from ...services.live_trading.readiness_service import build_live_deployment_readiness
+from ...services.live_trading.paper_position_manager import process_paper_positions_for_deployment
+from ...services.live_trading.final_qa_service import build_final_live_qa, run_paper_order_test, run_demo_micro_order_test
 from ...utils.api_response import success_response
 from .live_common import (
     block_live_mode,
@@ -40,6 +43,11 @@ router = APIRouter()
 
 class LiveSyncSettingsIn(BaseModel):
     interval_seconds: int | None = Field(default=None, ge=1, le=3600)
+
+class QaOrderTestIn(BaseModel):
+    side: str | None = Field(default="BUY")
+    confirm_demo_micro_order: bool | None = Field(default=False)
+
 
 
 def _ensure_tradingview_secret(row: StrategyDeployment) -> None:
@@ -90,6 +98,50 @@ async def _validate_broker_for_user(db: AsyncSession, broker_account_id: UUID | 
         return
     await get_broker_account_or_404(db, broker_account_id, current_user)
 
+
+
+
+def _validate_safe_deployment_values(values: dict, current: StrategyDeployment | None = None) -> None:
+    merged = {}
+    if current is not None:
+        for key in ["capital", "risk_per_trade", "rr_ratio", "price_risk_pct", "max_daily_loss", "max_trades_per_day", "max_open_positions", "mt5_demo_max_lot"]:
+            merged[key] = getattr(current, key, None)
+    merged.update(values)
+    def dec(key: str, default: str = "0") -> Decimal:
+        return _dec(merged.get(key), default)
+    if "capital" in merged and dec("capital") <= 0:
+        raise HTTPException(status_code=400, detail="Capital must be greater than 0.")
+    if "risk_per_trade" in merged:
+        risk = dec("risk_per_trade")
+        if risk <= 0:
+            raise HTTPException(status_code=400, detail="Risk per trade must be greater than 0%.")
+        if risk > Decimal("0.10"):
+            raise HTTPException(status_code=400, detail="Risk per trade cannot be more than 10%.")
+    if "rr_ratio" in merged and dec("rr_ratio") <= 0:
+        raise HTTPException(status_code=400, detail="RR ratio must be greater than 0.")
+    if "price_risk_pct" in merged and dec("price_risk_pct") <= 0:
+        raise HTTPException(status_code=400, detail="Fixed price risk percent must be greater than 0.")
+    if "max_daily_loss" in merged and dec("max_daily_loss") < 0:
+        raise HTTPException(status_code=400, detail="Max daily loss cannot be negative.")
+    if "max_trades_per_day" in merged and int(merged.get("max_trades_per_day") or 0) < 1:
+        raise HTTPException(status_code=400, detail="Max trades per day must be at least 1.")
+    if "max_open_positions" in merged and int(merged.get("max_open_positions") or 0) < 1:
+        raise HTTPException(status_code=400, detail="Max open positions must be at least 1.")
+    if merged.get("mt5_demo_max_lot") is not None and dec("mt5_demo_max_lot") <= 0:
+        raise HTTPException(status_code=400, detail="MT5 demo max lot must be greater than 0.")
+
+
+async def _guard_running_deployment_update(db: AsyncSession, row: StrategyDeployment, values: dict) -> None:
+    if str(row.status or "").upper() != "RUNNING":
+        return
+    locked = {"strategy_id", "instrument", "timeframe", "broker_account_id", "mode", "quantity_mode"}
+    changed = [key for key in locked if key in values and str(values.get(key)) != str(getattr(row, key, None))]
+    if changed:
+        raise HTTPException(status_code=400, detail="Stop this deployment first or clone it with new settings.")
+    if "risk_per_trade" in values and _dec(values.get("risk_per_trade")) != _dec(getattr(row, "risk_per_trade", None)):
+        open_count = int((await db.execute(select(func.count(LivePosition.id)).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN"))).scalar() or 0)
+        if open_count > 0:
+            raise HTTPException(status_code=400, detail="Risk percent cannot be changed while an open position exists. Close or stop first.")
 
 async def _write_log(db: AsyncSession, deployment: StrategyDeployment, event_type: str, message: str, level: str = "INFO", metadata: dict | None = None) -> None:
     db.add(LiveTradeLog(
@@ -359,6 +411,15 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
     recent_orders = await _recent(db, LiveOrder, row.id)
     recent_signals = await _recent(db, LiveSignal, row.id)
     recent_logs = await _recent(db, LiveTradeLog, row.id)
+    position_events = (await db.execute(
+        select(LiveTradeLog)
+        .where(LiveTradeLog.deployment_id == row.id, LiveTradeLog.event_type.in_([
+            "POSITION_OPENED", "STOP_LOSS_HIT", "TAKE_PROFIT_HIT", "POSITION_CLOSED", "BROKER_SYNC_UPDATE",
+            "BROKER_POSITION_SYNCED", "MANUAL_CLOSE", "PAPER_POSITION_MANAGER_UPDATED", "MAX_DAILY_LOSS", "ERROR_EXIT", "OPPOSITE_SIGNAL", "SQUARE_OFF"
+        ]))
+        .order_by(LiveTradeLog.created_at.desc())
+        .limit(20)
+    )).scalars().all()
     latest_engine_signal = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == row.id, LiveSignal.source == "ENGINE").order_by(LiveSignal.created_at.desc()).limit(1))).scalar_one_or_none()
     latest_runner_log = (await db.execute(select(LiveTradeLog).where(LiveTradeLog.deployment_id == row.id, LiveTradeLog.event_type.ilike("RUNNER_%")).order_by(LiveTradeLog.created_at.desc()).limit(1))).scalar_one_or_none()
 
@@ -442,6 +503,21 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
             "broker_synced": bool(broker_metrics is not None),
             "broker_deal_count": (broker_metrics or {}).get("deals_pnl", {}).get("deal_count") if isinstance((broker_metrics or {}).get("deals_pnl"), dict) else None,
         },
+        "broker_sync": {
+            "mode": row.mode,
+            "managed_by": "AlgoAgentX Paper Engine" if row.mode == "PAPER" else "Broker SL/TP Sync" if row.mode == "DEMO" else "LIVE locked",
+            "last_broker_sync_at": getattr(row, "last_broker_sync_at", None),
+            "last_live_sync_at": getattr(row, "last_live_sync_at", None),
+            "live_sync_enabled": getattr(row, "live_sync_enabled", False),
+            "live_sync_interval_seconds": getattr(row, "live_sync_interval_seconds", 10),
+            "live_sync_error_count": getattr(row, "live_sync_error_count", 0),
+            "live_sync_last_error": getattr(row, "live_sync_last_error", None),
+            "broker_connection_status": broker.get("status") if isinstance(broker, dict) else None,
+            "open_broker_positions": (broker_metrics or {}).get("open_positions_count") if broker_metrics is not None else None,
+            "local_tracked_positions": open_positions_count,
+            "sync_mismatch_warning": (broker_metrics is not None and int((broker_metrics or {}).get("open_positions_count") or 0) != int(open_positions_count or 0)),
+            "latest_sync_error": getattr(row, "live_sync_last_error", None),
+        },
         "runner": {
             "last_run_at": getattr(row, "last_runner_at", None) or (latest_runner_log.created_at if latest_runner_log else None),
             "last_processed_candle_time": getattr(row, "last_processed_candle_time", None),
@@ -461,10 +537,22 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
             "latest_order_status": latest_order.status if latest_order else None,
             "latest_order_error": latest_order.error_message if latest_order else None,
             "latest_broker_order_id": latest_order.broker_order_id if latest_order else None,
+            "last_entry_plan": ({
+                "entry_price": float(latest_order.entry_price) if latest_order.entry_price is not None else None,
+                "stop_loss": float(latest_order.stop_loss) if latest_order.stop_loss is not None else None,
+                "target": float(latest_order.target) if latest_order.target is not None else None,
+                "side": latest_order.side,
+                "symbol": latest_order.symbol,
+            } if latest_order else None),
+            "last_risk_preview": ((latest_order.raw_response or {}).get("sizing") if latest_order and isinstance(latest_order.raw_response, dict) else None),
+            "last_execution_decision": (
+                f"Last cycle: {latest_engine_signal.signal_type} signal {latest_engine_signal.status.lower()}" if latest_engine_signal else None
+            ),
         },
         "latest_signal": dump_one(LiveSignalOut, latest_signal) if latest_signal else None,
         "latest_order": dump_one(LiveOrderOut, latest_order) if latest_order else None,
         "open_positions": dump_list(LivePositionOut, open_positions),
+        "position_events": dump_list(LiveTradeLogOut, position_events),
         "recent_orders": dump_list(LiveOrderOut, recent_orders),
         "recent_signals": dump_list(LiveSignalOut, recent_signals),
         "recent_logs": dump_list(LiveTradeLogOut, recent_logs),
@@ -482,6 +570,7 @@ async def list_deployments(db: AsyncSession = Depends(get_db), current_user: dic
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_deployment(payload: StrategyDeploymentCreate, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    _validate_safe_deployment_values(payload.model_dump())
     block_live_mode(payload.mode)
     await get_deployable_strategy_or_400(db, payload.strategy_id, payload.mode)
     if payload.mode == "DEMO" and not payload.broker_account_id:
@@ -495,6 +584,50 @@ async def create_deployment(payload: StrategyDeploymentCreate, db: AsyncSession 
     await db.commit()
     await db.refresh(row)
     return success_response(dump_one(StrategyDeploymentOut, row), "Deployment created")
+
+
+@router.get("/{deployment_id}/readiness")
+async def get_deployment_readiness(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    result = await build_live_deployment_readiness(db, deployment_id, current_user)
+    return success_response(result, result.get("summary") or "Live readiness checked")
+
+
+@router.get("/{deployment_id}/positions")
+async def get_deployment_positions(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    rows = (await db.execute(
+        select(LivePosition).where(LivePosition.deployment_id == deployment_id).order_by(LivePosition.opened_at.desc(), LivePosition.created_at.desc()).limit(100)
+    )).scalars().all()
+    return success_response(dump_list(LivePositionOut, rows), "Deployment positions loaded")
+
+
+@router.get("/{deployment_id}/position-events")
+async def get_deployment_position_events(deployment_id: UUID, limit: int = 100, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    lifecycle_events = [
+        "POSITION_OPENED", "STOP_LOSS_HIT", "TAKE_PROFIT_HIT", "POSITION_CLOSED", "BROKER_SYNC_UPDATE",
+        "BROKER_POSITION_SYNCED", "MANUAL_CLOSE", "PAPER_POSITION_MANAGER_UPDATED", "PAPER_POSITION_MANAGER_SKIPPED",
+        "MAX_DAILY_LOSS", "ERROR_EXIT", "OPPOSITE_SIGNAL", "SQUARE_OFF",
+    ]
+    rows = (await db.execute(
+        select(LiveTradeLog)
+        .where(LiveTradeLog.deployment_id == deployment_id, LiveTradeLog.event_type.in_(lifecycle_events))
+        .order_by(LiveTradeLog.created_at.desc())
+        .limit(max(1, min(int(limit or 100), 300)))
+    )).scalars().all()
+    return success_response(dump_list(LiveTradeLogOut, rows), "Position events loaded")
+
+
+@router.post("/{deployment_id}/process-paper-positions")
+async def process_deployment_paper_positions(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    try:
+        result = await process_paper_positions_for_deployment(db, deployment_id)
+        await db.commit()
+        return success_response(result, result.get("message") or "Paper positions processed")
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.get("/{deployment_id}/summary")
@@ -665,6 +798,42 @@ async def create_deployment_manual_signal(deployment_id: UUID, payload: ManualDe
     }, message)
 
 
+
+@router.get("/{deployment_id}/final-qa")
+async def get_deployment_final_qa(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    result = await build_final_live_qa(db, deployment_id, current_user)
+    return success_response(result, result.get("summary") or "Final QA checked")
+
+
+@router.post("/{deployment_id}/test-paper-order")
+async def test_deployment_paper_order(deployment_id: UUID, payload: QaOrderTestIn | None = None, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    try:
+        result = await run_paper_order_test(db, row, side=(payload.side if payload else "BUY"))
+        return success_response(result, result.get("message") or "Paper order test completed")
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{deployment_id}/test-demo-micro-order")
+async def test_deployment_demo_micro_order(deployment_id: UUID, payload: QaOrderTestIn, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    try:
+        result = await run_demo_micro_order_test(db, row, confirm_demo_micro_order=bool(payload.confirm_demo_micro_order), side=payload.side or "BUY")
+        return success_response(result, result.get("message") or "Demo micro order test completed")
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{deployment_id}/run-full-dry-test")
+async def run_live_deployment_full_dry_test(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    result = await run_full_dry_test_for_deployment(db, deployment_id)
+    return success_response(result, result.get("message") or "Full dry test completed")
+
 @router.post("/{deployment_id}/run-strategy-once")
 async def run_live_strategy_once(deployment_id: UUID, payload: RunStrategyOnceIn | None = None, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     await get_deployment_or_404(db, deployment_id, current_user)
@@ -729,6 +898,8 @@ async def get_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_db)
 async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpdate, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     row = await get_deployment_or_404(db, deployment_id, current_user)
     values = payload.model_dump(exclude_unset=True)
+    _validate_safe_deployment_values(values, row)
+    await _guard_running_deployment_update(db, row, values)
     if "mode" in values:
         block_live_mode(values["mode"])
         await get_deployable_strategy_or_400(db, row.strategy_id, values["mode"])
