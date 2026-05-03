@@ -10,7 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_admin_user, get_current_user, get_db
 from ...db.compat import as_uuid_or_str, column_text, table_has_column
-from ...db.models import PerformanceMetric, Strategy, StrategyRequest, User
+from ...db.models import PerformanceMetric, Strategy, StrategyRequest, StrategyRuntimePreset, User
+from ...services.trading.runtime_config_service import (
+    get_default_runtime_config_schema,
+    get_system_default_runtime_config,
+    resolve_runtime_config,
+    validate_runtime_config,
+)
 from ...utils.api_response import success_response
 
 router = APIRouter()
@@ -687,3 +693,106 @@ async def publish_strategy(
         },
         "Strategy published successfully",
     )
+
+def _serialize_runtime_preset(row: StrategyRuntimePreset) -> dict[str, Any]:
+    return {
+        "id": str(row.id),
+        "strategy_id": str(row.strategy_id),
+        "strategyId": str(row.strategy_id),
+        "name": row.name,
+        "description": row.description,
+        "config_json": row.config_json or {},
+        "configJson": row.config_json or {},
+        "risk_label": getattr(row, "risk_label", None),
+        "riskLabel": getattr(row, "risk_label", None),
+        "is_default": bool(row.is_default),
+        "isDefault": bool(row.is_default),
+        "is_active": bool(row.is_active),
+        "isActive": bool(row.is_active),
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "createdAt": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "updatedAt": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.get("/{strategy_id}/runtime-config")
+async def get_strategy_runtime_config(
+    strategy_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    strategy = (
+        await db.execute(select(Strategy).where(column_text(Strategy.id) == str(strategy_id)))
+    ).scalar_one_or_none()
+
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    presets = (
+        await db.execute(
+            select(StrategyRuntimePreset)
+            .where(
+                StrategyRuntimePreset.strategy_id == str(strategy_id),
+                StrategyRuntimePreset.is_active == True,
+            )
+            .order_by(StrategyRuntimePreset.is_default.desc(), StrategyRuntimePreset.created_at.asc())
+        )
+    ).scalars().all()
+
+    strategy_hint = " ".join(
+        str(part or "")
+        for part in [
+            strategy.name,
+            (strategy.parameters or {}).get("strategy_type") if isinstance(strategy.parameters, dict) else None,
+        ]
+    )
+
+    default_runtime_config = strategy.default_runtime_config or get_system_default_runtime_config()
+    runtime_config_schema = strategy.runtime_config_schema or get_default_runtime_config_schema(strategy_hint)
+    default_preset = next((row for row in presets if bool(row.is_default)), None)
+    resolved_defaults = resolve_runtime_config(strategy=strategy, strategy_preset=default_preset)
+    validation = validate_runtime_config(resolved_defaults)
+
+    return success_response(
+        {
+            "strategy_id": str(strategy.id),
+            "strategyId": str(strategy.id),
+            "strategy_name": strategy.name,
+            "strategyName": strategy.name,
+            "supports_runtime_config": bool(getattr(strategy, "supports_runtime_config", True)),
+            "supportsRuntimeConfig": bool(getattr(strategy, "supports_runtime_config", True)),
+            "config_version": int(getattr(strategy, "config_version", 1) or 1),
+            "configVersion": int(getattr(strategy, "config_version", 1) or 1),
+            "system_default_runtime_config": get_system_default_runtime_config(),
+            "systemDefaultRuntimeConfig": get_system_default_runtime_config(),
+            "default_runtime_config": default_runtime_config,
+            "defaultRuntimeConfig": default_runtime_config,
+            "runtime_config_schema": runtime_config_schema,
+            "runtimeConfigSchema": runtime_config_schema,
+            "presets": [_serialize_runtime_preset(row) for row in presets],
+            "resolved_defaults": resolved_defaults,
+            "resolvedDefaults": resolved_defaults,
+            "validation": validation,
+        },
+        "Strategy runtime config loaded",
+    )
+
+@router.get("/{strategy_id}/runtime-presets")
+async def get_strategy_runtime_presets(
+    strategy_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    strategy = (await db.execute(select(Strategy).where(column_text(Strategy.id) == str(strategy_id)))).scalar_one_or_none()
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    rows = (
+        await db.execute(
+            select(StrategyRuntimePreset)
+            .where(StrategyRuntimePreset.strategy_id == str(strategy_id), StrategyRuntimePreset.is_active == True)
+            .order_by(StrategyRuntimePreset.is_default.desc(), StrategyRuntimePreset.created_at.asc())
+        )
+    ).scalars().all()
+    return success_response({"items": [_serialize_runtime_preset(row) for row in rows]}, "Runtime presets loaded")
+

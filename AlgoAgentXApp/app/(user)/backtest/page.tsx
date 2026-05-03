@@ -17,6 +17,7 @@ import {
   RefreshCcw,
   SlidersHorizontal,
   Wallet,
+  X,
 } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -34,6 +35,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { parseApiError, formatErrorMessage } from "@/lib/api/error";
+import { formatCurrency as formatMoney, formatNumber as formatDisplayNumber, formatTradeSize, currencySymbolForCode } from "@/lib/formatters";
 import {
   backtestsApi,
   type BacktestDetailResponse,
@@ -42,6 +44,7 @@ import {
   type CostPreviewResponse,
   type DataAvailabilityResponse,
   type InstrumentOption,
+  type RuntimePresetOption,
   type StrategyOption,
 } from "@/lib/api/backtests";
 
@@ -52,6 +55,179 @@ type ParameterField = {
   value: string;
 };
 
+
+
+
+
+
+type PresetNumberOption = { label: string; value: number };
+
+const RISK_PERCENT_OPTIONS: PresetNumberOption[] = [
+  { label: "0.25%", value: 0.0025 },
+  { label: "0.50%", value: 0.005 },
+  { label: "1.00%", value: 0.01 },
+  { label: "1.50%", value: 0.015 },
+  { label: "2.00%", value: 0.02 },
+  { label: "3.00%", value: 0.03 },
+  { label: "5.00%", value: 0.05 },
+];
+
+const RR_RATIO_OPTIONS: PresetNumberOption[] = [1, 1.5, 2, 3, 4, 5].map((value) => ({ label: String(value), value }));
+const ATR_PERIOD_OPTIONS: PresetNumberOption[] = [7, 10, 14, 20, 21, 50].map((value) => ({ label: String(value), value }));
+const ATR_MULTIPLIER_OPTIONS: PresetNumberOption[] = [1, 1.5, 2, 2.5, 3].map((value) => ({ label: String(value), value }));
+const SWING_LOOKBACK_OPTIONS: PresetNumberOption[] = [3, 5, 10, 20].map((value) => ({ label: String(value), value }));
+const FIXED_PRICE_RISK_OPTIONS: PresetNumberOption[] = [
+  { label: "0.10%", value: 0.001 },
+  { label: "0.20%", value: 0.002 },
+  { label: "0.50%", value: 0.005 },
+  { label: "1.00%", value: 0.01 },
+  { label: "2.00%", value: 0.02 },
+];
+const MAX_OPEN_POSITION_OPTIONS: PresetNumberOption[] = [1, 2, 3, 5].map((value) => ({ label: String(value), value }));
+const BREAK_EVEN_R_OPTIONS: PresetNumberOption[] = [0.5, 1, 1.5, 2].map((value) => ({ label: String(value), value }));
+const TRAIL_START_R_OPTIONS: PresetNumberOption[] = [1, 1.5, 2, 3].map((value) => ({ label: String(value), value }));
+const TRAIL_ATR_MULTIPLIER_OPTIONS: PresetNumberOption[] = [1, 1.5, 2, 2.5, 3].map((value) => ({ label: String(value), value }));
+const MAX_TRADES_PER_DAY_OPTIONS: Array<{ label: string; value: string }> = [
+  { label: "No Limit", value: "NONE" },
+  { label: "1", value: "1" },
+  { label: "2", value: "2" },
+  { label: "3", value: "3" },
+  { label: "5", value: "5" },
+  { label: "10", value: "10" },
+  { label: "20", value: "20" },
+];
+
+type RuntimeFieldSchema = {
+  type?: "number" | "boolean" | "select" | "text" | "string";
+  label?: string;
+  default?: string | number | boolean | null;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: Array<string | { label?: string; value?: string | number | boolean }>;
+};
+
+type RuntimeConfig = {
+  risk: {
+    initial_capital?: number;
+    account_currency?: string | null;
+    risk_percent?: number;
+    position_size_mode?: "RISK_BASED" | "FIXED_LOT" | "FIXED_QUANTITY" | string;
+    fixed_lot?: number | null;
+    fixed_quantity?: number | null;
+    max_lot_cap?: number | null;
+    max_quantity_cap?: number | null;
+  };
+  execution: {
+    entry_mode?: string;
+    exit_on_opposite_signal?: boolean;
+    allow_long?: boolean;
+    allow_short?: boolean;
+    max_trades_per_day?: number | null;
+    max_open_positions?: number | null;
+    intraday_square_off?: boolean;
+    square_off_time?: string;
+  };
+  sl_tp: {
+    sl_mode?: "ATR" | "SWING" | "FIXED_PERCENT" | "STRATEGY_SUGGESTED" | string;
+    rr_ratio?: number;
+    atr_period?: number;
+    atr_multiplier?: number;
+    swing_lookback?: number;
+    fixed_price_risk_pct?: number;
+    use_strategy_suggested_sl?: boolean;
+  };
+  trade_management: {
+    break_even_enabled?: boolean;
+    break_even_trigger_r?: number;
+    trailing_enabled?: boolean;
+    trailing_mode?: "ATR_TRAIL" | "EMA20_TRAIL" | "SWING_TRAIL" | string;
+    trail_start_r?: number;
+    trail_atr_multiplier?: number;
+    partial_exit_enabled?: boolean;
+    partial_exit_at_r?: number;
+    partial_exit_percent?: number;
+    break_even_offset_points?: number;
+  };
+  strategy_params: Record<string, string | number | boolean | null>;
+};
+
+type RuntimeTab = "risk" | "sl_tp" | "execution" | "trade_management" | "strategy_params";
+
+const SYSTEM_RUNTIME_DEFAULTS: RuntimeConfig = {
+  risk: {
+    initial_capital: 100000,
+    account_currency: null,
+    risk_percent: 0.01,
+    position_size_mode: "RISK_BASED",
+    fixed_lot: null,
+    fixed_quantity: null,
+    max_lot_cap: null,
+    max_quantity_cap: null,
+  },
+  execution: {
+    entry_mode: "NEXT_CANDLE_OPEN",
+    exit_on_opposite_signal: true,
+    allow_long: true,
+    allow_short: true,
+    max_trades_per_day: null,
+    max_open_positions: 1,
+    intraday_square_off: false,
+    square_off_time: "15:15",
+  },
+  sl_tp: {
+    sl_mode: "ATR",
+    rr_ratio: 2,
+    atr_period: 14,
+    atr_multiplier: 1.5,
+    swing_lookback: 5,
+    fixed_price_risk_pct: 0.002,
+    use_strategy_suggested_sl: false,
+  },
+  trade_management: {
+    break_even_enabled: false,
+    break_even_trigger_r: 1,
+    break_even_offset_points: 0,
+    trailing_enabled: false,
+    trailing_mode: "ATR_TRAIL",
+    trail_start_r: 1.5,
+    trail_atr_multiplier: 1,
+    partial_exit_enabled: false,
+    partial_exit_at_r: 1,
+    partial_exit_percent: 0.5,
+  },
+  strategy_params: {},
+};
+
+const cloneRuntimeConfig = (config: RuntimeConfig): RuntimeConfig => JSON.parse(JSON.stringify(config)) as RuntimeConfig;
+
+const mergeRuntimeConfig = (base: RuntimeConfig, override?: Partial<RuntimeConfig> | null): RuntimeConfig => ({
+  risk: { ...base.risk, ...(override?.risk || {}) },
+  execution: { ...base.execution, ...(override?.execution || {}) },
+  sl_tp: { ...base.sl_tp, ...(override?.sl_tp || {}) },
+  trade_management: { ...base.trade_management, ...(override?.trade_management || {}) },
+  strategy_params: { ...base.strategy_params, ...(override?.strategy_params || {}) },
+});
+
+const normalizeRuntimeConfig = (config?: Partial<RuntimeConfig> | null): RuntimeConfig =>
+  mergeRuntimeConfig(cloneRuntimeConfig(SYSTEM_RUNTIME_DEFAULTS), config || null);
+
+const toOptionalNumber = (value: string): number | null => {
+  if (value === "" || value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const runtimeChanged = (current: RuntimeConfig, defaults: RuntimeConfig): boolean =>
+  JSON.stringify(current) !== JSON.stringify(defaults);
+
+const toggleClass = (enabled: boolean) =>
+  `relative inline-flex h-7 w-14 items-center rounded-full border transition ${
+    enabled ? "border-primary/60 bg-primary/80" : "border-border/70 bg-card/30"
+  }`;
+
+const toggleKnobClass = (enabled: boolean) =>
+  `inline-block h-5 w-5 rounded-full bg-white shadow transition ${enabled ? "translate-x-7" : "translate-x-1"}`;
 
 type SessionOption = "ALL" | "ASIAN" | "LONDON" | "NEW_YORK" | "CUSTOM";
 
@@ -103,22 +279,9 @@ const safeNumber = (value: unknown, fallback = 0): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const formatNumber = (value: number | null | undefined, fractionDigits = 2): string => {
-  if (value === null || value === undefined || Number.isNaN(value)) return "—";
-  return new Intl.NumberFormat("en-IN", {
-    maximumFractionDigits: fractionDigits,
-    minimumFractionDigits: fractionDigits,
-  }).format(value);
-};
+const formatNumber = (value: number | null | undefined, fractionDigits = 2): string => formatDisplayNumber(value, fractionDigits);
 
-const formatCurrency = (value: number | null | undefined): string => {
-  if (value === null || value === undefined || Number.isNaN(value)) return "—";
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 2,
-  }).format(value);
-};
+const formatCurrency = (value: number | null | undefined, symbol = "₹"): string => formatMoney(value, symbol);
 
 const formatPercent = (value: number | null | undefined, multiplyBy100 = false): string => {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
@@ -222,6 +385,15 @@ export default function BacktestPage() {
 
   const [parameterValues, setParameterValues] = useState<Record<string, string>>({});
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [runtimeSettingsOpen, setRuntimeSettingsOpen] = useState(false);
+  const [runtimeTab, setRuntimeTab] = useState<RuntimeTab>("risk");
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig>(() => cloneRuntimeConfig(SYSTEM_RUNTIME_DEFAULTS));
+  const [runtimeDefaults, setRuntimeDefaults] = useState<RuntimeConfig>(() => cloneRuntimeConfig(SYSTEM_RUNTIME_DEFAULTS));
+  const [runtimeSchema, setRuntimeSchema] = useState<Record<string, RuntimeFieldSchema>>({});
+  const [runtimePresets, setRuntimePresets] = useState<RuntimePresetOption[]>([]);
+  const [selectedRuntimePresetId, setSelectedRuntimePresetId] = useState<string>("DEFAULT");
+  const [runtimeConfigLoading, setRuntimeConfigLoading] = useState(false);
+  const [runtimeConfigError, setRuntimeConfigError] = useState<string | null>(null);
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [advancedFiltersEnabled, setAdvancedFiltersEnabled] = useState(false);
   const [selectedDays, setSelectedDays] = useState<string[]>([]);
@@ -250,8 +422,39 @@ export default function BacktestPage() {
     [strategies, selectedStrategyId],
   );
 
-  const parameterFields = useMemo(() => extractStrategyParameterFields(selectedStrategy), [selectedStrategy]);
+  const selectedInstrument = useMemo(
+    () => instruments.find((instrument) => String(instrument.id) === String(selectedInstrumentId)) || null,
+    [instruments, selectedInstrumentId],
+  );
 
+  const parameterFields = useMemo(() => extractStrategyParameterFields(selectedStrategy), [selectedStrategy]);
+  const runtimeIsCustom = useMemo(() => runtimeChanged(runtimeConfig, runtimeDefaults), [runtimeConfig, runtimeDefaults]);
+
+  const selectedInstrumentMarketCode = useMemo(() => {
+    return String(
+      selectedInstrument?.asset_class ||
+      selectedInstrument?.market ||
+      selectedInstrument?.instrument_type ||
+      ""
+    ).toUpperCase();
+  }, [selectedInstrument]);
+
+  const isIntradayTimeframe = useMemo(() => {
+    const value = String(selectedTimeframe || "").trim().toLowerCase();
+    if (!value) return false;
+    if (["1d", "d", "day", "daily", "1w", "w", "week", "weekly", "1mo", "month", "monthly"].includes(value)) {
+      return false;
+    }
+    return /^(\d+)(m|min|minute|minutes|h|hr|hour|hours)$/.test(value);
+  }, [selectedTimeframe]);
+
+  const supportsIntradaySquareOff = useMemo(() => {
+    const indianAssetClasses = new Set(["INDIAN_EQUITY", "INDIAN_INDEX", "INDIAN_FO", "INDIAN_FUTURES", "INDIAN_OPTIONS"]);
+    return indianAssetClasses.has(selectedInstrumentMarketCode) && isIntradayTimeframe;
+  }, [isIntradayTimeframe, selectedInstrumentMarketCode]);
+
+  const instrumentCurrency = selectedInstrument?.account_currency || "—";
+  const instrumentQuantityMode = selectedInstrument?.quantity_mode || "—";
 
   const advancedFilterPayload = useMemo<AdvancedBacktestFilters | undefined>(() => {
     if (!advancedFiltersEnabled) return { enabled: false };
@@ -297,12 +500,149 @@ export default function BacktestPage() {
     setParameterValues(nextValues);
   }, [parameterFields]);
 
+  useEffect(() => {
+    if (!selectedStrategyId) {
+      const defaults = normalizeRuntimeConfig({ risk: { initial_capital: safeNumber(initialCapital, 100000) } });
+      setRuntimeDefaults(defaults);
+      setRuntimeConfig(defaults);
+      setRuntimeSchema({});
+      setRuntimePresets([]);
+      setSelectedRuntimePresetId("DEFAULT");
+      return;
+    }
+
+    let active = true;
+    const loadRuntimeConfig = async () => {
+      setRuntimeConfigLoading(true);
+      setRuntimeConfigError(null);
+      try {
+        const response = await backtestsApi.getStrategyRuntimeConfig(selectedStrategyId);
+        const resolved = normalizeRuntimeConfig(
+          (response.resolved_defaults || response.default_runtime_config || {}) as Partial<RuntimeConfig>,
+        );
+        resolved.risk.initial_capital = safeNumber(initialCapital, resolved.risk.initial_capital || 100000);
+        if (active) {
+          setRuntimeDefaults(resolved);
+          setRuntimeConfig(cloneRuntimeConfig(resolved));
+          const schema = response.runtime_config_schema as Record<string, unknown> | null | undefined;
+          const strategyParams = schema?.strategy_params;
+          setRuntimeSchema(
+            strategyParams && typeof strategyParams === "object"
+              ? (strategyParams as Record<string, RuntimeFieldSchema>)
+              : {},
+          );
+          const presets = Array.isArray(response.presets) ? response.presets : [];
+          setRuntimePresets(presets);
+          setSelectedRuntimePresetId("DEFAULT");
+        }
+      } catch (error) {
+        if (!active) return;
+        const fallback = normalizeRuntimeConfig({
+          risk: { initial_capital: safeNumber(initialCapital, 100000) },
+          strategy_params: Object.fromEntries(parameterFields.map((field) => [field.key, field.value])),
+        });
+        setRuntimeDefaults(fallback);
+        setRuntimeConfig(cloneRuntimeConfig(fallback));
+        setRuntimeSchema({});
+        setRuntimePresets([]);
+        setSelectedRuntimePresetId("DEFAULT");
+        setRuntimeConfigError(formatErrorMessage(parseApiError(error)));
+      } finally {
+        if (active) setRuntimeConfigLoading(false);
+      }
+    };
+
+    void loadRuntimeConfig();
+    return () => {
+      active = false;
+    };
+  }, [selectedStrategyId]);
+
+  useEffect(() => {
+    setRuntimeConfig((previous) => ({
+      ...previous,
+      risk: {
+        ...previous.risk,
+        initial_capital: safeNumber(initialCapital, previous.risk.initial_capital || 100000),
+      },
+    }));
+  }, [initialCapital]);
+
+  const updateRuntimeSection = useCallback((section: keyof RuntimeConfig, key: string, value: unknown) => {
+    setSelectedRuntimePresetId((previous) => previous === "CUSTOM" ? previous : "CUSTOM");
+    setRuntimeConfig((previous) => ({
+      ...previous,
+      [section]: {
+        ...(previous[section] as Record<string, unknown>),
+        [key]: value,
+      },
+    }));
+  }, []);
+
+  const updateStrategyParam = useCallback((key: string, value: string | number | boolean | null) => {
+    setSelectedRuntimePresetId((previous) => previous === "CUSTOM" ? previous : "CUSTOM");
+    setRuntimeConfig((previous) => ({
+      ...previous,
+      strategy_params: {
+        ...previous.strategy_params,
+        [key]: value,
+      },
+    }));
+  }, []);
+
+  const resetRuntimeSettings = useCallback(() => {
+    const nextDefaults = cloneRuntimeConfig(runtimeDefaults);
+    nextDefaults.risk.initial_capital = safeNumber(initialCapital, nextDefaults.risk.initial_capital || 100000);
+    setRuntimeConfig(nextDefaults);
+    setSelectedRuntimePresetId("DEFAULT");
+  }, [initialCapital, runtimeDefaults]);
+
+  const applyRuntimePreset = useCallback((presetId: string) => {
+    setSelectedRuntimePresetId(presetId);
+    if (presetId === "DEFAULT") {
+      const nextDefaults = cloneRuntimeConfig(runtimeDefaults);
+      nextDefaults.risk.initial_capital = safeNumber(initialCapital, nextDefaults.risk.initial_capital || 100000);
+      setRuntimeConfig(nextDefaults);
+      return;
+    }
+    if (presetId === "CUSTOM") return;
+    const preset = runtimePresets.find((item) => String(item.id) === String(presetId));
+    const presetConfig = (preset?.config_json || preset?.configJson || {}) as Partial<RuntimeConfig>;
+    const merged = mergeRuntimeConfig(runtimeDefaults, presetConfig);
+    merged.risk.initial_capital = safeNumber(initialCapital, merged.risk.initial_capital || 100000);
+    setRuntimeConfig(merged);
+  }, [initialCapital, runtimeDefaults, runtimePresets]);
+
+  const buildRuntimeConfigForRequest = useCallback((): Record<string, unknown> => {
+    const riskWithoutCurrency = { ...runtimeConfig.risk };
+    delete (riskWithoutCurrency as { account_currency?: unknown }).account_currency;
+    return {
+      ...runtimeConfig,
+      risk: {
+        ...riskWithoutCurrency,
+        initial_capital: safeNumber(initialCapital, runtimeConfig.risk.initial_capital || 100000),
+      },
+      execution: {
+        ...runtimeConfig.execution,
+        intraday_square_off: supportsIntradaySquareOff ? Boolean(runtimeConfig.execution.intraday_square_off) : false,
+      },
+    };
+  }, [initialCapital, runtimeConfig, supportsIntradaySquareOff]);
+
+  useEffect(() => {
+    if (!supportsIntradaySquareOff && runtimeConfig.execution.intraday_square_off) {
+      updateRuntimeSection("execution", "intraday_square_off", false);
+    }
+  }, [runtimeConfig.execution.intraday_square_off, supportsIntradaySquareOff, updateRuntimeSection]);
+
+  const runtimeRequestSignature = useMemo(() => JSON.stringify(buildRuntimeConfigForRequest()), [buildRuntimeConfigForRequest]);
+
   const requestSignature = useMemo(
     () =>
-      [selectedStrategyId, selectedInstrumentId, selectedTimeframe, startDate, endDate, initialCapital, advancedFilterSignature]
+      [selectedStrategyId, selectedInstrumentId, selectedTimeframe, startDate, endDate, initialCapital, advancedFilterSignature, selectedRuntimePresetId || "DEFAULT", runtimeRequestSignature]
         .map((item) => (item ?? "").toString().trim())
         .join("|"),
-    [selectedStrategyId, selectedInstrumentId, selectedTimeframe, startDate, endDate, initialCapital, advancedFilterSignature],
+    [selectedStrategyId, selectedInstrumentId, selectedTimeframe, startDate, endDate, initialCapital, advancedFilterSignature, selectedRuntimePresetId, runtimeRequestSignature],
   );
 
   const validationErrors = useMemo(() => {
@@ -407,12 +747,22 @@ export default function BacktestPage() {
         throw new Error("Unable to load strategy catalog. Please refresh and try again.");
       }
 
-      if (!nextInstruments.length) {
-        try {
-          nextInstruments = await backtestsApi.getInstruments();
-        } catch {
-          nextInstruments = [];
+      try {
+        const masterInstruments = await backtestsApi.getInstruments();
+        if (masterInstruments.length) {
+          if (nextInstruments.length) {
+            const masterById = new Map(masterInstruments.map((item) => [String(item.id), item]));
+            const masterBySymbol = new Map(masterInstruments.map((item) => [String(item.symbol || "").toUpperCase(), item]));
+            nextInstruments = nextInstruments.map((item) => {
+              const master = masterById.get(String(item.id)) || masterBySymbol.get(String(item.symbol || "").toUpperCase());
+              return master ? { ...item, ...master } : item;
+            });
+          } else {
+            nextInstruments = masterInstruments;
+          }
         }
+      } catch {
+        // Keep config instruments when the Phase 2A master endpoint is unavailable.
       }
 
       if (!nextTimeframes.length) {
@@ -575,6 +925,8 @@ export default function BacktestPage() {
     limits,
     validationErrors,
     advancedFilterPayload,
+    buildRuntimeConfigForRequest,
+    selectedRuntimePresetId,
   ]);
 
   const loadResultDetail = useCallback(async (backtestId: string) => {
@@ -597,16 +949,15 @@ export default function BacktestPage() {
       return;
     }
 
-    let previewData = { availability, cost: costPreview } as {
+    if (lastPreviewSignature !== requestSignature || !availability || !costPreview) {
+      setRunError("Preview Data First. Preview validates candle availability, estimated cost, filters, and selected instrument before execution.");
+      return;
+    }
+
+    const previewData = { availability, cost: costPreview } as {
       availability: DataAvailabilityResponse | null;
       cost: CostPreviewResponse | null;
     };
-
-    if (lastPreviewSignature !== requestSignature || !previewData.availability || !previewData.cost) {
-      const freshPreview = await runPreview();
-      if (!freshPreview) return;
-      previewData = freshPreview;
-    }
 
     if (!previewData.availability?.available || (previewData.availability.requested_candle_count || 0) <= 0) {
       setRunError(previewData.availability?.message || "Market data is missing for this instrument/timeframe/date range. Ask admin to import missing candles.");
@@ -642,6 +993,8 @@ export default function BacktestPage() {
         capital: safeNumber(initialCapital, 0),
         save_result: true,
         advanced_filters: advancedFilterPayload,
+        runtime_config: buildRuntimeConfigForRequest(),
+        strategy_preset_id: selectedRuntimePresetId && selectedRuntimePresetId !== "DEFAULT" && selectedRuntimePresetId !== "CUSTOM" ? selectedRuntimePresetId : null,
       });
 
       setRunResponse(response);
@@ -711,6 +1064,8 @@ export default function BacktestPage() {
     endDate,
     validationErrors,
     advancedFilterPayload,
+    buildRuntimeConfigForRequest,
+    selectedRuntimePresetId,
   ]);
 
   const resultSummary = useMemo(() => {
@@ -736,6 +1091,33 @@ export default function BacktestPage() {
     totalAvailableCredits !== null && estimatedCost !== null ? Math.max(totalAvailableCredits - estimatedCost, 0) : null;
   const isCreditInsufficient = Boolean(costPreview && costPreview.cost_feasible === false);
   const isPreviewNotFeasible = Boolean(costPreview && costPreview.can_run === false);
+  const previewIsCurrent = Boolean(lastPreviewSignature && lastPreviewSignature === requestSignature && availability && costPreview);
+  const hasPreviewEverRun = Boolean(lastPreviewSignature);
+  const previewStatus: "idle" | "loading" | "success" | "error" | "stale" = isPreviewing
+    ? "loading"
+    : previewError
+      ? "error"
+      : previewIsCurrent
+        ? "success"
+        : hasPreviewEverRun
+          ? "stale"
+          : "idle";
+  const canRunBacktest = isReadyForRun && previewIsCurrent && !isPreviewNotFeasible && !isPreviewing && !isRunning;
+  const runButtonLabel = isRunning
+    ? "Running Backtest..."
+    : isPreviewing
+      ? "Previewing..."
+    : isCreditInsufficient
+      ? "Insufficient Credits"
+      : isPreviewNotFeasible
+        ? "Preview Not Feasible"
+        : previewStatus === "stale"
+          ? "Preview Updated Data"
+          : previewStatus === "idle" || previewStatus === "error"
+            ? "Preview Data First"
+            : "Run Backtest";
+  const resultCurrencySymbol = resultSummary?.currency_symbol || currencySymbolForCode(resultSummary?.account_currency) || selectedInstrument?.currency_symbol || currencySymbolForCode(selectedInstrument?.account_currency);
+  const resultQuantityMode = resultSummary?.quantity_mode || selectedInstrument?.quantity_mode || "SHARES";
 
   const equityChartRows = useMemo(
     () =>
@@ -782,9 +1164,431 @@ export default function BacktestPage() {
   const initialCap = safeNumber(resultSummary?.initial_capital, safeNumber(initialCapital, 0));
   const finalCap = safeNumber(resultSummary?.final_capital, initialCap + netProfit);
   const returnPct = initialCap > 0 ? ((finalCap - initialCap) / initialCap) * 100 : 0;
+  const runtimeCurrency = instrumentCurrency;
+  const runtimeQuantityMode = instrumentQuantityMode;
+  const strategyParamEntries = Object.entries(runtimeSchema);
+  const runtimeTabs: Array<{ value: RuntimeTab; label: string }> = [
+    { value: "risk", label: "Risk" },
+    { value: "sl_tp", label: "SL / TP" },
+    { value: "execution", label: "Execution" },
+    { value: "trade_management", label: "Trade Mgmt" },
+    { value: "strategy_params", label: "Strategy Params" },
+  ];
+
+  const runtimeGuardrailMessages = (() => {
+    const messages: string[] = [];
+    const capital = safeNumber(initialCapital, 0);
+    const riskPct = safeNumber(runtimeConfig.risk.risk_percent, 0);
+    const rrRatio = safeNumber(runtimeConfig.sl_tp.rr_ratio, 0);
+    const atrPeriod = safeNumber(runtimeConfig.sl_tp.atr_period, 0);
+    const atrMultiplier = safeNumber(runtimeConfig.sl_tp.atr_multiplier, 0);
+    const swingLookback = safeNumber(runtimeConfig.sl_tp.swing_lookback, 0);
+    const fixedPriceRiskPct = safeNumber(runtimeConfig.sl_tp.fixed_price_risk_pct, 0);
+    const maxOpenPositions = runtimeConfig.execution.max_open_positions ?? 1;
+    const maxTradesPerDay = runtimeConfig.execution.max_trades_per_day;
+    const breakEvenTrigger = safeNumber(runtimeConfig.trade_management.break_even_trigger_r, 0);
+    const trailStart = safeNumber(runtimeConfig.trade_management.trail_start_r, 0);
+    const trailAtrMultiplier = safeNumber(runtimeConfig.trade_management.trail_atr_multiplier, 0);
+
+    if (capital <= 0) messages.push("Initial capital must be greater than 0.");
+    if (riskPct < 0.001 || riskPct > 0.05) messages.push("Capital risk must stay between 0.10% and 5.00%.");
+    if (rrRatio < 1 || rrRatio > 5) messages.push("RR ratio must stay between 1 and 5.");
+    if (atrPeriod < 5 || atrPeriod > 100) messages.push("ATR period must stay between 5 and 100.");
+    if (atrMultiplier < 0.5 || atrMultiplier > 5) messages.push("ATR multiplier must stay between 0.5 and 5.");
+    if (swingLookback < 2 || swingLookback > 50) messages.push("Swing lookback must stay between 2 and 50.");
+    if (fixedPriceRiskPct < 0.001 || fixedPriceRiskPct > 0.05) messages.push("Fixed price risk must stay between 0.10% and 5.00%.");
+    if (runtimeConfig.risk.position_size_mode === "FIXED_LOT" && safeNumber(runtimeConfig.risk.fixed_lot, 0) <= 0) messages.push("Fixed lot size must be greater than 0.");
+    if (runtimeConfig.risk.position_size_mode === "FIXED_QUANTITY" && safeNumber(runtimeConfig.risk.fixed_quantity, 0) <= 0) messages.push("Fixed quantity must be greater than 0.");
+    if (runtimeConfig.risk.max_lot_cap !== null && runtimeConfig.risk.max_lot_cap !== undefined && safeNumber(runtimeConfig.risk.max_lot_cap, 0) <= 0) messages.push("Max lot cap must be empty or greater than 0.");
+    if (runtimeConfig.risk.max_quantity_cap !== null && runtimeConfig.risk.max_quantity_cap !== undefined && safeNumber(runtimeConfig.risk.max_quantity_cap, 0) <= 0) messages.push("Max quantity cap must be empty or greater than 0.");
+    if (maxTradesPerDay !== null && maxTradesPerDay !== undefined && safeNumber(maxTradesPerDay, 0) < 1) messages.push("Max trades per day must be empty or at least 1.");
+    if (safeNumber(maxOpenPositions, 0) < 1 || safeNumber(maxOpenPositions, 0) > 5) messages.push("Max open positions must stay between 1 and 5.");
+    if (breakEvenTrigger < 0.5 || breakEvenTrigger > 5) messages.push("Break-even trigger must stay between 0.5R and 5R.");
+    if (trailStart < 0.5 || trailStart > 5) messages.push("Trail start must stay between 0.5R and 5R.");
+    if (trailAtrMultiplier < 0.5 || trailAtrMultiplier > 5) messages.push("Trail ATR multiplier must stay between 0.5 and 5.");
+
+    return messages;
+  })();
+
+  const runtimeWarningMessages = (() => {
+    const messages: string[] = [];
+    const riskPct = safeNumber(runtimeConfig.risk.risk_percent, 0);
+    const fixedLot = safeNumber(runtimeConfig.risk.fixed_lot, 0);
+    if (riskPct > 0.03) messages.push("Risk above 3% is aggressive. Use this only for testing or high-conviction systems.");
+    if (runtimeConfig.risk.position_size_mode === "FIXED_LOT" && fixedLot >= 1) messages.push("Fixed lot looks high. Confirm broker leverage, margin and account balance before live use.");
+    return messages;
+  })();
+
+  const runtimeSettingsValid = runtimeGuardrailMessages.length === 0;
+
+  const renderPresetSelect = (
+    label: string,
+    value: number | null | undefined,
+    options: PresetNumberOption[],
+    onValueChange: (next: number) => void,
+    help?: string,
+  ) => (
+    <div className="space-y-2">
+      <Label className="text-muted-foreground">{label}</Label>
+      <Select value={String(value ?? options[0]?.value ?? "")} onValueChange={(next) => onValueChange(safeNumber(next, options[0]?.value ?? 0))}>
+        <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger>
+        <SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">
+          {options.map((option) => <SelectItem key={`${label}-${option.value}`} value={String(option.value)}>{option.label}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      {help ? <p className="text-[11px] leading-relaxed text-muted-foreground">{help}</p> : null}
+    </div>
+  );
+
+  const runtimeSettingsModal = runtimeSettingsOpen ? (
+    <div className="fixed inset-0 z-[120] flex items-stretch justify-end bg-black/55 backdrop-blur-sm">
+      <button
+        type="button"
+        aria-label="Close strategy settings overlay"
+        className="absolute inset-0 cursor-default"
+        onClick={() => setRuntimeSettingsOpen(false)}
+      />
+      <aside className="relative z-[121] flex h-full w-full max-w-3xl flex-col border-l border-border/60 bg-[#211042]/95 shadow-2xl backdrop-blur-xl">
+        <div className="flex items-start justify-between gap-4 border-b border-border/50 px-5 py-4">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-xl font-semibold text-foreground">Strategy Runtime Settings</h2>
+              <Badge className={runtimeIsCustom ? "border-primary/50 bg-primary/20 text-primary-foreground" : "border-border/60 bg-card/30 text-muted-foreground"}>
+                {selectedRuntimePresetId === "CUSTOM" || runtimeIsCustom ? "Custom" : selectedRuntimePresetId === "DEFAULT" ? "Default" : (runtimePresets.find((item) => String(item.id) === String(selectedRuntimePresetId))?.name || "Preset")}
+              </Badge>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">Configure risk, SL/TP, execution and dynamic strategy inputs for this backtest only.</p>
+          </div>
+          <Button type="button" variant="ghost" size="sm" className="rounded-xl" onClick={() => setRuntimeSettingsOpen(false)}>
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+
+        <div className="border-b border-border/50 px-5 py-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto] md:items-end">
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">Runtime Preset</Label>
+              <Select value={selectedRuntimePresetId} onValueChange={applyRuntimePreset}>
+                <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground">
+                  <SelectValue placeholder="Strategy Default" />
+                </SelectTrigger>
+                <SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">
+                  <SelectItem value="DEFAULT">Strategy Default</SelectItem>
+                  {runtimePresets.map((preset) => (
+                    <SelectItem key={preset.id} value={String(preset.id)}>
+                      {preset.name}{preset.is_default || preset.isDefault ? " · Default" : ""}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="CUSTOM">Custom</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">Presets are managed by admin. You can select one and still fine-tune settings for this run.</p>
+            </div>
+            <Badge className="w-fit border-primary/40 bg-primary/15 text-primary-foreground">Runtime only</Badge>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 border-b border-border/50 px-5 py-4 md:grid-cols-6">
+          <div className="rounded-xl border border-border/50 bg-card/20 p-3 md:col-span-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Instrument</p>
+            <p className="mt-1 text-sm font-semibold text-foreground">{selectedInstrument?.symbol || "—"}</p>
+          </div>
+          <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Currency</p>
+            <p className="mt-1 text-sm font-semibold text-foreground">{runtimeCurrency}</p>
+          </div>
+          <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Qty Mode</p>
+            <p className="mt-1 text-sm font-semibold text-foreground">{runtimeQuantityMode}</p>
+          </div>
+          <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Risk</p>
+            <p className="mt-1 text-sm font-semibold text-foreground">{formatPercent(safeNumber(runtimeConfig.risk.risk_percent, 0), true)}</p>
+          </div>
+          <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">RR / SL</p>
+            <p className="mt-1 text-sm font-semibold text-foreground">{runtimeConfig.sl_tp.rr_ratio} · {runtimeConfig.sl_tp.sl_mode}</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 border-b border-border/50 px-5 py-3">
+          {runtimeTabs.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => setRuntimeTab(tab.value)}
+              className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${
+                runtimeTab === tab.value
+                  ? "border-primary/60 bg-primary/20 text-primary-foreground"
+                  : "border-border/60 bg-card/20 text-muted-foreground hover:bg-card/40 hover:text-foreground"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          {runtimeConfigLoading && (
+            <div className="mb-4 rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">Loading strategy runtime defaults...</div>
+          )}
+          {runtimeConfigError && (
+            <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              Runtime config API fallback is active: {runtimeConfigError}
+            </div>
+          )}
+          {runtimeGuardrailMessages.length > 0 && (
+            <div className="mb-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+              <div className="mb-1 font-semibold">Fix these runtime settings before applying:</div>
+              <ul className="list-disc space-y-1 pl-5">
+                {runtimeGuardrailMessages.map((message) => <li key={message}>{message}</li>)}
+              </ul>
+            </div>
+          )}
+          {runtimeWarningMessages.length > 0 && (
+            <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              <div className="mb-1 font-semibold">Risk warning</div>
+              <ul className="list-disc space-y-1 pl-5">
+                {runtimeWarningMessages.map((message) => <li key={message}>{message}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {runtimeTab === "risk" && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">Initial Capital</Label>
+                <Input type="number" value={initialCapital} onChange={(event) => setInitialCapital(event.target.value)} className="rounded-xl border-border/50 bg-card/20 text-foreground" />
+              </div>
+              <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Instrument Currency</p>
+                <p className="mt-1 text-sm font-semibold text-foreground">{runtimeCurrency}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">Readonly from Instrument Master. Admin controlled instrument specs.</p>
+              </div>
+              {renderPresetSelect(
+                "Capital Risk %",
+                runtimeConfig.risk.risk_percent,
+                RISK_PERCENT_OPTIONS,
+                (value) => updateRuntimeSection("risk", "risk_percent", value),
+                "Beginner-safe presets prevent unrealistic risk like 50% or 500%.",
+              )}
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">Position Size Mode</Label>
+                <Select value={runtimeConfig.risk.position_size_mode || "RISK_BASED"} onValueChange={(value) => updateRuntimeSection("risk", "position_size_mode", value)}>
+                  <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger>
+                  <SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">
+                    <SelectItem value="RISK_BASED">Risk Based</SelectItem>
+                    <SelectItem value="FIXED_LOT">Fixed Lot</SelectItem>
+                    <SelectItem value="FIXED_QUANTITY">Fixed Quantity</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {runtimeConfig.risk.position_size_mode === "FIXED_LOT" && (
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Fixed Lot Size</Label>
+                  <Input type="number" step={0.01} value={runtimeConfig.risk.fixed_lot ?? ""} onChange={(event) => updateRuntimeSection("risk", "fixed_lot", toOptionalNumber(event.target.value))} className="rounded-xl border-border/50 bg-card/20 text-foreground" />
+                </div>
+              )}
+              {runtimeConfig.risk.position_size_mode === "FIXED_QUANTITY" && (
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Fixed Quantity</Label>
+                  <Input type="number" step={1} value={runtimeConfig.risk.fixed_quantity ?? ""} onChange={(event) => updateRuntimeSection("risk", "fixed_quantity", toOptionalNumber(event.target.value))} className="rounded-xl border-border/50 bg-card/20 text-foreground" />
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">Max Lot Cap</Label>
+                <Input type="number" step={0.01} value={runtimeConfig.risk.max_lot_cap ?? ""} onChange={(event) => updateRuntimeSection("risk", "max_lot_cap", toOptionalNumber(event.target.value))} className="rounded-xl border-border/50 bg-card/20 text-foreground" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">Max Quantity Cap</Label>
+                <Input type="number" step={1} value={runtimeConfig.risk.max_quantity_cap ?? ""} onChange={(event) => updateRuntimeSection("risk", "max_quantity_cap", toOptionalNumber(event.target.value))} className="rounded-xl border-border/50 bg-card/20 text-foreground" />
+              </div>
+            </div>
+          )}
+
+          {runtimeTab === "sl_tp" && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {renderPresetSelect("RR Ratio", runtimeConfig.sl_tp.rr_ratio, RR_RATIO_OPTIONS, (value) => updateRuntimeSection("sl_tp", "rr_ratio", value), "Reward-to-risk presets keep reports comparable.")}
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">SL Mode</Label>
+                <Select value={runtimeConfig.sl_tp.sl_mode || "ATR"} onValueChange={(value) => updateRuntimeSection("sl_tp", "sl_mode", value)}>
+                  <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger>
+                  <SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">
+                    <SelectItem value="ATR">ATR</SelectItem>
+                    <SelectItem value="SWING">Swing</SelectItem>
+                    <SelectItem value="FIXED_PERCENT">Fixed Percent</SelectItem>
+                    <SelectItem value="STRATEGY_SUGGESTED">Strategy Suggested</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {renderPresetSelect("ATR Period", runtimeConfig.sl_tp.atr_period, ATR_PERIOD_OPTIONS, (value) => updateRuntimeSection("sl_tp", "atr_period", value), "Common ATR periods for intraday and swing systems.")}
+              {renderPresetSelect("ATR Multiplier", runtimeConfig.sl_tp.atr_multiplier, ATR_MULTIPLIER_OPTIONS, (value) => updateRuntimeSection("sl_tp", "atr_multiplier", value), "Higher multiplier means wider stop loss.")}
+              {renderPresetSelect("Swing Lookback", runtimeConfig.sl_tp.swing_lookback, SWING_LOOKBACK_OPTIONS, (value) => updateRuntimeSection("sl_tp", "swing_lookback", value), "Number of candles used to find recent swing high/low.")}
+              {renderPresetSelect("Fixed Price Risk %", runtimeConfig.sl_tp.fixed_price_risk_pct, FIXED_PRICE_RISK_OPTIONS, (value) => updateRuntimeSection("sl_tp", "fixed_price_risk_pct", value), "Used only when SL Mode is Fixed Percent.")}
+            </div>
+          )}
+
+          {runtimeTab === "execution" && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-2"><Label className="text-muted-foreground">Entry Mode</Label><Input value="Next Candle Open" readOnly className="rounded-xl border-border/50 bg-card/20 text-foreground" /></div>
+              {[
+                ["exit_on_opposite_signal", "Exit on Opposite Signal"],
+                ["allow_long", "Allow Long"],
+                ["allow_short", "Allow Short"],
+              ].map(([key, label]) => {
+                const enabled = Boolean(runtimeConfig.execution[key as keyof RuntimeConfig["execution"]]);
+                return (
+                  <div key={key} className="flex items-center justify-between rounded-xl border border-border/50 bg-card/20 p-3">
+                    <span className="text-sm font-medium text-foreground">{label}</span>
+                    <button type="button" className={toggleClass(enabled)} onClick={() => updateRuntimeSection("execution", key, !enabled)}>
+                      <span className={toggleKnobClass(enabled)} />
+                    </button>
+                  </div>
+                );
+              })}
+              {supportsIntradaySquareOff ? (
+                <>
+                  <div className="flex items-center justify-between rounded-xl border border-border/50 bg-card/20 p-3">
+                    <span className="text-sm font-medium text-foreground">Intraday Square Off</span>
+                    <button type="button" className={toggleClass(Boolean(runtimeConfig.execution.intraday_square_off))} onClick={() => updateRuntimeSection("execution", "intraday_square_off", !runtimeConfig.execution.intraday_square_off)}>
+                      <span className={toggleKnobClass(Boolean(runtimeConfig.execution.intraday_square_off))} />
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">Square Off Time</Label>
+                    <Input type="time" value={runtimeConfig.execution.square_off_time || "15:15"} onChange={(event) => updateRuntimeSection("execution", "square_off_time", event.target.value)} className="rounded-xl border-border/50 bg-card/20 text-foreground" />
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100 md:col-span-2">
+                  Intraday square-off is available only for intraday Indian market instruments. It is disabled for {selectedInstrument?.symbol || "this instrument"}.
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">Max Trades Per Day</Label>
+                <Select
+                  value={runtimeConfig.execution.max_trades_per_day === null || runtimeConfig.execution.max_trades_per_day === undefined ? "NONE" : String(runtimeConfig.execution.max_trades_per_day)}
+                  onValueChange={(value) => updateRuntimeSection("execution", "max_trades_per_day", value === "NONE" ? null : safeNumber(value, 1))}
+                >
+                  <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger>
+                  <SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">
+                    {MAX_TRADES_PER_DAY_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">Optional daily trade limiter.</p>
+              </div>
+              {renderPresetSelect("Max Open Positions", runtimeConfig.execution.max_open_positions, MAX_OPEN_POSITION_OPTIONS, (value) => updateRuntimeSection("execution", "max_open_positions", value), "Keep this low for backtest realism and risk control.")}
+
+            </div>
+          )}
+
+          {runtimeTab === "trade_management" && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {[
+                ["break_even_enabled", "Break Even Enabled"],
+                ["trailing_enabled", "Trailing Stop Enabled"],
+                ["partial_exit_enabled", "Partial Exit Enabled"],
+              ].map(([key, label]) => {
+                const enabled = Boolean(runtimeConfig.trade_management[key as keyof RuntimeConfig["trade_management"]]);
+                return (
+                  <div key={key} className="flex items-center justify-between rounded-xl border border-border/50 bg-card/20 p-3">
+                    <span className="text-sm font-medium text-foreground">{label}</span>
+                    <button type="button" className={toggleClass(enabled)} onClick={() => updateRuntimeSection("trade_management", key, !enabled)}>
+                      <span className={toggleKnobClass(enabled)} />
+                    </button>
+                  </div>
+                );
+              })}
+              {renderPresetSelect("Break Even Trigger R", runtimeConfig.trade_management.break_even_trigger_r, BREAK_EVEN_R_OPTIONS, (value) => updateRuntimeSection("trade_management", "break_even_trigger_r", value), "Move stop loss to entry after this R multiple.")}
+              <div className="space-y-2"><Label className="text-muted-foreground">Trailing Mode</Label><Select value={runtimeConfig.trade_management.trailing_mode || "ATR_TRAIL"} onValueChange={(value) => updateRuntimeSection("trade_management", "trailing_mode", value)}><SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger><SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground"><SelectItem value="ATR_TRAIL">ATR Trail</SelectItem><SelectItem value="EMA20_TRAIL">EMA20 Trail</SelectItem><SelectItem value="SWING_TRAIL">Swing Trail</SelectItem></SelectContent></Select></div>
+              {renderPresetSelect("Trail Start R", runtimeConfig.trade_management.trail_start_r, TRAIL_START_R_OPTIONS, (value) => updateRuntimeSection("trade_management", "trail_start_r", value), "Trailing starts only after this R multiple.")}
+              {renderPresetSelect("Trail ATR Multiplier", runtimeConfig.trade_management.trail_atr_multiplier, TRAIL_ATR_MULTIPLIER_OPTIONS, (value) => updateRuntimeSection("trade_management", "trail_atr_multiplier", value), "Used when trailing mode is ATR Trail.")}
+              {renderPresetSelect("Partial Exit At R", runtimeConfig.trade_management.partial_exit_at_r, BREAK_EVEN_R_OPTIONS, (value) => updateRuntimeSection("trade_management", "partial_exit_at_r", value), "Close part of the position after this R multiple.")}
+              <div className="space-y-2"><Label className="text-muted-foreground">Partial Exit Percent</Label><Select value={String(runtimeConfig.trade_management.partial_exit_percent ?? 0.5)} onValueChange={(value) => updateRuntimeSection("trade_management", "partial_exit_percent", safeNumber(value, 0.5))}><SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger><SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground"><SelectItem value="0.25">25%</SelectItem><SelectItem value="0.5">50%</SelectItem><SelectItem value="0.75">75%</SelectItem></SelectContent></Select><p className="text-[11px] leading-relaxed text-muted-foreground">Remaining position continues to TP/trailing stop.</p></div>
+            </div>
+          )}
+
+          {runtimeTab === "strategy_params" && (
+            <div className="space-y-4">
+              {!strategyParamEntries.length ? (
+                <div className="rounded-xl border border-border/50 bg-card/20 p-4 text-sm text-muted-foreground">No runtime strategy parameters published for this strategy yet.</div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {strategyParamEntries.map(([key, field]) => {
+                    const value = runtimeConfig.strategy_params[key] ?? field.default ?? "";
+                    const fieldType = field.type || "text";
+                    if (fieldType === "boolean") {
+                      const enabled = Boolean(value);
+                      return (
+                        <div key={key} className="flex items-center justify-between rounded-xl border border-border/50 bg-card/20 p-3">
+                          <span className="text-sm font-medium text-foreground">{field.label || humanLabel(key)}</span>
+                          <button type="button" className={toggleClass(enabled)} onClick={() => updateStrategyParam(key, !enabled)}>
+                            <span className={toggleKnobClass(enabled)} />
+                          </button>
+                        </div>
+                      );
+                    }
+                    if (fieldType === "select" && Array.isArray(field.options)) {
+                      return (
+                        <div key={key} className="space-y-2">
+                          <Label className="text-muted-foreground">{field.label || humanLabel(key)}</Label>
+                          <Select value={String(value)} onValueChange={(next) => updateStrategyParam(key, next)}>
+                            <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger>
+                            <SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">
+                              {field.options.map((option) => {
+                                const optionValue = typeof option === "object" ? String(option.value ?? option.label ?? "") : String(option);
+                                const optionLabel = typeof option === "object" ? String(option.label ?? option.value ?? "") : String(option);
+                                return <SelectItem key={optionValue} value={optionValue}>{optionLabel}</SelectItem>;
+                              })}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={key} className="space-y-2">
+                        <Label className="text-muted-foreground">{field.label || humanLabel(key)}</Label>
+                        <Input
+                          type={fieldType === "number" ? "number" : "text"}
+                          min={field.min}
+                          max={field.max}
+                          step={field.step ?? (fieldType === "number" ? 1 : undefined)}
+                          value={String(value)}
+                          onChange={(event) => updateStrategyParam(key, fieldType === "number" ? safeNumber(event.target.value, 0) : event.target.value)}
+                          className="rounded-xl border-border/50 bg-card/20 text-foreground"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-3 border-t border-border/50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-muted-foreground">Settings are sent with the next backtest request only. Instrument currency, quantity mode, ticks and lot steps are admin controlled.</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={resetRuntimeSettings} className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">
+              Reset to Defaults
+            </Button>
+            <Button
+              type="button"
+              disabled={!runtimeSettingsValid}
+              onClick={() => setRuntimeSettingsOpen(false)}
+              className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Apply Settings
+            </Button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  ) : null;
 
   return (
     <div className="space-y-6">
+      {runtimeSettingsModal}
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight text-foreground">Backtest Studio</h1>
         <p className="text-sm text-muted-foreground">
@@ -857,10 +1661,26 @@ export default function BacktestPage() {
 
       <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
         <CardHeader>
-          <CardTitle className="text-xl text-foreground">Backtest Configuration</CardTitle>
-          <CardDescription className="text-muted-foreground">
-            Select strategy, market scope, and execution settings before preview.
-          </CardDescription>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <CardTitle className="text-xl text-foreground">Backtest Configuration</CardTitle>
+              <CardDescription className="text-muted-foreground">
+                Select strategy, market scope, and execution settings before preview.
+              </CardDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRuntimeSettingsOpen(true)}
+              className="w-fit rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"
+            >
+              <SlidersHorizontal className="mr-2 h-4 w-4" />
+              Strategy Settings
+              <Badge className={`ml-2 ${runtimeIsCustom ? "border-primary/50 bg-primary/20 text-primary-foreground" : "border-border/60 bg-card/30 text-muted-foreground"}`}>
+                {selectedRuntimePresetId === "CUSTOM" || runtimeIsCustom ? "Custom" : selectedRuntimePresetId === "DEFAULT" ? "Default" : (runtimePresets.find((item) => String(item.id) === String(selectedRuntimePresetId))?.name || "Preset")}
+              </Badge>
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -1242,7 +2062,7 @@ export default function BacktestPage() {
           <div className="space-y-1">
             <p className="text-sm font-medium text-foreground">Execution Actions</p>
             <p className="text-xs text-muted-foreground">
-              Preview validates data/cost. Run executes and stores the result in history.
+              Preview validates candle availability, estimated cost, filters, and selected instrument before execution.
             </p>
           </div>
 
@@ -1261,17 +2081,11 @@ export default function BacktestPage() {
             <Button
               type="button"
               onClick={() => void runBacktest()}
-              disabled={isRunning || isPreviewing || !isReadyForRun || isPreviewNotFeasible}
+              disabled={!canRunBacktest}
               className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-              {isRunning
-                ? "Running Backtest..."
-                : isCreditInsufficient
-                  ? "Insufficient Credits"
-                  : isPreviewNotFeasible
-                    ? "Preview Not Feasible"
-                    : "Run Backtest"}
+              {runButtonLabel}
             </Button>
           </div>
         </CardContent>
@@ -1317,7 +2131,7 @@ export default function BacktestPage() {
               <div className="rounded-xl border border-border/50 bg-card/20 p-4">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">PnL</p>
                 <p className={`mt-2 text-xl font-semibold ${netProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                  {formatCurrency(netProfit)}
+                  {formatCurrency(netProfit, resultCurrencySymbol)}
                 </p>
               </div>
               <div className="rounded-xl border border-border/50 bg-card/20 p-4">
@@ -1360,7 +2174,7 @@ export default function BacktestPage() {
                       <XAxis dataKey="label" hide />
                       <YAxis hide domain={["dataMin", "dataMax"]} />
                       <Tooltip
-                        formatter={(value: number) => [formatCurrency(value), "Equity"]}
+                        formatter={(value: number) => [formatCurrency(value, resultCurrencySymbol), "Equity"]}
                         labelFormatter={(label) => `Date: ${label}`}
                         contentStyle={{
                           borderRadius: 12,
@@ -1385,7 +2199,7 @@ export default function BacktestPage() {
                         <th className="py-2 pr-3">Entry</th>
                         <th className="py-2 pr-3">Exit</th>
                         <th className="py-2 pr-3">Side</th>
-                        <th className="py-2 pr-3">Qty</th>
+                        <th className="py-2 pr-3">{resultQuantityMode === "LOTS" ? "Lot" : resultQuantityMode === "UNITS" ? "Units" : "Qty"}</th>
                         <th className="py-2 pr-3">Entry Px</th>
                         <th className="py-2 pr-3">Exit Px</th>
                         <th className="py-2 pr-0 text-right">PnL</th>
@@ -1399,11 +2213,11 @@ export default function BacktestPage() {
                             <td className="py-2 pr-3">{trade.entry_time ? new Date(trade.entry_time).toLocaleString() : "—"}</td>
                             <td className="py-2 pr-3">{trade.exit_time ? new Date(trade.exit_time).toLocaleString() : "—"}</td>
                             <td className="py-2 pr-3">{trade.side || "—"}</td>
-                            <td className="py-2 pr-3">{formatNumber(safeNumber(trade.quantity, 0), 0)}</td>
+                            <td className="py-2 pr-3">{formatTradeSize(trade, resultQuantityMode).value}</td>
                             <td className="py-2 pr-3">{formatNumber(safeNumber(trade.entry_price, 0), 2)}</td>
                             <td className="py-2 pr-3">{formatNumber(safeNumber(trade.exit_price, 0), 2)}</td>
                             <td className={`py-2 pr-0 text-right font-medium ${pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                              {formatCurrency(pnl)}
+                              {formatCurrency(pnl, trade.currency_symbol || resultCurrencySymbol)}
                             </td>
                           </tr>
                         );

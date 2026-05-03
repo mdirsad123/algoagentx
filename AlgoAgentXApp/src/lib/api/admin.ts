@@ -478,10 +478,38 @@ export interface StrategyPreset {
   config: Record<string, any>;
 }
 
+export interface StrategyRuntimePreset {
+  id: string;
+  strategy_id?: string;
+  strategyId?: string;
+  name: string;
+  description?: string | null;
+  config_json?: Record<string, any>;
+  configJson?: Record<string, any>;
+  risk_label?: string | null;
+  riskLabel?: string | null;
+  is_default?: boolean;
+  isDefault?: boolean;
+  is_active?: boolean;
+  isActive?: boolean;
+  created_at?: string | null;
+  createdAt?: string | null;
+  updated_at?: string | null;
+  updatedAt?: string | null;
+}
+
 export interface ImplementedStrategy {
   id: string;
   name: string;
   description?: string | null;
+  default_runtime_config?: Record<string, any> | null;
+  defaultRuntimeConfig?: Record<string, any> | null;
+  runtime_config_schema?: Record<string, any> | null;
+  runtimeConfigSchema?: Record<string, any> | null;
+  supports_runtime_config?: boolean;
+  supportsRuntimeConfig?: boolean;
+  config_version?: number;
+  configVersion?: number;
   strategy_type?: string | null;
   strategyType?: string | null;
   market?: string | null;
@@ -848,7 +876,86 @@ export interface AdminPricingPlanPayload {
   is_active: boolean;
 }
 
+
+export interface MarketMasterAssetClass {
+  id: number;
+  code: string;
+  label: string;
+  description?: string | null;
+  is_active: boolean;
+}
+
+export interface MarketMasterTimeframe {
+  id: number;
+  code: string;
+  label: string;
+  minutes?: number | null;
+  is_intraday: boolean;
+  is_active: boolean;
+  display_order: number;
+}
+
+export type QuantityMode = "SHARES" | "LOTS" | "UNITS" | "CONTRACTS";
+
+export interface MarketMasterInstrument {
+  id: number;
+  symbol: string;
+  name?: string | null;
+  exchange?: string | null;
+  market?: string | null;
+  instrument_type?: string | null;
+  asset_class?: string | null;
+  base_currency?: string | null;
+  quote_currency?: string | null;
+  account_currency?: string | null;
+  currency_symbol?: string | null;
+  price_unit_name?: string | null;
+  quantity_mode?: QuantityMode | string | null;
+  contract_size?: number | null;
+  tick_size?: number | null;
+  tick_value_per_lot?: number | null;
+  pip_size?: number | null;
+  min_quantity?: number | null;
+  max_quantity?: number | null;
+  quantity_step?: number | null;
+  min_lot?: number | null;
+  max_lot?: number | null;
+  lot_step?: number | null;
+  lot_size?: number | null;
+  price_precision?: number | null;
+  quantity_precision?: number | null;
+  broker_symbol?: string | null;
+  is_tradeable_backtest: boolean;
+  is_tradeable_live: boolean;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export type MarketMasterInstrumentPayload = Partial<Omit<MarketMasterInstrument, "id" | "created_at" | "updated_at">> & {
+  symbol?: string;
+};
+
 export const adminApi = {
+
+  getMarketMasterAssetClasses: async (): Promise<MarketMasterAssetClass[]> =>
+    unwrap(await axiosInstance.get("/api/v1/admin/market-master/asset-classes")),
+
+  getMarketMasterTimeframes: async (): Promise<MarketMasterTimeframe[]> =>
+    unwrap(await axiosInstance.get("/api/v1/admin/market-master/timeframes")),
+
+  getMarketMasterInstruments: async (search?: string): Promise<MarketMasterInstrument[]> =>
+    unwrap(await axiosInstance.get("/api/v1/admin/market-master/instruments", { params: { ...(search ? { search } : {}) } })),
+
+  getMarketMasterInstrument: async (instrumentId: number): Promise<MarketMasterInstrument> =>
+    unwrap(await axiosInstance.get(`/api/v1/admin/market-master/instruments/${instrumentId}`)),
+
+  createMarketMasterInstrument: async (payload: MarketMasterInstrumentPayload): Promise<MarketMasterInstrument> =>
+    unwrap(await axiosInstance.post("/api/v1/admin/market-master/instruments", payload)),
+
+  updateMarketMasterInstrument: async (instrumentId: number, payload: MarketMasterInstrumentPayload): Promise<MarketMasterInstrument> =>
+    unwrap(await axiosInstance.patch(`/api/v1/admin/market-master/instruments/${instrumentId}`, payload)),
+
   getDashboardSummary: async (): Promise<AdminDashboardSummary> =>
     unwrap(await axiosInstance.get("/api/v1/admin/dashboard/summary")),
 
@@ -1066,6 +1173,22 @@ export const adminApi = {
 
   listAdminStrategyPresets: async (): Promise<{ items: StrategyPreset[] }> =>
     unwrap(await axiosInstance.get(`/api/v1/admin/strategy-requests/strategy-presets`)),
+
+
+  listStrategyRuntimePresets: async (strategyId: string): Promise<{ items: StrategyRuntimePreset[] }> =>
+    unwrap(await axiosInstance.get(`/api/v1/admin/strategies/${strategyId}/runtime-presets`)),
+
+  createStrategyRuntimePreset: async (strategyId: string, payload: Partial<StrategyRuntimePreset>): Promise<StrategyRuntimePreset> =>
+    unwrap(await axiosInstance.post(`/api/v1/admin/strategies/${strategyId}/runtime-presets`, payload)),
+
+  updateStrategyRuntimePreset: async (presetId: string, payload: Partial<StrategyRuntimePreset>): Promise<StrategyRuntimePreset> =>
+    unwrap(await axiosInstance.patch(`/api/v1/admin/strategy-runtime-presets/${presetId}`, payload)),
+
+  deactivateStrategyRuntimePreset: async (presetId: string): Promise<StrategyRuntimePreset> =>
+    unwrap(await axiosInstance.delete(`/api/v1/admin/strategy-runtime-presets/${presetId}`)),
+
+  makeStrategyRuntimePresetDefault: async (presetId: string): Promise<StrategyRuntimePreset> =>
+    unwrap(await axiosInstance.post(`/api/v1/admin/strategy-runtime-presets/${presetId}/make-default`)),
 
   runAdminStrategySandboxBacktest: async (
     strategyId: string,

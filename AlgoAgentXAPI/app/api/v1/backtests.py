@@ -523,17 +523,34 @@ def _trade_json_from_service(service_response) -> list[dict]:
     rows: list[dict] = []
     for trade in (getattr(getattr(service_response, "result", None), "trades", None) or []):
         risk_values = _trade_transparency_values(trade)
-        rows.append({
+        row = {
             "entry_time": getattr(trade, "entry_datetime", None).isoformat() if getattr(trade, "entry_datetime", None) else None,
             "exit_time": getattr(trade, "exit_datetime", None).isoformat() if getattr(trade, "exit_datetime", None) else None,
             "side": getattr(trade, "direction", None),
-            "quantity": _to_int(getattr(trade, "quantity", 0)),
+            "quantity": _to_float(getattr(trade, "quantity", 0), None),
+            "lot_size": _to_float(getattr(trade, "lot_size", None), None),
             "entry_price": _to_float(getattr(trade, "entry_price", None), None),
             "exit_price": _to_float(getattr(trade, "exit_price", None), None),
             "pnl": _to_float(getattr(trade, "pnl", None), None),
             "exit_type": getattr(trade, "exit_reason", None),
+            "exit_reason": getattr(trade, "exit_reason", None),
+            "account_currency": getattr(trade, "account_currency", None),
+            "currency_symbol": getattr(trade, "currency_symbol", None),
+            "asset_class": getattr(trade, "asset_class", None),
+            "quantity_mode": getattr(trade, "quantity_mode", None),
+            "actual_risk_amount": _to_float(getattr(trade, "actual_risk_amount", None), None),
+            "risk_ticks": _to_float(getattr(trade, "risk_ticks", None), None),
+            "risk_pips": _to_float(getattr(trade, "risk_pips", None), None),
+            "reward_ticks": _to_float(getattr(trade, "reward_ticks", None), None),
+            "expected_reward_amount": _to_float(getattr(trade, "expected_reward_amount", None), None),
+            "sl_mode": getattr(trade, "sl_mode", None),
+            "position_size_mode": getattr(trade, "position_size_mode", None),
+            "runtime_config_snapshot": getattr(trade, "runtime_config_snapshot", None),
+            "instrument_spec_snapshot": getattr(trade, "instrument_spec_snapshot", None),
+            "lifecycle_events": getattr(trade, "lifecycle_events", None) or [],
             **{key: (_to_float(value, None) if key != "signal_reason" else value) for key, value in risk_values.items()},
-        })
+        }
+        rows.append(row)
     return rows
 
 
@@ -553,9 +570,10 @@ def _normalise_trade_detail_rows(value) -> list[dict]:
         if not isinstance(item, dict):
             continue
         row = dict(item)
-        row["quantity"] = _to_int(row.get("quantity"))
-        for key in ["entry_price", "exit_price", "stop_loss", "target", "risk_points", "reward_points", "rr_ratio", "risk_amount", "reward_amount", "r_multiple", "pnl"]:
+        row["quantity"] = _to_float(row.get("quantity"), None)
+        for key in ["entry_price", "exit_price", "stop_loss", "target", "risk_points", "risk_ticks", "risk_pips", "reward_points", "reward_ticks", "rr_ratio", "risk_amount", "actual_risk_amount", "reward_amount", "expected_reward_amount", "r_multiple", "pnl", "lot_size"]:
             row[key] = _to_float(row.get(key), None)
+        row["lifecycle_events"] = _jsonish(row.get("lifecycle_events")) or []
         if not row.get("risk_points") or not row.get("reward_points") or not row.get("risk_amount"):
             row.update(_risk_values_from_row(row))
         rows.append(row)
@@ -900,12 +918,37 @@ async def _serialize_summary(
         strategy_name = (
             await db.execute(select(Strategy.name).where(Strategy.id == row.strategy_id))
         ).scalar_one_or_none()
-    if instrument_symbol is None and row.instrument_id:
-        instrument_symbol = (
-            await db.execute(select(Instrument.symbol).where(Instrument.id == row.instrument_id))
-        ).scalar_one_or_none()
+    instrument_meta = None
+    if row.instrument_id:
+        instrument_meta = (
+            await db.execute(
+                select(Instrument).where(Instrument.id == row.instrument_id)
+            )
+        ).scalars().first()
+        if instrument_symbol is None and instrument_meta is not None:
+            instrument_symbol = instrument_meta.symbol
 
     filter_meta = await _get_backtest_filter_meta(db, str(row.id))
+
+    overlay = await _professional_summary_overlay(db, str(row.id), [])
+    instrument_spec = overlay.get("instrument_spec_snapshot") if isinstance(overlay.get("instrument_spec_snapshot"), dict) else {}
+    if instrument_meta is not None:
+        instrument_spec = {
+            **(instrument_spec or {}),
+            "symbol": getattr(instrument_meta, "symbol", None),
+            "asset_class": getattr(instrument_meta, "asset_class", None),
+            "account_currency": getattr(instrument_meta, "account_currency", None),
+            "currency_symbol": getattr(instrument_meta, "currency_symbol", None),
+            "quantity_mode": getattr(instrument_meta, "quantity_mode", None),
+        }
+    currency_payload = _infer_currency_payload(
+        instrument_symbol=instrument_symbol,
+        asset_class=overlay.get("asset_class") or (instrument_spec or {}).get("asset_class"),
+        account_currency=overlay.get("account_currency") or (instrument_spec or {}).get("account_currency"),
+        currency_symbol=overlay.get("currency_symbol") or (instrument_spec or {}).get("currency_symbol"),
+        quantity_mode=overlay.get("quantity_mode") or (instrument_spec or {}).get("quantity_mode"),
+        instrument_spec=instrument_spec,
+    )
 
     return {
         "id": str(row.id),
@@ -936,6 +979,17 @@ async def _serialize_summary(
         "avg_win": _to_float(getattr(row, "avg_win", None), None),
         "avg_loss": _to_float(getattr(row, "avg_loss", None), None),
         "expectancy": _to_float(getattr(row, "expectancy", None), None),
+        "account_currency": currency_payload.get("account_currency"),
+        "currency_symbol": currency_payload.get("currency_symbol"),
+        "asset_class": currency_payload.get("asset_class"),
+        "quantity_mode": currency_payload.get("quantity_mode"),
+        "is_legacy_currency": currency_payload.get("is_legacy_currency"),
+        "position_size_mode": overlay.get("position_size_mode"),
+        "sl_mode": overlay.get("sl_mode"),
+        "rr_ratio": _to_float(overlay.get("rr_ratio"), None),
+        "risk_percent": _to_float(overlay.get("risk_percent"), None),
+        "avg_lot_size": _to_float(overlay.get("avg_lot_size"), None),
+        "avg_quantity": _to_float(overlay.get("avg_quantity"), None),
         # asyncpg expects JSON/JSONB values passed through raw text() SQL to be
         # JSON-encoded strings. Passing a Python dict here raises:
         #   dict object has no attribute encode
@@ -996,6 +1050,17 @@ async def _save_backtest_payload(
         "candles_before_filter": filter_meta.get("candles_before_filter"),
         "candles_after_filter": filter_meta.get("candles_after_filter"),
         "filter_reduction_pct": _decimal(filter_meta.get("filter_reduction_pct"), Decimal("0")) if filter_meta.get("filter_reduction_pct") is not None else None,
+        "account_currency": getattr(service_response.result, "account_currency", None),
+        "currency_symbol": getattr(service_response.result, "currency_symbol", None),
+        "quantity_mode": getattr(service_response.result, "quantity_mode", None),
+        "runtime_config_snapshot": json.dumps(getattr(service_response, "runtime_config", None)) if getattr(service_response, "runtime_config", None) is not None else None,
+        "instrument_spec_snapshot": json.dumps(getattr(service_response, "instrument_spec", None)) if getattr(service_response, "instrument_spec", None) is not None else None,
+        "professional_summary": json.dumps(getattr(service_response.result, "summary", {}) or {}),
+        "risk_engine_version": (getattr(service_response.result, "summary", {}) or {}).get("risk_engine_version"),
+        "pnl_engine_version": (getattr(service_response.result, "summary", {}) or {}).get("pnl_engine_version"),
+        "warnings": json.dumps(service_response.warnings or []),
+        "rejected_trade_count": int(getattr(service_response, "rejected_trade_count", 0) or 0),
+        "rejection_reasons": json.dumps(getattr(service_response, "rejection_reasons", {}) or {}),
         "trade_details": json.dumps(_trade_json_from_service(service_response)),
         "status": "completed",
     }
@@ -1106,11 +1171,27 @@ async def _save_backtest_payload(
                         "entry_time": _ensure_aware_datetime(trade.entry_datetime),
                         "exit_time": _ensure_aware_datetime(trade.exit_datetime),
                         "side": trade.direction,
-                        "quantity": int(_to_float(trade.quantity, 0.0)),
+                        "quantity": _decimal(getattr(trade, "quantity", 0.0)),
+                        "lot_size": _decimal(getattr(trade, "lot_size", None)),
+                        "account_currency": getattr(trade, "account_currency", None),
+                        "currency_symbol": getattr(trade, "currency_symbol", None),
+                        "asset_class": getattr(trade, "asset_class", None),
+                        "quantity_mode": getattr(trade, "quantity_mode", None),
                         "entry_price": _decimal(trade.entry_price),
                         "exit_price": _decimal(trade.exit_price),
                         "pnl": _decimal(trade.pnl),
                         "exit_type": trade.exit_reason,
+                        "exit_reason": trade.exit_reason,
+                        "actual_risk_amount": _decimal(getattr(trade, "actual_risk_amount", None)),
+                        "risk_ticks": _decimal(getattr(trade, "risk_ticks", None)),
+                        "risk_pips": _decimal(getattr(trade, "risk_pips", None)),
+                        "reward_ticks": _decimal(getattr(trade, "reward_ticks", None)),
+                        "expected_reward_amount": _decimal(getattr(trade, "expected_reward_amount", None)),
+                        "sl_mode": getattr(trade, "sl_mode", None),
+                        "position_size_mode": getattr(trade, "position_size_mode", None),
+                        "runtime_config_snapshot": json.dumps(getattr(trade, "runtime_config_snapshot", None)) if getattr(trade, "runtime_config_snapshot", None) is not None else None,
+                        "instrument_spec_snapshot": json.dumps(getattr(trade, "instrument_spec_snapshot", None)) if getattr(trade, "instrument_spec_snapshot", None) is not None else None,
+                        "lifecycle_events": json.dumps(getattr(trade, "lifecycle_events", None) or []),
                     }
                     base_values.update({key: (_decimal(value) if isinstance(value, (int, float)) else value) for key, value in _trade_transparency_values(trade).items()})
                     insert_trade_values = _build_trade_insert_values(
@@ -1170,6 +1251,13 @@ def _build_detail_export_frames(detail: dict):
         ["Backtest ID", summary.get("id")],
         ["Strategy", summary.get("strategy_name")],
         ["Instrument", summary.get("instrument_symbol")],
+        ["Asset Class", summary.get("asset_class")],
+        ["Account Currency", summary.get("account_currency")],
+        ["Quantity Mode", summary.get("quantity_mode")],
+        ["Position Size Mode", summary.get("position_size_mode")],
+        ["SL Mode", summary.get("sl_mode")],
+        ["RR Ratio", summary.get("rr_ratio")],
+        ["Risk %", summary.get("risk_percent")],
         ["Timeframe", summary.get("timeframe")],
         ["Initial Capital", summary.get("initial_capital")],
         ["Final Capital", summary.get("final_capital")],
@@ -1283,86 +1371,25 @@ async def export_backtest_excel(backtest_id: str, db: AsyncSession = Depends(get
 
 @router.get("/{backtest_id}/export/pdf")
 async def export_backtest_pdf(backtest_id: str, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import mm
-    from reportlab.pdfgen import canvas
+    request_id = str(uuid4())
+    try:
+        from ...services.reports.backtest_pdf_report import build_backtest_pdf
 
-    detail = await _detail_payload_for_export(backtest_id, db, current_user)
-    summary = detail.get("summary", {})
-    trades = detail.get("trades", [])
-    pnl_calendar = detail.get("pnl_calendar", [])
-    output = BytesIO()
-    c = canvas.Canvas(output, pagesize=A4)
-    width, height = A4
-
-    def new_page(title: str | None = None):
-        c.showPage()
-        c.setFont("Helvetica-Bold", 15)
-        c.drawString(15 * mm, height - 18 * mm, title or "AlgoAgentX Backtest Report")
-        c.setFont("Helvetica", 9)
-        return height - 28 * mm
-
-    y = height - 18 * mm
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(15 * mm, y, "AlgoAgentX Backtest Report")
-    y -= 10 * mm
-    c.setFont("Helvetica", 10)
-    fields = [
-        ("Backtest ID", summary.get("id")),
-        ("Strategy", summary.get("strategy_name")),
-        ("Instrument", summary.get("instrument_symbol")),
-        ("Timeframe", summary.get("timeframe")),
-        ("Initial Capital", summary.get("initial_capital")),
-        ("Final Capital", summary.get("final_capital")),
-        ("Net Profit", summary.get("net_profit")),
-        ("Return %", summary.get("return_pct")),
-        ("Win Rate", summary.get("win_rate")),
-        ("Sharpe", summary.get("sharpe_ratio")),
-        ("Drawdown", summary.get("max_drawdown")),
-        ("Profit Factor", summary.get("profit_factor")),
-        ("Avg Win", summary.get("avg_win")),
-        ("Avg Loss", summary.get("avg_loss")),
-        ("Expectancy", summary.get("expectancy")),
-        ("Trades", summary.get("total_trades")),
-        ("Created At", summary.get("created_at")),
-    ]
-    for label, value in fields:
-        c.drawString(15 * mm, y, f"{label}: {value}")
-        y -= 6 * mm
-        if y < 22 * mm:
-            y = new_page("Backtest Report - Summary Continued")
-
-    y -= 4 * mm
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(15 * mm, y, "Trade List")
-    y -= 7 * mm
-    c.setFont("Helvetica", 8)
-    if not trades:
-        c.drawString(15 * mm, y, "No trades available for this run.")
-        y -= 6 * mm
-    else:
-        for idx, trade in enumerate(trades, start=1):
-            line = f"{idx}. {trade.get('entry_time')} | {trade.get('side')} | qty {trade.get('quantity')} | entry {trade.get('entry_price')} | exit {trade.get('exit_price')} | pnl {trade.get('pnl')} | {trade.get('exit_type')}"
-            c.drawString(15 * mm, y, line[:145])
-            y -= 5 * mm
-            if y < 18 * mm:
-                y = new_page("Backtest Report - Trades")
-
-    y -= 4 * mm
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(15 * mm, y, "PnL Calendar")
-    y -= 7 * mm
-    c.setFont("Helvetica", 8)
-    for row in pnl_calendar[:120]:
-        c.drawString(15 * mm, y, f"{row.get('date')}: {row.get('pnl')}")
-        y -= 5 * mm
-        if y < 18 * mm:
-            y = new_page("Backtest Report - PnL Calendar")
-
-    c.save()
-    output.seek(0)
-    filename = f"backtest-{backtest_id}-full-report.pdf"
-    return StreamingResponse(output, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+        detail = await _detail_payload_for_export(backtest_id, db, current_user)
+        output, filename = build_backtest_pdf(detail)
+        return StreamingResponse(
+            output,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("PDF export failed for backtest %s request_id=%s", backtest_id, request_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF export failed. Please retry or contact support with request ID {request_id}.",
+        ) from exc
 
 
 @router.get("/config")
@@ -1778,6 +1805,9 @@ async def run_backtest(
             end_date=payload.end_date,
             initial_capital=payload.capital,
             advanced_filters=payload.advanced_filters,
+            runtime_config=payload.runtime_config,
+            strategy_preset_id=payload.strategy_preset_id,
+            timeframe_id=payload.timeframe_id,
         )
 
         trade_df = _trade_df_from_service(service_response)
@@ -1833,6 +1863,22 @@ async def run_backtest(
             "pricing": estimate.get("breakdown", {}),
             "advanced_filters": _filter_meta_from_impact(service_response.advanced_filter_impact, payload.advanced_filters),
             "advanced_filter_impact": service_response.advanced_filter_impact,
+            "warnings": service_response.warnings or [],
+            "rejected_trade_count": int(getattr(service_response, "rejected_trade_count", 0) or 0),
+            "rejection_reasons": getattr(service_response, "rejection_reasons", {}) or {},
+            "risk_engine_version": (getattr(service_response.result, "summary", {}) or {}).get("risk_engine_version"),
+            "pnl_engine_version": (getattr(service_response.result, "summary", {}) or {}).get("pnl_engine_version"),
+            "account_currency": getattr(service_response.result, "account_currency", None),
+            "currency_symbol": getattr(service_response.result, "currency_symbol", None),
+            "asset_class": (getattr(service_response.result, "summary", {}) or {}).get("asset_class"),
+            "quantity_mode": getattr(service_response.result, "quantity_mode", None),
+            "position_size_mode": (getattr(service_response.result, "summary", {}) or {}).get("position_size_mode"),
+            "sl_mode": (getattr(service_response.result, "summary", {}) or {}).get("sl_mode"),
+            "rr_ratio": (getattr(service_response.result, "summary", {}) or {}).get("rr_ratio"),
+            "risk_percent": (getattr(service_response.result, "summary", {}) or {}).get("risk_percent"),
+            "avg_lot_size": (getattr(service_response.result, "summary", {}) or {}).get("avg_lot_size"),
+            "avg_quantity": (getattr(service_response.result, "summary", {}) or {}).get("avg_quantity"),
+            "professional_summary": getattr(service_response.result, "summary", {}) or {},
             "saved": True,
         }
 
@@ -2089,6 +2135,147 @@ async def get_backtest_by_id(
     )
 
 
+
+
+def _jsonish(value):
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except Exception:
+            return value
+    return value
+
+
+
+
+def _currency_symbol_for_code(code: str | None) -> str:
+    normalized = (code or "").upper()
+    if normalized == "USD":
+        return "$"
+    if normalized == "INR":
+        return "₹"
+    return code or "₹"
+
+
+def _infer_currency_payload(*, instrument_symbol: str | None = None, asset_class: str | None = None, account_currency: str | None = None, currency_symbol: str | None = None, quantity_mode: str | None = None, instrument_spec: dict | None = None) -> dict:
+    spec = instrument_spec if isinstance(instrument_spec, dict) else {}
+    symbol_upper = (instrument_symbol or spec.get("symbol") or "").upper()
+    asset_upper = (asset_class or spec.get("asset_class") or "").upper()
+    account = account_currency or spec.get("account_currency")
+    q_mode = quantity_mode or spec.get("quantity_mode")
+    if not account:
+        if symbol_upper in {"XAUUSD", "BTCUSD", "ETHUSD"} or asset_upper in {"METAL", "FOREX", "CRYPTO"}:
+            account = "USD"
+        else:
+            account = "INR"
+    if not currency_symbol:
+        currency_symbol = spec.get("currency_symbol") or _currency_symbol_for_code(account)
+    if not q_mode:
+        if asset_upper in {"METAL", "FOREX", "CRYPTO"} or symbol_upper in {"XAUUSD", "BTCUSD", "ETHUSD"}:
+            q_mode = "LOTS"
+        elif asset_upper == "INDIAN_EQUITY":
+            q_mode = "SHARES"
+        else:
+            q_mode = "SHARES"
+    return {
+        "account_currency": account,
+        "currency_symbol": currency_symbol,
+        "quantity_mode": q_mode,
+        "asset_class": asset_class or spec.get("asset_class"),
+        "is_legacy_currency": not bool(account_currency or spec.get("account_currency")),
+    }
+
+async def _professional_summary_overlay(db: AsyncSession, backtest_id: str, trades_data: list[dict]) -> dict:
+    """Best-effort Phase 2F report metadata overlay for new and legacy runs."""
+    overlay: dict = {}
+    try:
+        perf_cols = {meta["column_name"] for meta in await _table_columns_meta(db, "performance_metrics")}
+        wanted = ["account_currency", "currency_symbol", "quantity_mode", "runtime_config_snapshot", "instrument_spec_snapshot", "professional_summary"]
+        available = [col for col in wanted if col in perf_cols]
+        if available:
+            row = (await db.execute(text(f"SELECT {', '.join(available)} FROM performance_metrics WHERE id::text = :backtest_id LIMIT 1"), {"backtest_id": str(backtest_id)})).mappings().first()
+            if row:
+                for key in ["account_currency", "currency_symbol", "quantity_mode"]:
+                    if key in row and row.get(key) is not None:
+                        overlay[key] = row.get(key)
+                runtime_config = _jsonish(row.get("runtime_config_snapshot")) if "runtime_config_snapshot" in row else None
+                instrument_spec = _jsonish(row.get("instrument_spec_snapshot")) if "instrument_spec_snapshot" in row else None
+                professional_summary = _jsonish(row.get("professional_summary")) if "professional_summary" in row else None
+                if runtime_config is not None:
+                    overlay["runtime_config_snapshot"] = runtime_config
+                if instrument_spec is not None:
+                    overlay["instrument_spec_snapshot"] = instrument_spec
+                if isinstance(professional_summary, dict):
+                    for key in ["asset_class", "avg_actual_risk", "avg_lot_size", "avg_quantity", "gross_profit", "gross_loss"]:
+                        if professional_summary.get(key) is not None:
+                            overlay[key] = professional_summary.get(key)
+    except Exception as exc:
+        logger.warning("Unable to load professional summary overlay for backtest %s: %s", backtest_id, exc)
+
+    first_trade = next((trade for trade in trades_data if isinstance(trade, dict)), None)
+    if first_trade:
+        for key in ["account_currency", "currency_symbol", "asset_class", "quantity_mode", "sl_mode", "position_size_mode"]:
+            if not overlay.get(key) and first_trade.get(key) is not None:
+                overlay[key] = first_trade.get(key)
+        if not overlay.get("runtime_config_snapshot") and first_trade.get("runtime_config_snapshot") is not None:
+            overlay["runtime_config_snapshot"] = first_trade.get("runtime_config_snapshot")
+        if not overlay.get("instrument_spec_snapshot") and first_trade.get("instrument_spec_snapshot") is not None:
+            overlay["instrument_spec_snapshot"] = first_trade.get("instrument_spec_snapshot")
+
+    runtime_config = overlay.get("runtime_config_snapshot")
+    if isinstance(runtime_config, dict):
+        risk = runtime_config.get("risk") or {}
+        sl_tp = runtime_config.get("sl_tp") or {}
+        if isinstance(risk, dict):
+            if not overlay.get("position_size_mode") and risk.get("position_size_mode"):
+                overlay["position_size_mode"] = risk.get("position_size_mode")
+            if overlay.get("risk_percent") is None and risk.get("risk_percent") is not None:
+                overlay["risk_percent"] = risk.get("risk_percent")
+        if isinstance(sl_tp, dict):
+            if overlay.get("rr_ratio") is None and sl_tp.get("rr_ratio") is not None:
+                overlay["rr_ratio"] = sl_tp.get("rr_ratio")
+            if not overlay.get("sl_mode") and sl_tp.get("sl_mode"):
+                overlay["sl_mode"] = sl_tp.get("sl_mode")
+
+    instrument_spec = overlay.get("instrument_spec_snapshot")
+    if isinstance(instrument_spec, dict):
+        for src, dst in [("asset_class", "asset_class"), ("account_currency", "account_currency"), ("currency_symbol", "currency_symbol"), ("quantity_mode", "quantity_mode")]:
+            if not overlay.get(dst) and instrument_spec.get(src) is not None:
+                overlay[dst] = instrument_spec.get(src)
+
+    if trades_data:
+        actual_risks = [_to_float(t.get("actual_risk_amount"), None) for t in trades_data if _to_float(t.get("actual_risk_amount"), None) is not None]
+        lot_sizes = [_to_float(t.get("lot_size"), None) for t in trades_data if _to_float(t.get("lot_size"), None) is not None]
+        quantities = [_to_float(t.get("quantity"), None) for t in trades_data if _to_float(t.get("quantity"), None) is not None]
+        pnls = [_to_float(t.get("pnl"), 0.0) for t in trades_data]
+        if actual_risks and overlay.get("avg_actual_risk") is None:
+            overlay["avg_actual_risk"] = sum(actual_risks) / len(actual_risks)
+        if lot_sizes and overlay.get("avg_lot_size") is None:
+            overlay["avg_lot_size"] = sum(lot_sizes) / len(lot_sizes)
+        if quantities and overlay.get("avg_quantity") is None:
+            overlay["avg_quantity"] = sum(quantities) / len(quantities)
+        if overlay.get("gross_profit") is None:
+            overlay["gross_profit"] = sum(v for v in pnls if v > 0)
+        if overlay.get("gross_loss") is None:
+            overlay["gross_loss"] = sum(v for v in pnls if v < 0)
+
+    inferred = _infer_currency_payload(
+        instrument_symbol=overlay.get("instrument_symbol"),
+        asset_class=overlay.get("asset_class"),
+        account_currency=overlay.get("account_currency"),
+        currency_symbol=overlay.get("currency_symbol"),
+        quantity_mode=overlay.get("quantity_mode"),
+        instrument_spec=instrument_spec if isinstance(instrument_spec, dict) else None,
+    )
+    for key, value in inferred.items():
+        if overlay.get(key) is None or overlay.get(key) == "Legacy":
+            overlay[key] = value
+    return overlay
+
 @router.get("/{backtest_id}/detail")
 async def get_backtest_detail(
     backtest_id: str,
@@ -2107,8 +2294,11 @@ async def get_backtest_detail(
         trade_columns = [meta["column_name"] for meta in await _table_columns_meta(db, "trades")]
         if trade_columns:
             wanted = [
-                "id", "entry_time", "exit_time", "side", "quantity", "entry_price", "exit_price", "pnl", "exit_type",
-                "stop_loss", "target", "risk_points", "reward_points", "rr_ratio", "risk_amount", "reward_amount", "r_multiple", "signal_reason",
+                "id", "entry_time", "exit_time", "side", "quantity", "lot_size", "entry_price", "exit_price", "pnl", "exit_type", "exit_reason",
+                "account_currency", "currency_symbol", "asset_class", "quantity_mode",
+                "stop_loss", "target", "risk_points", "risk_ticks", "risk_pips", "reward_points", "reward_ticks",
+                "rr_ratio", "risk_amount", "actual_risk_amount", "reward_amount", "expected_reward_amount", "r_multiple",
+                "sl_mode", "position_size_mode", "runtime_config_snapshot", "instrument_spec_snapshot", "lifecycle_events", "signal_reason",
             ]
             select_columns = [column for column in wanted if column in trade_columns]
             select_sql = ", ".join(select_columns)
@@ -2127,11 +2317,27 @@ async def get_backtest_detail(
                         "entry_time": row_dict.get("entry_time").isoformat() if row_dict.get("entry_time") else None,
                         "exit_time": row_dict.get("exit_time").isoformat() if row_dict.get("exit_time") else None,
                         "side": row_dict.get("side"),
-                        "quantity": _to_int(row_dict.get("quantity")),
+                        "quantity": _to_float(row_dict.get("quantity"), None),
+                        "lot_size": _to_float(row_dict.get("lot_size"), None),
                         "entry_price": _to_float(row_dict.get("entry_price")),
                         "exit_price": _to_float(row_dict.get("exit_price")),
                         "pnl": _to_float(row_dict.get("pnl")),
-                        "exit_type": row_dict.get("exit_type"),
+                        "exit_type": row_dict.get("exit_type") or row_dict.get("exit_reason"),
+                        "exit_reason": row_dict.get("exit_reason") or row_dict.get("exit_type"),
+                        "account_currency": row_dict.get("account_currency"),
+                        "currency_symbol": row_dict.get("currency_symbol"),
+                        "asset_class": row_dict.get("asset_class"),
+                        "quantity_mode": row_dict.get("quantity_mode"),
+                        "actual_risk_amount": _to_float(row_dict.get("actual_risk_amount"), None),
+                        "risk_ticks": _to_float(row_dict.get("risk_ticks"), None),
+                        "risk_pips": _to_float(row_dict.get("risk_pips"), None),
+                        "reward_ticks": _to_float(row_dict.get("reward_ticks"), None),
+                        "expected_reward_amount": _to_float(row_dict.get("expected_reward_amount"), None),
+                        "sl_mode": row_dict.get("sl_mode"),
+                        "position_size_mode": row_dict.get("position_size_mode"),
+                        "runtime_config_snapshot": _jsonish(row_dict.get("runtime_config_snapshot")),
+                        "instrument_spec_snapshot": _jsonish(row_dict.get("instrument_spec_snapshot")),
+                        "lifecycle_events": _jsonish(row_dict.get("lifecycle_events")) or [],
                         **risk_values,
                     }
                 )
@@ -2195,6 +2401,28 @@ async def get_backtest_detail(
         credit_cost=debit.get("effective_credit_cost", debit.get("credit_cost")),
         debit_transaction_id=debit.get("debit_transaction_id"),
     )
+    summary.update(await _professional_summary_overlay(db, str(backtest_id), trades_data))
+    currency_payload = _infer_currency_payload(
+        instrument_symbol=summary.get("instrument_symbol"),
+        asset_class=summary.get("asset_class"),
+        account_currency=summary.get("account_currency"),
+        currency_symbol=summary.get("currency_symbol"),
+        quantity_mode=summary.get("quantity_mode"),
+        instrument_spec=summary.get("instrument_spec_snapshot") if isinstance(summary.get("instrument_spec_snapshot"), dict) else None,
+    )
+    summary.update({k: v for k, v in currency_payload.items() if summary.get(k) in (None, "Legacy")})
+    for trade in trades_data:
+        trade_payload = _infer_currency_payload(
+            instrument_symbol=summary.get("instrument_symbol"),
+            asset_class=trade.get("asset_class") or summary.get("asset_class"),
+            account_currency=trade.get("account_currency") or summary.get("account_currency"),
+            currency_symbol=trade.get("currency_symbol") or summary.get("currency_symbol"),
+            quantity_mode=trade.get("quantity_mode") or summary.get("quantity_mode"),
+            instrument_spec=trade.get("instrument_spec_snapshot") if isinstance(trade.get("instrument_spec_snapshot"), dict) else None,
+        )
+        for key, value in trade_payload.items():
+            if trade.get(key) in (None, "Legacy"):
+                trade[key] = value
     return success_response(
         {
             "summary": summary,

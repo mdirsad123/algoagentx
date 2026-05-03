@@ -1,6 +1,6 @@
 from .users import User
-from .instruments import Instrument
-from .strategies import Strategy
+from .instruments import AssetClass, Timeframe, Instrument
+from .strategies import Strategy, StrategyRuntimePreset
 from .market_data import MarketData
 from .backtests import PerformanceMetric
 from .trades import Trade
@@ -45,8 +45,11 @@ from .live_trading import (
 
 __all__ = [
     "User",
+    "AssetClass",
+    "Timeframe",
     "Instrument",
     "Strategy",
+    "StrategyRuntimePreset",
     "MarketData",
     "PerformanceMetric",
     "Trade",

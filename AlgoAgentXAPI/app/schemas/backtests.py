@@ -83,13 +83,18 @@ class PerformanceMetric(PerformanceMetricBase):
 
 class BacktestRunRequest(BaseModel):
     strategy_id: str
-    instrument_id: int
+    instrument_id: Optional[int] = None
+    instrument_symbol: Optional[str] = None
+    symbol: Optional[str] = None
     timeframe: str
+    timeframe_id: Optional[int] = None
     start_date: date
     end_date: date
     capital: Decimal = Field(..., gt=0)
     save_result: bool = True
     advanced_filters: Optional[BacktestAdvancedFilters] = None
+    runtime_config: Optional[dict[str, Any]] = None
+    strategy_preset_id: Optional[str] = None
 
     @field_validator("start_date", "end_date", mode="before")
     @classmethod

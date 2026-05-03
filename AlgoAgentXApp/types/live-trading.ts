@@ -726,3 +726,27 @@ export interface LiveTradingApproval {
   created_at?: string;
   updated_at?: string;
 }
+
+
+export interface LiveOrderPreview {
+  validation_status?: string;
+  status?: string;
+  rejected_reason?: string | null;
+  broker?: string;
+  symbol?: string;
+  side?: string;
+  quantity_mode?: string;
+  final_lot_size?: number | string | null;
+  final_quantity?: number | string | null;
+  risk_amount?: number | string | null;
+  actual_risk_amount?: number | string | null;
+  entry_price?: number | string | null;
+  stop_loss?: number | string | null;
+  target?: number | string | null;
+  account_currency?: string | null;
+  currency_symbol?: string | null;
+  broker_order_payload_preview?: Record<string, unknown>;
+  risk_engine?: Record<string, unknown>;
+  instrument_spec_snapshot?: Record<string, unknown>;
+  runtime_config_snapshot?: Record<string, unknown>;
+}

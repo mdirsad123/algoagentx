@@ -210,8 +210,8 @@ export default function BacktestReportPage() {
             </Button>
             <Button variant="outline" onClick={() => router.push(`/admin/strategy-requests/strategies/${summary.strategy_id || ""}`)} className="rounded-xl"><Play className="mr-2 h-4 w-4" />Rerun</Button>
             <Button variant="outline" onClick={exportTradesCsv} className="rounded-xl"><Download className="mr-2 h-4 w-4" />Trades CSV</Button>
-            <Button variant="outline" onClick={() => void exportFile("excel")} className="rounded-xl"><FileSpreadsheet className="mr-2 h-4 w-4" />{exporting === "excel" ? "Exporting..." : "Export Excel"}</Button>
-            <Button onClick={() => void exportFile("pdf")} className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"><FileText className="mr-2 h-4 w-4" />{exporting === "pdf" ? "Exporting..." : "Export PDF"}</Button>
+            <Button variant="outline" disabled={exporting !== null} onClick={() => void exportFile("excel")} className="rounded-xl"><FileSpreadsheet className="mr-2 h-4 w-4" />{exporting === "excel" ? "Exporting..." : "Export Excel"}</Button>
+            <Button disabled={exporting !== null} onClick={() => void exportFile("pdf")} className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"><FileText className="mr-2 h-4 w-4" />{exporting === "pdf" ? "Exporting PDF..." : "Export PDF"}</Button>
           </div>
         }
       />

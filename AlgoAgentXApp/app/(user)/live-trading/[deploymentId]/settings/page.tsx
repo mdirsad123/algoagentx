@@ -10,7 +10,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { PageShell } from "@/components/ui/PageShell";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
-import type { BrokerAccount, BrokerSymbol } from "@/types/live-trading";
+import type { BrokerAccount, BrokerSymbol, LiveOrderPreview } from "@/types/live-trading";
 
 const TIMEFRAME_OPTIONS = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"];
 const UPSTOX_TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "1d"];
@@ -37,6 +37,10 @@ export default function LiveDeploymentSettingsPage() {
   const [brokers, setBrokers] = useState<BrokerAccount[]>([]);
   const [symbolOptions, setSymbolOptions] = useState<BrokerSymbol[]>([]);
   const [loadingSymbols, setLoadingSymbols] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewEntryPrice, setPreviewEntryPrice] = useState(4630);
+  const [previewStopLoss, setPreviewStopLoss] = useState(4625);
+  const [riskPreview, setRiskPreview] = useState<LiveOrderPreview | null>(null);
   const [form, setForm] = useState({
     name: "",
     instrument: "",
@@ -134,6 +138,45 @@ export default function LiveDeploymentSettingsPage() {
     if (deploymentId) load();
   }, [deploymentId]);
 
+  const runRiskPreview = async () => {
+    if (!form.instrument) {
+      showToast("Select instrument before preview", "error");
+      return;
+    }
+    try {
+      setPreviewLoading(true);
+      const result = await liveTradingApi.previewLiveOrder({
+        deployment_id: deploymentId,
+        symbol: form.instrument,
+        side: "BUY",
+        entry_price: Number(previewEntryPrice),
+        stop_loss: Number(previewStopLoss),
+        runtime_config: {
+          risk: {
+            initial_capital: Number(form.capital),
+            risk_percent: Number(form.risk_per_trade),
+            max_lot_cap: form.mt5_demo_max_lot ? Number(form.mt5_demo_max_lot) : null,
+            max_quantity_cap: form.max_quantity ? Number(form.max_quantity) : null,
+          },
+          sl_tp: {
+            rr_ratio: Number(form.rr_ratio),
+            fixed_price_risk_pct: Number(form.price_risk_pct),
+          },
+          execution: {
+            max_trades_per_day: Number(form.max_trades_per_day),
+            max_open_positions: Number(form.max_open_positions),
+            allow_short: Boolean(form.allow_short),
+          },
+        },
+      });
+      setRiskPreview(result as LiveOrderPreview);
+    } catch (error: any) {
+      showToast(error?.message || "Risk preview failed", "error");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (form.mode === "DEMO" && !form.broker_account_id) {
@@ -156,7 +199,37 @@ export default function LiveDeploymentSettingsPage() {
         {loading ? <p className="text-purple-100">Loading settings...</p> : (
           <form onSubmit={submit} className="space-y-6">
             <div className="rounded-xl border border-lime-300/20 bg-lime-300/10 p-4 text-sm text-lime-100">
-              PAPER can run without broker. DEMO requires a connected broker. Upstox orders may place real trades in your broker account; use small quantity first.
+              PAPER can run without broker. DEMO requires a connected broker. Demo is recommended before live execution. Upstox orders may place real trades in your broker account; use small quantity first. Order sizing uses instrument master and risk engine.
+            </div>
+            <div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-5 text-sm text-cyan-50">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <h3 className="text-base font-black text-white">Risk Engine Order Preview</h3>
+                  <p className="mt-1 text-xs text-amber-100">Preview final lot/quantity before enabling deployment. Demo recommended for all live execution testing.</p>
+                  <p className="mt-1 text-xs text-cyan-100">Order sizing uses Instrument Master + the same shared risk engine as backtest. DEMO/LIVE will reject if instrument spec is missing.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <label className="space-y-1 text-xs text-cyan-100">Preview Entry
+                    <input type="number" step="0.01" className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-white outline-none" value={previewEntryPrice} onChange={(e) => setPreviewEntryPrice(Number(e.target.value))} />
+                  </label>
+                  <label className="space-y-1 text-xs text-cyan-100">Preview SL
+                    <input type="number" step="0.01" className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-white outline-none" value={previewStopLoss} onChange={(e) => setPreviewStopLoss(Number(e.target.value))} />
+                  </label>
+                  <Button type="button" disabled={previewLoading} onClick={runRiskPreview} className="mt-5 border-0 bg-cyan-400 text-slate-950 hover:bg-cyan-300">{previewLoading ? "Previewing..." : "Preview Sizing"}</Button>
+                </div>
+              </div>
+              {riskPreview && (
+                <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-3"><p className="text-[10px] uppercase text-cyan-200">Status</p><p className={riskPreview.validation_status === "OK" ? "font-bold text-lime-200" : "font-bold text-rose-200"}>{riskPreview.validation_status || "—"}</p></div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-3"><p className="text-[10px] uppercase text-cyan-200">Currency</p><p className="font-bold text-white">{riskPreview.account_currency || "—"}</p></div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-3"><p className="text-[10px] uppercase text-cyan-200">Qty Mode</p><p className="font-bold text-white">{riskPreview.quantity_mode || "—"}</p></div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-3"><p className="text-[10px] uppercase text-cyan-200">Lot / Qty</p><p className="font-bold text-white">{riskPreview.quantity_mode === "LOTS" ? (riskPreview.final_lot_size ?? "—") : (riskPreview.final_quantity ?? "—")}</p></div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-3"><p className="text-[10px] uppercase text-cyan-200">Actual Risk</p><p className="font-bold text-white">{riskPreview.currency_symbol || ""}{riskPreview.actual_risk_amount ?? "—"}</p></div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-3"><p className="text-[10px] uppercase text-cyan-200">SL / TP</p><p className="font-bold text-white">{riskPreview.stop_loss ?? "—"} / {riskPreview.target ?? "—"}</p></div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-3"><p className="text-[10px] uppercase text-cyan-200">Broker Payload</p><p className="truncate font-bold text-white">{riskPreview.quantity_mode === "LOTS" ? `volume=${(riskPreview.broker_order_payload_preview as any)?.volume ?? "—"}` : `qty=${(riskPreview.broker_order_payload_preview as any)?.quantity ?? "—"}`}</p></div>
+                </div>
+              )}
+              {riskPreview?.validation_status === "REJECTED" && <p className="mt-3 rounded-xl border border-rose-300/20 bg-rose-500/10 p-3 text-rose-100">{riskPreview.rejected_reason || "Risk engine rejected this order."}</p>}
             </div>
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
               <label className="space-y-2 text-sm text-purple-100">Name<input className="w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>

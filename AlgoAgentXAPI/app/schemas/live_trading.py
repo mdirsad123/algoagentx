@@ -405,6 +405,15 @@ class LiveOrderOut(LiveBaseModel):
     status: str
     error_message: Optional[str] = None
     raw_response: Optional[dict[str, Any]] = None
+    quantity_mode: Optional[str] = None
+    requested_lot: Optional[Decimal] = None
+    final_lot: Optional[Decimal] = None
+    requested_quantity: Optional[Decimal] = None
+    final_quantity: Optional[Decimal] = None
+    risk_amount: Optional[Decimal] = None
+    actual_risk: Optional[Decimal] = None
+    instrument_spec_snapshot: Optional[dict[str, Any]] = None
+    runtime_config_snapshot: Optional[dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 

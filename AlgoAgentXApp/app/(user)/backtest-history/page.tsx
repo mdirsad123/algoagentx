@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { parseApiError, formatErrorMessage } from "@/lib/api/error";
+import { formatCurrency as formatMoney, formatNumber as formatDisplayNumber, currencySymbolForCode } from "@/lib/formatters";
 import {
   backtestsApi,
   type BacktestDetailResponse,
@@ -81,22 +82,10 @@ const safeNumber = (value: unknown, fallback = 0): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const formatNumber = (value: number | null | undefined, digits = 2): string => {
-  if (value === null || value === undefined || Number.isNaN(value)) return "—";
-  return new Intl.NumberFormat("en-IN", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(value);
-};
+const formatNumber = (value: number | null | undefined, digits = 2): string => formatDisplayNumber(value, digits);
 
-const formatCurrency = (value: number | null | undefined): string => {
-  if (value === null || value === undefined || Number.isNaN(value)) return "—";
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 2,
-  }).format(value);
-};
+const rowCurrencySymbol = (item: BacktestHistoryItem): string => item.currency_symbol || currencySymbolForCode(item.account_currency) || "₹";
+const formatCurrency = (value: number | null | undefined, symbol = "₹"): string => formatMoney(value, symbol);
 
 const toDisplayPercent = (value: number): number => (Math.abs(value) <= 1 ? value * 100 : value);
 
@@ -481,7 +470,15 @@ export default function BacktestHistoryPage() {
         ? drawdownSeries.reduce((sum, value) => sum + value, 0) / drawdownSeries.length
         : null;
 
-    const totalProfit = rows.reduce((sum, item) => sum + safeNumber(item.net_profit, 0), 0);
+    const profitByCurrency = rows.reduce<Record<string, { symbol: string; total: number }>>((acc, item) => {
+      const code = item.account_currency || "INR";
+      const symbol = item.currency_symbol || currencySymbolForCode(code);
+      acc[code] = acc[code] || { symbol, total: 0 };
+      acc[code].total += safeNumber(item.net_profit, 0);
+      return acc;
+    }, {});
+    const currencyGroups = Object.values(profitByCurrency);
+    const totalProfit = currencyGroups.length === 1 ? currencyGroups[0].total : 0;
 
     return {
       totalRuns: pagination?.total_count ?? rows.length,
@@ -489,6 +486,7 @@ export default function BacktestHistoryPage() {
       avgReturn,
       avgDrawdown,
       totalProfit,
+      currencyGroups,
     };
   }, [pagination?.total_count, rows]);
 
@@ -555,10 +553,10 @@ export default function BacktestHistoryPage() {
           <CardHeader className="pb-2">
             <CardDescription>Total PnL</CardDescription>
             <CardTitle className={`text-2xl ${summaryStats.totalProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-              {formatCurrency(summaryStats.totalProfit)}
+              {summaryStats.currencyGroups.length === 1 ? formatCurrency(summaryStats.totalProfit, summaryStats.currencyGroups[0].symbol) : "Mixed"}
             </CardTitle>
           </CardHeader>
-          <CardContent className="pt-0 text-xs text-muted-foreground">Sum of visible runs</CardContent>
+          <CardContent className="pt-0 text-xs text-muted-foreground">{summaryStats.currencyGroups.length > 1 ? summaryStats.currencyGroups.map((g) => `${g.symbol}${formatNumber(Math.abs(g.total), 2)}`).join(" · ") : "Sum of visible runs"}</CardContent>
         </Card>
       </section>
 
@@ -768,7 +766,7 @@ export default function BacktestHistoryPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label className="text-muted-foreground">Min Profit (₹)</Label>
+                    <Label className="text-muted-foreground">Min Profit</Label>
                     <Input
                       type="number"
                       value={draftFilters.min_profit}
@@ -932,9 +930,9 @@ export default function BacktestHistoryPage() {
                               <TableCell className="font-medium">{item.strategy_name || "—"}</TableCell>
                               <TableCell>{item.instrument_symbol || "—"}</TableCell>
                               <TableCell>{item.timeframe || "—"}</TableCell>
-                              <TableCell className="text-right">{formatCurrency(item.initial_capital)}</TableCell>
+                              <TableCell className="text-right">{formatCurrency(item.initial_capital, rowCurrencySymbol(item))}</TableCell>
                               <TableCell className={`text-right font-medium ${pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                                {formatCurrency(item.net_profit)}
+                                {formatCurrency(item.net_profit, rowCurrencySymbol(item))}
                               </TableCell>
                               <TableCell className={`text-right ${safeNumber(returnPct, 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                                 {formatPercentAuto(returnPct)}
@@ -1011,12 +1009,12 @@ export default function BacktestHistoryPage() {
                       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                         <div className="rounded-lg border border-border/40 bg-card/20 p-2">
                           <p className="text-muted-foreground">Capital</p>
-                          <p className="font-medium text-foreground">{formatCurrency(item.initial_capital)}</p>
+                          <p className="font-medium text-foreground">{formatCurrency(item.initial_capital, rowCurrencySymbol(item))}</p>
                         </div>
                         <div className="rounded-lg border border-border/40 bg-card/20 p-2">
                           <p className="text-muted-foreground">PnL</p>
                           <p className={`font-medium ${pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                            {formatCurrency(item.net_profit)}
+                            {formatCurrency(item.net_profit, rowCurrencySymbol(item))}
                           </p>
                         </div>
                         <div className="rounded-lg border border-border/40 bg-card/20 p-2">

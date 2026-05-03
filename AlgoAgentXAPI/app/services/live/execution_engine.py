@@ -15,6 +15,7 @@ from .position_service import close_position, get_open_positions, open_position
 from .risk_manager import validate_signal_for_execution, validate_upstox_order_rules
 from .trading_safety import LIVE_DISABLED_MESSAGE, check_execution_safety, mark_heartbeat
 from .live_approval_service import check_live_execution_gate
+from .order_preview_service import build_live_order_preview
 
 
 def _round(value: Decimal, places: str = "0.00000001") -> Decimal:
@@ -81,6 +82,7 @@ async def _create_error_order(
     raw_response: Optional[dict] = None,
     stop_loss: Optional[Decimal] = None,
     target: Optional[Decimal] = None,
+    sizing_metadata: Optional[dict] = None,
 ) -> LiveOrder:
     order = LiveOrder(
         deployment_id=deployment.id,
@@ -97,10 +99,24 @@ async def _create_error_order(
         target=target,
         status="ERROR",
         error_message=message,
-        raw_response=raw_response or {},
+        raw_response={**(raw_response or {}), **({"sizing": sizing_metadata} if sizing_metadata else {})},
     )
+    if sizing_metadata:
+        for field, key in {
+            "quantity_mode": "quantity_mode",
+            "requested_lot": "requested_lot",
+            "final_lot": "final_lot",
+            "requested_quantity": "requested_quantity",
+            "final_quantity": "final_quantity",
+            "risk_amount": "risk_amount",
+            "actual_risk": "actual_risk",
+            "instrument_spec_snapshot": "instrument_spec_snapshot",
+            "runtime_config_snapshot": "runtime_config_snapshot",
+        }.items():
+            if hasattr(order, field):
+                setattr(order, field, sizing_metadata.get(key))
     db.add(order)
-    await _log(db, deployment, "ORDER_ERROR", message, "ERROR", {"signal_id": str(signal.id), "symbol": signal.symbol, "side": side})
+    await _log(db, deployment, "ORDER_ERROR", message, "ERROR", {"signal_id": str(signal.id), "symbol": signal.symbol, "side": side, "sizing": sizing_metadata or {}})
     await db.flush()
     return order
 
@@ -115,6 +131,7 @@ async def _execute_demo_entry(
     price: Decimal,
     stop_loss: Decimal,
     target: Decimal,
+    sizing_metadata: Optional[dict] = None,
 ) -> LiveOrder:
     if not deployment.broker_account_id:
         signal.status = "REJECTED"
@@ -129,7 +146,7 @@ async def _execute_demo_entry(
         return await _create_error_order(db, deployment, signal, order_side, qty, price, msg, stop_loss=stop_loss, target=target)
 
     adapter = get_broker_adapter(broker)
-    await _log(db, deployment, "BROKER_EXECUTION_STARTED", "MT5 demo order send started", metadata={"broker_account_id": str(broker.id), "signal_id": str(signal.id)})
+    await _log(db, deployment, "BROKER_EXECUTION_STARTED", "MT5 demo order send started", metadata={"broker_account_id": str(broker.id), "signal_id": str(signal.id), "sizing": sizing_metadata or {}})
     result = await adapter.place_market_order(BrokerOrderRequest(
         symbol=signal.symbol,
         side=order_side,
@@ -158,8 +175,22 @@ async def _execute_demo_entry(
         target=target,
         status="FILLED" if result.success else "ERROR",
         error_message=None if result.success else result.message,
-        raw_response=result.raw_response,
+        raw_response={**(result.raw_response or {}), **({"sizing": sizing_metadata} if sizing_metadata else {})},
     )
+    if sizing_metadata:
+        for field, key in {
+            "quantity_mode": "quantity_mode",
+            "requested_lot": "requested_lot",
+            "final_lot": "final_lot",
+            "requested_quantity": "requested_quantity",
+            "final_quantity": "final_quantity",
+            "risk_amount": "risk_amount",
+            "actual_risk": "actual_risk",
+            "instrument_spec_snapshot": "instrument_spec_snapshot",
+            "runtime_config_snapshot": "runtime_config_snapshot",
+        }.items():
+            if hasattr(order, field):
+                setattr(order, field, sizing_metadata.get(key))
     db.add(order)
     await db.flush()
 
@@ -170,7 +201,7 @@ async def _execute_demo_entry(
         return order
 
     executed_price = result.executed_price or price
-    await _log(db, deployment, "BROKER_ORDER_FILLED", "MT5 demo market order filled/placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id})
+    await _log(db, deployment, "BROKER_ORDER_FILLED", "MT5 demo market order filled/placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id, "sizing": sizing_metadata or {}})
     await open_position(db, deployment, signal.symbol, position_side, actual_qty, executed_price, stop_loss, target)
     signal.status = "EXECUTED"
     return order
@@ -231,6 +262,7 @@ async def _execute_upstox_entry(
     price: Decimal,
     stop_loss: Decimal,
     target: Decimal,
+    sizing_metadata: Optional[dict] = None,
 ) -> LiveOrder:
     broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
     if broker is None or broker.status != "CONNECTED":
@@ -247,7 +279,7 @@ async def _execute_upstox_entry(
 
     instrument_key = getattr(deployment, "instrument_key", None) or getattr(deployment, "broker_symbol", None) or signal.symbol
     adapter = get_broker_adapter(broker)
-    await _log(db, deployment, "UPSTOX_ORDER_STARTED", "Upstox order send started", metadata={"instrument_key": instrument_key, "signal_id": str(signal.id), "side": order_side, "qty": str(qty)})
+    await _log(db, deployment, "UPSTOX_ORDER_STARTED", "Upstox order send started", metadata={"instrument_key": instrument_key, "signal_id": str(signal.id), "side": order_side, "qty": str(qty), "sizing": sizing_metadata or {}})
     result = await adapter.place_market_order(BrokerOrderRequest(
         symbol=signal.symbol,
         instrument_key=instrument_key,
@@ -265,8 +297,22 @@ async def _execute_upstox_entry(
         deployment_id=deployment.id, signal_id=signal.id, user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
         broker_order_id=result.broker_order_id, symbol=instrument_key, side=order_side, order_type="MARKET", qty=qty, entry_price=price,
         executed_price=result.executed_price if result.success else None, stop_loss=stop_loss, target=target, status=status,
-        error_message=None if result.success else result.message, raw_response=result.raw_response,
+        error_message=None if result.success else result.message, raw_response={**(result.raw_response or {}), **({"sizing": sizing_metadata} if sizing_metadata else {})},
     )
+    if sizing_metadata:
+        for field, key in {
+            "quantity_mode": "quantity_mode",
+            "requested_lot": "requested_lot",
+            "final_lot": "final_lot",
+            "requested_quantity": "requested_quantity",
+            "final_quantity": "final_quantity",
+            "risk_amount": "risk_amount",
+            "actual_risk": "actual_risk",
+            "instrument_spec_snapshot": "instrument_spec_snapshot",
+            "runtime_config_snapshot": "runtime_config_snapshot",
+        }.items():
+            if hasattr(order, field):
+                setattr(order, field, sizing_metadata.get(key))
     db.add(order)
     await db.flush()
     if not result.success:
@@ -278,7 +324,7 @@ async def _execute_upstox_entry(
     signal.status = "EXECUTED"
     executed_price = result.executed_price or price
     await open_position(db, deployment, instrument_key, position_side, qty, executed_price, stop_loss, target)
-    await _log(db, deployment, "UPSTOX_ORDER_PLACED", "Upstox order placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id, "status": status})
+    await _log(db, deployment, "UPSTOX_ORDER_PLACED", "Upstox order placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id, "status": status, "sizing": sizing_metadata or {}})
     return order
 
 
@@ -384,23 +430,70 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
             return latest_order
 
     if signal.signal_type in {"BUY", "SELL"}:
-        position_side, qty, stop_loss, target = calculate_entry_plan(deployment, signal.signal_type, price)
+        broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none() if deployment.broker_account_id else None
+        broker_code = get_broker_code(broker) if broker is not None else ("PAPER" if deployment.mode == "PAPER" else "MT5")
+        preview = await build_live_order_preview(
+            db,
+            deployment=deployment,
+            broker_code=broker_code,
+            symbol=signal.symbol or deployment.instrument,
+            side=signal.signal_type,
+            entry_price=price,
+            stop_loss=None,
+            runtime_config=None,
+            strict_instrument=deployment.mode in {"DEMO", "LIVE"},
+        )
+        if preview.get("validation_status") != "OK":
+            # PAPER may keep legacy behavior when an old deployment has no instrument master; DEMO/LIVE never fallback.
+            if deployment.mode in {"DEMO", "LIVE"}:
+                signal.status = "REJECTED"
+                signal.rejection_reason = preview.get("rejected_reason") or "Risk engine rejected order sizing"
+                await _log(db, deployment, "RISK_ENGINE_REJECTED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id), "preview": preview})
+                return latest_order
+            position_side, qty, stop_loss, target = calculate_entry_plan(deployment, signal.signal_type, price)
+            sizing_metadata = {"legacy_fallback": True, "rejected_preview": preview}
+        else:
+            position_side = "LONG" if signal.signal_type == "BUY" else "SHORT"
+            order_side = signal.signal_type
+            stop_loss = to_decimal(preview.get("stop_loss"), "0")
+            target = to_decimal(preview.get("target"), "0")
+            if str(preview.get("quantity_mode") or "").upper() == "LOTS":
+                qty = to_decimal(preview.get("final_lot_size"), "0")
+            else:
+                qty = to_decimal(preview.get("final_quantity"), "0")
+            sizing_metadata = preview.get("risk_metadata") or {}
         if qty <= 0:
             signal.status = "REJECTED"
-            signal.rejection_reason = "Calculated quantity is zero"
-            await _log(db, deployment, "RISK_REJECTED", "Calculated quantity is zero", "WARNING", {"signal_id": str(signal.id)})
+            signal.rejection_reason = "Calculated lot/quantity is zero"
+            await _log(db, deployment, "RISK_REJECTED", "Calculated lot/quantity is zero", "WARNING", {"signal_id": str(signal.id), "sizing": sizing_metadata})
             return latest_order
         order_side = "BUY" if position_side == "LONG" else "SELL"
         if deployment.mode == "PAPER":
             latest_order = await fill_market_order(db, deployment, signal, order_side, qty, price, stop_loss, target, action="ENTRY")
+            if latest_order is not None:
+                raw = getattr(latest_order, "raw_response", None) or {}
+                latest_order.raw_response = {**raw, **({"sizing": sizing_metadata} if sizing_metadata else {})}
+                for field, key in {
+                    "quantity_mode": "quantity_mode",
+                    "requested_lot": "requested_lot",
+                    "final_lot": "final_lot",
+                    "requested_quantity": "requested_quantity",
+                    "final_quantity": "final_quantity",
+                    "risk_amount": "risk_amount",
+                    "actual_risk": "actual_risk",
+                    "instrument_spec_snapshot": "instrument_spec_snapshot",
+                    "runtime_config_snapshot": "runtime_config_snapshot",
+                }.items():
+                    if hasattr(latest_order, field):
+                        setattr(latest_order, field, sizing_metadata.get(key))
             await open_position(db, deployment, signal.symbol, position_side, qty, price, stop_loss, target)
             signal.status = "EXECUTED"
+            await _log(db, deployment, "PAPER_ORDER_SIZED", "Paper order sized with shared risk engine", metadata={"signal_id": str(signal.id), "sizing": sizing_metadata})
         elif deployment.mode == "DEMO":
-            broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none() if deployment.broker_account_id else None
             if broker is not None and get_broker_code(broker) == "UPSTOX":
-                latest_order = await _execute_upstox_entry(db, deployment, signal, order_side, position_side, qty, price, stop_loss, target)
+                latest_order = await _execute_upstox_entry(db, deployment, signal, order_side, position_side, qty, price, stop_loss, target, sizing_metadata=sizing_metadata)
             else:
-                latest_order = await _execute_demo_entry(db, deployment, signal, order_side, position_side, qty, price, stop_loss, target)
+                latest_order = await _execute_demo_entry(db, deployment, signal, order_side, position_side, qty, price, stop_loss, target, sizing_metadata=sizing_metadata)
         await create_equity_point(db, deployment)
         return latest_order
 

@@ -12,6 +12,7 @@ import {
   type ImplementedStrategy,
   type AdminStrategySandboxResult,
   type StrategyPreset,
+  type StrategyRuntimePreset,
   type StrategyVersion,
   type StrategyWorkflowStatus,
 } from "@/lib/api/admin";
@@ -83,6 +84,157 @@ const recommendPresetKey = (timeframe: string, strategyType: string) => {
   return '';
 };
 
+
+const DEFAULT_RUNTIME_PRESET_CONFIG: Record<string, any> = {
+  risk: {
+    initial_capital: 100000,
+    risk_percent: 0.01,
+    position_size_mode: "RISK_BASED",
+    fixed_lot: null,
+    fixed_quantity: null,
+    max_lot_cap: null,
+    max_quantity_cap: null,
+  },
+  sl_tp: {
+    sl_mode: "ATR",
+    rr_ratio: 2,
+    atr_period: 14,
+    atr_multiplier: 1.5,
+    swing_lookback: 5,
+    fixed_price_risk_pct: 0.002,
+  },
+  execution: {
+    entry_mode: "NEXT_CANDLE_OPEN",
+    exit_on_opposite_signal: true,
+    allow_long: true,
+    allow_short: true,
+    max_trades_per_day: null,
+    max_open_positions: 1,
+    intraday_square_off: false,
+    square_off_time: "15:15",
+  },
+  trade_management: {
+    break_even_enabled: false,
+    break_even_trigger_r: 1,
+    break_even_offset_points: 0,
+    trailing_enabled: false,
+    trailing_mode: "ATR_TRAIL",
+    trail_start_r: 1.5,
+    trail_atr_multiplier: 1,
+    partial_exit_enabled: false,
+    partial_exit_at_r: 1,
+    partial_exit_percent: 0.5,
+  },
+  strategy_params: {},
+};
+
+const RUNTIME_PRESET_TEMPLATES: Record<string, { description: string; config: Record<string, any> }> = {
+  Conservative: {
+    description: "Lower risk preset with wider ATR stop and breakeven protection.",
+    config: {
+      risk: { risk_percent: 0.005, position_size_mode: "RISK_BASED" },
+      sl_tp: { sl_mode: "ATR", rr_ratio: 2, atr_multiplier: 2, atr_period: 14 },
+      trade_management: { break_even_enabled: true, break_even_trigger_r: 1, trailing_enabled: false },
+    },
+  },
+  Balanced: {
+    description: "Balanced default preset for normal backtesting.",
+    config: {
+      risk: { risk_percent: 0.01, position_size_mode: "RISK_BASED" },
+      sl_tp: { sl_mode: "ATR", rr_ratio: 2, atr_multiplier: 1.5, atr_period: 14 },
+      trade_management: { break_even_enabled: false, trailing_enabled: false },
+    },
+  },
+  Aggressive: {
+    description: "Higher risk and reward preset for advanced testing.",
+    config: {
+      risk: { risk_percent: 0.02, position_size_mode: "RISK_BASED" },
+      sl_tp: { sl_mode: "SWING", rr_ratio: 3, swing_lookback: 5 },
+      trade_management: { break_even_enabled: false, trailing_enabled: true, trail_start_r: 1.5, trailing_mode: "ATR_TRAIL" },
+    },
+  },
+};
+
+const runtimeDeepMerge = (base: any, override: any): Record<string, any> => {
+  const output = { ...(base || {}) };
+  Object.entries(override || {}).forEach(([key, value]) => {
+    if (value && typeof value === "object" && !Array.isArray(value) && output[key] && typeof output[key] === "object" && !Array.isArray(output[key])) {
+      output[key] = runtimeDeepMerge(output[key], value);
+    } else {
+      output[key] = value;
+    }
+  });
+  return output;
+};
+
+const normalizePresetConfigForForm = (config: any): Record<string, any> => runtimeDeepMerge(DEFAULT_RUNTIME_PRESET_CONFIG, config || {});
+
+const getConfigValue = (config: any, path: string, fallback: any = "") => {
+  const value = path.split(".").reduce((acc: any, key) => (acc == null ? undefined : acc[key]), config);
+  return value ?? fallback;
+};
+
+const setConfigValue = (config: any, path: string, value: any): Record<string, any> => {
+  const next = JSON.parse(JSON.stringify(config || {}));
+  const keys = path.split(".");
+  let cursor = next;
+  keys.slice(0, -1).forEach((key) => {
+    if (!cursor[key] || typeof cursor[key] !== "object") cursor[key] = {};
+    cursor = cursor[key];
+  });
+  cursor[keys[keys.length - 1]] = value;
+  return next;
+};
+
+const parsePresetJson = (value: string): { ok: boolean; config: Record<string, any>; error?: string } => {
+  try {
+    return { ok: true, config: normalizePresetConfigForForm(JSON.parse(value || "{}")) };
+  } catch (error: any) {
+    return { ok: false, config: normalizePresetConfigForForm({}), error: error?.message || "Invalid JSON" };
+  }
+};
+
+const presetSummary = (preset: StrategyRuntimePreset) => {
+  const cfg = normalizePresetConfigForForm(preset.config_json || preset.configJson || {});
+  return {
+    risk: `${(safeNumber(cfg.risk?.risk_percent, 0) * 100).toFixed(2)}%`,
+    sl: cfg.sl_tp?.sl_mode === "ATR" ? `ATR × ${cfg.sl_tp?.atr_multiplier ?? "—"}` : String(cfg.sl_tp?.sl_mode || "—"),
+    rr: `1:${cfg.sl_tp?.rr_ratio ?? "—"}`,
+    position: String(cfg.risk?.position_size_mode || "RISK_BASED").replaceAll("_", " "),
+    be: cfg.trade_management?.break_even_enabled ? `On @ ${cfg.trade_management?.break_even_trigger_r ?? 1}R` : "Off",
+    trail: cfg.trade_management?.trailing_enabled ? String(cfg.trade_management?.trailing_mode || "ATR_TRAIL").replaceAll("_", " ") : "Off",
+  };
+};
+
+const validatePresetFormConfig = (config: any, meta: { name: string; advancedJsonError?: string | null }) => {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const risk = config.risk || {};
+  const sltp = config.sl_tp || {};
+  const execution = config.execution || {};
+  const tm = config.trade_management || {};
+  if (!meta.name.trim()) errors.push("Preset name is required.");
+  if (meta.advancedJsonError) errors.push(`Advanced JSON is invalid: ${meta.advancedJsonError}`);
+  const riskPercent = safeNumber(risk.risk_percent, 0);
+  if (riskPercent <= 0 || riskPercent > 0.10) errors.push("Risk percent must be between 0 and 10%.");
+  if (riskPercent > 0.03) warnings.push("Risk percent above 3% is high. Use only for advanced testing.");
+  if (risk.position_size_mode === "FIXED_LOT" && safeNumber(risk.fixed_lot, 0) <= 0) errors.push("Fixed lot is required when position size mode is FIXED_LOT.");
+  if (risk.position_size_mode === "FIXED_QUANTITY" && safeNumber(risk.fixed_quantity, 0) <= 0) errors.push("Fixed quantity is required when position size mode is FIXED_QUANTITY.");
+  if (safeNumber(sltp.rr_ratio, 0) <= 0) errors.push("RR ratio must be greater than zero.");
+  if (safeNumber(sltp.atr_period, 0) <= 0) errors.push("ATR period must be greater than zero.");
+  if (safeNumber(sltp.atr_multiplier, 0) <= 0) errors.push("ATR multiplier must be greater than zero.");
+  if (safeNumber(sltp.swing_lookback, 0) <= 0) errors.push("Swing lookback must be greater than zero.");
+  if (safeNumber(sltp.fixed_price_risk_pct, 0) <= 0) errors.push("Fixed price risk % must be greater than zero.");
+  if (safeNumber(execution.max_open_positions, 0) < 1) errors.push("Max open positions must be at least 1.");
+  if (execution.max_trades_per_day !== null && execution.max_trades_per_day !== "" && safeNumber(execution.max_trades_per_day, 0) < 1) errors.push("Max trades per day must be empty or at least 1.");
+  if (!/^\d{2}:\d{2}$/.test(String(execution.square_off_time || "15:15"))) errors.push("Square off time must use HH:mm format.");
+  if (safeNumber(tm.break_even_trigger_r, 0) <= 0) errors.push("Breakeven trigger R must be greater than zero.");
+  if (safeNumber(tm.trail_start_r, 0) <= 0) errors.push("Trail start R must be greater than zero.");
+  const partialPercent = safeNumber(tm.partial_exit_percent, 0);
+  if (tm.partial_exit_enabled && (partialPercent <= 0 || partialPercent > 100)) errors.push("Partial exit percent must be between 1 and 100 when enabled.");
+  return { errors, warnings };
+};
+
 export default function AdminStrategyWorkspacePage() {
   const params = useParams<{ strategyId: string }>();
   const strategyId = params?.strategyId as string;
@@ -100,6 +252,19 @@ export default function AdminStrategyWorkspacePage() {
   const [versions, setVersions] = useState<StrategyVersion[]>([]);
   const [workflow, setWorkflow] = useState<StrategyWorkflowStatus | null>(null);
   const [presets, setPresets] = useState<StrategyPreset[]>([]);
+  const [runtimePresets, setRuntimePresets] = useState<StrategyRuntimePreset[]>([]);
+  const [runtimePresetForm, setRuntimePresetForm] = useState({
+    name: "Balanced",
+    description: "Balanced default runtime preset",
+    risk_label: "Balanced",
+    config_json: JSON.stringify(normalizePresetConfigForForm(RUNTIME_PRESET_TEMPLATES.Balanced.config), null, 2),
+    is_active: true,
+    is_default: false,
+  });
+  const [editingRuntimePresetId, setEditingRuntimePresetId] = useState<string | null>(null);
+  const [showAdvancedRuntimeJson, setShowAdvancedRuntimeJson] = useState(false);
+  const [allowAdvancedRuntimeJsonEdit, setAllowAdvancedRuntimeJsonEdit] = useState(false);
+  const [runtimePresetSaving, setRuntimePresetSaving] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState<string>("");
   const [selectedVersionId, setSelectedVersionId] = useState<string>("");
   const [sandboxInput, setSandboxInput] = useState({ instrument_id: 1, timeframe: "5m", start_date: "2025-12-24", end_date: "2025-12-26", capital: 100000 });
@@ -108,11 +273,12 @@ export default function AdminStrategyWorkspacePage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [strategyData, instrumentsResponse, versionsResponse, presetResponse] = await Promise.all([
+      const [strategyData, instrumentsResponse, versionsResponse, presetResponse, runtimePresetResponse] = await Promise.all([
         adminApi.getAdminStrategyById(strategyId),
         backtestsApi.getInstruments(),
         adminApi.listAdminStrategyVersions(strategyId),
         adminApi.listAdminStrategyPresets(),
+        adminApi.listStrategyRuntimePresets(strategyId),
       ]);
       const instruments = Array.isArray(instrumentsResponse) ? instrumentsResponse : [];
       setCatalog(instruments.map((item: any) => ({ id: Number(item.id), symbol: item.symbol || item.name || `#${item.id}` })));
@@ -121,6 +287,7 @@ export default function AdminStrategyWorkspacePage() {
       setVersions(versionsResponse.items || []);
       setWorkflow(versionsResponse.workflow || strategyData.workflow || null);
       setPresets(presetResponse.items || []);
+      setRuntimePresets(runtimePresetResponse.items || []);
       if (versionsResponse.items?.[0]?.version_id) setSelectedVersionId((prev) => prev || versionsResponse.items[0].version_id);
       if (instruments[0]?.id) {
         setSandboxInput((prev) => ({ ...prev, instrument_id: Number(instruments[0].id) }));
@@ -149,6 +316,11 @@ export default function AdminStrategyWorkspacePage() {
   const changedLines = useMemo(() => calcChangedLines(currentSource, selectedVersionSource), [currentSource, selectedVersionSource]);
   const recommendedPresetKey = useMemo(() => recommendPresetKey(String(sandboxInput.timeframe || form?.timeframe || ''), String(form?.strategy_type || '')), [sandboxInput.timeframe, form?.timeframe, form?.strategy_type]);
   const recommendedPreset = useMemo(() => presets.find((item) => item.key === recommendedPresetKey) || null, [presets, recommendedPresetKey]);
+  const runtimePresetJsonState = useMemo(() => parsePresetJson(runtimePresetForm.config_json), [runtimePresetForm.config_json]);
+  const runtimePresetConfig = runtimePresetJsonState.config;
+  const runtimePresetValidation = useMemo(() => validatePresetFormConfig(runtimePresetConfig, { name: runtimePresetForm.name, advancedJsonError: runtimePresetJsonState.ok ? null : runtimePresetJsonState.error }), [runtimePresetConfig, runtimePresetForm.name, runtimePresetJsonState.ok, runtimePresetJsonState.error]);
+  const runtimeConfigSchema = useMemo(() => ((strategy as any)?.runtime_config_schema || (strategy as any)?.runtimeConfigSchema || {}) as Record<string, any>, [strategy]);
+  const strategyParamSchema = useMemo(() => (runtimeConfigSchema?.strategy_params || {}) as Record<string, any>, [runtimeConfigSchema]);
 
   useEffect(() => {
     if (recommendedPresetKey && !selectedPreset) setSelectedPreset(recommendedPresetKey);
@@ -294,6 +466,108 @@ export default function AdminStrategyWorkspacePage() {
     }
   };
 
+  const refreshRuntimePresets = async () => {
+    try {
+      const response = await adminApi.listStrategyRuntimePresets(strategyId);
+      setRuntimePresets(response.items || []);
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to refresh runtime presets");
+    }
+  };
+
+  const updateRuntimePresetConfig = (path: string, value: any) => {
+    const next = setConfigValue(runtimePresetConfig, path, value);
+    setRuntimePresetForm((prev) => ({ ...prev, config_json: JSON.stringify(next, null, 2) }));
+  };
+
+  const resetRuntimePresetForm = (kind: "Conservative" | "Balanced" | "Aggressive" = "Balanced") => {
+    const template = RUNTIME_PRESET_TEMPLATES[kind];
+    setEditingRuntimePresetId(null);
+    setAllowAdvancedRuntimeJsonEdit(false);
+    setShowAdvancedRuntimeJson(false);
+    setRuntimePresetForm({
+      name: kind,
+      description: template.description,
+      risk_label: kind,
+      config_json: JSON.stringify(normalizePresetConfigForForm(template.config), null, 2),
+      is_active: true,
+      is_default: kind === "Balanced",
+    });
+  };
+
+  const saveRuntimePreset = async () => {
+    const validation = validatePresetFormConfig(runtimePresetConfig, { name: runtimePresetForm.name, advancedJsonError: runtimePresetJsonState.ok ? null : runtimePresetJsonState.error });
+    if (validation.errors.length) {
+      toast.error(validation.errors[0]);
+      return;
+    }
+    setRuntimePresetSaving(true);
+    try {
+      const payload = {
+        name: runtimePresetForm.name.trim(),
+        description: runtimePresetForm.description,
+        risk_label: runtimePresetForm.risk_label,
+        config_json: runtimePresetConfig,
+        is_default: runtimePresetForm.is_default,
+        is_active: runtimePresetForm.is_active,
+      };
+      if (editingRuntimePresetId) {
+        await adminApi.updateStrategyRuntimePreset(editingRuntimePresetId, payload);
+        toast.success("Runtime preset updated");
+      } else {
+        await adminApi.createStrategyRuntimePreset(strategyId, payload);
+        toast.success("Runtime preset created");
+      }
+      resetRuntimePresetForm("Balanced");
+      await refreshRuntimePresets();
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail;
+      const message = detail?.message || detail?.errors?.[0] || error?.message || "Failed to save runtime preset";
+      toast.error(message);
+    } finally {
+      setRuntimePresetSaving(false);
+    }
+  };
+
+  const loadRuntimePresetForEdit = (preset: StrategyRuntimePreset) => {
+    setEditingRuntimePresetId(preset.id);
+    setShowAdvancedRuntimeJson(false);
+    setAllowAdvancedRuntimeJsonEdit(false);
+    setRuntimePresetForm({
+      name: preset.name || "Preset",
+      description: preset.description || "",
+      risk_label: preset.risk_label || preset.riskLabel || "",
+      config_json: JSON.stringify(normalizePresetConfigForForm(preset.config_json || preset.configJson || {}), null, 2),
+      is_active: Boolean(preset.is_active ?? preset.isActive ?? true),
+      is_default: Boolean(preset.is_default ?? preset.isDefault ?? false),
+    });
+  };
+
+  const createExampleRuntimePreset = (kind: "Conservative" | "Balanced" | "Aggressive") => {
+    resetRuntimePresetForm(kind);
+    toast.success(`${kind} template loaded. Review fields and click Save Preset.`);
+  };
+
+  const makeRuntimePresetDefault = async (presetId: string) => {
+    try {
+      await adminApi.makeStrategyRuntimePresetDefault(presetId);
+      toast.success("Default preset updated");
+      await refreshRuntimePresets();
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to mark default");
+    }
+  };
+
+  const toggleRuntimePresetActive = async (preset: StrategyRuntimePreset) => {
+    try {
+      await adminApi.updateStrategyRuntimePreset(preset.id, { is_active: !(preset.is_active ?? preset.isActive) });
+      toast.success("Runtime preset updated");
+      await refreshRuntimePresets();
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to update preset");
+    }
+  };
+
   const updateDeploymentGate = async (payload: { is_deployable_paper?: boolean; is_deployable_demo?: boolean; is_live_approved?: boolean; reason?: string }) => {
     try {
       const updated = await adminApi.updateAdminStrategyDeploymentGate(strategyId, payload);
@@ -420,6 +694,190 @@ export default function AdminStrategyWorkspacePage() {
             <div className="flex gap-2">
               <Button variant="outline" className="rounded-xl" onClick={rollbackVersion} disabled={!selectedVersion}><RotateCcw className="mr-2 h-4 w-4" />Rollback</Button>
               <div className="rounded-xl border border-border/50 bg-card/20 px-3 py-2 text-xs text-muted-foreground">Changed lines vs selected: <span className="text-foreground">{selectedVersion ? changedLines : 0}</span></div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+
+      <section className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+        <Card className="rounded-xl border border-primary/30 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader>
+            <CardTitle>Runtime Presets</CardTitle>
+            <CardDescription>Admin-managed defaults and presets shown in the user Backtest Runtime Settings drawer.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {(["Conservative", "Balanced", "Aggressive"] as const).map((kind) => (
+                <Button key={kind} variant="outline" disabled={runtimePresetSaving} className="rounded-xl" onClick={() => createExampleRuntimePreset(kind)}>Load {kind} Form</Button>
+              ))}
+            </div>
+            <div className="space-y-3">
+              {runtimePresets.length ? runtimePresets.map((preset) => {
+                const summary = presetSummary(preset);
+                return (
+                  <div key={preset.id} className="rounded-xl border border-border/50 bg-card/20 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-semibold text-foreground">{preset.name}</p>
+                          {(preset.is_default || preset.isDefault) && <span className="rounded-full bg-primary/20 px-2 py-1 text-xs text-primary-foreground">Default</span>}
+                          <span className={`rounded-full px-2 py-1 text-xs ${(preset.is_active ?? preset.isActive) ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"}`}>{(preset.is_active ?? preset.isActive) ? "Active" : "Inactive"}</span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">{preset.description || "No description"}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Risk label: {preset.risk_label || preset.riskLabel || "—"}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" className="rounded-xl" onClick={() => loadRuntimePresetForEdit(preset)}>Edit Form</Button>
+                        <Button variant="outline" className="rounded-xl" onClick={() => { loadRuntimePresetForEdit(preset); setShowAdvancedRuntimeJson(true); }}>Preview JSON</Button>
+                        <Button variant="outline" className="rounded-xl" disabled={Boolean(preset.is_default || preset.isDefault)} onClick={() => void makeRuntimePresetDefault(preset.id)}>Make Default</Button>
+                        <Button variant="outline" className="rounded-xl" onClick={() => void toggleRuntimePresetActive(preset)}>{(preset.is_active ?? preset.isActive) ? "Deactivate" : "Activate"}</Button>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-3">
+                      {[
+                        ["Risk", summary.risk],
+                        ["SL", summary.sl],
+                        ["RR", summary.rr],
+                        ["Position", summary.position],
+                        ["BE", summary.be],
+                        ["Trail", summary.trail],
+                      ].map(([label, value]) => (
+                        <div key={label} className="rounded-lg border border-border/40 bg-black/10 p-2">
+                          <p className="text-muted-foreground">{label}</p>
+                          <p className="mt-1 font-medium text-foreground">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              }) : (
+                <div className="rounded-xl border border-dashed border-border/50 p-5 text-sm text-muted-foreground">No runtime presets yet. Load Conservative, Balanced, or Aggressive, review the form, then save to expose preset choices to users.</div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader>
+            <CardTitle>{editingRuntimePresetId ? "Edit Runtime Preset" : "Create Runtime Preset"}</CardTitle>
+            <CardDescription>Use clean form controls. AlgoAgentX generates valid runtime config JSON in the background.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+              <p className="mb-3 text-sm font-semibold text-foreground">Preset Info</p>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <input className={fieldClass} value={runtimePresetForm.name} onChange={(e)=>setRuntimePresetForm((p)=>({...p,name:e.target.value}))} placeholder="Preset name" />
+                <input className={fieldClass} value={runtimePresetForm.risk_label} onChange={(e)=>setRuntimePresetForm((p)=>({...p,risk_label:e.target.value}))} placeholder="Risk label" />
+              </div>
+              <input className={`${fieldClass} mt-4`} value={runtimePresetForm.description} onChange={(e)=>setRuntimePresetForm((p)=>({...p,description:e.target.value}))} placeholder="Description" />
+              <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+                <label className="flex items-center gap-2"><input type="checkbox" checked={runtimePresetForm.is_active} onChange={(e)=>setRuntimePresetForm((p)=>({...p,is_active:e.target.checked}))} /> Active</label>
+                <label className="flex items-center gap-2"><input type="checkbox" checked={runtimePresetForm.is_default} onChange={(e)=>setRuntimePresetForm((p)=>({...p,is_default:e.target.checked}))} /> Mark as default</label>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+              <p className="mb-3 text-sm font-semibold text-foreground">Risk Settings</p>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div><p className="mb-2 text-xs text-muted-foreground">Initial Capital</p><input className={fieldClass} type="number" value={getConfigValue(runtimePresetConfig,"risk.initial_capital",100000)} onChange={(e)=>updateRuntimePresetConfig("risk.initial_capital", Number(e.target.value))} /></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">Risk Percent</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"risk.risk_percent",0.01)} onChange={(e)=>updateRuntimePresetConfig("risk.risk_percent", Number(e.target.value))}>{[0.0025,0.005,0.01,0.015,0.02,0.03,0.05].map((v)=><option key={v} value={v}>{(v*100).toFixed(2)}%</option>)}</select></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">Position Size Mode</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"risk.position_size_mode","RISK_BASED")} onChange={(e)=>updateRuntimePresetConfig("risk.position_size_mode", e.target.value)}><option value="RISK_BASED">Risk Based</option><option value="FIXED_LOT">Fixed Lot</option><option value="FIXED_QUANTITY">Fixed Quantity</option></select></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">Max Lot Cap</p><input className={fieldClass} type="number" value={getConfigValue(runtimePresetConfig,"risk.max_lot_cap","") ?? ""} onChange={(e)=>updateRuntimePresetConfig("risk.max_lot_cap", e.target.value === "" ? null : Number(e.target.value))} /></div>
+                {getConfigValue(runtimePresetConfig,"risk.position_size_mode") === "FIXED_LOT" && <div><p className="mb-2 text-xs text-muted-foreground">Fixed Lot</p><input className={fieldClass} type="number" step="0.01" value={getConfigValue(runtimePresetConfig,"risk.fixed_lot","") ?? ""} onChange={(e)=>updateRuntimePresetConfig("risk.fixed_lot", e.target.value === "" ? null : Number(e.target.value))} /></div>}
+                {getConfigValue(runtimePresetConfig,"risk.position_size_mode") === "FIXED_QUANTITY" && <div><p className="mb-2 text-xs text-muted-foreground">Fixed Quantity</p><input className={fieldClass} type="number" value={getConfigValue(runtimePresetConfig,"risk.fixed_quantity","") ?? ""} onChange={(e)=>updateRuntimePresetConfig("risk.fixed_quantity", e.target.value === "" ? null : Number(e.target.value))} /></div>}
+                <div><p className="mb-2 text-xs text-muted-foreground">Max Quantity Cap</p><input className={fieldClass} type="number" value={getConfigValue(runtimePresetConfig,"risk.max_quantity_cap","") ?? ""} onChange={(e)=>updateRuntimePresetConfig("risk.max_quantity_cap", e.target.value === "" ? null : Number(e.target.value))} /></div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+              <p className="mb-3 text-sm font-semibold text-foreground">SL / TP Settings</p>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div><p className="mb-2 text-xs text-muted-foreground">SL Mode</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"sl_tp.sl_mode","ATR")} onChange={(e)=>updateRuntimePresetConfig("sl_tp.sl_mode", e.target.value)}><option value="ATR">ATR</option><option value="SWING">Swing</option><option value="FIXED_PERCENT">Fixed Percent</option><option value="STRATEGY_SUGGESTED">Strategy Suggested</option></select></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">RR Ratio</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"sl_tp.rr_ratio",2)} onChange={(e)=>updateRuntimePresetConfig("sl_tp.rr_ratio", Number(e.target.value))}>{[1,1.5,2,3,4,5].map((v)=><option key={v} value={v}>{v}</option>)}</select></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">ATR Period</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"sl_tp.atr_period",14)} onChange={(e)=>updateRuntimePresetConfig("sl_tp.atr_period", Number(e.target.value))}>{[7,10,14,20,21,50].map((v)=><option key={v} value={v}>{v}</option>)}</select></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">ATR Multiplier</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"sl_tp.atr_multiplier",1.5)} onChange={(e)=>updateRuntimePresetConfig("sl_tp.atr_multiplier", Number(e.target.value))}>{[1,1.5,2,2.5,3].map((v)=><option key={v} value={v}>{v}</option>)}</select></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">Swing Lookback</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"sl_tp.swing_lookback",5)} onChange={(e)=>updateRuntimePresetConfig("sl_tp.swing_lookback", Number(e.target.value))}>{[3,5,10,20].map((v)=><option key={v} value={v}>{v}</option>)}</select></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">Fixed Price Risk %</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"sl_tp.fixed_price_risk_pct",0.002)} onChange={(e)=>updateRuntimePresetConfig("sl_tp.fixed_price_risk_pct", Number(e.target.value))}>{[0.001,0.002,0.005,0.01,0.02].map((v)=><option key={v} value={v}>{(v*100).toFixed(2)}%</option>)}</select></div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+              <p className="mb-3 text-sm font-semibold text-foreground">Execution Settings</p>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div><p className="mb-2 text-xs text-muted-foreground">Entry Mode</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"execution.entry_mode","NEXT_CANDLE_OPEN")} onChange={(e)=>updateRuntimePresetConfig("execution.entry_mode", e.target.value)}><option value="NEXT_CANDLE_OPEN">Next Candle Open</option></select></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">Max Open Positions</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"execution.max_open_positions",1)} onChange={(e)=>updateRuntimePresetConfig("execution.max_open_positions", Number(e.target.value))}>{[1,2,3,5].map((v)=><option key={v} value={v}>{v}</option>)}</select></div>
+                <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(getConfigValue(runtimePresetConfig,"execution.exit_on_opposite_signal",true))} onChange={(e)=>updateRuntimePresetConfig("execution.exit_on_opposite_signal", e.target.checked)} /> Exit on opposite signal</label>
+                <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(getConfigValue(runtimePresetConfig,"execution.allow_long",true))} onChange={(e)=>updateRuntimePresetConfig("execution.allow_long", e.target.checked)} /> Allow Long</label>
+                <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(getConfigValue(runtimePresetConfig,"execution.allow_short",true))} onChange={(e)=>updateRuntimePresetConfig("execution.allow_short", e.target.checked)} /> Allow Short</label>
+                <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(getConfigValue(runtimePresetConfig,"execution.intraday_square_off",false))} onChange={(e)=>updateRuntimePresetConfig("execution.intraday_square_off", e.target.checked)} /> Intraday Square Off</label>
+                <div><p className="mb-2 text-xs text-muted-foreground">Max Trades Per Day</p><input className={fieldClass} type="number" value={getConfigValue(runtimePresetConfig,"execution.max_trades_per_day","") ?? ""} onChange={(e)=>updateRuntimePresetConfig("execution.max_trades_per_day", e.target.value === "" ? null : Number(e.target.value))} /></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">Square Off Time</p><input className={fieldClass} type="time" value={getConfigValue(runtimePresetConfig,"execution.square_off_time","15:15")} onChange={(e)=>updateRuntimePresetConfig("execution.square_off_time", e.target.value)} /></div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+              <p className="mb-3 text-sm font-semibold text-foreground">Trade Management</p>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(getConfigValue(runtimePresetConfig,"trade_management.break_even_enabled",false))} onChange={(e)=>updateRuntimePresetConfig("trade_management.break_even_enabled", e.target.checked)} /> Break Even Enabled</label>
+                <div><p className="mb-2 text-xs text-muted-foreground">Break Even Trigger R</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"trade_management.break_even_trigger_r",1)} onChange={(e)=>updateRuntimePresetConfig("trade_management.break_even_trigger_r", Number(e.target.value))}>{[0.5,1,1.5,2].map((v)=><option key={v} value={v}>{v}</option>)}</select></div>
+                <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(getConfigValue(runtimePresetConfig,"trade_management.trailing_enabled",false))} onChange={(e)=>updateRuntimePresetConfig("trade_management.trailing_enabled", e.target.checked)} /> Trailing Enabled</label>
+                <div><p className="mb-2 text-xs text-muted-foreground">Trailing Mode</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"trade_management.trailing_mode","ATR_TRAIL")} onChange={(e)=>updateRuntimePresetConfig("trade_management.trailing_mode", e.target.value)}><option value="ATR_TRAIL">ATR Trail</option><option value="EMA20_TRAIL">EMA20 Trail</option><option value="SWING_TRAIL">Swing Trail</option></select></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">Trail Start R</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"trade_management.trail_start_r",1.5)} onChange={(e)=>updateRuntimePresetConfig("trade_management.trail_start_r", Number(e.target.value))}>{[1,1.5,2,3].map((v)=><option key={v} value={v}>{v}</option>)}</select></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">Trail ATR Multiplier</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"trade_management.trail_atr_multiplier",1)} onChange={(e)=>updateRuntimePresetConfig("trade_management.trail_atr_multiplier", Number(e.target.value))}>{[1,1.5,2,2.5,3].map((v)=><option key={v} value={v}>{v}</option>)}</select></div>
+                <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(getConfigValue(runtimePresetConfig,"trade_management.partial_exit_enabled",false))} onChange={(e)=>updateRuntimePresetConfig("trade_management.partial_exit_enabled", e.target.checked)} /> Partial Exit Enabled</label>
+                <div><p className="mb-2 text-xs text-muted-foreground">Partial Exit At R</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"trade_management.partial_exit_at_r",1)} onChange={(e)=>updateRuntimePresetConfig("trade_management.partial_exit_at_r", Number(e.target.value))}>{[0.5,1,1.5,2].map((v)=><option key={v} value={v}>{v}</option>)}</select></div>
+                <div><p className="mb-2 text-xs text-muted-foreground">Partial Exit Percent</p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"trade_management.partial_exit_percent",0.5)} onChange={(e)=>updateRuntimePresetConfig("trade_management.partial_exit_percent", Number(e.target.value))}>{[[0.25,"25%"],[0.5,"50%"],[0.75,"75%"]].map(([v,label])=><option key={String(v)} value={Number(v)}>{label}</option>)}</select></div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+              <p className="mb-3 text-sm font-semibold text-foreground">Strategy Params</p>
+              {Object.keys(strategyParamSchema).length ? (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {Object.entries(strategyParamSchema).map(([key, schema]: any) => {
+                    const fieldType = schema?.type || "text";
+                    const label = schema?.label || key;
+                    const value = getConfigValue(runtimePresetConfig, `strategy_params.${key}`, schema?.default ?? "");
+                    if (fieldType === "boolean") {
+                      return <label key={key} className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(value)} onChange={(e)=>updateRuntimePresetConfig(`strategy_params.${key}`, e.target.checked)} /> {label}</label>;
+                    }
+                    if (fieldType === "select" && Array.isArray(schema?.options)) {
+                      return <div key={key}><p className="mb-2 text-xs text-muted-foreground">{label}</p><select className={fieldClass} value={value} onChange={(e)=>updateRuntimePresetConfig(`strategy_params.${key}`, e.target.value)}>{schema.options.map((option: any)=><option key={String(option.value ?? option)} value={option.value ?? option}>{option.label ?? option.value ?? option}</option>)}</select></div>;
+                    }
+                    return <div key={key}><p className="mb-2 text-xs text-muted-foreground">{label}</p><input className={fieldClass} type={fieldType === "number" ? "number" : "text"} value={value} min={schema?.min} max={schema?.max} onChange={(e)=>updateRuntimePresetConfig(`strategy_params.${key}`, fieldType === "number" ? Number(e.target.value) : e.target.value)} /></div>;
+                  })}
+                </div>
+              ) : <p className="text-sm text-muted-foreground">No dynamic strategy params are defined for this strategy schema.</p>}
+            </div>
+
+            <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Generated Runtime Config JSON</p>
+                  <p className="text-xs text-muted-foreground">Readonly preview by default. Advanced raw editing is hidden for safety.</p>
+                </div>
+                <Button variant="outline" className="rounded-xl" onClick={()=>setShowAdvancedRuntimeJson((v)=>!v)}>{showAdvancedRuntimeJson ? "Hide JSON" : "Preview JSON"}</Button>
+              </div>
+              {showAdvancedRuntimeJson && (
+                <div className="mt-4 space-y-3">
+                  <textarea readOnly={!allowAdvancedRuntimeJsonEdit} className={`${fieldClass} min-h-[220px] font-mono text-xs ${allowAdvancedRuntimeJsonEdit ? "" : "opacity-80"}`} value={runtimePresetForm.config_json} onChange={(e)=>setRuntimePresetForm((p)=>({...p,config_json:e.target.value}))} />
+                  {!allowAdvancedRuntimeJsonEdit ? <Button variant="outline" className="rounded-xl" onClick={()=>setAllowAdvancedRuntimeJsonEdit(true)}>I understand advanced JSON editing</Button> : <p className="text-xs text-amber-300">Advanced JSON edit is enabled. Save is blocked while JSON is invalid.</p>}
+                  {!runtimePresetJsonState.ok && <p className="text-xs text-rose-300">Invalid JSON: {runtimePresetJsonState.error}</p>}
+                </div>
+              )}
+            </div>
+
+            {(runtimePresetValidation.errors.length > 0 || runtimePresetValidation.warnings.length > 0) && (
+              <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm">
+                {runtimePresetValidation.errors.map((item) => <p key={item} className="text-rose-300">• {item}</p>)}
+                {runtimePresetValidation.warnings.map((item) => <p key={item} className="text-amber-300">• {item}</p>)}
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-3">
+              <Button onClick={() => void saveRuntimePreset()} disabled={runtimePresetSaving || runtimePresetValidation.errors.length > 0} className="rounded-xl bg-primary text-primary-foreground">{runtimePresetSaving ? "Saving..." : editingRuntimePresetId ? "Update Preset" : "Save Preset"}</Button>
+              <Button variant="outline" className="rounded-xl" onClick={() => resetRuntimePresetForm("Balanced")}>Reset Form</Button>
             </div>
           </CardContent>
         </Card>
