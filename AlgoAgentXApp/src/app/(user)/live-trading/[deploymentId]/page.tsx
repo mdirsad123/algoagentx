@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { PageShell } from "@/components/ui/PageShell";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
-import type { BrokerAccount, BrokerOrderEvent, LiveCandleSnapshot, FullDryTestResponse, FinalQaResult, QaOrderTestResult, LiveDeploymentSummary, LiveReadiness, LiveReadinessCheck, SignalType, StrategyDeployment } from "@/types/live-trading";
+import type { BrokerAccount, LiveCandleSnapshot, FullDryTestResponse, FinalQaResult, QaOrderTestResult, LiveDeploymentSummary, LiveReadiness, LiveReadinessCheck, SignalType, StrategyDeployment } from "@/types/live-trading";
 
 const date = (value?: string | null) => (value ? new Date(value).toLocaleString() : "—");
 const num = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -143,7 +143,6 @@ export default function LiveDeploymentDetailPage() {
   const [summary, setSummary] = useState<LiveDeploymentSummary | null>(null);
   const [readiness, setReadiness] = useState<LiveReadiness | null>(null);
   const [candleSnapshot, setCandleSnapshot] = useState<LiveCandleSnapshot | null>(null);
-  const [brokerEvents, setBrokerEvents] = useState<BrokerOrderEvent[]>([]);
   const [brokerAccounts, setBrokerAccounts] = useState<BrokerAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -175,7 +174,6 @@ export default function LiveDeploymentDetailPage() {
   const latestCandles = candleSnapshot?.candles?.slice(0, 5) || [];
   const runner = summary?.runner;
   const brokerSync = summary?.broker_sync;
-  const positionEvents = summary?.position_events || [];
   const currency = broker?.currency || metrics?.currency || null;
   const isRunning = (summary?.deployment?.status || deployment?.status) === "RUNNING";
   const mode = summary?.deployment?.mode || deployment?.mode;
@@ -206,10 +204,12 @@ export default function LiveDeploymentDetailPage() {
       setBrokerAccounts(accounts);
       if (ready) setReadiness(ready);
       if (candles) setCandleSnapshot(candles);
-      const events = await liveTradingApi.listDeploymentBrokerEvents(deploymentId, 30).catch(() => []);
-      setBrokerEvents(events);
-      const qa = await liveTradingApi.getFinalQa(deploymentId).catch(() => null);
-      if (qa) setFinalQa(qa);
+      // Final QA is intentionally not polled during silent summary refresh.
+      // It is heavy and should run only on initial page load or when user clicks QA buttons.
+      if (!silent) {
+        const qa = await liveTradingApi.getFinalQa(deploymentId).catch(() => null);
+        if (qa) setFinalQa(qa);
+      }
     } catch (error: any) {
       showToast(error.message || "Failed to load deployment summary", "error");
     } finally {
@@ -238,10 +238,12 @@ export default function LiveDeploymentDetailPage() {
       await liveTradingApi.syncDeploymentBroker(deploymentId);
       showToast("Broker orders/positions synced", "success");
       await loadSummary(true);
-      const events = await liveTradingApi.listDeploymentBrokerEvents(deploymentId, 30).catch(() => []);
-      setBrokerEvents(events);
-      const qa = await liveTradingApi.getFinalQa(deploymentId).catch(() => null);
-      if (qa) setFinalQa(qa);
+      // Final QA is intentionally not polled during silent summary refresh.
+      // It is heavy and should run only on initial page load or when user clicks QA buttons.
+      if (!silent) {
+        const qa = await liveTradingApi.getFinalQa(deploymentId).catch(() => null);
+        if (qa) setFinalQa(qa);
+      }
     } catch (error: any) {
       showToast(error.message || "Failed to sync broker", "error");
     } finally {
@@ -312,7 +314,7 @@ export default function LiveDeploymentDetailPage() {
 
   useEffect(() => {
     if (!deploymentId) return;
-    const timer = setInterval(() => loadSummary(true), 5000);
+    const timer = setInterval(() => loadSummary(true), 15000);
     return () => clearInterval(timer);
   }, [deploymentId]);
 
@@ -372,10 +374,12 @@ export default function LiveDeploymentDetailPage() {
       await loadSummary(true);
       const candles = await liveTradingApi.getDeploymentCandles(deploymentId, 5).catch(() => null);
       if (candles) setCandleSnapshot(candles);
-      const events = await liveTradingApi.listDeploymentBrokerEvents(deploymentId, 30).catch(() => []);
-      setBrokerEvents(events);
-      const qa = await liveTradingApi.getFinalQa(deploymentId).catch(() => null);
-      if (qa) setFinalQa(qa);
+      // Final QA is intentionally not polled during silent summary refresh.
+      // It is heavy and should run only on initial page load or when user clicks QA buttons.
+      if (!silent) {
+        const qa = await liveTradingApi.getFinalQa(deploymentId).catch(() => null);
+        if (qa) setFinalQa(qa);
+      }
     } catch (error: any) {
       showToast(error.message || "Strategy runner failed", "error");
     } finally {
@@ -807,33 +811,10 @@ export default function LiveDeploymentDetailPage() {
       </div>
 
       <GlassCard className="mb-6 p-6" hoverEffect={false}>
-        <div className="mb-4 flex items-center justify-between gap-2">
-          <div>
-            <h2 className="text-xl font-bold text-white">Position Timeline</h2>
-            <p className="mt-1 text-sm text-purple-200">Lifecycle events such as opened, SL hit, TP hit, broker sync update, and closed.</p>
-          </div>
-          <Badge className="border-white/10 bg-white/10 text-purple-100">{positionEvents.length} events</Badge>
-        </div>
-        {positionEvents.length === 0 ? <NoRows label="No position lifecycle events yet." /> : (
-          <div className="space-y-2">
-            {positionEvents.slice(0, 8).map((event) => (
-              <div key={event.id} className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-purple-100">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-semibold text-white">{event.event_type}</span>
-                  <span className="text-xs text-purple-300">{date(event.created_at)}</span>
-                </div>
-                <p className="mt-1 text-purple-200">{event.message}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </GlassCard>
-
-      <GlassCard className="mb-6 p-6" hoverEffect={false}>
         <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
           <div>
             <h2 className="text-xl font-bold text-white">Advanced Diagnostics</h2>
-            <p className="mt-1 text-sm text-purple-200">Market data snapshot, raw runner status, broker events, webhook/debug tables and logs are hidden by default.</p>
+            <p className="mt-1 text-sm text-purple-200">Market data snapshot, runner status, signal/order history, and execution logs are hidden by default.</p>
           </div>
           <Button onClick={() => setShowAdvancedDiagnostics((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">
             {showAdvancedDiagnostics ? "Hide Advanced Diagnostics" : "Show Advanced Diagnostics"}
@@ -903,7 +884,7 @@ export default function LiveDeploymentDetailPage() {
               <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
                 <MetricCard label="Strategy" value={summary.deployment?.strategy_name || deployment.strategy_id} />
                 <MetricCard label="Last Run" value={date(runner?.last_run_at)} />
-                <MetricCard label="Last Candle" value={date(runner?.last_candle_time || candleSnapshot?.latest_candle_time)} />
+                <MetricCard label="Last Processed Candle" value={date(runner?.last_processed_candle_time || runner?.last_candle_time || candleSnapshot?.latest_candle_time)} />
                 <MetricCard label="Last Signal" value={runner?.last_signal || summary.latest_signal?.signal_type || "—"} />
                 <MetricCard label="Auto Trade" value={summary.deployment?.auto_trade_enabled ? "ON" : "OFF"} />
                 <MetricCard label="Latest Order" value={runner?.latest_order_status || summary.latest_order?.status || "—"} />
@@ -922,14 +903,6 @@ export default function LiveDeploymentDetailPage() {
               <div className="mt-4 flex flex-wrap gap-2">{(["BUY", "SELL", "EXIT", "HOLD"] as SignalType[]).map((signal) => <Button key={signal} disabled={busy || !isRunning || isDemoBrokerBlocked} onClick={() => sendManualSignal(signal)} className="gap-2 bg-fuchsia-500 text-white hover:bg-fuchsia-400"><Send className="h-4 w-4" />{signal}</Button>)}</div>
             </GlassCard>
           </div>
-
-          <GlassCard className="mb-6 p-6" hoverEffect={false}>
-            <div className="mb-4 flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
-              <div><h2 className="text-xl font-bold text-lime-300">Broker Events</h2><p className="mt-1 text-sm text-purple-200">Recent broker order webhook and sync events. Raw payload is redacted and safe for debugging.</p></div>
-              <Button disabled={brokerBusy || !deployment.broker_account_id} onClick={syncBroker} className="gap-2 bg-emerald-500 text-slate-950 hover:bg-emerald-400"><RefreshCw className="h-4 w-4" />Sync Broker</Button>
-            </div>
-            {brokerEvents.length === 0 ? <NoRows label="No broker events yet. Click Sync Broker after placing a broker order, or configure broker webhook updates." /> : <div className="max-h-[360px] overflow-auto rounded-xl border border-white/10"><table className="w-full min-w-[960px] text-left text-sm"><thead className="sticky top-0 bg-purple-950 text-purple-200"><tr><th className="p-3">Time</th><th>Provider</th><th>Event</th><th>Broker Order ID</th><th>Processed</th><th>Payload</th></tr></thead><tbody className="divide-y divide-white/10">{brokerEvents.map((event) => <tr key={event.id} className="text-purple-50"><td className="p-3">{date(event.created_at)}</td><td>{event.broker_provider_code}</td><td>{event.event_type}</td><td>{event.broker_order_id || "—"}</td><td>{event.processed ? "YES" : "NO"}</td><td className="max-w-[360px] truncate" title={JSON.stringify(event.raw_payload || {})}>{JSON.stringify(event.raw_payload || {}).slice(0, 180)}</td></tr>)}</tbody></table></div>}
-          </GlassCard>
 
           <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
             <GlassCard className="p-6" hoverEffect={false}>

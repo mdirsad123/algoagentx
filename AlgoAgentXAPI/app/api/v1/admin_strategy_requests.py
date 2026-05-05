@@ -13,10 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.dependencies import get_admin_user, get_db
 from ...db.compat import as_uuid_or_str, column_text
 from ...db.models.strategy_requests import StrategyRequest
-from ...db.models.strategies import Strategy
+from ...db.models.strategies import Strategy, StrategyRuntimePreset
 from ...db.models.users import User
 from ...db.models import Instrument, MarketData
 from ...services.backtest_service import BacktestService
+from ...services.dynamic_strategy_loader import validate_dynamic_strategy_source, DynamicStrategyLoadError, DynamicStrategySecurityError
+from ...services.trading.runtime_config_service import get_system_default_runtime_config, get_default_runtime_config_schema, normalize_runtime_config
 from ...utils.api_response import success_response
 from .strategies import (
     PRIVATE_VISIBILITY,
@@ -96,6 +98,89 @@ def _clean(value: Optional[str]) -> Optional[str]:
 
 def _serialize_dt(value: Any) -> Optional[str]:
     return value.isoformat() if value else None
+
+
+def _build_default_runtime_config(params: dict[str, Any] | None = None, strategy_name: str | None = None) -> dict[str, Any]:
+    """Professional default preset for workshop-created strategies.
+
+    Uses the existing common risk/engine contract. If a pasted strategy emits
+    strategy_stop_loss / strategy_target, STRATEGY_SUGGESTED will consume them.
+    Otherwise the engine safely falls back to fixed/ATR behavior based on config.
+    """
+    params = params if isinstance(params, dict) else {}
+    config = get_system_default_runtime_config()
+    config.setdefault("risk", {}).update({
+        "initial_capital": 1000,
+        "risk_percent": float(params.get("risk_percent") or 0.01),
+        "position_size_mode": "RISK_BASED",
+    })
+    config.setdefault("execution", {}).update({
+        "entry_mode": "NEXT_CANDLE_OPEN",
+        "exit_on_opposite_signal": True,
+        "allow_long": True,
+        "allow_short": True,
+        "max_open_positions": 1,
+        "intraday_square_off": False,
+    })
+    config.setdefault("sl_tp", {}).update({
+        "sl_mode": "STRATEGY_SUGGESTED",
+        "use_strategy_suggested_sl": True,
+        "rr_ratio": float(params.get("rr_ratio") or 2.0),
+        "atr_period": int(params.get("atr_period") or 14),
+        "atr_multiplier": float(params.get("atr_multiplier") or 1.5),
+        "swing_lookback": int(params.get("swing_lookback") or 5),
+        "fixed_price_risk_pct": float(params.get("fixed_price_risk_pct") or 0.002),
+    })
+    config.setdefault("strategy_params", {})
+    for key, value in params.items():
+        if str(key).startswith("_") or key in {
+            "source_code", "strategy_type", "market", "timeframe", "entry_rules", "exit_rules",
+            "confirmation_rules", "risk_rules", "invalidation_rules", "trade_management_rules", "notes",
+            "performance_metrics",
+        }:
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            config["strategy_params"][str(key)] = value
+    return normalize_runtime_config(config)
+
+
+async def _ensure_default_runtime_preset(db: AsyncSession, strategy: Strategy, admin_user: dict | None = None) -> None:
+    params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
+    default_config = _build_default_runtime_config(params, strategy.name)
+    strategy.default_runtime_config = strategy.default_runtime_config or default_config
+    strategy.runtime_config_schema = strategy.runtime_config_schema or get_default_runtime_config_schema(
+        " ".join([str(strategy.name or ""), str(params.get("strategy_type") or "")])
+    )
+    strategy.supports_runtime_config = True
+    strategy.config_version = int(getattr(strategy, "config_version", 1) or 1)
+
+    existing_default = (
+        await db.execute(
+            select(StrategyRuntimePreset).where(
+                StrategyRuntimePreset.strategy_id == str(strategy.id),
+                StrategyRuntimePreset.is_default == True,
+                StrategyRuntimePreset.is_active == True,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing_default:
+        if not existing_default.config_json:
+            existing_default.config_json = default_config
+        return
+
+    row = StrategyRuntimePreset(
+        id=str(uuid4()),
+        strategy_id=str(strategy.id),
+        name="Default Risk-Based Runtime",
+        description="Auto-created by Strategy Workshop. Uses common engine, risk-based sizing, next-candle entry, and strategy-suggested SL/TP when provided by code.",
+        config_json=default_config,
+        risk_label="Risk 1% | Strategy SL/TP | RR 1:2",
+        is_default=True,
+        is_active=True,
+        created_by=as_uuid_or_str(admin_user.get("user_id")) if admin_user and admin_user.get("user_id") else None,
+    )
+    db.add(row)
 
 
 def _set_or_remove(params: dict[str, Any], key: str, value: Any, *, remove_if_none: bool = True) -> None:
@@ -335,6 +420,10 @@ def _apply_payload_to_parameters(params: dict[str, Any], payload: StrategyCreate
         _set_or_remove(params, "notes", _clean(payload.notes))
     if getattr(payload, "source_code", None) is not None:
         _set_or_remove(params, "source_code", _clean(payload.source_code), remove_if_none=False)
+        if _clean(payload.source_code):
+            params["engine_mode"] = "DYNAMIC_DB"
+        else:
+            params.pop("engine_mode", None)
 
     if payload.performance_metrics is not None:
         _set_or_remove(params, "performance_metrics", payload.performance_metrics)
@@ -527,14 +616,15 @@ async def validate_strategy_code(
     source_code = str(params.get("source_code") or "")
 
     syntax_ok = True
-    syntax_message = "No custom source code attached."
+    syntax_message = "No custom source code attached. Static registry strategy will be used if available."
     if source_code.strip():
         try:
-            compile(source_code, f"strategy:{strategy_id}", "exec")
-            syntax_message = "Source code syntax check passed."
-        except Exception as exc:
+            safety = validate_dynamic_strategy_source(source_code)
+            classes = ", ".join(safety.get("classes") or [])
+            syntax_message = f"Dynamic source check passed. Strategy class found: {classes or 'Strategy'}."
+        except (DynamicStrategyLoadError, DynamicStrategySecurityError, Exception) as exc:
             syntax_ok = False
-            syntax_message = f"Syntax check failed: {exc}"
+            syntax_message = f"Dynamic source check failed: {exc}"
 
     instrument_id = payload.instrument_id
     timeframe = payload.timeframe or params.get("timeframe") or "5m"
@@ -644,6 +734,37 @@ async def sandbox_backtest_strategy(
     raw_pnl_calendar = getattr(result, "daily_pnl", None) or []
     equity = getattr(result, "equity_curve", None) or []
     summary = getattr(result, "summary", None) or {}
+
+    # Normalize engine summary keys for sandbox UI.
+    initial_capital_value = float(getattr(service_response, "initial_capital", payload.capital) or payload.capital)
+    final_capital_value = float(getattr(service_response, "final_capital", initial_capital_value) or initial_capital_value)
+
+    if "net_profit" not in summary:
+        summary["net_profit"] = float(
+            summary.get("net_pnl", final_capital_value - initial_capital_value) or 0
+        )
+
+    if "return_pct" not in summary:
+        total_return = getattr(result, "total_return", None)
+        if total_return is not None:
+            value = float(total_return or 0)
+            summary["return_pct"] = value * 100.0 if abs(value) <= 1 else value
+        else:
+            summary["return_pct"] = (
+                ((final_capital_value - initial_capital_value) / initial_capital_value) * 100.0
+                if initial_capital_value
+                else 0.0
+            )
+
+    if "win_rate" not in summary:
+        value = float(getattr(result, "win_rate", 0) or 0)
+        summary["win_rate"] = value * 100.0 if abs(value) <= 1 else value
+
+    if "sharpe_ratio" not in summary:
+        summary["sharpe_ratio"] = float(getattr(result, "sharpe_ratio", 0) or 0)
+
+    if "total_trades" not in summary:
+        summary["total_trades"] = len(trades)
 
     def _dt(v):
         return v.isoformat() if hasattr(v, 'isoformat') else v
@@ -817,17 +938,23 @@ async def create_strategy(
     visibility = _normalize_visibility(payload.visibility)
     params = _apply_payload_to_parameters(dict(payload.parameters or {}), payload)
 
+    default_runtime_config = _build_default_runtime_config(params, name)
     strategy = Strategy(
         id=str(uuid4()),
         name=name,
         description=_clean(payload.description),
         parameters=params,
+        default_runtime_config=default_runtime_config,
+        runtime_config_schema=get_default_runtime_config_schema(" ".join([name, str(params.get("strategy_type") or "")])),
+        supports_runtime_config=True,
+        config_version=1,
         visibility=visibility,
         source_request_id=as_uuid_or_str(payload.source_request_id) if payload.source_request_id else None,
         created_by=as_uuid_or_str(payload.created_by) if payload.created_by else as_uuid_or_str(admin_user["user_id"]),
         published_by=as_uuid_or_str(admin_user["user_id"]) if visibility == PUBLIC_VISIBILITY else None,
     )
     db.add(strategy)
+    await _ensure_default_runtime_preset(db, strategy, admin_user)
 
     await _link_source_request_if_exists(db, payload.source_request_id, strategy.id)
 
@@ -859,6 +986,7 @@ async def update_strategy(
     params = _append_version_history(params, strategy, admin_user, reason="save")
     params = _apply_payload_to_parameters(params, payload)
     strategy.parameters = params
+    await _ensure_default_runtime_preset(db, strategy, admin_user)
 
     if payload.visibility is not None:
         strategy.visibility = _normalize_visibility(payload.visibility)
@@ -990,6 +1118,7 @@ async def publish_strategy(
     strategy = await _get_strategy_or_404(db, strategy_id)
     params = dict(strategy.parameters or {})
     _ensure_publish_gate(params)
+    await _ensure_default_runtime_preset(db, strategy, admin_user)
     strategy.visibility = PUBLIC_VISIBILITY
     strategy.published_by = as_uuid_or_str(admin_user["user_id"])
     if not getattr(strategy, "lifecycle_status", None) or strategy.lifecycle_status in {"DRAFT", "VERIFIED", "SANDBOX_PASSED"}:

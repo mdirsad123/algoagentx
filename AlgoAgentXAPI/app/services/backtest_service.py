@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Instrument, MarketData, Strategy, StrategyRuntimePreset, Timeframe
 from ..services.strategy_registry import resolve_strategy
+from ..services.dynamic_strategy_loader import build_dynamic_strategy_entry, DynamicStrategyLoadError, DynamicStrategySecurityError
 from ..services.backtest_advanced_filters import apply_advanced_filters, build_filter_summary
 from engine.backtest_engine import BacktestParams, BacktestResult, run_backtest_engine
 from .trading.runtime_config_service import resolve_runtime_config, validate_runtime_config
@@ -239,14 +240,44 @@ class BacktestService:
         strategy = await db.get(Strategy, strategy_id)
         if not strategy:
             raise StrategyNotFoundError(f"Strategy with id {strategy_id} not found")
+        params = strategy.parameters if isinstance(strategy.parameters, dict) else None
+        dynamic_requested = bool(
+            isinstance(params, dict)
+            and str(params.get("source_code") or "").strip()
+            and str(params.get("engine_mode") or "").upper() == "DYNAMIC_DB"
+        )
+
+        if dynamic_requested:
+            try:
+                strategy_class, strategy_params, strategy_name = build_dynamic_strategy_entry(
+                    strategy_id=str(strategy.id),
+                    strategy_name=str(strategy.name),
+                    db_parameters=params,
+                )
+                return strategy, strategy_class, strategy_params, strategy_name
+            except (DynamicStrategyLoadError, DynamicStrategySecurityError, ValueError) as dynamic_exc:
+                raise StrategyNotFoundError(f"Dynamic strategy load failed: {dynamic_exc}") from dynamic_exc
+
         try:
             strategy_class, strategy_params, strategy_name = resolve_strategy(
                 strategy_id=str(strategy.id),
                 strategy_name=str(strategy.name),
-                db_parameters=strategy.parameters if isinstance(strategy.parameters, dict) else None,
+                db_parameters=params,
             )
-        except ValueError as exc:
-            raise StrategyNotFoundError(str(exc)) from exc
+        except ValueError as static_exc:
+            if isinstance(params, dict) and str(params.get("source_code") or "").strip():
+                try:
+                    strategy_class, strategy_params, strategy_name = build_dynamic_strategy_entry(
+                        strategy_id=str(strategy.id),
+                        strategy_name=str(strategy.name),
+                        db_parameters=params,
+                    )
+                except (DynamicStrategyLoadError, DynamicStrategySecurityError, ValueError) as dynamic_exc:
+                    raise StrategyNotFoundError(
+                        f"No static mapping found and dynamic strategy load failed: {dynamic_exc}"
+                    ) from dynamic_exc
+            else:
+                raise StrategyNotFoundError(str(static_exc)) from static_exc
         return strategy, strategy_class, strategy_params, strategy_name
 
     @staticmethod

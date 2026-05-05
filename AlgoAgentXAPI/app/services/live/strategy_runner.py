@@ -373,10 +373,41 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
             metadata={"signal_type": signal_type, "latest_candle_time": latest_candle_time.isoformat(), "price": str(latest_close), "symbol": latest_symbol},
         )
 
+        # Do not persist HOLD noise into live_signals. HOLD is a heartbeat/result,
+        # not a tradeable signal. Persist only BUY/SELL/EXIT so Recent Signals and
+        # signal counts stay useful for trading decisions.
+        if signal_type == "HOLD":
+            deployment.last_heartbeat_at = datetime.now(timezone.utc)
+            latest_log_message = "HOLD - no tradeable signal, not saved"
+            await _log(
+                db,
+                deployment,
+                "RUNNER_HOLD_IGNORED",
+                latest_log_message,
+                metadata={"latest_candle_time": latest_candle_time.isoformat(), "price": str(latest_close), "symbol": latest_symbol},
+            )
+            await db.commit()
+            return StrategyRunnerResult(
+                success=True,
+                deployment_id=str(deployment.id),
+                strategy_name=canonical_name or getattr(strategy, "name", None),
+                latest_candle_time=latest_candle_time.isoformat(),
+                signal=signal_type,
+                executed=False,
+                order_id=None,
+                broker_order_id=None,
+                signal_id=None,
+                duplicate=False,
+                message=latest_log_message,
+                latest_runner_log=latest_log_message,
+                symbol=latest_symbol,
+                final_action="HOLD_IGNORED",
+            ).to_dict()
+
         duplicate = await _find_duplicate_engine_signal(db, deployment.id, latest_candle_time, signal_type, strategy_id=deployment.strategy_id, symbol=latest_symbol, timeframe=deployment.timeframe)
         if duplicate is not None:
             deployment.last_heartbeat_at = datetime.now(timezone.utc)
-            latest_log_message = "Duplicate signal ignored"
+            latest_log_message = "Duplicate tradeable signal ignored"
             await _log(
                 db,
                 deployment,

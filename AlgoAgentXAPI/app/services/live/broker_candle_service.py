@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -39,6 +39,30 @@ def _parse_dt(value: Any) -> datetime:
     except Exception:
         return datetime.now(timezone.utc)
 
+
+
+def _timeframe_minutes(timeframe: str) -> int:
+    tf = str(timeframe or "").strip().lower()
+    aliases = {"m1": 1, "1m": 1, "m5": 5, "5m": 5, "m15": 15, "15m": 15, "m30": 30, "30m": 30, "h1": 60, "1h": 60, "h4": 240, "4h": 240, "d1": 1440, "1d": 1440}
+    if tf in aliases:
+        return aliases[tf]
+    import re
+    match = re.match(r"^(\d+)\s*([mhd])", tf)
+    if match:
+        n = max(1, int(match.group(1)))
+        unit = match.group(2)
+        return n if unit == "m" else n * 60 if unit == "h" else n * 1440
+    return 1
+
+
+def _is_candle_closed(candle_time: datetime, timeframe: str, *, now: datetime | None = None, grace_seconds: int = 2) -> bool:
+    if candle_time.tzinfo is None:
+        candle_time = candle_time.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    close_time = candle_time + timedelta(minutes=_timeframe_minutes(timeframe))
+    return now >= close_time + timedelta(seconds=max(0, int(grace_seconds or 0)))
 
 def _candle_payload(row: LiveMarketCandle) -> dict[str, Any]:
     return {
@@ -123,10 +147,19 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
         raise HTTPException(status_code=400, detail=message)
 
     upserted = 0
+    skipped_forming = 0
+    now_utc = datetime.now(timezone.utc)
     for item in rates:
         if item.get("success") is False:
             continue
         candle_time = _parse_dt(item.get("candle_time"))
+        # MT5/Upstox timestamps are candle OPEN times. Do not save the currently
+        # forming candle as closed; the strategy runner must only see candles
+        # whose full timeframe has completed. Example: M5 candle 20:05 becomes
+        # eligible after 20:10:02.
+        if not _is_candle_closed(candle_time, deployment.timeframe, now=now_utc, grace_seconds=2):
+            skipped_forming += 1
+            continue
         row_symbol = str(item.get("symbol") or resolved_symbol)
         values = {
             "deployment_id": deployment.id,
@@ -162,12 +195,20 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
         await db.execute(stmt)
         upserted += 1
 
-    await _write_log(db, deployment, "CANDLE_REFRESH_COMPLETED", f"{source} candle refresh stored {upserted} candles", metadata={"count": safe_count, "stored": upserted, "source": source})
+    await _write_log(db, deployment, "CANDLE_REFRESH_COMPLETED", f"{source} candle refresh stored {upserted} closed candles", metadata={"count": safe_count, "stored": upserted, "skipped_forming": skipped_forming, "source": source})
     await db.commit()
 
     latest_rows = await get_latest_closed_candles(db, deployment_id, limit=5)
     latest = latest_rows[0] if latest_rows else None
     total_count = int((await db.execute(select(func.count(LiveMarketCandle.id)).where(LiveMarketCandle.deployment_id == deployment_id))).scalar() or 0)
+    next_closed_expected_at = None
+    latest_open_time = latest.get("candle_time") if latest else None
+    if latest_open_time:
+        try:
+            base_dt = latest_open_time if isinstance(latest_open_time, datetime) else _parse_dt(latest_open_time)
+            next_closed_expected_at = base_dt + timedelta(minutes=_timeframe_minutes(deployment.timeframe) * 2, seconds=2)
+        except Exception:
+            next_closed_expected_at = None
     return {
         "source": source,
         "symbol": deployment.instrument,
@@ -178,8 +219,10 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
         "requested_count": safe_count,
         "stored_count": total_count,
         "upserted_count": upserted,
+        "skipped_forming_count": skipped_forming,
         "latest_candle_time": latest.get("candle_time") if latest else None,
         "latest_close": latest.get("close") if latest else None,
+        "next_closed_candle_expected_at": next_closed_expected_at,
         "candles": latest_rows,
     }
 
@@ -210,6 +253,14 @@ async def get_candle_snapshot(db: AsyncSession, deployment_id: UUID, limit: int 
     rows = await get_latest_closed_candles(db, deployment_id, limit)
     total_count = int((await db.execute(select(func.count(LiveMarketCandle.id)).where(LiveMarketCandle.deployment_id == deployment_id))).scalar() or 0)
     latest = rows[0] if rows else None
+    latest_open_time = latest.get("candle_time") if latest else None
+    next_closed_expected_at = None
+    if latest_open_time:
+        try:
+            base_dt = latest_open_time if isinstance(latest_open_time, datetime) else _parse_dt(latest_open_time)
+            next_closed_expected_at = base_dt + timedelta(minutes=_timeframe_minutes(deployment.timeframe) * 2, seconds=2)
+        except Exception:
+            next_closed_expected_at = None
     return {
         "source": latest.get("source") if latest else source,
         "symbol": deployment.instrument,
@@ -220,5 +271,6 @@ async def get_candle_snapshot(db: AsyncSession, deployment_id: UUID, limit: int 
         "stored_count": total_count,
         "latest_candle_time": latest.get("candle_time") if latest else None,
         "latest_close": latest.get("close") if latest else None,
+        "next_closed_candle_expected_at": next_closed_expected_at,
         "candles": rows,
     }

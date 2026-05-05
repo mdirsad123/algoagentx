@@ -398,18 +398,19 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
     today_pnl = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == row.id, LivePosition.closed_at >= day_start))).scalar())
     open_positions_count = int((await db.execute(select(func.count(LivePosition.id)).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN"))).scalar() or 0)
     orders_count_today = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == row.id, LiveOrder.created_at >= day_start))).scalar() or 0)
-    signals_count_today = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == row.id, LiveSignal.created_at >= day_start))).scalar() or 0)
+    tradeable_signal_filter = LiveSignal.signal_type.in_(["BUY", "SELL", "EXIT"])
+    signals_count_today = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == row.id, LiveSignal.created_at >= day_start, tradeable_signal_filter))).scalar() or 0)
     total_orders = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == row.id))).scalar() or 0)
-    total_signals = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == row.id))).scalar() or 0)
+    total_signals = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == row.id, tradeable_signal_filter))).scalar() or 0)
 
     latest_equity = (await db.execute(select(LiveEquityPoint.equity).where(LiveEquityPoint.deployment_id == row.id).order_by(LiveEquityPoint.timestamp.desc()).limit(1))).scalar_one_or_none()
     equity = _dec(latest_equity, str(_dec(row.capital, "100000") + realized + unrealized))
 
-    latest_signal = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == row.id).order_by(LiveSignal.created_at.desc()).limit(1))).scalar_one_or_none()
+    latest_signal = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == row.id, tradeable_signal_filter).order_by(LiveSignal.created_at.desc()).limit(1))).scalar_one_or_none()
     latest_order = (await db.execute(select(LiveOrder).where(LiveOrder.deployment_id == row.id).order_by(LiveOrder.created_at.desc()).limit(1))).scalar_one_or_none()
     open_positions = (await db.execute(select(LivePosition).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN").order_by(LivePosition.opened_at.desc()).limit(20))).scalars().all()
     recent_orders = await _recent(db, LiveOrder, row.id)
-    recent_signals = await _recent(db, LiveSignal, row.id)
+    recent_signals = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == row.id, tradeable_signal_filter).order_by(LiveSignal.created_at.desc()).limit(20))).scalars().all()
     recent_logs = await _recent(db, LiveTradeLog, row.id)
     position_events = (await db.execute(
         select(LiveTradeLog)
@@ -420,7 +421,7 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
         .order_by(LiveTradeLog.created_at.desc())
         .limit(20)
     )).scalars().all()
-    latest_engine_signal = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == row.id, LiveSignal.source == "ENGINE").order_by(LiveSignal.created_at.desc()).limit(1))).scalar_one_or_none()
+    latest_engine_signal = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == row.id, LiveSignal.source == "ENGINE", tradeable_signal_filter).order_by(LiveSignal.created_at.desc()).limit(1))).scalar_one_or_none()
     latest_runner_log = (await db.execute(select(LiveTradeLog).where(LiveTradeLog.deployment_id == row.id, LiveTradeLog.event_type.ilike("RUNNER_%")).order_by(LiveTradeLog.created_at.desc()).limit(1))).scalar_one_or_none()
 
     if broker_metrics is not None:
@@ -530,7 +531,9 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
             "auto_runner_enabled": getattr(row, "auto_runner_enabled", False),
             "runner_error_count": getattr(row, "runner_error_count", 0),
             "runner_last_error": getattr(row, "runner_last_error", None),
-            "last_candle_time": latest_engine_signal.candle_time if latest_engine_signal else None,
+            # Last processed candle must show the actual candle processed by the runner.
+            # Do not derive it from the latest tradeable ENGINE signal, because HOLD cycles are not saved.
+            "last_candle_time": getattr(row, "last_processed_candle_time", None) or (latest_engine_signal.candle_time if latest_engine_signal else None),
             "last_signal": latest_engine_signal.signal_type if latest_engine_signal else None,
             "latest_runner_log": latest_runner_log.message if latest_runner_log else None,
             "latest_runner_status": latest_runner_log.level if latest_runner_log else None,

@@ -42,23 +42,36 @@ def _normalize_dt(value: Any) -> datetime | None:
         return None
 
 
-def calculate_next_due_by_timeframe(timeframe: str, last_runner_at: datetime | None = None) -> datetime:
-    """Return next runner due time based on timeframe and last runner time."""
+def timeframe_minutes(timeframe: str) -> int:
+    """Convert a platform timeframe such as M5/H1/D1 into minutes."""
     tf = str(timeframe or "").strip().lower()
-    base = last_runner_at or datetime.fromtimestamp(0, tz=timezone.utc)
-    if base.tzinfo is None:
-        base = base.replace(tzinfo=timezone.utc)
-    minutes = 1
     aliases = {"m1": 1, "1m": 1, "m5": 5, "5m": 5, "m15": 15, "15m": 15, "m30": 30, "30m": 30, "h1": 60, "1h": 60, "h4": 240, "4h": 240, "d1": 1440, "1d": 1440, "day": 1440, "daily": 1440}
     if tf in aliases:
-        minutes = aliases[tf]
-    else:
-        match = re.match(r"^(\d+)\s*([mhd])", tf)
-        if match:
-            n = max(1, int(match.group(1)))
-            unit = match.group(2)
-            minutes = n if unit == "m" else n * 60 if unit == "h" else n * 1440
-    return base + timedelta(minutes=minutes)
+        return aliases[tf]
+    match = re.match(r"^(\d+)\s*([mhd])", tf)
+    if match:
+        n = max(1, int(match.group(1)))
+        unit = match.group(2)
+        return n if unit == "m" else n * 60 if unit == "h" else n * 1440
+    return 1
+
+
+def calculate_next_due_by_timeframe(timeframe: str, last_processed_candle_time: datetime | None = None) -> datetime:
+    """Return when the next broker candle should be safely available.
+
+    MT5/Upstox candle_time is the candle OPEN time. For M5, the candle stamped
+    20:05 is only closed after 20:10. After we process candle 20:00, the next
+    strategy run should happen just after 20:10, not at 20:05. This prevents
+    repeated 10-second runner checks and avoids using a forming candle.
+    """
+    base = last_processed_candle_time or datetime.fromtimestamp(0, tz=timezone.utc)
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
+    minutes = timeframe_minutes(timeframe)
+    # last_processed is an OPEN timestamp of the last processed closed candle.
+    # next candle opens at +minutes and closes at +2*minutes. Add small broker
+    # grace so the terminal has time to publish the just-closed candle.
+    return base + timedelta(minutes=minutes * 2, seconds=2)
 
 
 async def _write_log(db: AsyncSession, deployment: StrategyDeployment, event_type: str, message: str, level: str = "INFO", metadata: dict[str, Any] | None = None) -> None:
@@ -112,10 +125,15 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID) -> dict[s
         await db.commit()
         return result
 
-    due_at = calculate_next_due_by_timeframe(deployment.timeframe, getattr(deployment, "last_runner_at", None))
+    # Run on the next closed-candle boundary, not merely N minutes after the
+    # previous runner tick. Example: if the last manual run happened at 13:43 on
+    # M5, the auto runner should still process the 13:45 candle as soon as it is
+    # closed instead of waiting until 13:48.
+    last_processed_before_refresh = _normalize_dt(getattr(deployment, "last_processed_candle_time", None))
+    due_at = calculate_next_due_by_timeframe(deployment.timeframe, last_processed_before_refresh)
     result["next_due_at"] = due_at.isoformat()
-    if getattr(deployment, "last_runner_at", None) is not None and now < due_at:
-        result.update(skipped=True, reason="Not due yet")
+    if last_processed_before_refresh is not None and now < due_at:
+        result.update(skipped=True, reason="Waiting for next closed candle")
         return result
 
     try:
@@ -194,12 +212,11 @@ async def run_due_deployments(db: AsyncSession | None = None) -> dict[str, Any]:
 
 
 async def auto_runner_loop() -> None:
-    interval = max(10, int(getattr(settings, "live_runner_interval_seconds", 60) or 60))
+    interval = max(5, int(getattr(settings, "live_runner_interval_seconds", 10) or 10))
     logger.info("Live auto runner loop started, interval=%ss", interval)
     while True:
         try:
-            if getattr(settings, "live_runner_enabled", False):
-                await run_due_deployments()
+            await run_due_deployments()
         except asyncio.CancelledError:
             logger.info("Live auto runner loop cancelled")
             raise

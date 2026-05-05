@@ -48,12 +48,13 @@ async def lifespan(app: FastAPI):
 
     runner_task = None
     broker_sync_task = None
-    if settings.live_runner_enabled:
-        from .services.live.auto_runner_service import auto_runner_loop
-        runner_task = asyncio.create_task(auto_runner_loop())
-        logger.info("[LIVE_RUNNER] Background auto runner enabled")
-    else:
-        logger.info("[LIVE_RUNNER] Background auto runner disabled")
+    # Always start the lightweight auto-runner loop. Per-deployment switches
+    # (status, Auto Runner, Auto Trade and platform kill-switch) still decide
+    # whether anything runs. This avoids a hidden .env flag making the UI show
+    # "Auto Runner ON" while no background runner is actually active.
+    from .services.live.auto_runner_service import auto_runner_loop
+    runner_task = asyncio.create_task(auto_runner_loop())
+    logger.info("[LIVE_RUNNER] Background auto runner loop started")
 
     if getattr(settings, "live_broker_sync_enabled", True):
         from .services.live.broker_sync_service import broker_sync_loop

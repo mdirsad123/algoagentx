@@ -248,13 +248,16 @@ async def run_demo_micro_order_test(db: AsyncSession, deployment: StrategyDeploy
     if sl <= 0 or tp <= 0:
         raise ValueError("Demo micro order requires valid SL and TP.")
     broker_symbol = str(preview.get("broker_symbol") or deployment.broker_symbol or deployment.instrument)
-    adapter = get_broker_adapter(broker)
-    result = await adapter.place_market_order(BrokerOrderRequest(symbol=broker_symbol, side=side, qty=qty, price=entry, stop_loss=sl, target=tp, comment="AlgoAgentX QA Demo Micro", max_lot=safe_cap))
+
+    # Save the test signal before sending the broker order, and use an allowed
+    # source value. The DB check constraint commonly allows ENGINE/MANUAL/WEBHOOK
+    # sources; putting QA_DEMO_MICRO_TEST in source caused a 500 after MT5 had
+    # already accepted the order. Keep the QA marker in raw_payload instead.
     signal = LiveSignal(
         deployment_id=deployment.id,
         user_id=deployment.user_id,
         strategy_id=deployment.strategy_id,
-        source="QA_DEMO_MICRO_TEST",
+        source="ENGINE",
         symbol=broker_symbol,
         timeframe=deployment.timeframe,
         signal_type=side,
@@ -262,12 +265,17 @@ async def run_demo_micro_order_test(db: AsyncSession, deployment: StrategyDeploy
         price=entry,
         candle_time=_now(),
         reason="Phase 3E demo micro order test",
-        raw_payload={"is_test_signal": True, "qa_test_type": "DEMO_MICRO_ORDER"},
-        status="EXECUTED" if result.success else "ERROR",
-        rejection_reason=None if result.success else result.message,
+        raw_payload={"is_test_signal": True, "qa_test_type": "DEMO_MICRO_ORDER", "source_label": "QA_DEMO_MICRO_TEST"},
+        status="RECEIVED",
     )
     db.add(signal)
     await db.flush()
+
+    adapter = get_broker_adapter(broker)
+    result = await adapter.place_market_order(BrokerOrderRequest(symbol=broker_symbol, side=side, qty=qty, price=entry, stop_loss=sl, target=tp, comment="AlgoAgentX QA Demo Micro", max_lot=safe_cap))
+    signal.status = "EXECUTED" if result.success else "ERROR"
+    signal.rejection_reason = None if result.success else result.message
+
     order = LiveOrder(
         deployment_id=deployment.id,
         signal_id=signal.id,
