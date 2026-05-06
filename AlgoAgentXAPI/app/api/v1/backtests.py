@@ -8,6 +8,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from math import ceil
 from uuid import UUID, uuid4
+from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -999,6 +1000,9 @@ async def _serialize_summary(
         "candles_before_filter": filter_meta.get("candles_before_filter"),
         "candles_after_filter": filter_meta.get("candles_after_filter"),
         "filter_reduction_pct": filter_meta.get("filter_reduction_pct"),
+        "runtime_config_snapshot": overlay.get("runtime_config_snapshot"),
+        "instrument_spec_snapshot": overlay.get("instrument_spec_snapshot"),
+        "runtime_summary": _runtime_summary_text(overlay.get("runtime_config_snapshot"), filter_meta.get("filter_summary")),
     }
 
 
@@ -1245,6 +1249,94 @@ async def _save_backtest_payload(
     return backtest_id
 
 
+
+def _runtime_section_rows(runtime_config: dict | None) -> list[list[Any]]:
+    cfg = runtime_config if isinstance(runtime_config, dict) else {}
+    if not cfg:
+        return [["Snapshot Status", "Runtime settings snapshot was not available for this older backtest."]]
+    risk = cfg.get("risk") if isinstance(cfg.get("risk"), dict) else {}
+    sl_tp = cfg.get("sl_tp") if isinstance(cfg.get("sl_tp"), dict) else {}
+    execution = cfg.get("execution") if isinstance(cfg.get("execution"), dict) else {}
+    tm = cfg.get("trade_management") if isinstance(cfg.get("trade_management"), dict) else {}
+    params = cfg.get("strategy_params") if isinstance(cfg.get("strategy_params"), dict) else {}
+
+    def yn(value: Any) -> str:
+        return "ON" if bool(value) else "OFF"
+
+    rows: list[list[Any]] = [
+        ["Risk · Initial Capital", risk.get("initial_capital")],
+        ["Risk · Capital Risk %", risk.get("risk_percent")],
+        ["Risk · Position Size Mode", risk.get("position_size_mode")],
+        ["Risk · Fixed Lot Size", risk.get("fixed_lot_size")],
+        ["Risk · Max Lot Cap", risk.get("max_lot_cap")],
+        ["Risk · Max Quantity Cap", risk.get("max_quantity_cap")],
+        ["SL/TP · RR Ratio", sl_tp.get("rr_ratio")],
+        ["SL/TP · SL Mode", sl_tp.get("sl_mode")],
+        ["SL/TP · Fixed Price Risk %", sl_tp.get("fixed_price_risk_pct")],
+        ["SL/TP · ATR Period", sl_tp.get("atr_period")],
+        ["SL/TP · ATR Multiplier", sl_tp.get("atr_multiplier")],
+        ["SL/TP · Swing Lookback", sl_tp.get("swing_lookback")],
+        ["Execution · Entry Mode", execution.get("entry_mode")],
+        ["Execution · Exit On Opposite Signal", yn(execution.get("exit_on_opposite_signal"))],
+        ["Execution · Allow Long", yn(execution.get("allow_long"))],
+        ["Execution · Allow Short", yn(execution.get("allow_short"))],
+        ["Execution · Max Trades Per Day", execution.get("max_trades_per_day")],
+        ["Execution · Max Open Positions", execution.get("max_open_positions")],
+        ["Trade Mgmt · Break Even Enabled", yn(tm.get("break_even_enabled"))],
+        ["Trade Mgmt · Break Even Trigger R", tm.get("break_even_trigger_r")],
+        ["Trade Mgmt · Trailing Stop Enabled", yn(tm.get("trailing_enabled"))],
+        ["Trade Mgmt · Trailing Mode", tm.get("trailing_mode")],
+        ["Trade Mgmt · Trail Start R", tm.get("trail_start_r")],
+        ["Trade Mgmt · Trail ATR Multiplier", tm.get("trail_atr_multiplier")],
+        ["Trade Mgmt · Partial Exit Enabled", yn(tm.get("partial_exit_enabled"))],
+        ["Trade Mgmt · Partial Exit At R", tm.get("partial_exit_at_r")],
+        ["Trade Mgmt · Partial Exit Percent", tm.get("partial_exit_percent")],
+    ]
+    for key, value in params.items():
+        rows.append([f"Strategy Params · {key}", value])
+    return rows
+
+
+def _runtime_summary_text(runtime_config: dict | None, filter_summary: str | None = None) -> str:
+    cfg = runtime_config if isinstance(runtime_config, dict) else {}
+    if not cfg:
+        base = "Runtime snapshot unavailable"
+    else:
+        risk = cfg.get("risk") if isinstance(cfg.get("risk"), dict) else {}
+        sl_tp = cfg.get("sl_tp") if isinstance(cfg.get("sl_tp"), dict) else {}
+        tm = cfg.get("trade_management") if isinstance(cfg.get("trade_management"), dict) else {}
+        parts: list[str] = []
+        risk_value = risk.get("risk_percent")
+        if risk_value is not None:
+            try:
+                rv = float(risk_value)
+                risk_label = f"Risk {rv * 100:g}%" if abs(rv) <= 1 else f"Risk {rv:g}%"
+            except Exception:
+                risk_label = f"Risk {risk_value}"
+            parts.append(risk_label)
+        rr_value = sl_tp.get("rr_ratio")
+        if rr_value is not None:
+            parts.append(f"RR 1:{rr_value}")
+        sl_mode = sl_tp.get("sl_mode")
+        if sl_mode:
+            parts.append(f"{str(sl_mode).replace('_', ' ').title()} SL")
+        pos_mode = risk.get("position_size_mode")
+        if pos_mode:
+            if str(pos_mode).upper() == "FIXED_LOT" and risk.get("fixed_lot_size") is not None:
+                parts.append(f"Fixed Lot {risk.get('fixed_lot_size')}")
+            else:
+                parts.append(str(pos_mode).replace('_', ' ').title())
+        if tm.get("break_even_enabled"):
+            parts.append("Breakeven ON")
+        if tm.get("trailing_enabled"):
+            parts.append("Trail ON")
+        if tm.get("partial_exit_enabled"):
+            parts.append("Partial Exit ON")
+        base = " · ".join(parts) if parts else "Runtime snapshot captured"
+    if filter_summary:
+        base = f"{base} · Advanced Filters: {filter_summary}"
+    return base
+
 def _build_detail_export_frames(detail: dict):
     summary = detail.get("summary", {}) if isinstance(detail, dict) else {}
     metrics_rows = [
@@ -1279,11 +1371,17 @@ def _build_detail_export_frames(detail: dict):
         ["Filter Reduction %", summary.get("filter_reduction_pct")],
         ["Created At", summary.get("created_at")],
     ]
+    runtime_config = _jsonish(summary.get("runtime_config_snapshot"))
+    if not isinstance(runtime_config, dict):
+        runtime_config = {}
+    runtime_rows = _runtime_section_rows(runtime_config)
+    runtime_rows.append(["Advanced Filters", summary.get("filter_summary") or "Not used"])
     metrics_df = pd.DataFrame(metrics_rows, columns=["Metric", "Value"])
+    runtime_df = pd.DataFrame(runtime_rows, columns=["Runtime Setting", "Value"])
     trades_df = pd.DataFrame(detail.get("trades", []))
     equity_df = pd.DataFrame(detail.get("equity_curve", []))
     pnl_df = pd.DataFrame(detail.get("pnl_calendar", []))
-    return metrics_df, trades_df, equity_df, pnl_df
+    return metrics_df, runtime_df, trades_df, equity_df, pnl_df
 
 
 async def _detail_payload_for_export(backtest_id: str, db: AsyncSession, current_user: dict) -> dict:
@@ -1346,12 +1444,13 @@ def _build_trade_analysis_frames(detail: dict):
 @router.get("/{backtest_id}/export/excel")
 async def export_backtest_excel(backtest_id: str, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     detail = await _detail_payload_for_export(backtest_id, db, current_user)
-    metrics_df, trades_df, equity_df, pnl_df = _build_detail_export_frames(detail)
+    metrics_df, runtime_df, trades_df, equity_df, pnl_df = _build_detail_export_frames(detail)
     side_df, daily_trades_df, highlights_df = _build_trade_analysis_frames(detail)
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         metrics_df.to_excel(writer, sheet_name="Summary", index=False)
         highlights_df.to_excel(writer, sheet_name="Highlights", index=False)
+        runtime_df.to_excel(writer, sheet_name="Runtime Settings", index=False)
         trades_df.to_excel(writer, sheet_name="Trades", index=False)
         side_df.to_excel(writer, sheet_name="Trade Breakdown", index=False)
         daily_trades_df.to_excel(writer, sheet_name="Daily Trades", index=False)

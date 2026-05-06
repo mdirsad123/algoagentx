@@ -117,14 +117,97 @@ const getNestedValue = (value: unknown, path: string[]): unknown => {
   return current;
 };
 
+
+const formatRuntimeValue = (value: unknown): string => {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "ON" : "OFF";
+  if (typeof value === "number") return Number.isFinite(value) ? formatNumber(value, 4).replace(/\.0+$/, "") : "—";
+  if (Array.isArray(value)) return value.join(", ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return humanize(String(value));
+};
+
+const percentRuntimeValue = (value: unknown): string => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return formatRuntimeValue(value);
+  const pct = Math.abs(parsed) <= 1 ? parsed * 100 : parsed;
+  return `${formatNumber(pct, 2)}%`;
+};
+
+const compactRuntimeSummary = (runtime: Record<string, unknown> | null, fallback?: string | null): string => {
+  if (fallback && fallback.trim()) return fallback;
+  if (!runtime) return "Runtime settings snapshot was not available for this older backtest.";
+  const risk = getNestedRecord(runtime, "risk") || {};
+  const slTp = getNestedRecord(runtime, "sl_tp") || {};
+  const tm = getNestedRecord(runtime, "trade_management") || {};
+  const parts: string[] = [];
+  if (risk.risk_percent !== undefined) parts.push(`Risk ${percentRuntimeValue(risk.risk_percent)}`);
+  if (slTp.rr_ratio !== undefined) parts.push(`RR 1:${formatRuntimeValue(slTp.rr_ratio)}`);
+  if (slTp.sl_mode) parts.push(`${humanize(String(slTp.sl_mode))} SL`);
+  if (risk.position_size_mode) parts.push(humanize(String(risk.position_size_mode)));
+  if (tm.break_even_enabled) parts.push("Breakeven ON");
+  if (tm.trailing_enabled) parts.push("Trail ON");
+  if (tm.partial_exit_enabled) parts.push("Partial Exit ON");
+  return parts.length ? parts.join(" · ") : "Runtime settings snapshot captured.";
+};
+
+const runtimeSectionRows = (runtime: Record<string, unknown> | null) => {
+  if (!runtime) return null;
+  const risk = getNestedRecord(runtime, "risk") || {};
+  const slTp = getNestedRecord(runtime, "sl_tp") || {};
+  const execution = getNestedRecord(runtime, "execution") || {};
+  const tradeMgmt = getNestedRecord(runtime, "trade_management") || {};
+  const strategyParams = getNestedRecord(runtime, "strategy_params") || {};
+  return [
+    { title: "Risk", rows: [
+      ["Initial Capital", formatRuntimeValue(risk.initial_capital)],
+      ["Capital Risk %", percentRuntimeValue(risk.risk_percent)],
+      ["Position Size Mode", formatRuntimeValue(risk.position_size_mode)],
+      ["Fixed Lot Size", formatRuntimeValue(risk.fixed_lot_size)],
+      ["Max Lot Cap", formatRuntimeValue(risk.max_lot_cap)],
+      ["Max Quantity Cap", formatRuntimeValue(risk.max_quantity_cap)],
+    ]},
+    { title: "SL / TP", rows: [
+      ["RR Ratio", formatRuntimeValue(slTp.rr_ratio)],
+      ["SL Mode", formatRuntimeValue(slTp.sl_mode)],
+      ["Fixed Price Risk %", percentRuntimeValue(slTp.fixed_price_risk_pct)],
+      ["ATR Period", formatRuntimeValue(slTp.atr_period)],
+      ["ATR Multiplier", formatRuntimeValue(slTp.atr_multiplier)],
+      ["Swing Lookback", formatRuntimeValue(slTp.swing_lookback)],
+    ]},
+    { title: "Execution", rows: [
+      ["Entry Mode", formatRuntimeValue(execution.entry_mode)],
+      ["Exit On Opposite Signal", formatRuntimeValue(execution.exit_on_opposite_signal)],
+      ["Allow Long", formatRuntimeValue(execution.allow_long)],
+      ["Allow Short", formatRuntimeValue(execution.allow_short)],
+      ["Max Trades Per Day", formatRuntimeValue(execution.max_trades_per_day)],
+      ["Max Open Positions", formatRuntimeValue(execution.max_open_positions)],
+    ]},
+    { title: "Trade Management", rows: [
+      ["Break Even Enabled", formatRuntimeValue(tradeMgmt.break_even_enabled)],
+      ["Break Even Trigger R", formatRuntimeValue(tradeMgmt.break_even_trigger_r)],
+      ["Trailing Stop Enabled", formatRuntimeValue(tradeMgmt.trailing_enabled)],
+      ["Trailing Mode", formatRuntimeValue(tradeMgmt.trailing_mode)],
+      ["Trail Start R", formatRuntimeValue(tradeMgmt.trail_start_r)],
+      ["Trail ATR Multiplier", formatRuntimeValue(tradeMgmt.trail_atr_multiplier)],
+      ["Partial Exit Enabled", formatRuntimeValue(tradeMgmt.partial_exit_enabled)],
+      ["Partial Exit At R", formatRuntimeValue(tradeMgmt.partial_exit_at_r)],
+      ["Partial Exit Percent", percentRuntimeValue(tradeMgmt.partial_exit_percent)],
+    ]},
+    { title: "Strategy Parameters", rows: Object.keys(strategyParams).length ? Object.entries(strategyParams).map(([key, value]) => [humanize(key), formatRuntimeValue(value)]) : [["Parameters", "No custom strategy parameters captured"]] },
+  ];
+};
+
 const formatFilterSummary = (summary: BacktestDetailResponse["summary"]): string => {
   if (summary.filter_summary && summary.filter_summary.trim()) return summary.filter_summary;
-  const filters = summary.advanced_filters;
+  const filters = asRecord(summary.advanced_filters) || (summary.advanced_filters && typeof summary.advanced_filters === "object" ? summary.advanced_filters : null);
   if (!filters || !filters.enabled) return "Advanced filters were not used for this run.";
-  const days = filters.days_of_week?.length ? filters.days_of_week.map(humanize).join(", ") : "All days";
-  const session = filters.session === "CUSTOM"
+  const daysRaw = Array.isArray(filters.days_of_week) ? filters.days_of_week : [];
+  const days = daysRaw.length ? daysRaw.map((day) => humanize(String(day))).join(", ") : "All days";
+  const sessionValue = String(filters.session || "ALL");
+  const session = sessionValue === "CUSTOM"
     ? `${filters.custom_start_time || "—"}-${filters.custom_end_time || "—"} ${filters.timezone || "Asia/Kolkata"}`
-    : `${humanize(filters.session || "ALL")} Session`;
+    : `${humanize(sessionValue)} Session`;
   return `${days} · ${session.replace("All Session", "All sessions")}`;
 };
 
@@ -164,6 +247,9 @@ export default function BacktestReportPage() {
   const reportRrRatio = summary?.rr_ratio ?? safeNumber(slTpSnapshot?.rr_ratio, NaN);
   const reportSlMode = summary?.sl_mode || String(slTpSnapshot?.sl_mode || "");
   const positionSizeMode = summary?.position_size_mode || String(riskSnapshot?.position_size_mode || "");
+  const runtimeSections = runtimeSectionRows(runtimeSnapshot);
+  const runtimeSummary = compactRuntimeSummary(runtimeSnapshot, summary?.runtime_summary);
+  const advancedFilters = asRecord(summary?.advanced_filters) || (summary?.advanced_filters && typeof summary.advanced_filters === "object" ? summary.advanced_filters : null);
 
   const returnPct = useMemo(() => {
     if (!summary) return null;
@@ -344,16 +430,50 @@ export default function BacktestReportPage() {
         </Card>
       </section>
 
+
+      <Card className="rounded-xl border border-primary/30 bg-primary/10 shadow-xl backdrop-blur-xl">
+        <CardHeader>
+          <CardTitle>Runtime Settings Used</CardTitle>
+          <CardDescription>Exact risk, SL/TP, execution, trade management, and strategy parameter snapshot used for this backtest.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-xl border border-primary/30 bg-background/30 p-4 text-sm font-medium text-primary">
+            {runtimeSummary}
+          </div>
+          {runtimeSections ? (
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+              {runtimeSections.map((section) => (
+                <div key={section.title} className="rounded-xl border border-border/40 bg-card/25 p-4">
+                  <h3 className="text-sm font-semibold text-foreground">{section.title}</h3>
+                  <div className="mt-3 space-y-2 text-xs">
+                    {section.rows.map(([label, value]) => (
+                      <div key={`${section.title}-${label}`} className="flex items-start justify-between gap-3 rounded-lg border border-border/30 bg-background/20 px-3 py-2">
+                        <span className="text-muted-foreground">{label}</span>
+                        <span className="max-w-[55%] break-words text-right font-medium text-foreground">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-border/40 bg-card/20 p-4 text-sm text-muted-foreground">
+              Runtime settings snapshot was not available for this older backtest. New backtests will capture this automatically after the RS-4 migration.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
         <CardHeader><CardTitle>Advanced Filters Used</CardTitle><CardDescription>Saved filter scope for this exact backtest run.</CardDescription></CardHeader>
         <CardContent>
-          {summary.advanced_filters?.enabled ? (
+          {advancedFilters?.enabled ? (
             <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2 xl:grid-cols-3">
               <div className="rounded-xl border border-primary/30 bg-primary/10 p-3"><p className="text-xs text-muted-foreground">Summary</p><p className="mt-1 font-medium text-primary">{formatFilterSummary(summary)}</p></div>
-              <div className="rounded-xl border border-border/40 bg-card/20 p-3"><p className="text-xs text-muted-foreground">Days</p><p className="mt-1 text-foreground">{summary.advanced_filters.days_of_week?.length ? summary.advanced_filters.days_of_week.map(humanize).join(", ") : "All days"}</p></div>
-              <div className="rounded-xl border border-border/40 bg-card/20 p-3"><p className="text-xs text-muted-foreground">Session</p><p className="mt-1 text-foreground">{humanize(summary.advanced_filters.session || "ALL")}</p></div>
-              <div className="rounded-xl border border-border/40 bg-card/20 p-3"><p className="text-xs text-muted-foreground">Custom Time Window</p><p className="mt-1 text-foreground">{summary.advanced_filters.custom_start_time && summary.advanced_filters.custom_end_time ? `${summary.advanced_filters.custom_start_time} → ${summary.advanced_filters.custom_end_time}` : "Not used"}</p></div>
-              <div className="rounded-xl border border-border/40 bg-card/20 p-3"><p className="text-xs text-muted-foreground">Timezone</p><p className="mt-1 text-foreground">{summary.advanced_filters.timezone || "Asia/Kolkata"}</p></div>
+              <div className="rounded-xl border border-border/40 bg-card/20 p-3"><p className="text-xs text-muted-foreground">Days</p><p className="mt-1 text-foreground">{Array.isArray(advancedFilters.days_of_week) && advancedFilters.days_of_week.length ? advancedFilters.days_of_week.map((day) => humanize(String(day))).join(", ") : "All days"}</p></div>
+              <div className="rounded-xl border border-border/40 bg-card/20 p-3"><p className="text-xs text-muted-foreground">Session</p><p className="mt-1 text-foreground">{humanize(String(advancedFilters.session || "ALL"))}</p></div>
+              <div className="rounded-xl border border-border/40 bg-card/20 p-3"><p className="text-xs text-muted-foreground">Custom Time Window</p><p className="mt-1 text-foreground">{advancedFilters.custom_start_time && advancedFilters.custom_end_time ? `${advancedFilters.custom_start_time} → ${advancedFilters.custom_end_time}` : "Not used"}</p></div>
+              <div className="rounded-xl border border-border/40 bg-card/20 p-3"><p className="text-xs text-muted-foreground">Timezone</p><p className="mt-1 text-foreground">{String(advancedFilters.timezone || "Asia/Kolkata")}</p></div>
               <div className="rounded-xl border border-border/40 bg-card/20 p-3"><p className="text-xs text-muted-foreground">Filter Impact</p><p className="mt-1 text-foreground">{formatNumber(summary.candles_before_filter, 0)} → {formatNumber(summary.candles_after_filter, 0)} candles · {formatPercent(summary.filter_reduction_pct)} reduction</p></div>
             </div>
           ) : (

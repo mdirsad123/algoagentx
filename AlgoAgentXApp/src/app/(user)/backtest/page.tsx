@@ -21,6 +21,8 @@ import {
 } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { FieldHelpTooltip } from "@/components/common/FieldHelpTooltip";
+import { RuntimeSettingsForm } from "@/components/runtime/RuntimeSettingsForm";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,6 +49,43 @@ import {
   type RuntimePresetOption,
   type StrategyOption,
 } from "@/lib/api/backtests";
+
+
+const FIELD_HELP: Record<string, string> = {
+  "Initial Capital": "Starting capital used for this backtest. It affects risk sizing, equity curve, and drawdown calculations. Example: 100,000. Keep it close to the account size you want to simulate.",
+  "Capital Risk %": "Percentage of capital risked per trade when using risk-based sizing. Example: 1% of $100,000 means $1,000 risk per trade. Higher values can create large drawdowns.",
+  "Position Size Mode": "Risk Based calculates position size from stop loss and risk percent. Fixed Lot uses the same lot size for every trade. Fixed Quantity is for share/unit based instruments.",
+  "Fixed Lot Size": "Manual lot size used for each trade. Example: 0.02 lots. High fixed lots can create unrealistic or dangerous risk.",
+  "Fixed Quantity": "Manual quantity used for each trade on non-lot based instruments. Example: 10 shares/contracts. Use with a max quantity cap for safety.",
+  "Max Lot Cap": "Maximum allowed lot size. This protects from oversized trades when stop loss distance is small. Example: 0.10 lots.",
+  "Max Quantity Cap": "Maximum quantity cap for non-lot based instruments. Example: 100 shares. This protects from oversized orders.",
+  "RR Ratio": "Reward-to-risk ratio. Example: 1:2 means target is twice the stop loss distance. Higher RR can reduce win rate but improve payoff.",
+  "SL Mode": "Defines how stop loss is calculated: Fixed Percent, ATR volatility, recent swing high/low, or strategy suggested stop. This directly affects trade risk and lot sizing.",
+  "ATR Period": "Number of candles used to calculate Average True Range. Example: 14. Higher values make the volatility estimate smoother.",
+  "ATR Multiplier": "Multiplier applied to ATR to calculate stop loss distance. Example: 1.5. Higher multiplier means wider stop and usually smaller position size.",
+  "Swing Lookback": "Number of candles used to find recent swing high/low for stop loss placement. Example: 5 or 10 candles.",
+  "Fixed Price Risk %": "Stop loss distance as a fixed percent of entry price. Example: 0.20% means SL is 0.20% away from entry. Too tight can cause noisy exits.",
+  "Entry Mode": "Controls when trade enters after signal. Next Candle Open is safer for realistic backtests because it avoids entering before the candle is complete.",
+  "Exit on Opposite Signal": "Closes current trade when an opposite signal appears. This can reduce losses but may exit before the original target.",
+  "Allow Long": "Allows buy trades. Turn OFF to test short-only behavior or restrict a strategy.",
+  "Allow Short": "Allows sell trades. Turn OFF when the market/account should only take long trades.",
+  "Intraday Square Off": "For supported intraday Indian instruments, closes positions near the selected time. It is disabled for forex/metals like XAUUSD.",
+  "Square Off Time": "Time used to close intraday Indian market positions. Example: 15:15. Not used for forex/metals.",
+  "Max Trades Per Day": "Limits number of trades per day to avoid overtrading. Example: 3 trades/day. Leave as No Limit only for research.",
+  "Max Open Positions": "Limits simultaneous open positions. Example: 1 keeps the backtest simple and risk controlled.",
+  "Break Even Enabled": "When enabled, stop loss can move to entry after trade reaches selected profit. This can reduce losses but may exit early.",
+  "Break Even Trigger R": "Profit multiple required before stop loss moves to entry. Example: 1R means profit equals initial risk.",
+  "Trailing Stop Enabled": "When enabled, stop loss can follow price after trade moves in profit. This can protect gains but may cut winners early.",
+  "Trailing Mode": "Method used to trail stop. ATR trail uses volatility; swing/EMA trail follows structure or moving average behavior.",
+  "Trail Start R": "Profit multiple after which trailing starts. Example: 1.5R means trailing begins after profit reaches 1.5 times initial risk.",
+  "Trail ATR Multiplier": "ATR multiplier used for trailing stop distance. Higher values trail wider and may give trades more room.",
+  "Partial Exit Enabled": "Closes part of the position at selected profit level. This can lock in gains but reduces the size left for final target.",
+  "Partial Exit At R": "R multiple where partial exit happens. Example: 1R closes part when profit equals initial risk.",
+  "Partial Exit Percent": "Percent of position closed during partial exit. Example: 50% closes half and lets the remaining position continue.",
+  "Runtime Preset": "Saved runtime template for risk, execution, SL/TP and trade management settings. Applying a preset changes this drawer only until you save/run.",
+};
+
+const STRATEGY_PARAM_HELP = "Strategy-specific parameter. Changing this may affect signal frequency and trade quality. Example: a larger period usually creates fewer but smoother signals.";
 
 type ParameterField = {
   key: string;
@@ -1174,6 +1213,11 @@ export default function BacktestPage() {
     { value: "trade_management", label: "Trade Mgmt" },
     { value: "strategy_params", label: "Strategy Params" },
   ];
+  const positionSizeMode = runtimeConfig.risk.position_size_mode || "RISK_BASED";
+  const slMode = runtimeConfig.sl_tp.sl_mode || "ATR";
+  const breakEvenEnabled = Boolean(runtimeConfig.trade_management.break_even_enabled);
+  const trailingEnabled = Boolean(runtimeConfig.trade_management.trailing_enabled);
+  const partialExitEnabled = Boolean(runtimeConfig.trade_management.partial_exit_enabled);
 
   const runtimeGuardrailMessages = (() => {
     const messages: string[] = [];
@@ -1193,19 +1237,19 @@ export default function BacktestPage() {
     if (capital <= 0) messages.push("Initial capital must be greater than 0.");
     if (riskPct < 0.001 || riskPct > 0.05) messages.push("Capital risk must stay between 0.10% and 5.00%.");
     if (rrRatio < 1 || rrRatio > 5) messages.push("RR ratio must stay between 1 and 5.");
-    if (atrPeriod < 5 || atrPeriod > 100) messages.push("ATR period must stay between 5 and 100.");
-    if (atrMultiplier < 0.5 || atrMultiplier > 5) messages.push("ATR multiplier must stay between 0.5 and 5.");
-    if (swingLookback < 2 || swingLookback > 50) messages.push("Swing lookback must stay between 2 and 50.");
-    if (fixedPriceRiskPct < 0.001 || fixedPriceRiskPct > 0.05) messages.push("Fixed price risk must stay between 0.10% and 5.00%.");
-    if (runtimeConfig.risk.position_size_mode === "FIXED_LOT" && safeNumber(runtimeConfig.risk.fixed_lot, 0) <= 0) messages.push("Fixed lot size must be greater than 0.");
-    if (runtimeConfig.risk.position_size_mode === "FIXED_QUANTITY" && safeNumber(runtimeConfig.risk.fixed_quantity, 0) <= 0) messages.push("Fixed quantity must be greater than 0.");
-    if (runtimeConfig.risk.max_lot_cap !== null && runtimeConfig.risk.max_lot_cap !== undefined && safeNumber(runtimeConfig.risk.max_lot_cap, 0) <= 0) messages.push("Max lot cap must be empty or greater than 0.");
-    if (runtimeConfig.risk.max_quantity_cap !== null && runtimeConfig.risk.max_quantity_cap !== undefined && safeNumber(runtimeConfig.risk.max_quantity_cap, 0) <= 0) messages.push("Max quantity cap must be empty or greater than 0.");
+    if (slMode === "ATR" && (atrPeriod < 5 || atrPeriod > 100)) messages.push("ATR period must stay between 5 and 100.");
+    if (slMode === "ATR" && (atrMultiplier < 0.5 || atrMultiplier > 5)) messages.push("ATR multiplier must stay between 0.5 and 5.");
+    if (slMode === "SWING" && (swingLookback < 2 || swingLookback > 50)) messages.push("Swing lookback must stay between 2 and 50.");
+    if (slMode === "FIXED_PERCENT" && (fixedPriceRiskPct < 0.001 || fixedPriceRiskPct > 0.05)) messages.push("Fixed price risk must stay between 0.10% and 5.00%.");
+    if (positionSizeMode === "FIXED_LOT" && safeNumber(runtimeConfig.risk.fixed_lot, 0) <= 0) messages.push("Fixed lot size must be greater than 0.");
+    if (positionSizeMode === "FIXED_QUANTITY" && safeNumber(runtimeConfig.risk.fixed_quantity, 0) <= 0) messages.push("Fixed quantity must be greater than 0.");
+    if (positionSizeMode !== "FIXED_QUANTITY" && runtimeConfig.risk.max_lot_cap !== null && runtimeConfig.risk.max_lot_cap !== undefined && safeNumber(runtimeConfig.risk.max_lot_cap, 0) <= 0) messages.push("Max lot cap must be empty or greater than 0.");
+    if (positionSizeMode === "FIXED_QUANTITY" && runtimeConfig.risk.max_quantity_cap !== null && runtimeConfig.risk.max_quantity_cap !== undefined && safeNumber(runtimeConfig.risk.max_quantity_cap, 0) <= 0) messages.push("Max quantity cap must be empty or greater than 0.");
     if (maxTradesPerDay !== null && maxTradesPerDay !== undefined && safeNumber(maxTradesPerDay, 0) < 1) messages.push("Max trades per day must be empty or at least 1.");
     if (safeNumber(maxOpenPositions, 0) < 1 || safeNumber(maxOpenPositions, 0) > 5) messages.push("Max open positions must stay between 1 and 5.");
-    if (breakEvenTrigger < 0.5 || breakEvenTrigger > 5) messages.push("Break-even trigger must stay between 0.5R and 5R.");
-    if (trailStart < 0.5 || trailStart > 5) messages.push("Trail start must stay between 0.5R and 5R.");
-    if (trailAtrMultiplier < 0.5 || trailAtrMultiplier > 5) messages.push("Trail ATR multiplier must stay between 0.5 and 5.");
+    if (breakEvenEnabled && (breakEvenTrigger < 0.5 || breakEvenTrigger > 5)) messages.push("Break-even trigger must stay between 0.5R and 5R.");
+    if (trailingEnabled && (trailStart < 0.5 || trailStart > 5)) messages.push("Trail start must stay between 0.5R and 5R.");
+    if (trailingEnabled && (trailAtrMultiplier < 0.5 || trailAtrMultiplier > 5)) messages.push("Trail ATR multiplier must stay between 0.5 and 5.");
 
     return messages;
   })();
@@ -1215,7 +1259,7 @@ export default function BacktestPage() {
     const riskPct = safeNumber(runtimeConfig.risk.risk_percent, 0);
     const fixedLot = safeNumber(runtimeConfig.risk.fixed_lot, 0);
     if (riskPct > 0.03) messages.push("Risk above 3% is aggressive. Use this only for testing or high-conviction systems.");
-    if (runtimeConfig.risk.position_size_mode === "FIXED_LOT" && fixedLot >= 1) messages.push("Fixed lot looks high. Confirm broker leverage, margin and account balance before live use.");
+    if (positionSizeMode === "FIXED_LOT" && fixedLot >= 1) messages.push("Fixed lot looks high. Confirm broker leverage, margin and account balance before live use.");
     return messages;
   })();
 
@@ -1229,7 +1273,7 @@ export default function BacktestPage() {
     help?: string,
   ) => (
     <div className="space-y-2">
-      <Label className="text-muted-foreground">{label}</Label>
+      <Label className="text-muted-foreground"><FieldLabel label={label} help={help} /></Label>
       <Select value={String(value ?? options[0]?.value ?? "")} onValueChange={(next) => onValueChange(safeNumber(next, options[0]?.value ?? 0))}>
         <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger>
         <SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">
@@ -1239,6 +1283,14 @@ export default function BacktestPage() {
       {help ? <p className="text-[11px] leading-relaxed text-muted-foreground">{help}</p> : null}
     </div>
   );
+
+  
+const FieldLabel = ({ label, help }: { label: string; help?: string }) => (
+  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+    {label}
+    <FieldHelpTooltip label={`${label} help`} content={help || FIELD_HELP[label] || STRATEGY_PARAM_HELP} />
+  </span>
+);
 
   const runtimeSettingsModal = runtimeSettingsOpen ? (
     <div className="fixed inset-0 z-[120] flex items-stretch justify-end bg-black/55 backdrop-blur-sm">
@@ -1267,7 +1319,7 @@ export default function BacktestPage() {
         <div className="border-b border-border/50 px-5 py-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto] md:items-end">
             <div className="space-y-2">
-              <Label className="text-muted-foreground">Runtime Preset</Label>
+              <Label className="text-muted-foreground"><FieldLabel label="Runtime Preset" /></Label>
               <Select value={selectedRuntimePresetId} onValueChange={applyRuntimePreset}>
                 <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground">
                   <SelectValue placeholder="Strategy Default" />
@@ -1354,216 +1406,19 @@ export default function BacktestPage() {
             </div>
           )}
 
-          {runtimeTab === "risk" && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label className="text-muted-foreground">Initial Capital</Label>
-                <Input type="number" value={initialCapital} onChange={(event) => setInitialCapital(event.target.value)} className="rounded-xl border-border/50 bg-card/20 text-foreground" />
-              </div>
-              <div className="rounded-xl border border-border/50 bg-card/20 p-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Instrument Currency</p>
-                <p className="mt-1 text-sm font-semibold text-foreground">{runtimeCurrency}</p>
-                <p className="mt-1 text-[11px] text-muted-foreground">Readonly from Instrument Master. Admin controlled instrument specs.</p>
-              </div>
-              {renderPresetSelect(
-                "Capital Risk %",
-                runtimeConfig.risk.risk_percent,
-                RISK_PERCENT_OPTIONS,
-                (value) => updateRuntimeSection("risk", "risk_percent", value),
-                "Beginner-safe presets prevent unrealistic risk like 50% or 500%.",
-              )}
-              <div className="space-y-2">
-                <Label className="text-muted-foreground">Position Size Mode</Label>
-                <Select value={runtimeConfig.risk.position_size_mode || "RISK_BASED"} onValueChange={(value) => updateRuntimeSection("risk", "position_size_mode", value)}>
-                  <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger>
-                  <SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">
-                    <SelectItem value="RISK_BASED">Risk Based</SelectItem>
-                    <SelectItem value="FIXED_LOT">Fixed Lot</SelectItem>
-                    <SelectItem value="FIXED_QUANTITY">Fixed Quantity</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              {runtimeConfig.risk.position_size_mode === "FIXED_LOT" && (
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Fixed Lot Size</Label>
-                  <Input type="number" step={0.01} value={runtimeConfig.risk.fixed_lot ?? ""} onChange={(event) => updateRuntimeSection("risk", "fixed_lot", toOptionalNumber(event.target.value))} className="rounded-xl border-border/50 bg-card/20 text-foreground" />
-                </div>
-              )}
-              {runtimeConfig.risk.position_size_mode === "FIXED_QUANTITY" && (
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Fixed Quantity</Label>
-                  <Input type="number" step={1} value={runtimeConfig.risk.fixed_quantity ?? ""} onChange={(event) => updateRuntimeSection("risk", "fixed_quantity", toOptionalNumber(event.target.value))} className="rounded-xl border-border/50 bg-card/20 text-foreground" />
-                </div>
-              )}
-              <div className="space-y-2">
-                <Label className="text-muted-foreground">Max Lot Cap</Label>
-                <Input type="number" step={0.01} value={runtimeConfig.risk.max_lot_cap ?? ""} onChange={(event) => updateRuntimeSection("risk", "max_lot_cap", toOptionalNumber(event.target.value))} className="rounded-xl border-border/50 bg-card/20 text-foreground" />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-muted-foreground">Max Quantity Cap</Label>
-                <Input type="number" step={1} value={runtimeConfig.risk.max_quantity_cap ?? ""} onChange={(event) => updateRuntimeSection("risk", "max_quantity_cap", toOptionalNumber(event.target.value))} className="rounded-xl border-border/50 bg-card/20 text-foreground" />
-              </div>
-            </div>
-          )}
-
-          {runtimeTab === "sl_tp" && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {renderPresetSelect("RR Ratio", runtimeConfig.sl_tp.rr_ratio, RR_RATIO_OPTIONS, (value) => updateRuntimeSection("sl_tp", "rr_ratio", value), "Reward-to-risk presets keep reports comparable.")}
-              <div className="space-y-2">
-                <Label className="text-muted-foreground">SL Mode</Label>
-                <Select value={runtimeConfig.sl_tp.sl_mode || "ATR"} onValueChange={(value) => updateRuntimeSection("sl_tp", "sl_mode", value)}>
-                  <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger>
-                  <SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">
-                    <SelectItem value="ATR">ATR</SelectItem>
-                    <SelectItem value="SWING">Swing</SelectItem>
-                    <SelectItem value="FIXED_PERCENT">Fixed Percent</SelectItem>
-                    <SelectItem value="STRATEGY_SUGGESTED">Strategy Suggested</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              {renderPresetSelect("ATR Period", runtimeConfig.sl_tp.atr_period, ATR_PERIOD_OPTIONS, (value) => updateRuntimeSection("sl_tp", "atr_period", value), "Common ATR periods for intraday and swing systems.")}
-              {renderPresetSelect("ATR Multiplier", runtimeConfig.sl_tp.atr_multiplier, ATR_MULTIPLIER_OPTIONS, (value) => updateRuntimeSection("sl_tp", "atr_multiplier", value), "Higher multiplier means wider stop loss.")}
-              {renderPresetSelect("Swing Lookback", runtimeConfig.sl_tp.swing_lookback, SWING_LOOKBACK_OPTIONS, (value) => updateRuntimeSection("sl_tp", "swing_lookback", value), "Number of candles used to find recent swing high/low.")}
-              {renderPresetSelect("Fixed Price Risk %", runtimeConfig.sl_tp.fixed_price_risk_pct, FIXED_PRICE_RISK_OPTIONS, (value) => updateRuntimeSection("sl_tp", "fixed_price_risk_pct", value), "Used only when SL Mode is Fixed Percent.")}
-            </div>
-          )}
-
-          {runtimeTab === "execution" && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="space-y-2"><Label className="text-muted-foreground">Entry Mode</Label><Input value="Next Candle Open" readOnly className="rounded-xl border-border/50 bg-card/20 text-foreground" /></div>
-              {[
-                ["exit_on_opposite_signal", "Exit on Opposite Signal"],
-                ["allow_long", "Allow Long"],
-                ["allow_short", "Allow Short"],
-              ].map(([key, label]) => {
-                const enabled = Boolean(runtimeConfig.execution[key as keyof RuntimeConfig["execution"]]);
-                return (
-                  <div key={key} className="flex items-center justify-between rounded-xl border border-border/50 bg-card/20 p-3">
-                    <span className="text-sm font-medium text-foreground">{label}</span>
-                    <button type="button" className={toggleClass(enabled)} onClick={() => updateRuntimeSection("execution", key, !enabled)}>
-                      <span className={toggleKnobClass(enabled)} />
-                    </button>
-                  </div>
-                );
-              })}
-              {supportsIntradaySquareOff ? (
-                <>
-                  <div className="flex items-center justify-between rounded-xl border border-border/50 bg-card/20 p-3">
-                    <span className="text-sm font-medium text-foreground">Intraday Square Off</span>
-                    <button type="button" className={toggleClass(Boolean(runtimeConfig.execution.intraday_square_off))} onClick={() => updateRuntimeSection("execution", "intraday_square_off", !runtimeConfig.execution.intraday_square_off)}>
-                      <span className={toggleKnobClass(Boolean(runtimeConfig.execution.intraday_square_off))} />
-                    </button>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-muted-foreground">Square Off Time</Label>
-                    <Input type="time" value={runtimeConfig.execution.square_off_time || "15:15"} onChange={(event) => updateRuntimeSection("execution", "square_off_time", event.target.value)} className="rounded-xl border-border/50 bg-card/20 text-foreground" />
-                  </div>
-                </>
-              ) : (
-                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100 md:col-span-2">
-                  Intraday square-off is available only for intraday Indian market instruments. It is disabled for {selectedInstrument?.symbol || "this instrument"}.
-                </div>
-              )}
-              <div className="space-y-2">
-                <Label className="text-muted-foreground">Max Trades Per Day</Label>
-                <Select
-                  value={runtimeConfig.execution.max_trades_per_day === null || runtimeConfig.execution.max_trades_per_day === undefined ? "NONE" : String(runtimeConfig.execution.max_trades_per_day)}
-                  onValueChange={(value) => updateRuntimeSection("execution", "max_trades_per_day", value === "NONE" ? null : safeNumber(value, 1))}
-                >
-                  <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger>
-                  <SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">
-                    {MAX_TRADES_PER_DAY_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <p className="text-[11px] leading-relaxed text-muted-foreground">Optional daily trade limiter.</p>
-              </div>
-              {renderPresetSelect("Max Open Positions", runtimeConfig.execution.max_open_positions, MAX_OPEN_POSITION_OPTIONS, (value) => updateRuntimeSection("execution", "max_open_positions", value), "Keep this low for backtest realism and risk control.")}
-
-            </div>
-          )}
-
-          {runtimeTab === "trade_management" && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {[
-                ["break_even_enabled", "Break Even Enabled"],
-                ["trailing_enabled", "Trailing Stop Enabled"],
-                ["partial_exit_enabled", "Partial Exit Enabled"],
-              ].map(([key, label]) => {
-                const enabled = Boolean(runtimeConfig.trade_management[key as keyof RuntimeConfig["trade_management"]]);
-                return (
-                  <div key={key} className="flex items-center justify-between rounded-xl border border-border/50 bg-card/20 p-3">
-                    <span className="text-sm font-medium text-foreground">{label}</span>
-                    <button type="button" className={toggleClass(enabled)} onClick={() => updateRuntimeSection("trade_management", key, !enabled)}>
-                      <span className={toggleKnobClass(enabled)} />
-                    </button>
-                  </div>
-                );
-              })}
-              {renderPresetSelect("Break Even Trigger R", runtimeConfig.trade_management.break_even_trigger_r, BREAK_EVEN_R_OPTIONS, (value) => updateRuntimeSection("trade_management", "break_even_trigger_r", value), "Move stop loss to entry after this R multiple.")}
-              <div className="space-y-2"><Label className="text-muted-foreground">Trailing Mode</Label><Select value={runtimeConfig.trade_management.trailing_mode || "ATR_TRAIL"} onValueChange={(value) => updateRuntimeSection("trade_management", "trailing_mode", value)}><SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger><SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground"><SelectItem value="ATR_TRAIL">ATR Trail</SelectItem><SelectItem value="EMA20_TRAIL">EMA20 Trail</SelectItem><SelectItem value="SWING_TRAIL">Swing Trail</SelectItem></SelectContent></Select></div>
-              {renderPresetSelect("Trail Start R", runtimeConfig.trade_management.trail_start_r, TRAIL_START_R_OPTIONS, (value) => updateRuntimeSection("trade_management", "trail_start_r", value), "Trailing starts only after this R multiple.")}
-              {renderPresetSelect("Trail ATR Multiplier", runtimeConfig.trade_management.trail_atr_multiplier, TRAIL_ATR_MULTIPLIER_OPTIONS, (value) => updateRuntimeSection("trade_management", "trail_atr_multiplier", value), "Used when trailing mode is ATR Trail.")}
-              {renderPresetSelect("Partial Exit At R", runtimeConfig.trade_management.partial_exit_at_r, BREAK_EVEN_R_OPTIONS, (value) => updateRuntimeSection("trade_management", "partial_exit_at_r", value), "Close part of the position after this R multiple.")}
-              <div className="space-y-2"><Label className="text-muted-foreground">Partial Exit Percent</Label><Select value={String(runtimeConfig.trade_management.partial_exit_percent ?? 0.5)} onValueChange={(value) => updateRuntimeSection("trade_management", "partial_exit_percent", safeNumber(value, 0.5))}><SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger><SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground"><SelectItem value="0.25">25%</SelectItem><SelectItem value="0.5">50%</SelectItem><SelectItem value="0.75">75%</SelectItem></SelectContent></Select><p className="text-[11px] leading-relaxed text-muted-foreground">Remaining position continues to TP/trailing stop.</p></div>
-            </div>
-          )}
-
-          {runtimeTab === "strategy_params" && (
-            <div className="space-y-4">
-              {!strategyParamEntries.length ? (
-                <div className="rounded-xl border border-border/50 bg-card/20 p-4 text-sm text-muted-foreground">No runtime strategy parameters published for this strategy yet.</div>
-              ) : (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {strategyParamEntries.map(([key, field]) => {
-                    const value = runtimeConfig.strategy_params[key] ?? field.default ?? "";
-                    const fieldType = field.type || "text";
-                    if (fieldType === "boolean") {
-                      const enabled = Boolean(value);
-                      return (
-                        <div key={key} className="flex items-center justify-between rounded-xl border border-border/50 bg-card/20 p-3">
-                          <span className="text-sm font-medium text-foreground">{field.label || humanLabel(key)}</span>
-                          <button type="button" className={toggleClass(enabled)} onClick={() => updateStrategyParam(key, !enabled)}>
-                            <span className={toggleKnobClass(enabled)} />
-                          </button>
-                        </div>
-                      );
-                    }
-                    if (fieldType === "select" && Array.isArray(field.options)) {
-                      return (
-                        <div key={key} className="space-y-2">
-                          <Label className="text-muted-foreground">{field.label || humanLabel(key)}</Label>
-                          <Select value={String(value)} onValueChange={(next) => updateStrategyParam(key, next)}>
-                            <SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger>
-                            <SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">
-                              {field.options.map((option) => {
-                                const optionValue = typeof option === "object" ? String(option.value ?? option.label ?? "") : String(option);
-                                const optionLabel = typeof option === "object" ? String(option.label ?? option.value ?? "") : String(option);
-                                return <SelectItem key={optionValue} value={optionValue}>{optionLabel}</SelectItem>;
-                              })}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      );
-                    }
-                    return (
-                      <div key={key} className="space-y-2">
-                        <Label className="text-muted-foreground">{field.label || humanLabel(key)}</Label>
-                        <Input
-                          type={fieldType === "number" ? "number" : "text"}
-                          min={field.min}
-                          max={field.max}
-                          step={field.step ?? (fieldType === "number" ? 1 : undefined)}
-                          value={String(value)}
-                          onChange={(event) => updateStrategyParam(key, fieldType === "number" ? safeNumber(event.target.value, 0) : event.target.value)}
-                          className="rounded-xl border-border/50 bg-card/20 text-foreground"
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
+          <RuntimeSettingsForm
+            activeTab={runtimeTab}
+            config={runtimeConfig as any}
+            updateSection={updateRuntimeSection as any}
+            strategySchema={runtimeSchema as any}
+            updateStrategyParam={updateStrategyParam as any}
+            initialCapital={initialCapital}
+            onInitialCapitalChange={setInitialCapital}
+            currency={runtimeCurrency}
+            instrumentSymbol={selectedInstrument?.symbol || "this instrument"}
+            supportsIntradaySquareOff={supportsIntradaySquareOff}
+            mode="backtest"
+          />
         </div>
 
         <div className="flex flex-col gap-3 border-t border-border/50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1733,7 +1588,7 @@ export default function BacktestPage() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-muted-foreground">Initial Capital</Label>
+              <Label className="text-muted-foreground"><FieldLabel label="Initial Capital" /></Label>
               <Input
                 type="number"
                 min={1}

@@ -38,6 +38,11 @@ class PerformanceMetric(Base):
     candles_before_filter = Column(Integer, nullable=True)
     candles_after_filter = Column(Integer, nullable=True)
     filter_reduction_pct = Column(Numeric, nullable=True)
+
+    # Phase RS-4: immutable runtime/instrument/report snapshots for history and report transparency.
+    runtime_config_snapshot = Column(JSON, nullable=True)
+    instrument_spec_snapshot = Column(JSON, nullable=True)
+    professional_summary = Column(JSON, nullable=True)
     status = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = deferred(Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=True))

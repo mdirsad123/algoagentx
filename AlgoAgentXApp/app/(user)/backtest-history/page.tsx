@@ -123,14 +123,65 @@ const humanize = (value: string) =>
     .trim();
 
 
+
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value) return null;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+};
+
+const getRuntimeSection = (runtime: Record<string, unknown> | null, key: string): Record<string, unknown> => {
+  const section = runtime?.[key];
+  return section && typeof section === "object" && !Array.isArray(section) ? (section as Record<string, unknown>) : {};
+};
+
+const formatRuntimePercent = (value: unknown): string | null => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  const pct = Math.abs(parsed) <= 1 ? parsed * 100 : parsed;
+  return `${formatNumber(pct, 2)}%`;
+};
+
+const formatRuntimeSummary = (item: BacktestHistoryItem): string => {
+  if (item.runtime_summary && item.runtime_summary.trim()) return item.runtime_summary;
+  const runtime = asRecord(item.runtime_config_snapshot);
+  if (!runtime) return "Runtime snapshot unavailable";
+  const risk = getRuntimeSection(runtime, "risk");
+  const slTp = getRuntimeSection(runtime, "sl_tp");
+  const tm = getRuntimeSection(runtime, "trade_management");
+  const parts: string[] = [];
+  const riskPct = formatRuntimePercent(risk.risk_percent);
+  if (riskPct) parts.push(`Risk ${riskPct}`);
+  if (slTp.rr_ratio !== undefined && slTp.rr_ratio !== null) parts.push(`RR 1:${slTp.rr_ratio}`);
+  if (slTp.sl_mode) parts.push(`${humanize(String(slTp.sl_mode))} SL`);
+  if (risk.position_size_mode) {
+    const mode = String(risk.position_size_mode).toUpperCase();
+    if (mode === "FIXED_LOT" && risk.fixed_lot_size !== undefined) parts.push(`Fixed Lot ${risk.fixed_lot_size}`);
+    else parts.push(humanize(String(risk.position_size_mode)));
+  }
+  if (tm.break_even_enabled) parts.push("Breakeven ON");
+  if (tm.trailing_enabled) parts.push("Trail ON");
+  if (tm.partial_exit_enabled) parts.push("Partial Exit ON");
+  return parts.length ? parts.join(" · ") : "Runtime snapshot captured";
+};
+
 const formatFilterSummary = (item: Pick<BacktestHistoryItem, "filter_summary" | "advanced_filters">): string => {
   if (item.filter_summary && item.filter_summary.trim()) return item.filter_summary;
-  const filters = item.advanced_filters;
+  const filters = asRecord(item.advanced_filters) || (item.advanced_filters && typeof item.advanced_filters === "object" ? item.advanced_filters : null);
   if (!filters || !filters.enabled) return "Advanced filters not used";
-  const days = filters.days_of_week?.length ? filters.days_of_week.map(humanize).join(", ") : "All days";
-  const session = filters.session === "CUSTOM"
+  const daysRaw = Array.isArray(filters.days_of_week) ? filters.days_of_week : [];
+  const days = daysRaw.length ? daysRaw.map((day) => humanize(String(day))).join(", ") : "All days";
+  const sessionValue = String(filters.session || "ALL");
+  const session = sessionValue === "CUSTOM"
     ? `${filters.custom_start_time || "—"}-${filters.custom_end_time || "—"} ${filters.timezone || "Asia/Kolkata"}`
-    : `${humanize(filters.session || "ALL")} Session`;
+    : `${humanize(sessionValue)} Session`;
   return `${days} · ${session.replace("All Session", "All sessions")}`;
 };
 
@@ -902,6 +953,7 @@ export default function BacktestHistoryPage() {
                       <TableHead className="text-right">Sharpe</TableHead>
                       <TableHead className="text-right">Drawdown</TableHead>
                       <TableHead className="text-right">Trades</TableHead>
+                      <TableHead>Runtime</TableHead>
                       <TableHead>Filters</TableHead>
                       <TableHead>Created</TableHead>
                       <TableHead>Status</TableHead>
@@ -913,7 +965,7 @@ export default function BacktestHistoryPage() {
                     {loading
                       ? Array.from({ length: 6 }).map((_, idx) => (
                           <TableRow key={`skeleton-${idx}`} className="border-border/30 hover:bg-transparent">
-                            <TableCell colSpan={14} className="py-4">
+                            <TableCell colSpan={15} className="py-4">
                               <div className="h-6 animate-pulse rounded-lg bg-card/40" />
                             </TableCell>
                           </TableRow>
@@ -941,6 +993,11 @@ export default function BacktestHistoryPage() {
                               <TableCell className="text-right">{formatNumber(item.sharpe_ratio, 2)}</TableCell>
                               <TableCell className="text-right">{formatPercentAuto(item.max_drawdown)}</TableCell>
                               <TableCell className="text-right">{formatNumber(item.total_trades, 0)}</TableCell>
+                              <TableCell>
+                                <span className="inline-flex max-w-[260px] rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-1 text-xs text-violet-100">
+                                  {formatRuntimeSummary(item)}
+                                </span>
+                              </TableCell>
                               <TableCell>
                                 <span className="inline-flex max-w-[220px] rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary">
                                   {formatFilterSummary(item)}
@@ -1029,8 +1086,12 @@ export default function BacktestHistoryPage() {
                         </div>
                       </div>
 
+                      <div className="mt-3 rounded-lg border border-violet-400/40 bg-violet-500/10 px-3 py-2 text-xs text-violet-100">
+                        <span className="font-semibold">Runtime Settings:</span> {formatRuntimeSummary(item)}
+                      </div>
+
                       <div className="mt-3 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs text-primary">
-                        {formatFilterSummary(item)}
+                        <span className="font-semibold">Advanced Filters:</span> {formatFilterSummary(item)}
                       </div>
 
                       <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">

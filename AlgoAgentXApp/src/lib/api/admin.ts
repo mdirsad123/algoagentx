@@ -1,4 +1,5 @@
 import axiosInstance from "../axios";
+import { HEAVY_API_TIMEOUT_MS } from "../api-timeouts";
 
 const unwrap = <T>(response: any): T => {
   const payload = response?.data;
@@ -1159,7 +1160,7 @@ export const adminApi = {
     end_date?: string;
     capital?: number;
   }): Promise<any> =>
-    unwrap(await axiosInstance.post(`/api/v1/admin/strategy-requests/strategies/${strategyId}/validate`, payload || {})),
+    unwrap(await axiosInstance.post(`/api/v1/admin/strategy-requests/strategies/${strategyId}/validate`, payload || {}, { timeout: HEAVY_API_TIMEOUT_MS })),
 
 
   getAdminStrategyById: async (strategyId: string): Promise<ImplementedStrategy> =>
@@ -1194,7 +1195,7 @@ export const adminApi = {
     strategyId: string,
     payload: { instrument_id: number; timeframe: string; start_date: string; end_date: string; capital?: number },
   ): Promise<AdminStrategySandboxResult> =>
-    unwrap(await axiosInstance.post(`/api/v1/admin/strategy-requests/strategies/${strategyId}/sandbox-backtest`, payload)),
+    unwrap(await axiosInstance.post(`/api/v1/admin/strategy-requests/strategies/${strategyId}/sandbox-backtest`, payload, { timeout: HEAVY_API_TIMEOUT_MS })),
 
   getAdminBacktestEngineSource: async (): Promise<AdminBacktestEngineSource> =>
     unwrap(await axiosInstance.get(`/api/v1/admin/backtest-engine/source`)),
@@ -1298,13 +1299,13 @@ export const adminApi = {
     unwrap(await axiosInstance.post("/api/v1/admin/market-data/hooks/refresh", payload)),
 
   fetchMarketDataPreview: async (payload: AdminMarketDataFetchPayload): Promise<AdminMarketDataFetchResponse> =>
-    unwrap(await axiosInstance.post("/api/v1/admin/market-data/fetch-preview", payload, { timeout: 120000 })),
+    unwrap(await axiosInstance.post("/api/v1/admin/market-data/fetch-preview", payload, { timeout: HEAVY_API_TIMEOUT_MS })),
 
   fetchMarketDataImport: async (payload: AdminMarketDataFetchPayload): Promise<AdminMarketDataFetchResponse> =>
-    unwrap(await axiosInstance.post("/api/v1/admin/market-data/fetch-import", payload, { timeout: 120000 })),
+    unwrap(await axiosInstance.post("/api/v1/admin/market-data/fetch-import", payload, { timeout: HEAVY_API_TIMEOUT_MS })),
 
   refreshMissingMarketData: async (payload: AdminMarketDataRefreshMissingPayload): Promise<AdminMarketDataRefreshMissingResponse> =>
-    unwrap(await axiosInstance.post("/api/v1/admin/market-data/refresh-missing", payload, { timeout: 120000 })),
+    unwrap(await axiosInstance.post("/api/v1/admin/market-data/refresh-missing", payload, { timeout: HEAVY_API_TIMEOUT_MS })),
 
   uploadMarketDataCsv: async (payload: AdminMarketDataCsvUploadPayload): Promise<AdminMarketDataCsvUploadResponse> => {
     const formData = new FormData();
@@ -1316,7 +1317,7 @@ export const adminApi = {
     return unwrap(
       await axiosInstance.post("/api/v1/admin/market-data/upload-csv", formData, {
         headers: { "Content-Type": "multipart/form-data" },
-        timeout: 120000,
+        timeout: HEAVY_API_TIMEOUT_MS,
       }),
     );
   },

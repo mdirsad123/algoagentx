@@ -190,6 +190,9 @@ class BacktestHistoryItem(BaseModel):
     candles_before_filter: Optional[int] = None
     candles_after_filter: Optional[int] = None
     filter_reduction_pct: Optional[float] = None
+    runtime_config_snapshot: Optional[dict[str, Any]] = None
+    instrument_spec_snapshot: Optional[dict[str, Any]] = None
+    runtime_summary: Optional[str] = None
 
 
 class BacktestPagination(BaseModel):

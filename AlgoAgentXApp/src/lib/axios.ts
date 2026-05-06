@@ -1,4 +1,5 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from "axios";
+import { API_TIMEOUT_MS } from "./api-timeouts";
 
 type ApiEnvelope<T> = {
   success?: boolean;
@@ -9,6 +10,9 @@ type ApiEnvelope<T> = {
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_SERVER?.replace(/\/+$/, "") || "http://localhost:8000";
 
+const SLOW_REQUEST_MESSAGE =
+  "Request is still taking longer than expected. Please retry, or wait for backend to finish if this is a heavy report/backtest.";
+
 export const getStoredAccessToken = (): string | null => {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("access_token");
@@ -16,7 +20,7 @@ export const getStoredAccessToken = (): string | null => {
 
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 15000,
+  timeout: API_TIMEOUT_MS,
   withCredentials: false,
   headers: {
     "Content-Type": "application/json",
@@ -40,6 +44,9 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError<any>) => {
     const detail = error.response?.data?.detail;
+    const isTimeoutError =
+      error.code === "ECONNABORTED" ||
+      String(error.message || "").toLowerCase().includes("timeout");
 
     let message = "Request failed";
     if (typeof detail === "string" && detail.trim()) {
@@ -58,6 +65,8 @@ apiClient.interceptors.response.use(
       message = detail.message || detail.error || error.response?.data?.message || error.message || "Request failed";
     } else if (typeof error.response?.data?.message === "string" && error.response?.data?.message.trim()) {
       message = error.response.data.message;
+    } else if (isTimeoutError) {
+      message = SLOW_REQUEST_MESSAGE;
     } else if (error.message) {
       message = error.message;
     }
@@ -101,6 +110,14 @@ export const apiPatch = async <T>(
   config?: AxiosRequestConfig & { auth?: boolean }
 ): Promise<T> => {
   const response = await apiClient.patch<ApiEnvelope<T> | T>(url, body, config);
+  return unwrapResponse<T>(response.data);
+};
+
+export const apiDelete = async <T = unknown>(
+  url: string,
+  config?: AxiosRequestConfig & { auth?: boolean }
+): Promise<T> => {
+  const response = await apiClient.delete<ApiEnvelope<T> | T>(url, config);
   return unwrapResponse<T>(response.data);
 };
 
