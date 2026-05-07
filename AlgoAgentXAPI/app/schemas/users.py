@@ -20,6 +20,15 @@ class GoogleLoginRequest(BaseModel):
     credential: str
     remember_me: bool = False
 
+
+class AdminOtpVerifyRequest(BaseModel):
+    otp_session_id: str
+    otp: str
+    remember_me: bool = False
+
+class AdminOtpResendRequest(BaseModel):
+    otp_session_id: str
+
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 

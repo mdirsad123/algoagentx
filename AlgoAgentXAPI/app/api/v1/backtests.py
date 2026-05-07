@@ -40,6 +40,7 @@ from ...services.credits.management import CreditManagementService
 from ...services.metrics import MetricsCalculator
 from ...services.notification_service import NotificationService
 from ...services.pricing.backtest_pricing_service import BacktestPricingService
+from ...services.billing.credit_cost_service import CreditCostService
 from ...services.backtest_advanced_filters import apply_advanced_filters, build_filter_summary
 from ...utils.api_response import success_response
 
@@ -642,25 +643,45 @@ async def _quote_backtest_cost(
     use_actual_candle_count: bool,
     candle_count_override: int | None = None,
     candle_count_mode_override: str | None = None,
+    advanced_filters=None,
 ) -> dict:
-    strategy_parameters = None
-    if strategy_id:
-        strategy = await db.get(Strategy, strategy_id)
-        if strategy and isinstance(strategy.parameters, dict):
-            strategy_parameters = strategy.parameters
+    """PAY-BILL-5: admin-managed credit expense rules.
 
-    return await BacktestPricingService.quote_backtest_cost(
+    Keep the legacy BacktestPricingService import untouched for compatibility, but
+    route backtest debit/preview amounts through the new rule engine.
+    """
+    if candle_count_override is not None:
+        candle_count = int(candle_count_override or 0)
+    else:
+        try:
+            quote = await BacktestPricingService.quote_backtest_cost(
+                db,
+                timeframe=timeframe,
+                start_date=start_date,
+                end_date=end_date,
+                instrument_id=instrument_id,
+                strategy_parameters=None,
+                use_actual_candle_count=use_actual_candle_count,
+                plan_code=plan_code,
+                candle_count_override=None,
+                candle_count_mode_override=candle_count_mode_override,
+            )
+            candle_count = _to_int((quote.get("breakdown") or {}).get("candle_count"), 0)
+        except Exception:
+            candle_count = 0
+
+    estimate = await CreditCostService.calculate_backtest_credit_cost(
         db,
+        user_id=None,
+        instrument_id=instrument_id,
         timeframe=timeframe,
         start_date=start_date,
         end_date=end_date,
-        instrument_id=instrument_id,
-        strategy_parameters=strategy_parameters,
-        use_actual_candle_count=use_actual_candle_count,
-        plan_code=plan_code,
-        candle_count_override=candle_count_override,
-        candle_count_mode_override=candle_count_mode_override,
+        candle_count=candle_count,
+        advanced_filters=advanced_filters,
     )
+    estimate["breakdown"]["candle_count_mode"] = candle_count_mode_override or ("actual" if use_actual_candle_count else "estimated")
+    return estimate
 
 
 
@@ -1687,6 +1708,7 @@ async def preview_backtest_cost(
         use_actual_candle_count=bool(payload.instrument_id),
         candle_count_override=filtered_candle_override,
         candle_count_mode_override=candle_count_mode_override,
+        advanced_filters=payload.advanced_filters,
     )
 
     capacity = await CreditManagementService.get_credit_capacity(db, str(current_user["user_id"]), for_update=False)
@@ -1733,6 +1755,11 @@ async def preview_backtest_cost(
         },
         "total_cost": estimate["total_cost"],
         "estimated_run_cost": estimate["total_cost"],
+        "estimated_candles": estimate.get("estimated_candles") or after_count or before_count,
+        "credit_cost": estimate["total_cost"],
+        "credit_balance": float(total_available),
+        "has_enough_credits": can_run,
+        "pricing_rule": estimate.get("pricing_rule") or estimate.get("breakdown", {}).get("rule_set_name"),
         "breakdown": estimate["breakdown"],
         "pricing_rule_set": {
             "id": estimate.get("breakdown", {}).get("rule_set_id"),
@@ -1817,6 +1844,7 @@ async def run_backtest(
         use_actual_candle_count=True,
         candle_count_override=filtered_candle_override,
         candle_count_mode_override=candle_count_mode_override,
+        advanced_filters=payload.advanced_filters,
     )
     cost = Decimal(str(estimate["total_cost"]))
 
@@ -1878,8 +1906,10 @@ async def run_backtest(
             user_id=str(current_user["user_id"]),
             total_cost=cost,
             description=(
-                f"Backtest run: {payload.timeframe} | {payload.start_date.isoformat()} to "
-                f"{payload.end_date.isoformat()}"
+                f"Backtest run: {getattr(instrument, 'symbol', payload.instrument_id)} {payload.timeframe} "
+                f"{payload.start_date.isoformat()} to {payload.end_date.isoformat()} | "
+                f"candles: {estimate.get('estimated_candles') or estimate.get('breakdown', {}).get('candle_count') or 0} | "
+                f"rule: {estimate.get('pricing_rule') or estimate.get('breakdown', {}).get('rule_set_name') or 'Credit expense rule'}"
             ),
             job_id=job_id,
             auto_commit=False,

@@ -24,6 +24,7 @@ from ...services.live.trading_safety import LIVE_DISABLED_MESSAGE, check_platfor
 from ...services.live_trading.readiness_service import build_live_deployment_readiness
 from ...services.live_trading.paper_position_manager import process_paper_positions_for_deployment
 from ...services.live_trading.final_qa_service import build_final_live_qa, run_paper_order_test, run_demo_micro_order_test
+from ...services.billing.live_subscription_gate import build_live_trading_access_status, require_active_subscription_for_live_trading
 from ...utils.api_response import success_response
 from .live_common import (
     block_live_mode,
@@ -571,8 +572,16 @@ async def list_deployments(db: AsyncSession = Depends(get_db), current_user: dic
     return success_response(dump_list(StrategyDeploymentOut, rows))
 
 
+@router.get("/access-status")
+async def get_live_trading_access_status(db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    payload = await build_live_trading_access_status(db, user_id_from(current_user))
+    await db.commit()
+    return success_response(payload, payload.get("message") or "Live trading access checked")
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_deployment(payload: StrategyDeploymentCreate, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     _validate_safe_deployment_values(payload.model_dump())
     block_live_mode(payload.mode)
     await get_deployable_strategy_or_400(db, payload.strategy_id, payload.mode)
@@ -712,6 +721,7 @@ async def _set_live_sync(db: AsyncSession, row: StrategyDeployment, enabled: boo
 
 @router.post("/{deployment_id}/live-sync/enable")
 async def enable_deployment_live_sync(deployment_id: UUID, payload: LiveSyncSettingsIn | None = None, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     row = await get_deployment_or_404(db, deployment_id, current_user)
     return success_response(dump_one(StrategyDeploymentOut, await _set_live_sync(db, row, True, (payload.interval_seconds if payload else None))), "Live broker auto-sync enabled")
 
@@ -749,6 +759,7 @@ async def get_deployment_live_sync_status(deployment_id: UUID, db: AsyncSession 
 
 @router.post("/{deployment_id}/manual-signal")
 async def create_deployment_manual_signal(deployment_id: UUID, payload: ManualDeploymentSignalIn, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     row = await get_deployment_or_404(db, deployment_id, current_user)
     signal_type = payload.signal_type
     side = "LONG" if signal_type == "BUY" else "SHORT" if signal_type == "SELL" else None
@@ -822,6 +833,7 @@ async def test_deployment_paper_order(deployment_id: UUID, payload: QaOrderTestI
 
 @router.post("/{deployment_id}/test-demo-micro-order")
 async def test_deployment_demo_micro_order(deployment_id: UUID, payload: QaOrderTestIn, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     row = await get_deployment_or_404(db, deployment_id, current_user)
     try:
         result = await run_demo_micro_order_test(db, row, confirm_demo_micro_order=bool(payload.confirm_demo_micro_order), side=payload.side or "BUY")
@@ -839,12 +851,15 @@ async def run_live_deployment_full_dry_test(deployment_id: UUID, db: AsyncSessio
 
 @router.post("/{deployment_id}/run-strategy-once")
 async def run_live_strategy_once(deployment_id: UUID, payload: RunStrategyOnceIn | None = None, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    if payload is None or payload.execute:
+        await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     await get_deployment_or_404(db, deployment_id, current_user)
     result = await run_strategy_for_deployment(db, deployment_id, execute=(payload.execute if payload else True))
     return success_response(result, result.get("message") or "Strategy runner completed")
 
 @router.post("/{deployment_id}/auto-runner/enable")
 async def enable_deployment_auto_runner(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     row = await get_deployment_or_404(db, deployment_id, current_user)
     row.auto_runner_enabled = True
     row.runner_error_count = 0
@@ -919,6 +934,7 @@ async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpda
 
 @router.post("/{deployment_id}/start")
 async def start_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     row = await get_deployment_or_404(db, deployment_id, current_user)
     block_live_mode(row.mode)
     platform_check = await check_platform_mode_allowed(db, row.mode)

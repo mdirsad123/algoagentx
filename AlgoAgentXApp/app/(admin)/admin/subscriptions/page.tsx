@@ -78,7 +78,9 @@ export default function AdminSubscriptionsPage() {
                   <th className="px-3 py-3">User</th>
                   <th className="px-3 py-3">Plan</th>
                   <th className="px-3 py-3">Period</th>
-                  <th className="px-3 py-3">Amount</th>
+                  <th className="px-3 py-3">Paid Amount</th>
+                  <th className="px-3 py-3">Coupon</th>
+                  <th className="px-3 py-3">Source Order</th>
                   <th className="px-3 py-3">Included Credits</th>
                   <th className="px-3 py-3">Remaining</th>
                   <th className="px-3 py-3">Status</th>
@@ -90,12 +92,14 @@ export default function AdminSubscriptionsPage() {
                 </tr>
               </thead>
               <tbody>
-                {loading ? <tr><td className="px-3 py-8 text-muted-foreground" colSpan={12}>Loading subscriptions...</td></tr> : items.length === 0 ? <tr><td className="px-3 py-8 text-center text-muted-foreground" colSpan={12}>No data found</td></tr> : items.map((item) => (
+                {loading ? <tr><td className="px-3 py-8 text-muted-foreground" colSpan={14}>Loading subscriptions...</td></tr> : items.length === 0 ? <tr><td className="px-3 py-8 text-center text-muted-foreground" colSpan={14}>No data found</td></tr> : items.map((item) => (
                   <tr key={item.id} className="border-b border-border/30 hover:bg-card/50 transition-colors">
                     <td className="px-3 py-3"><div className="text-foreground">{item.user_name || item.user_email || '—'}</div><div className="text-xs text-muted-foreground">{item.user_email || ''}</div></td>
                     <td className="px-3 py-3"><span className="rounded-full border border-border/60 bg-card/50 px-2 py-1 text-xs uppercase text-foreground">{item.plan_code || 'free'}</span></td>
                     <td className="px-3 py-3 text-foreground">{item.billing_period}</td>
-                    <td className="px-3 py-3 text-foreground font-medium">₹{item.price_inr || 0}</td>
+                    <td className="px-3 py-3 text-foreground font-medium">{(item as any).paid_currency === "USD" ? `$${Number((item as any).paid_amount || (item as any).final_usd || 0).toFixed(2)}` : `₹${Number((item as any).paid_amount || item.price_inr || 0).toLocaleString("en-IN")}`}</td>
+                    <td className="px-3 py-3 text-foreground">{(item as any).coupon_code ? <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-xs text-emerald-200">{(item as any).coupon_code} · -${Number((item as any).discount_usd || 0).toFixed(2)}</span> : "—"}</td>
+                    <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{(item as any).source_order_id || (item as any).source_payment_id || "—"}</td>
                     <td className="px-3 py-3 text-foreground">{item.included_credits_total ?? item.included_credits ?? 0}</td>
                     <td className="px-3 py-3 text-foreground">{item.included_credits_remaining ?? 0}</td>
                     <td className="px-3 py-3"><Badge className="bg-card/60 text-foreground border border-border/60">{item.status}</Badge></td>

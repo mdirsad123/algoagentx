@@ -1380,9 +1380,30 @@ async def get_subscriptions(
     rows = (await db.execute(stmt)).all()
     total = (await db.execute(count_stmt)).scalar() or 0
     items = []
+    has_billing_order_audit = await table_has_column(db, "billing_orders", "id")
     for sub, plan, email, fullname in rows:
-        items.append(
-            {
+        order_audit = {}
+        if has_billing_order_audit:
+            order_row = (await db.execute(text("""
+                SELECT billing_order_id, payment_id, coupon_code, discount_usd, final_usd, payment_amount, payment_currency, status
+                FROM billing_orders
+                WHERE (subscription_id IS NOT NULL AND CAST(subscription_id AS TEXT) = :sub_id)
+                   OR (payment_id IS NOT NULL AND payment_id = :payment_id)
+                ORDER BY created_at DESC
+                LIMIT 1
+            """), {"sub_id": str(sub.id), "payment_id": str(getattr(sub, "source_payment_id", "") or "")})).mappings().first()
+            if order_row:
+                order_audit = {
+                    "source_order_id": order_row.get("billing_order_id"),
+                    "source_payment_id": order_row.get("payment_id"),
+                    "paid_amount": _serialize(order_row.get("payment_amount")),
+                    "paid_currency": order_row.get("payment_currency"),
+                    "coupon_code": order_row.get("coupon_code"),
+                    "discount_usd": _serialize(order_row.get("discount_usd")),
+                    "final_usd": _serialize(order_row.get("final_usd")),
+                    "order_status": order_row.get("status"),
+                }
+        item = {
                 "id": str(sub.id),
                 "user_id": str(sub.user_id),
                 "user_email": email or "—",
@@ -1405,8 +1426,10 @@ async def get_subscriptions(
                 "next_credit_refill_at": _serialize(getattr(sub, "next_credit_refill_at", None)),
                 "last_credit_refill_at": _serialize(getattr(sub, "last_credit_refill_at", None)),
                 "created_at": _serialize(sub.created_at),
+                "source_payment_id": str(getattr(sub, "source_payment_id", "") or "") or order_audit.get("source_payment_id"),
+                **order_audit,
             }
-        )
+        items.append(item)
     return success_response({"items": items, "total": total, "skip": skip, "limit": limit}, "No data found" if not items else None)
 
 
@@ -1507,9 +1530,12 @@ async def get_orders(
                     "order_type": order.purpose,
                     "source_type": order.purpose,
                     "status": order.status,
-                    "total_amount": int(order.amount_inr or 0),
-                    "currency": order.currency or "INR",
-                    "payment_method": order.provider,
+                    "total_amount": float(getattr(order, "payment_amount", None) or order.amount_inr or 0),
+                    "currency": getattr(order, "payment_currency", None) or order.currency or "INR",
+                    "payment_method": getattr(order, "payment_method", None) or order.provider,
+                    "provider": order.provider,
+                    "coupon_code": getattr(order, "coupon_code", None),
+                    "discount_usd": float(getattr(order, "discount_usd", None) or 0),
                     "transaction_id": order.razorpay_payment_id,
                     "linked_payment_id": order.payment_id,
                     "linked_payment_status": order.status,
@@ -1567,9 +1593,12 @@ async def get_order_detail(order_id: str, db: AsyncSession = Depends(get_db), cu
                 "order_type": order.purpose,
                 "source_type": order.purpose,
                 "status": order.status,
-                "total_amount": int(order.amount_inr or 0),
-                "currency": order.currency or "INR",
-                "payment_method": order.provider,
+                "total_amount": float(getattr(order, "payment_amount", None) or order.amount_inr or 0),
+                "currency": getattr(order, "payment_currency", None) or order.currency or "INR",
+                "payment_method": getattr(order, "payment_method", None) or order.provider,
+                "provider": order.provider,
+                "coupon_code": getattr(order, "coupon_code", None),
+                "discount_usd": float(getattr(order, "discount_usd", None) or 0),
                 "transaction_id": order.razorpay_payment_id,
                 "linked_payment_id": order.payment_id,
                 "linked_payment_status": order.status,

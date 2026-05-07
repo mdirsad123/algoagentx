@@ -34,6 +34,7 @@ type BillingPeriod = AdminPricingPlan["billing_period"];
 type PlanFormState = {
   code: string;
   billing_period: BillingPeriod;
+  price_usd: number;
   price_inr: number;
   included_credits: number;
   summary: string;
@@ -61,6 +62,7 @@ const PLAN_PRESETS: Array<{ label: string; code: string; billing_period: Billing
 const emptyForm = (): PlanFormState => ({
   code: "",
   billing_period: "MONTHLY",
+  price_usd: 0,
   price_inr: 0,
   included_credits: 0,
   summary: "",
@@ -95,6 +97,7 @@ const periodSortOrder = (period: string): number => {
 const toFormState = (plan: AdminPricingPlan): PlanFormState => ({
   code: String(plan.code || "").toUpperCase(),
   billing_period: plan.billing_period,
+  price_usd: Number(plan.price_usd || 0),
   price_inr: Number(plan.price_inr || 0),
   included_credits: Number(plan.included_credits || 0),
   summary: String(plan.summary || ""),
@@ -112,7 +115,8 @@ const toFormState = (plan: AdminPricingPlan): PlanFormState => ({
 const toPayload = (form: PlanFormState): AdminPricingPlanPayload => ({
   code: String(form.code || "").trim().toUpperCase(),
   billing_period: form.billing_period,
-  price_inr: Math.max(0, Number(form.price_inr || 0)),
+  price_usd: Math.max(0, Number(form.price_usd || 0)),
+  price_inr: Math.max(0, Number(form.price_inr || 0)) || Math.round(Math.max(0, Number(form.price_usd || 0)) * 83),
   included_credits: Math.max(0, Number(form.included_credits || 0)),
   summary: String(form.summary || "").trim(),
   daily_backtests: Math.max(0, Number(form.daily_backtests || 0)),
@@ -269,12 +273,13 @@ export default function AdminPricingPage() {
       </div>
 
       <div className="space-y-1.5">
-        <Label>Price INR</Label>
+        <Label>Price USD</Label>
         <Input
           type="number"
           min={0}
-          value={form.price_inr}
-          onChange={(e) => setField("price_inr", Number(e.target.value || 0))}
+          step="0.01"
+          value={form.price_usd}
+          onChange={(e) => setField("price_usd", Number(e.target.value || 0))}
           className="rounded-xl border-border/50 bg-card/20 text-foreground"
         />
       </div>
@@ -379,7 +384,7 @@ export default function AdminPricingPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Pricing Master</h1>
           <p className="text-sm text-muted-foreground">
-            Manage plan pricing, limits, features, and activation in a structured admin table.
+            Manage USD plan pricing, limits, features, and activation in a structured admin table.
           </p>
         </div>
 
@@ -494,7 +499,7 @@ export default function AdminPricingPage() {
                   <TableRow className="border-border/60 hover:bg-transparent">
                     <TableHead>Plan Code</TableHead>
                     <TableHead>Billing Period</TableHead>
-                    <TableHead>Price INR</TableHead>
+                    <TableHead>Price USD</TableHead>
                     <TableHead>Included Credits</TableHead>
                     <TableHead>Daily Backtests</TableHead>
                     <TableHead>Daily AI Screener Runs</TableHead>
@@ -555,12 +560,12 @@ export default function AdminPricingPage() {
                             <Input
                               type="number"
                               min={0}
-                              value={row.price_inr}
-                              onChange={(e) => updateDraft("price_inr", Number(e.target.value || 0))}
+                              value={row.price_usd}
+                              onChange={(e) => updateDraft("price_usd", Number(e.target.value || 0))}
                               className="h-9 rounded-xl border-border/50 bg-card/20 text-foreground"
                             />
                           ) : (
-                            <span className="text-foreground">₹{plan.price_inr}</span>
+                            <span className="text-foreground">${Number(plan.price_usd || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                           )}
                         </TableCell>
 

@@ -27,6 +27,14 @@ export default function AdminCreditsPage() {
     return userId.trim().length > 0 && Number.isFinite(amount) && amount > 0 && reason.trim().length > 0
   }, [userId, amount, reason])
 
+  const formatLedgerSource = (item: CreditTransaction) => {
+    const source = String(item.source || item.source_type || item.type || "").toLowerCase();
+    if (source.includes("backtest")) return "Backtest Credit Debit";
+    if (source.includes("included")) return "Subscription Included Credits";
+    if (source.includes("wallet")) return "Wallet Credits";
+    return item.source || item.source_type || item.type || "—";
+  }
+
   const load = async (nextSkip = skip) => {
     try {
       setLoading(true)
@@ -105,8 +113,9 @@ export default function AdminCreditsPage() {
                     <td className="px-3 py-3 text-rose-300">{item.credits_used ?? ((item.credits ?? 0) < 0 ? Math.abs(item.credits || 0) : 0)}</td>
                     <td className="px-3 py-3">{item.remaining_credits ?? item.balance_after ?? 0}</td>
                     <td className="px-3 py-3">
-                      <div>{item.source || item.source_type || item.type}</div>
-                      <div className="text-xs text-purple-200">actor: {item.actor_user_id || '—'}{item.reason ? ` | ${item.reason}` : ''}</div>
+                      <div>{formatLedgerSource(item)}</div>
+                      <div className="text-xs text-purple-200">{item.reason || '—'}</div>
+                      <div className="text-xs text-purple-200/70">actor: {item.actor_user_id || '—'}</div>
                     </td>
                     <td className="px-3 py-3">{new Date(item.created_at).toLocaleString()}</td>
                   </tr>

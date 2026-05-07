@@ -58,6 +58,26 @@ def _to_int(value: Any, default: int = 0) -> int:
     return default
 
 
+def _to_float(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except Exception:
+            return default
+    return default
+
+
+def _price_usd_from_plan(plan: Plan) -> float:
+    price_usd = _to_float(getattr(plan, "price_usd", None), default=0.0)
+    if price_usd > 0 or int(getattr(plan, "price_inr", 0) or 0) <= 0:
+        return round(price_usd, 2)
+    return round(int(getattr(plan, "price_inr", 0) or 0) / 83, 2)
+
+
 def _to_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
@@ -90,7 +110,8 @@ def _extract_structured_features(features: dict[str, Any] | None) -> dict[str, A
 class PlanCreateRequest(BaseModel):
     code: str = Field(..., min_length=2, max_length=50)
     billing_period: str = Field(..., min_length=2, max_length=20)
-    price_inr: int = Field(..., ge=0)
+    price_usd: float = Field(default=0, ge=0)
+    price_inr: int = Field(default=0, ge=0)
     included_credits: int = Field(..., ge=0)
 
     summary: str = Field(default="", max_length=500)
@@ -120,6 +141,7 @@ class PlanCreateRequest(BaseModel):
 class PlanUpdateRequest(BaseModel):
     code: Optional[str] = Field(default=None, min_length=2, max_length=50)
     billing_period: Optional[str] = Field(default=None, min_length=2, max_length=20)
+    price_usd: Optional[float] = Field(default=None, ge=0)
     price_inr: Optional[int] = Field(default=None, ge=0)
     included_credits: Optional[int] = Field(default=None, ge=0)
 
@@ -198,6 +220,7 @@ def _serialize_plan(plan: Plan) -> dict[str, Any]:
         "id": str(plan.id),
         "code": str(plan.code or "").upper(),
         "billing_period": _normalize_billing_period(str(plan.billing_period or "")),
+        "price_usd": _price_usd_from_plan(plan),
         "price_inr": int(plan.price_inr or 0),
         "included_credits": int(plan.included_credits or 0),
         "summary": structured["summary"],
@@ -265,7 +288,8 @@ async def create_pricing_plan(
     plan = Plan(
         code=payload.code,
         billing_period=payload.billing_period,
-        price_inr=int(payload.price_inr),
+        price_usd=round(float(payload.price_usd or 0), 2),
+        price_inr=int(payload.price_inr or 0),
         included_credits=int(payload.included_credits),
         features=features,
         is_active=bool(payload.is_active),
@@ -310,6 +334,8 @@ async def update_pricing_plan(
         plan.code = next_code
     if payload.billing_period is not None:
         plan.billing_period = next_period
+    if payload.price_usd is not None:
+        plan.price_usd = round(float(payload.price_usd or 0), 2)
     if payload.price_inr is not None:
         plan.price_inr = int(payload.price_inr)
     if payload.included_credits is not None:

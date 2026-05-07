@@ -252,6 +252,49 @@ async def send_login_alert(db: AsyncSession, user: User, ip_address: str | None,
     return await send_email(user.email, "New login to your AlgoAgentX account", html_body, message)
 
 
+async def send_admin_login_otp_email(
+    email: str,
+    otp: str,
+    expires_minutes: int,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+) -> bool:
+    """Send the admin login OTP email. Plain OTP is never stored; this helper only receives it for delivery."""
+    message = (
+        "Use the following 6-digit OTP to complete your AlgoAgentX admin login.\n\n"
+        f"OTP: {otp}\n"
+        f"This OTP expires in {expires_minutes} minutes.\n"
+        f"IP address: {ip_address or 'Not available'}\n"
+        f"Browser: {user_agent or 'Not available'}\n\n"
+        "If you did not request this login, change your password immediately and review your admin account security."
+    )
+    safe_otp = html.escape(str(otp))
+    safe_minutes = html.escape(str(expires_minutes))
+    safe_ip = html.escape(ip_address or "Not available")
+    safe_agent = html.escape(user_agent or "Not available")
+    html_body = f"""
+    <!doctype html><html><body style="margin:0;background:#f5f3ff;font-family:Arial,Helvetica,sans-serif;color:#20143a;">
+      <div style="max-width:640px;margin:0 auto;padding:28px 16px;">
+        <div style="background:linear-gradient(135deg,#4c1d95,#7c3aed,#2563eb);color:#fff;padding:22px 24px;border-radius:20px 20px 0 0;">
+          <div style="font-size:22px;font-weight:800;">AlgoAgentX</div>
+          <div style="opacity:.85;font-size:13px;margin-top:4px;">Admin login verification</div>
+        </div>
+        <div style="background:#fff;border:1px solid #e9d5ff;border-top:0;padding:26px 24px;border-radius:0 0 20px 20px;box-shadow:0 18px 45px rgba(76,29,149,.12);">
+          <h1 style="margin:0 0 12px;font-size:22px;line-height:1.3;color:#2e1065;">AlgoAgentX Admin Login OTP</h1>
+          <p style="margin:0 0 18px;color:#4c3b6f;line-height:1.7;font-size:15px;">Use this 6-digit code to complete your admin login. It expires in {safe_minutes} minutes.</p>
+          <div style="font-size:34px;letter-spacing:8px;font-weight:800;color:#4c1d95;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:16px;padding:18px;text-align:center;">{safe_otp}</div>
+          <p style="margin:18px 0 0;color:#4c3b6f;line-height:1.7;font-size:14px;"><strong>IP:</strong> {safe_ip}<br /><strong>Browser:</strong> {safe_agent}</p>
+          <p style="margin:18px 0 0;color:#991b1b;line-height:1.6;font-size:13px;">If you did not request this login, change your password immediately and review your admin account security.</p>
+        </div>
+      </div>
+    </body></html>
+    """
+    sent = await send_email(email, "AlgoAgentX Admin Login OTP", html_body, message)
+    if not sent and not settings.is_production:
+        logger.info("[AUTH DEV] Admin login OTP for %s: %s", email, otp)
+    return sent
+
+
 # Backward-compatible class API used by older modules.
 class EmailService:
     async def send_email(self, to_email: str, subject: str, body: str, is_html: bool = False) -> bool:

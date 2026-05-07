@@ -1,4 +1,4 @@
-from .users import User, UserCreate, UserLogin, UserUpdate, GoogleLoginRequest, ForgotPasswordRequest, ResetPasswordRequest
+from .users import User, UserCreate, UserLogin, UserUpdate, GoogleLoginRequest, ForgotPasswordRequest, ResetPasswordRequest, AdminOtpVerifyRequest, AdminOtpResendRequest
 from .strategies import Strategy, StrategyCreate, StrategyTemplateResponse, StrategyMyResponse
 from .backtests import (
     PerformanceMetric, PerformanceMetricCreate, PerformanceMetricBase,
@@ -38,7 +38,7 @@ Backtest = PerformanceMetric
 BacktestCreate = PerformanceMetricCreate
 
 __all__ = [
-    "User", "UserCreate", "UserLogin", "UserUpdate", "GoogleLoginRequest", "ForgotPasswordRequest", "ResetPasswordRequest",
+    "User", "UserCreate", "UserLogin", "UserUpdate", "GoogleLoginRequest", "ForgotPasswordRequest", "ResetPasswordRequest", "AdminOtpVerifyRequest", "AdminOtpResendRequest",
     "Strategy", "StrategyCreate", "StrategyTemplateResponse", "StrategyMyResponse",
     "PerformanceMetric", "PerformanceMetricCreate", "PerformanceMetricBase",
     "BacktestRunRequest", "BacktestRunResponse", "TradeData", "EquityPoint",

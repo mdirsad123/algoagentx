@@ -3,11 +3,13 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import CouponBarSettingsCard from '@/components/admin/CouponBarSettingsCard'
 
 export default function AdminSettingsPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Admin Settings" subtitle="Security and console preferences for the admin workspace." />
+      <CouponBarSettingsCard />
       <div className="grid gap-6 md:grid-cols-2">
         <GlassCard className="rounded-3xl border border-white/10 p-6 hover:scale-100">
           <div className="space-y-4">

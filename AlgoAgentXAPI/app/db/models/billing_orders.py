@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, Text, Index, func
+from sqlalchemy import Column, String, Integer, DateTime, Text, Index, func, Numeric
 
 from ..base import Base
 
@@ -30,6 +30,22 @@ class BillingOrder(Base):
 
     razorpay_order_id = Column(String(100), nullable=True)
     razorpay_payment_id = Column(String(100), nullable=True)
+
+    # PAY-BILL-4 unified billing checkout fields. Existing legacy fields stay readable.
+    purchase_type = Column(String(30), nullable=True)
+    credit_amount = Column(Integer, nullable=True)
+    subtotal_usd = Column(Numeric(12, 2), nullable=True)
+    coupon_code = Column(String(80), nullable=True)
+    discount_usd = Column(Numeric(12, 2), nullable=True)
+    final_usd = Column(Numeric(12, 2), nullable=True)
+    payment_method = Column(String(30), nullable=True)
+    payment_currency = Column(String(3), nullable=True)
+    payment_amount = Column(Numeric(14, 2), nullable=True)
+    inr_conversion_rate = Column(Numeric(12, 4), nullable=True)
+    gst_percent = Column(Numeric(6, 2), nullable=True)
+    gst_amount_inr = Column(Numeric(14, 2), nullable=True)
+    final_amount_inr = Column(Numeric(14, 2), nullable=True)
+    provider_order_id = Column(String(100), nullable=True)
 
     failure_reason = Column(Text, nullable=True)
     metadata_json = Column(Text, nullable=True)

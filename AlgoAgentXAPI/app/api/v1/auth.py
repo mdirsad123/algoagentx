@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import uuid
 import bcrypt
 import hashlib
 import logging
@@ -12,16 +13,96 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from ...core.config import settings
 from ...core.security import get_current_user
-from ...db.models import User
+from ...db.models import User, AdminLoginOtp
 from ...db.models.password_reset_tokens import PasswordResetToken
 from ...db.session import async_session
-from ...schemas import UserCreate, UserLogin, GoogleLoginRequest, ForgotPasswordRequest, ResetPasswordRequest
+from ...schemas import UserCreate, UserLogin, GoogleLoginRequest, ForgotPasswordRequest, ResetPasswordRequest, AdminOtpVerifyRequest, AdminOtpResendRequest
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 GENERIC_LOGIN_ERROR = "Invalid email or password"
 RESET_GENERIC_MESSAGE = "If this email exists, password reset instructions have been sent."
+
+GENERIC_OTP_ERROR = "Invalid or expired OTP session"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _client_ip(request: Request) -> str | None:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip() or None
+    return request.client.host if request.client else None
+
+
+def _otp_hash(otp: str, session_id: str) -> str:
+    raw = f"{str(otp).strip()}:{str(session_id)}:{settings.jwt_secret_key}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _generate_otp() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _as_aware(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+async def _create_admin_otp_session(db, user: User, request: Request) -> AdminLoginOtp:
+    now = _utcnow()
+    session_id = uuid.uuid4()
+    otp = _generate_otp()
+    expires_minutes = int(getattr(settings, "admin_otp_expire_minutes", 10) or 10)
+    cooldown_seconds = int(getattr(settings, "admin_otp_resend_cooldown_seconds", 60) or 60)
+    max_attempts = int(getattr(settings, "admin_otp_max_attempts", 5) or 5)
+    otp_row = AdminLoginOtp(
+        id=session_id,
+        user_id=user.id,
+        email=user.email,
+        otp_hash=_otp_hash(otp, str(session_id)),
+        max_attempts=max_attempts,
+        expires_at=now + timedelta(minutes=expires_minutes),
+        resend_available_at=now + timedelta(seconds=cooldown_seconds),
+        last_sent_at=now,
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    db.add(otp_row)
+    await db.commit()
+    await db.refresh(otp_row)
+
+    try:
+        from app.services.email_service import send_admin_login_otp_email
+        await send_admin_login_otp_email(
+            user.email,
+            otp,
+            expires_minutes,
+            _client_ip(request),
+            request.headers.get("user-agent"),
+        )
+    except Exception as exc:
+        logger.warning("[AUTH] Admin OTP email send skipped for %s: %s", user.email, exc)
+        if not settings.is_production:
+            logger.info("[AUTH DEV] Admin login OTP for %s: %s", user.email, otp)
+
+    logger.info("[AUTH] Admin password verified; OTP session created for user_id=%s", user.id)
+    return otp_row
+
+
+async def _load_admin_otp_session(db, raw_session_id: str) -> AdminLoginOtp | None:
+    try:
+        session_uuid = uuid.UUID(str(raw_session_id))
+    except Exception:
+        return None
+    result = await db.execute(select(AdminLoginOtp).where(AdminLoginOtp.id == session_uuid))
+    return result.scalar_one_or_none()
 
 
 def _normalize_email(email: str | None) -> str:
@@ -130,6 +211,14 @@ async def login(login_data: UserLogin, request: Request):
                 await _increment_failed_login(db, user)
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=GENERIC_LOGIN_ERROR)
 
+            if str(getattr(user, "role", "user") or "user").lower() == "admin" and bool(getattr(settings, "admin_otp_enabled", True)):
+                otp_row = await _create_admin_otp_session(db, user, request)
+                return {
+                    "requires_otp": True,
+                    "otp_session_id": str(otp_row.id),
+                    "message": "OTP sent to admin email",
+                }
+
             await _mark_login_success(db, user, "local")
             token = _create_access_token(user, remember_me=bool(getattr(login_data, "remember_me", False)))
 
@@ -138,7 +227,7 @@ async def login(login_data: UserLogin, request: Request):
                 await send_login_alert(
                     db,
                     user,
-                    request.client.host if request.client else None,
+                    _client_ip(request),
                     request.headers.get("user-agent"),
                 )
             except Exception as email_exc:
@@ -150,6 +239,110 @@ async def login(login_data: UserLogin, request: Request):
     except SQLAlchemyError as e:
         logger.error(f"[AUTH] Database error during login: {e}")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable")
+
+
+@router.post("/admin/verify-otp")
+async def verify_admin_otp(body: AdminOtpVerifyRequest, request: Request):
+    otp = str(body.otp or "").strip()
+    if not otp.isdigit() or len(otp) != 6:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=GENERIC_OTP_ERROR)
+
+    async with async_session() as db:
+        otp_row = await _load_admin_otp_session(db, body.otp_session_id)
+        now = _utcnow()
+        if not otp_row or otp_row.used_at is not None:
+            logger.warning("[AUTH] Admin OTP verify failed: missing/used session")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=GENERIC_OTP_ERROR)
+
+        if _as_aware(otp_row.expires_at) <= now:
+            otp_row.used_at = now
+            await db.commit()
+            logger.warning("[AUTH] Admin OTP expired for email=%s", otp_row.email)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=GENERIC_OTP_ERROR)
+
+        if int(otp_row.attempts or 0) >= int(otp_row.max_attempts or 5):
+            otp_row.used_at = now
+            await db.commit()
+            logger.warning("[AUTH] Admin OTP max attempts already reached for email=%s", otp_row.email)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=GENERIC_OTP_ERROR)
+
+        expected_hash = otp_row.otp_hash or ""
+        supplied_hash = _otp_hash(otp, str(otp_row.id))
+        if not secrets.compare_digest(expected_hash, supplied_hash):
+            otp_row.attempts = int(otp_row.attempts or 0) + 1
+            if otp_row.attempts >= int(otp_row.max_attempts or 5):
+                otp_row.used_at = now
+                logger.warning("[AUTH] Admin OTP max attempts reached for email=%s", otp_row.email)
+            else:
+                logger.warning("[AUTH] Admin OTP verify failed for email=%s attempt=%s", otp_row.email, otp_row.attempts)
+            await db.commit()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=GENERIC_OTP_ERROR)
+
+        result = await db.execute(select(User).where(User.id == otp_row.user_id))
+        user = result.scalar_one_or_none()
+        if not user or str(getattr(user, "role", "user") or "user").lower() != "admin":
+            otp_row.used_at = now
+            await db.commit()
+            logger.warning("[AUTH] Admin OTP session has invalid user for email=%s", otp_row.email)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=GENERIC_OTP_ERROR)
+
+        otp_row.used_at = now
+        await _mark_login_success(db, user, "local_otp")
+        token = _create_access_token(user, remember_me=bool(body.remember_me))
+
+        try:
+            from app.services.email_service import send_login_alert
+            await send_login_alert(db, user, _client_ip(request), request.headers.get("user-agent"))
+        except Exception as email_exc:
+            logger.warning(f"[AUTH] Admin login alert email skipped: {email_exc}")
+
+        logger.info("[AUTH] Admin OTP verified successfully for user_id=%s", user.id)
+        return {"access_token": token, "token_type": "bearer", "user": _user_response(user)}
+
+
+@router.post("/admin/resend-otp")
+async def resend_admin_otp(body: AdminOtpResendRequest, request: Request):
+    async with async_session() as db:
+        otp_row = await _load_admin_otp_session(db, body.otp_session_id)
+        now = _utcnow()
+        if not otp_row or otp_row.used_at is not None or _as_aware(otp_row.expires_at) <= now:
+            logger.warning("[AUTH] Admin OTP resend failed: invalid session")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=GENERIC_OTP_ERROR)
+
+        resend_available_at = _as_aware(otp_row.resend_available_at)
+        if resend_available_at and resend_available_at > now:
+            remaining = max(1, int((resend_available_at - now).total_seconds()))
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"Please wait {remaining} seconds before requesting a new OTP")
+
+        result = await db.execute(select(User).where(User.id == otp_row.user_id))
+        user = result.scalar_one_or_none()
+        if not user or str(getattr(user, "role", "user") or "user").lower() != "admin":
+            otp_row.used_at = now
+            await db.commit()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=GENERIC_OTP_ERROR)
+
+        otp = _generate_otp()
+        expires_minutes = int(getattr(settings, "admin_otp_expire_minutes", 10) or 10)
+        cooldown_seconds = int(getattr(settings, "admin_otp_resend_cooldown_seconds", 60) or 60)
+        otp_row.otp_hash = _otp_hash(otp, str(otp_row.id))
+        otp_row.attempts = 0
+        otp_row.expires_at = now + timedelta(minutes=expires_minutes)
+        otp_row.last_sent_at = now
+        otp_row.resend_available_at = now + timedelta(seconds=cooldown_seconds)
+        otp_row.ip_address = _client_ip(request)
+        otp_row.user_agent = request.headers.get("user-agent")
+        await db.commit()
+
+        try:
+            from app.services.email_service import send_admin_login_otp_email
+            await send_admin_login_otp_email(user.email, otp, expires_minutes, _client_ip(request), request.headers.get("user-agent"))
+        except Exception as exc:
+            logger.warning("[AUTH] Admin OTP resend email skipped for %s: %s", user.email, exc)
+            if not settings.is_production:
+                logger.info("[AUTH DEV] Resent admin login OTP for %s: %s", user.email, otp)
+
+        logger.info("[AUTH] Admin OTP resent for user_id=%s", user.id)
+        return {"message": "OTP sent to admin email", "resend_cooldown_seconds": cooldown_seconds}
 
 
 @router.post("/signup")

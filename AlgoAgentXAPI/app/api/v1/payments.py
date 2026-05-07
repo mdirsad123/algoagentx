@@ -5,6 +5,8 @@ import hashlib
 import hmac
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Any
 from uuid import uuid4
 
 import razorpay
@@ -31,16 +33,18 @@ from ...schemas.payments import (
     VerifyPaymentRequest,
 )
 from ...utils.api_response import success_response
+from ...services.billing.coupon_service import record_coupon_redemption
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 TOPUP_PURPOSE = "CREDIT_TOPUP"
 LEGACY_TOPUP_PURPOSE = "CREDITS_TOPUP"
+CHECKOUT_CREDITS_PURPOSE = "CREDITS"
 
 
-def _topup_purposes() -> tuple[str, str]:
-    return (TOPUP_PURPOSE, LEGACY_TOPUP_PURPOSE)
+def _topup_purposes() -> tuple[str, str, str]:
+    return (TOPUP_PURPOSE, LEGACY_TOPUP_PURPOSE, CHECKOUT_CREDITS_PURPOSE)
 
 
 def _is_topup_purpose(value: str | None) -> bool:
@@ -53,11 +57,37 @@ def _normalize_purpose(value: str | None) -> str:
     return str(value or "").strip().upper()
 
 
+def _normalize_checkout_purchase_type(value: Any) -> str:
+    raw = str(value or "").strip().upper()
+    if raw in {"CREDITS", "CREDIT_TOPUP", "CREDITS_TOPUP", "CREDIT", "TOPUP"}:
+        return "CREDITS"
+    if raw == "SUBSCRIPTION":
+        return "SUBSCRIPTION"
+    return raw or "CREDITS"
+
+
+def _decimal_or_zero(value: Any) -> Decimal:
+    try:
+        if value is None or value == "":
+            return Decimal("0")
+        return Decimal(str(value))
+    except Exception:
+        return Decimal("0")
+
+
+def _metadata_number(metadata: dict, *keys: str) -> Any:
+    for key in keys:
+        value = metadata.get(key)
+        if value not in (None, ""):
+            return value
+    return 0
+
+
 DEFAULT_TOPUP_PACKS = [
-    {"code": "PACK_100", "credits": 100, "amount_inr": 100, "label": "₹100", "popular": False},
-    {"code": "PACK_250", "credits": 250, "amount_inr": 250, "label": "₹250", "popular": False},
-    {"code": "PACK_500", "credits": 500, "amount_inr": 500, "label": "₹500", "popular": True},
-    {"code": "PACK_1000", "credits": 1000, "amount_inr": 1000, "label": "₹1000", "popular": False},
+    {"code": "PACK_100", "credits": 100, "amount_inr": 100, "amount_usd": 1, "label": "$1", "popular": False},
+    {"code": "PACK_250", "credits": 250, "amount_inr": 250, "amount_usd": 3, "label": "$3", "popular": False},
+    {"code": "PACK_500", "credits": 500, "amount_inr": 500, "amount_usd": 5, "label": "$5", "popular": True},
+    {"code": "PACK_1000", "credits": 1000, "amount_inr": 1000, "amount_usd": 10, "label": "$10", "popular": False},
 ]
 
 
@@ -82,6 +112,7 @@ def _get_topup_rules() -> dict:
                         continue
                     credits = int(item.get("credits") or 0)
                     amount_inr = int(item.get("amount_inr") or credits)
+                    amount_usd = float(item.get("amount_usd") or round(amount_inr / 83, 2))
                     code = str(item.get("code") or "").strip().upper()
                     if not code or credits <= 0 or amount_inr <= 0:
                         continue
@@ -90,7 +121,8 @@ def _get_topup_rules() -> dict:
                             "code": code,
                             "credits": credits,
                             "amount_inr": amount_inr,
-                            "label": str(item.get("label") or f"₹{amount_inr}"),
+                            "amount_usd": amount_usd,
+                            "label": str(item.get("label") or f"${amount_usd:g}"),
                             "popular": bool(item.get("popular", False)),
                         }
                     )
@@ -201,7 +233,17 @@ async def _sync_billing_order(db: AsyncSession, payment: Payment, *, metadata: d
     existing.failure_reason = payment.failure_reason
     existing.verified_at = payment.verified_at
     if metadata is not None:
-        existing.metadata_json = json.dumps(metadata)
+        merged_metadata: dict[str, Any] = {}
+        raw_metadata = getattr(existing, "metadata_json", None)
+        if raw_metadata:
+            try:
+                parsed_metadata = json.loads(raw_metadata)
+                if isinstance(parsed_metadata, dict):
+                    merged_metadata.update(parsed_metadata)
+            except Exception:
+                merged_metadata = {}
+        merged_metadata.update(metadata)
+        existing.metadata_json = json.dumps(merged_metadata, default=str)
 
     await db.flush()
 
@@ -301,6 +343,78 @@ async def _record_webhook_event(
     return row
 
 
+async def _billing_order_metadata(db: AsyncSession, billing_order_id: str | None) -> dict:
+    if not billing_order_id or not await table_has_column(db, "billing_orders", "id"):
+        return {}
+    row = (
+        await db.execute(select(BillingOrder).where(BillingOrder.billing_order_id == str(billing_order_id)).limit(1))
+    ).scalar_one_or_none()
+    raw = getattr(row, "metadata_json", None) if row else None
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _expected_payment_paise(payment: Payment, metadata: dict) -> int:
+    try:
+        if metadata.get("payment_amount_paise"):
+            return int(metadata.get("payment_amount_paise") or 0)
+    except Exception:
+        pass
+    return int(payment.amount_inr or 0) * 100
+
+
+def _credits_from_payment(payment: Payment, metadata: dict) -> int:
+    """Resolve credits to grant from checkout metadata, never from INR amount unless legacy fallback.
+
+    PAY-BILL checkout stores the real top-up credit count as credit_amount.
+    Older direct top-up orders stored it as credits. Amounts in INR/USD must not
+    be interpreted as wallet credits.
+    """
+    for key in ("credit_amount", "credits"):
+        try:
+            value = metadata.get(key)
+            if value not in (None, ""):
+                credits = int(value)
+                if credits > 0:
+                    return credits
+        except Exception:
+            continue
+    # Legacy direct /payments/create-order used INR amount equal to credits.
+    return max(0, int(payment.amount_inr or 0))
+
+
+async def _record_checkout_coupon_if_needed(db: AsyncSession, payment: Payment, metadata: dict) -> None:
+    coupon_code = metadata.get("coupon_code")
+    if not coupon_code:
+        return
+
+    # Coupon audit must never rollback an already captured payment/wallet grant.
+    # Use a savepoint so duplicate/legacy-column issues are isolated.
+    try:
+        async with db.begin_nested():
+            await record_coupon_redemption(
+                db,
+                coupon_code=coupon_code,
+                user_id=str(payment.user_id),
+                order_id=str(payment.billing_order_id or payment.id),
+                purchase_type=_normalize_checkout_purchase_type(metadata.get("purchase_type") or payment.purpose),
+                subtotal_usd=_metadata_number(metadata, "subtotal_usd"),
+                discount_usd=_metadata_number(metadata, "discount_usd"),
+                final_usd=_metadata_number(metadata, "final_usd"),
+            )
+    except Exception:
+        logger.exception(
+            "Coupon redemption audit failed but payment verification will continue | billing_order_id=%s | coupon=%s",
+            payment.billing_order_id,
+            coupon_code,
+        )
+
+
 async def _rollback_safely(db: AsyncSession) -> None:
     try:
         await db.rollback()
@@ -317,6 +431,7 @@ async def get_payment_config():
         {
             "key_id": _get_key_id(),
             "currency": "INR",
+            "display_currency": "USD",
             "configured": configured,
             "allow_custom_topup": rules["allow_custom_topup"],
             "min_custom_credits": rules["min_custom_credits"],
@@ -389,7 +504,9 @@ async def create_order(payload: CreateOrderRequest, db: AsyncSession = Depends(g
         'credits': int(resolved["credits"]),
         'amount': int(resolved["amount_inr"]) * 100,
         'amount_inr': int(resolved["amount_inr"]),
+        'amount_usd': round(int(resolved["amount_inr"]) / 83, 2),
         'currency': payment.currency,
+        'display_currency': 'USD',
         'razorpay_key_id': _get_key_id(),
         'key_id': _get_key_id(),
         'status': payment.status,
@@ -415,6 +532,8 @@ async def verify_payment(payload: VerifyPaymentRequest, db: AsyncSession = Depen
     ).scalar_one_or_none()
     if not payment:
         raise HTTPException(status_code=404, detail='Order not found')
+
+    checkout_metadata = await _billing_order_metadata(db, payment.billing_order_id)
 
     if payment.status == 'PAID':
         if payment.razorpay_payment_id and payment.razorpay_payment_id != payload.razorpay_payment_id:
@@ -475,9 +594,30 @@ async def verify_payment(payload: VerifyPaymentRequest, db: AsyncSession = Depen
         razorpay_payment = client.payment.fetch(payload.razorpay_payment_id)
         fetched_order_id = str(razorpay_payment.get('order_id') or '')
         fetched_status = str(razorpay_payment.get('status') or '').lower()
+        fetched_amount = int(razorpay_payment.get('amount') or 0)
     except Exception as exc:
         logger.exception('Failed to fetch Razorpay payment details')
         raise HTTPException(status_code=502, detail='Unable to verify payment with Razorpay') from exc
+
+    expected_amount = _expected_payment_paise(payment, checkout_metadata)
+    if fetched_amount and expected_amount and fetched_amount != expected_amount:
+        payment.status = 'FAILED'
+        payment.failure_reason = 'amount_mismatch'
+        await _sync_billing_order(
+            db,
+            payment,
+            metadata={
+                "flow": "credits_topup_verify_failed",
+                "reason": "amount_mismatch",
+                "expected_amount_paise": expected_amount,
+                "fetched_amount_paise": fetched_amount,
+            },
+        )
+        try:
+            await db.commit()
+        except SQLAlchemyError:
+            await _rollback_safely(db)
+        raise HTTPException(status_code=400, detail='Payment amount mismatch')
 
     if fetched_order_id != str(payment.razorpay_order_id):
         payment.status = 'FAILED'
@@ -513,7 +653,9 @@ async def verify_payment(payload: VerifyPaymentRequest, db: AsyncSession = Depen
             await _rollback_safely(db)
         raise HTTPException(status_code=400, detail='Payment is not successful')
 
-    granted_credits = int(payment.amount_inr or 0)
+    granted_credits = _credits_from_payment(payment, checkout_metadata)
+    if granted_credits <= 0:
+        raise HTTPException(status_code=422, detail="Credit top-up metadata is missing credit_amount")
     try:
         payment.razorpay_payment_id = payload.razorpay_payment_id
         payment.razorpay_signature = payload.razorpay_signature
@@ -527,10 +669,23 @@ async def verify_payment(payload: VerifyPaymentRequest, db: AsyncSession = Depen
         new_balance = old_balance + granted_credits
         credit_row.balance = new_balance
 
-        description = (
-            f"Credits top-up via Razorpay | billing_order_id={payment.billing_order_id} | "
-            f"razorpay_order_id={payment.razorpay_order_id} | razorpay_payment_id={payload.razorpay_payment_id}"
-        )
+        pack_code = str(checkout_metadata.get("pack_code") or "").strip().upper()
+        pack_title = str(checkout_metadata.get("pack_title") or "").strip()
+        base_credits = checkout_metadata.get("base_credits")
+        bonus_credits = int(float(checkout_metadata.get("bonus_credits") or 0))
+        subtotal_usd = checkout_metadata.get("subtotal_usd") or checkout_metadata.get("price_usd")
+        if pack_code:
+            credit_breakdown = f"{int(float(base_credits or granted_credits))} base + {bonus_credits} bonus" if bonus_credits > 0 else f"{granted_credits} credits"
+            description = (
+                f"Credits top-up pack {pack_code} | {pack_title or pack_code} | {credit_breakdown} | "
+                f"${subtotal_usd} | billing_order_id={payment.billing_order_id} | "
+                f"razorpay_order_id={payment.razorpay_order_id} | razorpay_payment_id={payload.razorpay_payment_id}"
+            )
+        else:
+            description = (
+                f"Credits top-up via Razorpay | {granted_credits} credits | billing_order_id={payment.billing_order_id} | "
+                f"razorpay_order_id={payment.razorpay_order_id} | razorpay_payment_id={payload.razorpay_payment_id}"
+            )
 
         db.add(CreditTransaction(
             id=str(uuid4()),
@@ -556,6 +711,7 @@ async def verify_payment(payload: VerifyPaymentRequest, db: AsyncSession = Depen
             credits_delta=granted_credits,
             source="verify_endpoint",
         )
+        await _record_checkout_coupon_if_needed(db, payment, checkout_metadata)
 
         await db.commit()
     except SQLAlchemyError as exc:
@@ -712,6 +868,8 @@ async def razorpay_topup_webhook(
         await db.commit()
         return success_response({'event': event_type, 'status': 'ignored'}, 'No matching payment order found')
 
+    checkout_metadata = await _billing_order_metadata(db, payment.billing_order_id)
+
     if event_type == 'payment.captured':
         if payment.status == 'PAID':
             await _record_webhook_event(
@@ -729,7 +887,7 @@ async def razorpay_topup_webhook(
             return success_response({'event': event_type, 'status': 'already_processed'}, 'Already processed')
 
         captured_amount = int(payment_entity.get('amount') or 0)
-        expected_amount = int(payment.amount_inr or 0) * 100
+        expected_amount = _expected_payment_paise(payment, checkout_metadata)
         if captured_amount != expected_amount:
             payment.status = 'FAILED'
             payment.failure_reason = 'amount_mismatch'
@@ -755,7 +913,28 @@ async def razorpay_topup_webhook(
             await db.commit()
             return success_response({'event': event_type, 'status': 'failed'}, 'Payment amount mismatch')
 
-        granted_credits = int(payment.amount_inr or 0)
+        granted_credits = _credits_from_payment(payment, checkout_metadata)
+        if granted_credits <= 0:
+            payment.status = 'FAILED'
+            payment.failure_reason = 'missing_credit_amount'
+            await _sync_billing_order(
+                db,
+                payment,
+                metadata={"flow": "credits_topup_webhook_failed", "reason": "missing_credit_amount"},
+            )
+            await _record_webhook_event(
+                db,
+                event_type=event_type,
+                payload_json=raw_body.decode('utf-8', errors='ignore'),
+                signature=x_razorpay_signature,
+                status='FAILED',
+                event_key=webhook_event_key,
+                payload_hash=payload_hash,
+                payment=payment,
+                processing_error='missing_credit_amount',
+            )
+            await db.commit()
+            return success_response({'event': event_type, 'status': 'failed'}, 'Credit amount missing')
         credit_row = await _ensure_credit_row(db, str(payment.user_id))
         new_balance = int(credit_row.balance or 0) + granted_credits
         credit_row.balance = new_balance
@@ -794,6 +973,7 @@ async def razorpay_topup_webhook(
             credits_delta=granted_credits,
             source='webhook_payment_captured',
         )
+        await _record_checkout_coupon_if_needed(db, payment, checkout_metadata)
         await _record_webhook_event(
             db,
             event_type=event_type,

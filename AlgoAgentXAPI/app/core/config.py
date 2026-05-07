@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     password_reset_token_minutes: int = 30
 
+    # Admin email OTP login security
+    admin_otp_enabled: bool = True
+    admin_otp_expire_minutes: int = 10
+    admin_otp_max_attempts: int = 5
+    admin_otp_resend_cooldown_seconds: int = 60
 
     # SMTP / Email notifications (do not hardcode credentials; use .env)
     smtp_enabled: bool = False

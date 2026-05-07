@@ -25,6 +25,8 @@ import {
   Users,
   Wallet,
   BadgeDollarSign,
+  TicketPercent,
+  ReceiptText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -49,6 +51,8 @@ const adminMenuItems = [
   { icon: Users, label: "Users", href: "/admin/users" },
   { icon: CreditCard, label: "Subscriptions", href: "/admin/subscriptions" },
   { icon: BadgeDollarSign, label: "Pricing", href: "/admin/pricing" },
+  { icon: TicketPercent, label: "Coupons", href: "/admin/coupons" },
+  { icon: ReceiptText, label: "Credit Rules", href: "/admin/credit-rules" },
   { icon: Wallet, label: "Payments", href: "/admin/payments" },
   { icon: FileText, label: "Orders", href: "/admin/orders" },
   { icon: BarChart3, label: "Credits", href: "/admin/credits" },

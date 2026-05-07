@@ -206,6 +206,8 @@ export interface Subscription {
   plan_id: string;
   plan_code: string;
   billing_period: string;
+  price_usd: number;
+  price_usd: number;
   price_inr: number;
   included_credits: number;
   included_credits_total?: number;
@@ -284,6 +286,9 @@ export interface Order {
   total_amount: number;
   currency: string;
   payment_method: string;
+  provider?: string;
+  coupon_code?: string | null;
+  discount_usd?: number;
   transaction_id?: string;
   created_at: string;
   updated_at?: string;
@@ -840,10 +845,100 @@ export interface DeployStrategyRequestPayload {
 }
 
 // Add these interfaces near the other admin interfaces
+
+export type CouponDiscountType = "PERCENT" | "FIXED_USD";
+export type CouponAppliesTo = "ALL" | "SUBSCRIPTION" | "CREDITS";
+export type CouponBillingPeriod = "NONE" | "MONTHLY" | "YEARLY" | "";
+
+export interface AdminCoupon {
+  id: string;
+  code: string;
+  description?: string | null;
+  discount_type: CouponDiscountType;
+  discount_value: number;
+  applies_to: CouponAppliesTo;
+  plan_code?: string | null;
+  billing_period?: CouponBillingPeriod | null;
+  min_order_usd?: number | null;
+  max_discount_usd?: number | null;
+  max_redemptions?: number | null;
+  per_user_limit?: number | null;
+  starts_at?: string | null;
+  expires_at?: string | null;
+  is_active: boolean;
+  redemption_count?: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface AdminCouponPayload {
+  code: string;
+  description?: string | null;
+  discount_type: CouponDiscountType;
+  discount_value: number;
+  applies_to: CouponAppliesTo;
+  plan_code?: string | null;
+  billing_period?: CouponBillingPeriod | null;
+  min_order_usd?: number | null;
+  max_discount_usd?: number | null;
+  max_redemptions?: number | null;
+  per_user_limit?: number | null;
+  starts_at?: string | null;
+  expires_at?: string | null;
+  is_active: boolean;
+}
+
+export interface AdminCouponListResponse {
+  items: AdminCoupon[];
+  total: number;
+}
+
+export type CreditRuleOperationType = "BACKTEST" | "AI_SCREENER" | "LIVE_DEPLOYMENT" | "OTHER";
+export type CreditRuleMarket = "FOREX" | "INDIAN" | "CRYPTO" | "ALL" | "";
+
+export interface AdminCreditRule {
+  id: string;
+  name: string;
+  operation_type: CreditRuleOperationType;
+  market?: CreditRuleMarket | null;
+  instrument_symbol?: string | null;
+  timeframe?: string | null;
+  base_credits: number;
+  per_1000_candles_credits: number;
+  min_credits: number;
+  max_credits?: number | null;
+  advanced_filter_multiplier: number;
+  is_active: boolean;
+  priority: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface AdminCreditRulePayload {
+  name: string;
+  operation_type: CreditRuleOperationType;
+  market?: CreditRuleMarket | null;
+  instrument_symbol?: string | null;
+  timeframe?: string | null;
+  base_credits: number;
+  per_1000_candles_credits: number;
+  min_credits: number;
+  max_credits?: number | null;
+  advanced_filter_multiplier: number;
+  is_active: boolean;
+  priority: number;
+}
+
+export interface AdminCreditRuleListResponse {
+  items: AdminCreditRule[];
+  total: number;
+}
+
 export interface AdminPricingPlan {
   id: string;
   code: string;
   billing_period: "NONE" | "MONTHLY" | "YEARLY";
+  price_usd: number;
   price_inr: number;
   included_credits: number;
   summary: string;
@@ -863,6 +958,7 @@ export interface AdminPricingPlan {
 export interface AdminPricingPlanPayload {
   code: string;
   billing_period: "NONE" | "MONTHLY" | "YEARLY";
+  price_usd: number;
   price_inr: number;
   included_credits: number;
   summary: string;
@@ -1321,6 +1417,32 @@ export const adminApi = {
       }),
     );
   },
+
+
+
+  getCreditRules: async (search?: string): Promise<AdminCreditRuleListResponse> =>
+    unwrap(await axiosInstance.get("/api/v1/admin/credit-rules", { params: { ...(search ? { search } : {}) } })),
+
+  createCreditRule: async (payload: AdminCreditRulePayload): Promise<AdminCreditRule> =>
+    unwrap(await axiosInstance.post("/api/v1/admin/credit-rules", payload)),
+
+  updateCreditRule: async (ruleId: string, payload: AdminCreditRulePayload): Promise<AdminCreditRule> =>
+    unwrap(await axiosInstance.put(`/api/v1/admin/credit-rules/${ruleId}`, payload)),
+
+  toggleCreditRule: async (ruleId: string, is_active: boolean): Promise<AdminCreditRule> =>
+    unwrap(await axiosInstance.patch(`/api/v1/admin/credit-rules/${ruleId}/status`, { is_active })),
+
+  getCoupons: async (search?: string): Promise<AdminCouponListResponse> =>
+    unwrap(await axiosInstance.get("/api/v1/admin/coupons", { params: { ...(search ? { search } : {}) } })),
+
+  createCoupon: async (payload: AdminCouponPayload): Promise<AdminCoupon> =>
+    unwrap(await axiosInstance.post("/api/v1/admin/coupons", payload)),
+
+  updateCoupon: async (couponId: string, payload: Partial<AdminCouponPayload>): Promise<AdminCoupon> =>
+    unwrap(await axiosInstance.put(`/api/v1/admin/coupons/${couponId}`, payload)),
+
+  toggleCoupon: async (couponId: string, is_active: boolean): Promise<AdminCoupon> =>
+    unwrap(await axiosInstance.patch(`/api/v1/admin/coupons/${couponId}/status`, { is_active })),
 
   getPricingPlans: async (): Promise<AdminPricingPlan[]> =>
     unwrap(await axiosInstance.get("/api/v1/admin/pricing/plans")),

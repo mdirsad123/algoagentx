@@ -477,3 +477,20 @@ html, body {
 }
 
 }
+
+@keyframes coupon-marquee-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.coupon-marquee {
+  animation: coupon-marquee-scroll 24s linear infinite;
+  will-change: transform;
+}
+
+@media (max-width: 640px) {
+  .coupon-marquee {
+    animation-duration: 18s;
+  }
+}
+.coupon-marquee:hover { animation-play-state: paused; }

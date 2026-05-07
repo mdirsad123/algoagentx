@@ -43,6 +43,26 @@ export default function LoginPage() {
         password: values.password,
         remember_me: rememberMe,
       })
+      if (response.data?.requires_otp) {
+        const otpSessionId = response.data?.otp_session_id
+        if (!otpSessionId) {
+          showToast('OTP session was not created. Please try again.', 'error')
+          return
+        }
+        if (typeof window !== 'undefined') {
+          window.sessionStorage.setItem('algoagentx_admin_otp_challenge', JSON.stringify({
+            otp_session_id: otpSessionId,
+            email: values.email.trim().toLowerCase(),
+            remember_me: rememberMe,
+            resend_cooldown_seconds: Number(response.data?.resend_cooldown_seconds || 60),
+            created_at: Date.now(),
+          }))
+        }
+        showToast(response.data?.message || 'OTP sent to admin email', 'success')
+        router.push('/auth/admin-login?otp=1')
+        return
+      }
+
       const { access_token, user } = response.data
       setAuthSession(access_token, user, { rememberMe })
       axiosInstance.defaults.headers['Authorization'] = `Bearer ${access_token}`

@@ -1886,6 +1886,11 @@ const FieldLabel = ({ label, help }: { label: string; help?: string }) => (
                 <p className="mt-2 text-sm font-semibold text-foreground">{previewFilterSummary}</p>
                 <p className="mt-1 text-xs text-muted-foreground">Preview cost is based on filtered candles when enabled.</p>
               </div>
+              <div className="rounded-xl border border-border/50 bg-card/20 p-4 md:col-span-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Credit Rule Used</p>
+                <p className="mt-2 text-lg font-semibold text-foreground">{costPreview.pricing_rule || costPreview.breakdown?.rule_set_name || "Default Backtest Candle Rule"}</p>
+                <p className="mt-1 text-xs text-muted-foreground">Estimated candles: {formatNumber(costPreview.estimated_candles ?? costPreview.breakdown?.candle_count ?? candlesAfterFilters, 0)} · Cost: {formatNumber(costPreview.credit_cost ?? costPreview.total_cost, 0)} credits · Balance: {formatNumber(costPreview.credit_balance ?? totalAvailableCredits, 0)} credits</p>
+              </div>
             </div>
           )}
 

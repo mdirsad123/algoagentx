@@ -32,6 +32,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { landingApi, type LandingStats } from "@/lib/api/landing";
 import type { SubscriptionPlan, SubscriptionPlansGrouped } from "@/lib/api/subscriptions";
 import { cn } from "@/lib/utils";
+import CouponAnnouncementBar from "@/components/common/CouponAnnouncementBar";
 
 const EMPTY_STATS: LandingStats = {
   total_users: 0,
@@ -179,6 +180,7 @@ export default function LandingPage() {
       </div>
 
       <header className="fixed inset-x-0 top-0 z-50 border-b border-white/15 bg-[#17112b]/55 shadow-lg shadow-purple-950/10 backdrop-blur-2xl">
+        <CouponAnnouncementBar />
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <Link href="/" className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-500 via-fuchsia-500 to-pink-500 shadow-lg shadow-purple-500/30">

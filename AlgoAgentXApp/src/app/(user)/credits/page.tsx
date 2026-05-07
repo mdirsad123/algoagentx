@@ -264,38 +264,20 @@ export default function CreditsWalletPage() {
   );
 
   const handleTopUp = async (creditsToBuy: number, packCode?: string) => {
-    try {
-      setIsProcessing(true);
-      setError(null);
+    setError(null);
 
-      // Check if user is authenticated
-      const token = localStorage.getItem('access_token');
-      if (!token) {
-        router.push('/auth/login');
-        return;
-      }
-
-      if (!configured) {
-        throw new Error('Razorpay is not configured. Please contact support.');
-      }
-
-      // Create order
-      const orderResponse = await axiosInstance.post('/api/v1/payments/razorpay/create-order',
-        packCode ? { pack_code: packCode } : { credits_to_buy: creditsToBuy },
-      );
-
-      const orderData: CreateOrderResponse = unwrapApiData(orderResponse.data);
-      await openRazorpayCheckout(orderData, creditsToBuy);
-    } catch (err: any) {
-      console.error('Error processing payment:', err);
-      const message = getErrorMessage(err);
-      if (String(message || '').toLowerCase() !== 'checkout_cancelled') {
-        setError(message || 'Failed to process payment. Please try again.');
-        toast.error(message || 'Failed to process payment. Please try again.');
-      }
-    } finally {
-      setIsProcessing(false);
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      router.push('/auth/login');
+      return;
     }
+
+    if (!creditsToBuy || creditsToBuy <= 0) {
+      setError('Please choose a valid credit amount.');
+      return;
+    }
+
+    router.push(`/billing/checkout?type=credits&credits=${encodeURIComponent(String(creditsToBuy))}${packCode ? `&pack=${encodeURIComponent(packCode)}` : ''}`);
   };
 
   const handleCustomTopUp = () => {
@@ -498,7 +480,7 @@ export default function CreditsWalletPage() {
               )}
               {!configured && (
                 <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-                  Razorpay configuration is missing. Please set backend Razorpay credentials.
+                  Razorpay routing is configured on the checkout page. You can preview billing before payment.
                 </div>
               )}
             </CardContent>
@@ -538,7 +520,7 @@ export default function CreditsWalletPage() {
               <div className="mt-6 flex justify-center space-x-4">
                 <Button
                   onClick={() => selectedPack ? handleTopUp(selectedPack.credits, selectedPack.code) : null}
-                  disabled={isProcessing || !selectedPack || !configured}
+                  disabled={isProcessing || !selectedPack}
                   className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-8 py-3 text-lg shadow-lg shadow-purple-500/30"
                 >
                   <CreditCard className="h-5 w-5 mr-3" />

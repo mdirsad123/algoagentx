@@ -1,230 +1,69 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { adminApi, Payment } from "@/lib/api/admin"
+import { adminApi, BillingAuditPayment, BillingSummary } from "@/lib/api/admin"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Eye, RefreshCw, RotateCcw } from "lucide-react"
-import { toast } from "sonner"
 
+const money = (amount?: number, currency = "USD") => currency === "INR" ? `₹${Number(amount || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}` : `$${Number(amount || 0).toFixed(2)}`
+const emptySummary: BillingSummary = { total_revenue_usd: 0, total_revenue_inr: 0, total_gst_collected_inr: 0, total_discounts_usd: 0, total_paid_orders: 0, pending_orders: 0, failed_orders: 0, coupon_redemptions: 0, credit_topup_revenue_usd: 0, subscription_revenue_usd: 0 }
 const PAGE_SIZE = 20
 
 export default function AdminPaymentsPage() {
-  const [items, setItems] = useState<Payment[]>([])
+  const [summary, setSummary] = useState<BillingSummary>(emptySummary)
+  const [items, setItems] = useState<BillingAuditPayment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [skip, setSkip] = useState(0)
   const [total, setTotal] = useState(0)
-  const [selected, setSelected] = useState<Payment | null>(null)
-
+  const [selected, setSelected] = useState<BillingAuditPayment | null>(null)
   const [search, setSearch] = useState("")
   const [status, setStatus] = useState("")
   const [method, setMethod] = useState("")
-  const [purpose, setPurpose] = useState("")
+  const [purchaseType, setPurchaseType] = useState("")
   const [fromDate, setFromDate] = useState("")
   const [toDate, setToDate] = useState("")
 
   const load = async (nextSkip = skip) => {
     try {
-      setLoading(true)
-      setError(null)
-      const data = await adminApi.getPayments(
-        nextSkip,
-        PAGE_SIZE,
-        status || undefined,
-        search || undefined,
-        method || undefined,
-        purpose || undefined,
-        fromDate ? new Date(fromDate).toISOString() : undefined,
-        toDate ? new Date(toDate).toISOString() : undefined,
-      )
-      setItems(data.items || [])
-      setTotal(data.total || 0)
-      setSkip(nextSkip)
-    } catch (e: any) {
-      setError(e?.response?.data?.detail || "Failed to load payments")
-    } finally {
-      setLoading(false)
-    }
+      setLoading(true); setError(null)
+      const [sum, data] = await Promise.all([
+        adminApi.getBillingSummary().catch(() => emptySummary),
+        adminApi.getBillingAuditPayments({ skip: nextSkip, limit: PAGE_SIZE, status: status || undefined, payment_method: method || undefined, purchase_type: purchaseType || undefined, user_email: search || undefined, from_date: fromDate ? new Date(fromDate).toISOString() : undefined, to_date: toDate ? new Date(toDate).toISOString() : undefined }),
+      ])
+      setSummary(sum); setItems(data.items || []); setTotal(data.total || 0); setSkip(nextSkip)
+    } catch (e: any) { setError(e?.response?.data?.detail || "Failed to load payment audit") }
+    finally { setLoading(false) }
   }
+  useEffect(() => { load(0) }, [])
+  const reset = () => { setSearch(""); setStatus(""); setMethod(""); setPurchaseType(""); setFromDate(""); setToDate(""); setTimeout(() => load(0), 0) }
 
-  useEffect(() => {
-    load(0)
-  }, [])
+  return <div className="space-y-6">
+    <div className="flex items-center justify-between"><div><h1 className="text-foreground text-2xl font-semibold tracking-tight">Payments</h1><p className="text-muted-foreground text-sm">Audit provider references, linked orders, payment method, currency, verification status, and coupon context.</p></div><Button onClick={() => load(skip)} variant="outline" className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50"><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button></div>
 
-  const openDetails = async (id: string) => {
-    try {
-      setSelected(await adminApi.getPayment(id))
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail || "Unable to load payment details")
-    }
-  }
-
-  const refund = async (id: string) => {
-    const note = window.prompt("Refund note (optional):") || undefined
-    try {
-      await adminApi.refundPayment(id, note)
-      toast.success("Payment marked refunded")
-      await load(skip)
-      if (selected?.id === id) {
-        await openDetails(id)
-      }
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail || "Unable to refund payment")
-    }
-  }
-
-  const clearFilters = () => {
-    setSearch("")
-    setStatus("")
-    setMethod("")
-    setPurpose("")
-    setFromDate("")
-    setToDate("")
-    load(0)
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-foreground text-2xl font-semibold tracking-tight">Payments</h1>
-          <p className="text-muted-foreground text-sm">Monitor payment lifecycle, gateway reconciliation, and refunds.</p>
-        </div>
-        <Button onClick={() => load(skip)} variant="outline" className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50">
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
-      </div>
-
-      <div className="rounded-xl border border-border/50 bg-card/30 p-4 shadow-xl backdrop-blur-xl">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-6">
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search user / order / payment" className="bg-card/20 border-border/50 text-foreground placeholder:text-muted-foreground" />
-
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-xl border border-border/50 bg-card/20 px-3 py-2 text-sm text-foreground">
-            <option value="">All status</option>
-            <option value="CREATED">CREATED</option>
-            <option value="PAID">PAID</option>
-            <option value="FAILED">FAILED</option>
-            <option value="REFUNDED">REFUNDED</option>
-          </select>
-
-          <select value={method} onChange={(e) => setMethod(e.target.value)} className="rounded-xl border border-border/50 bg-card/20 px-3 py-2 text-sm text-foreground">
-            <option value="">All methods</option>
-            <option value="RAZORPAY">RAZORPAY</option>
-          </select>
-
-          <select value={purpose} onChange={(e) => setPurpose(e.target.value)} className="rounded-xl border border-border/50 bg-card/20 px-3 py-2 text-sm text-foreground">
-            <option value="">All source types</option>
-            <option value="CREDIT_TOPUP">CREDIT_TOPUP</option>
-            <option value="CREDITS_TOPUP">CREDITS_TOPUP</option>
-            <option value="SUBSCRIPTION">SUBSCRIPTION</option>
-          </select>
-
-          <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="bg-card/20 border-border/50 text-foreground" />
-          <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="bg-card/20 border-border/50 text-foreground" />
-        </div>
-
-        <div className="mt-3 flex gap-2">
-          <Button onClick={() => load(0)} className="rounded-xl">Apply Filters</Button>
-          <Button onClick={clearFilters} variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">
-            <RotateCcw className="mr-2 h-4 w-4" />
-            Reset
-          </Button>
-        </div>
-      </div>
-
-      <div className="overflow-auto rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
-        <table className="w-full min-w-[1280px] text-sm">
-          <thead>
-            <tr className="border-b border-border/60 text-left text-muted-foreground">
-              <th className="px-3 py-3">User</th>
-              <th className="px-3 py-3">Payment</th>
-              <th className="px-3 py-3">Order</th>
-              <th className="px-3 py-3">Amount</th>
-              <th className="px-3 py-3">Source</th>
-              <th className="px-3 py-3">Method</th>
-              <th className="px-3 py-3">Status</th>
-              <th className="px-3 py-3">Reconciliation</th>
-              <th className="px-3 py-3">Created</th>
-              <th className="px-3 py-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td className="px-3 py-8 text-muted-foreground" colSpan={10}>Loading payments...</td></tr>
-            ) : error ? (
-              <tr><td className="px-3 py-8 text-rose-300" colSpan={10}>{error}</td></tr>
-            ) : items.length === 0 ? (
-              <tr><td className="px-3 py-8 text-center text-muted-foreground" colSpan={10}>No data found</td></tr>
-            ) : items.map((item) => (
-              <tr key={item.id} className="border-b border-border/30 hover:bg-card/50 transition-colors">
-                <td className="px-3 py-3">
-                  <div className="text-foreground">{item.user_name || item.user_email || "—"}</div>
-                  <div className="text-muted-foreground text-xs">{item.user_email || ""}</div>
-                </td>
-                <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{item.razorpay_payment_id || item.id}</td>
-                <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{item.razorpay_order_id || item.billing_order_id || "—"}</td>
-                <td className="px-3 py-3 text-foreground font-medium">₹{item.amount}</td>
-                <td className="px-3 py-3 text-foreground">{item.purpose || "—"}</td>
-                <td className="px-3 py-3 text-foreground">{item.payment_method}</td>
-                <td className="px-3 py-3">
-                  <span className="rounded-full border border-border/60 bg-card/50 px-2 py-1 text-xs text-foreground">{item.status}</span>
-                </td>
-                <td className="px-3 py-3">
-                  <span className={`rounded-full px-2 py-1 text-xs ${item.is_reconciled ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300"}`}>
-                    {item.is_reconciled ? "Reconciled" : "Pending"}
-                  </span>
-                </td>
-                <td className="px-3 py-3 text-muted-foreground">{new Date(item.created_at).toLocaleString()}</td>
-                <td className="px-3 py-3">
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40" onClick={() => openDetails(item.id)}>
-                      <Eye className="mr-2 h-4 w-4" />View
-                    </Button>
-                    {(item.status || "").toUpperCase() !== "REFUNDED" && (
-                      <Button size="sm" variant="outline" className="rounded-xl border-rose-500/40 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20" onClick={() => refund(item.id)}>
-                        Refund
-                      </Button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <div>Showing {items.length} of {total}</div>
-        <div className="flex gap-2">
-          <Button disabled={skip === 0} onClick={() => load(Math.max(0, skip - PAGE_SIZE))} variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">Previous</Button>
-          <Button disabled={skip + PAGE_SIZE >= total} onClick={() => load(skip + PAGE_SIZE)} variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">Next</Button>
-        </div>
-      </div>
-
-      <Dialog open={!!selected} onOpenChange={() => setSelected(null)}>
-        <DialogContent className="rounded-xl border border-border/60 bg-card/95 text-foreground">
-          <DialogHeader><DialogTitle>Payment Details</DialogTitle></DialogHeader>
-          {selected && (
-            <div className="grid grid-cols-1 gap-2 text-sm md:grid-cols-2">
-              <div><span className="text-muted-foreground">User:</span> {selected.user_name || selected.user_email || "—"}</div>
-              <div><span className="text-muted-foreground">Amount:</span> ₹{selected.amount}</div>
-              <div><span className="text-muted-foreground">Status:</span> {selected.status}</div>
-              <div><span className="text-muted-foreground">Purpose:</span> {selected.purpose || "—"}</div>
-              <div><span className="text-muted-foreground">Method:</span> {selected.payment_method}</div>
-              <div><span className="text-muted-foreground">Payment ID:</span> {selected.razorpay_payment_id || "—"}</div>
-              <div><span className="text-muted-foreground">Order ID:</span> {selected.razorpay_order_id || selected.billing_order_id || "—"}</div>
-              <div><span className="text-muted-foreground">Verified At:</span> {selected.verified_at ? new Date(selected.verified_at).toLocaleString() : "—"}</div>
-              <div className="md:col-span-2"><span className="text-muted-foreground">Failure/Reconciliation Note:</span> {selected.failure_reason || "—"}</div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40" onClick={() => setSelected(null)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+      {[["Paid orders", summary.total_paid_orders], ["Pending orders", summary.pending_orders], ["Failed orders", summary.failed_orders], ["Revenue INR", money(summary.total_revenue_inr, "INR")], ["Revenue USD", money(summary.total_revenue_usd)]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-border/50 bg-card/30 p-4 shadow-xl backdrop-blur-xl"><div className="text-xs uppercase tracking-wider text-muted-foreground">{label}</div><div className="mt-2 text-2xl font-bold text-foreground">{value}</div></div>)}
     </div>
-  )
+
+    <div className="rounded-xl border border-border/50 bg-card/30 p-4 shadow-xl backdrop-blur-xl"><div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="User email" className="bg-card/20 border-border/50 text-foreground placeholder:text-muted-foreground" />
+      <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-xl border border-border/50 bg-card/20 px-3 py-2 text-sm text-foreground"><option value="">All statuses</option><option value="CREATED">CREATED</option><option value="PAID">PAID</option><option value="FAILED">FAILED</option><option value="REFUNDED">REFUNDED</option></select>
+      <select value={method} onChange={(e) => setMethod(e.target.value)} className="rounded-xl border border-border/50 bg-card/20 px-3 py-2 text-sm text-foreground"><option value="">All methods</option><option value="RAZORPAY_UPI">RAZORPAY UPI</option><option value="CARD">CARD</option><option value="CRYPTO">CRYPTO</option></select>
+      <select value={purchaseType} onChange={(e) => setPurchaseType(e.target.value)} className="rounded-xl border border-border/50 bg-card/20 px-3 py-2 text-sm text-foreground"><option value="">All purchases</option><option value="SUBSCRIPTION">SUBSCRIPTION</option><option value="CREDITS">CREDITS</option></select>
+      <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="bg-card/20 border-border/50 text-foreground" />
+      <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="bg-card/20 border-border/50 text-foreground" />
+    </div><div className="mt-3 flex gap-2"><Button onClick={() => load(0)} className="rounded-xl">Apply Filters</Button><Button onClick={reset} variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"><RotateCcw className="mr-2 h-4 w-4" />Reset</Button></div></div>
+
+    <div className="overflow-auto rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl"><table className="w-full min-w-[1450px] text-sm"><thead><tr className="border-b border-border/60 text-left text-muted-foreground"><th className="px-3 py-3">Created</th><th className="px-3 py-3">User</th><th className="px-3 py-3">Provider</th><th className="px-3 py-3">Method</th><th className="px-3 py-3">Amount</th><th className="px-3 py-3">Status</th><th className="px-3 py-3">Linked Order</th><th className="px-3 py-3">Purchase</th><th className="px-3 py-3">Coupon</th><th className="px-3 py-3">Verified</th><th className="px-3 py-3">Provider Ref</th><th className="px-3 py-3">Action</th></tr></thead><tbody>
+      {loading ? <tr><td colSpan={12} className="px-3 py-8 text-muted-foreground">Loading payments...</td></tr> : error ? <tr><td colSpan={12} className="px-3 py-8 text-rose-300">{error}</td></tr> : items.length === 0 ? <tr><td colSpan={12} className="px-3 py-8 text-center text-muted-foreground">No data found</td></tr> : items.map(item => <tr key={item.id} className="border-b border-border/30 hover:bg-card/50 transition-colors">
+        <td className="px-3 py-3 text-muted-foreground">{item.created_at ? new Date(item.created_at).toLocaleString() : "—"}</td><td className="px-3 py-3"><div className="text-foreground">{item.user_name || item.user_email || "—"}</div><div className="text-xs text-muted-foreground">{item.user_email || ""}</div></td><td className="px-3 py-3 text-foreground">{item.provider || "—"}</td><td className="px-3 py-3 text-foreground">{item.method || "—"}</td><td className="px-3 py-3 font-semibold text-foreground">{money(item.amount, item.currency || "INR")}</td><td className="px-3 py-3"><span className="rounded-full border border-border/60 bg-card/50 px-2 py-1 text-xs text-foreground">{item.status || "—"}</span></td><td className="px-3 py-3 font-mono text-xs text-muted-foreground">{item.linked_order || "—"}</td><td className="px-3 py-3 text-foreground">{item.purchase_type || "—"}</td><td className="px-3 py-3">{item.coupon_code ? <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-xs text-emerald-200">{item.coupon_code} · -{money(item.discount_usd)}</span> : "—"}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-xs ${item.verified_at ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300"}`}>{item.verified_at ? "Verified" : "Pending"}</span></td><td className="px-3 py-3 font-mono text-xs text-muted-foreground">{item.provider_reference || "—"}</td><td className="px-3 py-3"><Button size="sm" variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40" onClick={() => setSelected(item)}><Eye className="mr-2 h-4 w-4" />View</Button></td>
+      </tr>)}
+    </tbody></table></div>
+
+    <div className="flex items-center justify-between text-sm text-muted-foreground"><div>Showing {items.length} of {total}</div><div className="flex gap-2"><Button disabled={skip === 0} onClick={() => load(Math.max(0, skip - PAGE_SIZE))} variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">Previous</Button><Button disabled={skip + PAGE_SIZE >= total} onClick={() => load(skip + PAGE_SIZE)} variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">Next</Button></div></div>
+
+    <Dialog open={!!selected} onOpenChange={() => setSelected(null)}><DialogContent className="max-w-2xl rounded-xl border border-border/60 bg-card/95 text-foreground"><DialogHeader><DialogTitle>Payment audit details</DialogTitle></DialogHeader>{selected && <div className="grid gap-2 text-sm md:grid-cols-2">{Object.entries(selected).map(([key, value]) => <div key={key} className="rounded-lg border border-border/40 bg-card/30 p-2"><div className="text-xs text-muted-foreground">{key}</div><div className="break-words text-foreground">{String(value ?? "—")}</div></div>)}</div>}<DialogFooter><Button variant="outline" onClick={() => setSelected(null)}>Close</Button></DialogFooter></DialogContent></Dialog>
+  </div>
 }

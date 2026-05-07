@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Info, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -37,6 +37,16 @@ const defaults = {
 const isPaperReady = (s: StrategyCatalogItem) => Boolean(s.isDeployablePaper ?? s.is_deployable_paper);
 const isDemoReady = (s: StrategyCatalogItem) => Boolean(s.isDeployableDemo ?? s.is_deployable_demo);
 
+type LiveAccessStatus = { allowed: boolean; requires_subscription: boolean; message?: string; recommended_coupon?: string | null };
+
+const extractGateDetail = (error: any): LiveAccessStatus | null => {
+  const detail = error?.response?.data?.detail;
+  if (detail && typeof detail === "object" && detail.code === "SUBSCRIPTION_REQUIRED") {
+    return { allowed: false, requires_subscription: true, message: detail.message, recommended_coupon: detail.recommended_coupon || null };
+  }
+  return null;
+};
+
 export default function NewLiveDeploymentPage() {
   const router = useRouter();
   const { showToast } = useToast();
@@ -44,6 +54,7 @@ export default function NewLiveDeploymentPage() {
   const [brokers, setBrokers] = useState<BrokerAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [accessStatus, setAccessStatus] = useState<LiveAccessStatus | null>(null);
   const [form, setForm] = useState(defaults);
 
   const connectedDemoBrokers = useMemo(() => brokers.filter((b) => b.mode === "DEMO" && b.status === "CONNECTED"), [brokers]);
@@ -59,7 +70,12 @@ export default function NewLiveDeploymentPage() {
     const load = async () => {
       try {
         setLoading(true);
-        const [strategyRows, brokerRows] = await Promise.all([liveTradingApi.listStrategies(), liveTradingApi.listBrokerAccounts()]);
+        const [strategyRows, brokerRows, access] = await Promise.all([
+          liveTradingApi.listStrategies(),
+          liveTradingApi.listBrokerAccounts(),
+          liveTradingApi.getLiveAccessStatus().catch(() => null),
+        ]);
+        if (access) setAccessStatus(access);
         setStrategies(strategyRows);
         setBrokers(brokerRows);
       } catch (error: any) {
@@ -84,6 +100,10 @@ export default function NewLiveDeploymentPage() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (accessStatus?.allowed === false) {
+      showToast("Active subscription required to deploy live strategies", "error");
+      return;
+    }
     if (!form.strategy_id) {
       showToast("No deployable strategy found for selected mode", "error");
       return;
@@ -109,7 +129,13 @@ export default function NewLiveDeploymentPage() {
       showToast("Deployment created", "success");
       router.push(`/live-trading/${created.id}`);
     } catch (error: any) {
-      showToast(error.message || "Failed to create deployment", "error");
+      const gate = extractGateDetail(error);
+      if (gate) {
+        setAccessStatus(gate);
+        showToast(gate.message || "Active subscription required to deploy live strategies", "error");
+      } else {
+        showToast(error.message || "Failed to create deployment", "error");
+      }
     } finally {
       setSaving(false);
     }
@@ -122,6 +148,28 @@ export default function NewLiveDeploymentPage() {
         subtitle="Only admin-approved strategies can be deployed to PAPER or DEMO. MT5 executes demo orders; Upstox market data is snapshot-only in this phase. LIVE mode remains locked."
         actions={<Link href="/live-trading"><Button variant="outline" className="gap-2 border-white/10 bg-white/5 text-white hover:bg-white/10"><ArrowLeft className="h-4 w-4" />Back</Button></Link>}
       />
+
+      {accessStatus?.allowed === false && (
+        <GlassCard className="mb-6 rounded-3xl border border-amber-300/25 bg-amber-400/10 p-5" hoverEffect={false}>
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-3">
+              <ShieldAlert className="mt-1 h-5 w-5 text-amber-200" />
+              <div>
+                <h3 className="font-semibold text-white">Subscription required</h3>
+                <p className="mt-1 text-sm text-purple-100/75">
+                  Live trading deployment is available for active subscribers.
+                  {accessStatus.recommended_coupon ? ` Use coupon ${accessStatus.recommended_coupon} for discount.` : ""}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              {accessStatus.recommended_coupon && <Button onClick={() => router.push(`/billing/checkout?type=subscription&plan=PRO&period=MONTHLY&coupon=${encodeURIComponent(accessStatus.recommended_coupon || "")}`)} className="bg-gradient-to-r from-lime-400 to-emerald-500 text-slate-950">Apply Coupon</Button>}
+              <Button onClick={() => router.push("/pricing")} className="bg-gradient-to-r from-fuchsia-500 to-blue-500 text-white">View Plans</Button>
+            </div>
+          </div>
+        </GlassCard>
+      )}
+
 
       <GlassCard className="p-6" hoverEffect={false}>
         {loading ? (
@@ -162,7 +210,7 @@ export default function NewLiveDeploymentPage() {
               <label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={form.auto_trade_enabled} onChange={(e) => setForm({ ...form, auto_trade_enabled: e.target.checked })} />Auto trade enabled</label>
             </div>
 
-            <Button disabled={saving || !form.strategy_id} className="border-0 bg-gradient-to-r from-lime-400 to-emerald-500 text-slate-950 hover:from-lime-300 hover:to-emerald-400">{saving ? "Creating..." : "Create Deployment"}</Button>
+            <Button disabled={saving || !form.strategy_id || accessStatus?.allowed === false} className="border-0 bg-gradient-to-r from-lime-400 to-emerald-500 text-slate-950 hover:from-lime-300 hover:to-emerald-400">{accessStatus?.allowed === false ? "Subscription Required" : saving ? "Creating..." : "Create Deployment"}</Button>
           </form>
         )}
       </GlassCard>

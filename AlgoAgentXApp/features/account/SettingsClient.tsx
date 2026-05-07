@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { profileSettingsApi, AccountSettings, Profile } from "@/lib/api/profile-settings";
+import CouponBarSettingsCard from "@/components/admin/CouponBarSettingsCard";
+import BillingSettingsCard from "@/components/admin/BillingSettingsCard";
 
 const notificationLabels: Record<string, string> = {
   support_replies: "Support replies",
@@ -191,6 +193,9 @@ export default function SettingsClient({ admin = false }: { admin?: boolean }) {
       ) : (
         <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="space-y-6">
+            {isAdmin && <CouponBarSettingsCard />}
+            {isAdmin && <BillingSettingsCard />}
+
             <GlassCard className="rounded-3xl border border-white/10 p-6 hover:scale-100">
               <div className="mb-5 flex items-center justify-between">
                 <div><h3 className="flex items-center gap-2 text-lg font-semibold text-white"><KeyRound className="h-5 w-5 text-fuchsia-300" />Security</h3><p className="mt-1 text-sm text-purple-100/65">Change password safely with current password verification.</p></div>

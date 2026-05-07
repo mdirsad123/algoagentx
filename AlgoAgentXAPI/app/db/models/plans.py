@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, String, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, Numeric, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from ..base import Base
 import uuid
@@ -13,7 +13,8 @@ class Plan(Base):
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     code = Column(String(50), nullable=False)  # FREE, PRO, PREMIUM, ULTIMATE
     billing_period = Column(String(20), nullable=False)  # MONTHLY, YEARLY, NONE
-    price_inr = Column(Integer, nullable=False, default=0)  # 0 for FREE
+    price_inr = Column(Integer, nullable=False, default=0)  # Legacy INR amount kept for Razorpay/backward compatibility
+    price_usd = Column(Numeric(10, 2), nullable=False, default=0)  # Base billing currency amount
     included_credits = Column(Integer, nullable=False, default=0)
     features = Column(JSON, nullable=False)
     is_active = Column(Boolean, default=True)

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   Check,
@@ -202,6 +203,7 @@ export default function PricingPage() {
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
   const [processingPlanKey, setProcessingPlanKey] = useState<string | null>(null);
   const [billingView, setBillingView] = useState<BillingView>("MONTHLY");
+  const router = useRouter();
 
   const activePlanKey = useMemo(() => {
     if (!subscription) return null;
@@ -365,12 +367,7 @@ export default function PricingPage() {
         return;
       }
 
-      const order = await subscriptionsApi.createOrder({
-        plan_code: plan.code,
-        billing_period: plan.billing_period,
-      });
-
-      await openRazorpayCheckout(order, plan);
+      router.push(`/billing/checkout?type=subscription&plan=${encodeURIComponent(plan.code)}&period=${encodeURIComponent(plan.billing_period)}`);
     } catch (error) {
       const parsed = parseApiError(error);
       const message = formatErrorMessage(parsed);

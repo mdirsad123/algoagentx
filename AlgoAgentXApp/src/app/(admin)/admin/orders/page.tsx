@@ -8,6 +8,12 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { RefreshCw, Eye, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 
+const formatOrderAmount = (amount: number, currency?: string) => {
+  const cur = currency || "INR";
+  if (cur === "USD") return `$${Number(amount || 0).toFixed(2)}`;
+  return `₹${Number(amount || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
+
 export default function AdminOrdersPage() {
   const [items, setItems] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
@@ -94,7 +100,7 @@ export default function AdminOrdersPage() {
           </select>
           <select value={method} onChange={(e) => setMethod(e.target.value)} className="rounded-xl border border-border/50 bg-card/20 px-3 py-2 text-sm text-foreground">
             <option value="">All methods</option>
-            <option value="RAZORPAY">RAZORPAY</option>
+            <option value="RAZORPAY">RAZORPAY</option><option value="CARD_PROVIDER">CARD_PROVIDER</option><option value="CRYPTO">CRYPTO</option>
           </select>
           <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="bg-card/20 border-border/50 text-foreground" />
           <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="bg-card/20 border-border/50 text-foreground" />
@@ -119,17 +125,18 @@ export default function AdminOrdersPage() {
                   <th className="px-3 py-3">Linked Payment</th>
                   <th className="px-3 py-3">Reconciliation</th>
                   <th className="px-3 py-3">Method</th>
+                  <th className="px-3 py-3">Coupon</th>
                   <th className="px-3 py-3">Created At</th>
                   <th className="px-3 py-3">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {loading ? <tr><td className="px-3 py-8 text-muted-foreground" colSpan={10}>Loading orders...</td></tr> : items.length === 0 ? <tr><td className="px-3 py-8 text-center text-muted-foreground" colSpan={10}>No data found</td></tr> : items.map((item) => (
+                {loading ? <tr><td className="px-3 py-8 text-muted-foreground" colSpan={11}>Loading orders...</td></tr> : items.length === 0 ? <tr><td className="px-3 py-8 text-center text-muted-foreground" colSpan={11}>No data found</td></tr> : items.map((item) => (
                   <tr key={item.id} className="border-b border-border/30 hover:bg-card/50 transition-colors">
                     <td className="px-3 py-3"><div className="text-foreground">{item.user_name || item.user_email || '—'}</div><div className="text-xs text-muted-foreground">{item.user_email || ''}</div></td>
                     <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{item.order_number}</td>
                     <td className="px-3 py-3 text-foreground">{item.source_type || item.order_type || '—'}</td>
-                    <td className="px-3 py-3 text-foreground font-medium">₹{item.total_amount}</td>
+                    <td className="px-3 py-3 text-foreground font-medium">{formatOrderAmount(item.total_amount, item.currency)}</td>
                     <td className="px-3 py-3"><span className="rounded-full border border-border/60 bg-card/50 px-2 py-1 text-xs text-foreground">{item.status}</span></td>
                     <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{item.linked_payment_id || '—'} ({item.linked_payment_status || item.status})</td>
                     <td className="px-3 py-3">
@@ -138,6 +145,7 @@ export default function AdminOrdersPage() {
                       </span>
                     </td>
                     <td className="px-3 py-3 text-foreground">{item.payment_method}</td>
+                    <td className="px-3 py-3 text-foreground">{item.coupon_code ? <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-200">{item.coupon_code} (-${Number(item.discount_usd || 0).toFixed(2)})</span> : "—"}</td>
                     <td className="px-3 py-3 text-muted-foreground">{new Date(item.created_at).toLocaleString()}</td>
                     <td className="px-3 py-3">
                       <div className="flex gap-2">
@@ -167,7 +175,8 @@ export default function AdminOrdersPage() {
             <div><span className="text-muted-foreground">User:</span> {selected.user_name || selected.user_email || '—'}</div>
             <div><span className="text-muted-foreground">Order Number:</span> {selected.order_number}</div>
             <div><span className="text-muted-foreground">Source:</span> {selected.source_type || selected.order_type || '—'}</div>
-            <div><span className="text-muted-foreground">Amount:</span> ₹{selected.total_amount}</div>
+            <div><span className="text-muted-foreground">Amount:</span> {formatOrderAmount(selected.total_amount, selected.currency)}</div>
+            <div><span className="text-muted-foreground">Coupon:</span> {selected.coupon_code ? `${selected.coupon_code} (-$${Number(selected.discount_usd || 0).toFixed(2)})` : "—"}</div>
             <div><span className="text-muted-foreground">Status:</span> {selected.status}</div>
             <div><span className="text-muted-foreground">Method:</span> {selected.payment_method}</div>
             <div><span className="text-muted-foreground">Linked Payment:</span> {selected.linked_payment_id || '—'} ({selected.linked_payment_status || selected.status})</div>

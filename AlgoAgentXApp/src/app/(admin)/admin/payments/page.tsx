@@ -8,6 +8,12 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Eye, RefreshCw, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 
+const formatPaymentAmount = (amount: number, currency?: string) => {
+  const cur = currency || "INR";
+  if (cur === "USD") return `$${Number(amount || 0).toFixed(2)}`;
+  return `₹${Number(amount || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
+
 const PAGE_SIZE = 20
 
 export default function AdminPaymentsPage() {
@@ -166,7 +172,7 @@ export default function AdminPaymentsPage() {
                 </td>
                 <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{item.razorpay_payment_id || item.id}</td>
                 <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{item.razorpay_order_id || item.billing_order_id || "—"}</td>
-                <td className="px-3 py-3 text-foreground font-medium">₹{item.amount}</td>
+                <td className="px-3 py-3 text-foreground font-medium">{formatPaymentAmount(item.amount, item.currency)}</td>
                 <td className="px-3 py-3 text-foreground">{item.purpose || "—"}</td>
                 <td className="px-3 py-3 text-foreground">{item.payment_method}</td>
                 <td className="px-3 py-3">
@@ -210,7 +216,7 @@ export default function AdminPaymentsPage() {
           {selected && (
             <div className="grid grid-cols-1 gap-2 text-sm md:grid-cols-2">
               <div><span className="text-muted-foreground">User:</span> {selected.user_name || selected.user_email || "—"}</div>
-              <div><span className="text-muted-foreground">Amount:</span> ₹{selected.amount}</div>
+              <div><span className="text-muted-foreground">Amount:</span> {formatPaymentAmount(selected.amount, selected.currency)}</div>
               <div><span className="text-muted-foreground">Status:</span> {selected.status}</div>
               <div><span className="text-muted-foreground">Purpose:</span> {selected.purpose || "—"}</div>
               <div><span className="text-muted-foreground">Method:</span> {selected.payment_method}</div>

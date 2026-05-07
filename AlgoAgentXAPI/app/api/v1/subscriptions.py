@@ -25,6 +25,7 @@ from ...db.models import (
 )
 from ...services.subscriptions import SubscriptionLifecycleService, SubscriptionLifecycleState
 from ...utils.api_response import success_response
+from ...services.billing.coupon_service import record_coupon_redemption
 
 router = APIRouter()
 
@@ -118,6 +119,20 @@ def _is_valid_plan_combo(plan_code: str | None, billing_period: str | None) -> b
     return period in {"MONTHLY", "YEARLY"}
 
 
+
+
+def _price_usd_from_plan(plan: Plan | None) -> float:
+    if not plan:
+        return 0.0
+    raw = getattr(plan, "price_usd", None)
+    try:
+        price_usd = float(raw or 0)
+    except Exception:
+        price_usd = 0.0
+    if price_usd > 0 or int(getattr(plan, "price_inr", 0) or 0) <= 0:
+        return round(price_usd, 2)
+    return round(int(getattr(plan, "price_inr", 0) or 0) / 83, 2)
+
 def _serialize_plan(row: Plan) -> dict:
     code = _normalize_plan_code(getattr(row, "code", None))
     period = _normalize_billing_period(getattr(row, "billing_period", None))
@@ -125,6 +140,7 @@ def _serialize_plan(row: Plan) -> dict:
         "id": str(row.id),
         "code": code,
         "billing_period": period,
+        "price_usd": _price_usd_from_plan(row),
         "price_inr": int(row.price_inr or 0),
         "included_credits": int(row.included_credits or 0),
         "features": row.features or {},
@@ -218,6 +234,44 @@ async def _get_active_subscription(db: AsyncSession, user_id: str) -> UserSubscr
             .limit(1)
         )
     ).scalar_one_or_none()
+
+
+async def _billing_order_metadata(db: AsyncSession, billing_order_id: str | None) -> dict:
+    if not billing_order_id or not await table_has_column(db, "billing_orders", "id"):
+        return {}
+    row = (
+        await db.execute(select(BillingOrder).where(BillingOrder.billing_order_id == str(billing_order_id)).limit(1))
+    ).scalar_one_or_none()
+    raw = getattr(row, "metadata_json", None) if row else None
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _expected_payment_paise(payment: Payment, metadata: dict) -> int:
+    try:
+        if metadata.get("payment_amount_paise"):
+            return int(metadata.get("payment_amount_paise") or 0)
+    except Exception:
+        pass
+    return int(payment.amount_inr or 0) * 100
+
+
+async def _record_checkout_coupon_if_needed(db: AsyncSession, payment: Payment, metadata: dict) -> None:
+    await record_coupon_redemption(
+        db,
+        coupon_code=metadata.get("coupon_code"),
+        user_id=str(payment.user_id),
+        order_id=str(payment.billing_order_id or payment.id),
+        purchase_type=metadata.get("purchase_type") or "SUBSCRIPTION",
+        subtotal_usd=metadata.get("subtotal_usd") or 0,
+        discount_usd=metadata.get("discount_usd") or 0,
+        final_usd=metadata.get("final_usd") or 0,
+    )
 
 
 def _verify_webhook_signature(raw_body: bytes, signature: str | None) -> bool:
@@ -400,6 +454,7 @@ def _serialize_subscription(sub: UserSubscription | None, plan: Plan | None = No
         "plan_code": (sub.plan_code_snapshot or getattr(plan, "code", None) or "FREE"),
         "billing_period": _normalize_billing_period(sub.billing_period_snapshot or getattr(plan, "billing_period", None) or "NONE"),
         "plan_key": _plan_key(sub.plan_code_snapshot or getattr(plan, "code", None), sub.billing_period_snapshot or getattr(plan, "billing_period", None)),
+        "price_usd": _price_usd_from_plan(plan),
         "price_inr": int(sub.plan_price_inr or getattr(plan, "price_inr", 0) or 0),
         "status": sub.status,
         "billing_state": _subscription_state(sub),
@@ -718,6 +773,7 @@ async def create_subscription_checkout(
                 "id": str(plan.id),
                 "code": str(plan.code),
                 "billing_period": _normalize_billing_period(getattr(plan, "billing_period", None)),
+                "price_usd": _price_usd_from_plan(plan),
                 "price_inr": int(plan.price_inr or 0),
                 "included_credits": int(plan.included_credits or 0),
             },
@@ -748,6 +804,8 @@ async def verify_subscription_payment(
     ).scalar_one_or_none()
     if not payment:
         raise HTTPException(status_code=404, detail="Subscription order not found")
+
+    checkout_metadata = await _billing_order_metadata(db, payment.billing_order_id)
 
     if payment.status == "PAID":
         existing_sub = await _get_subscription_by_id(db, payment.subscription_id)
@@ -813,7 +871,7 @@ async def verify_subscription_payment(
         raise HTTPException(status_code=400, detail="Payment is not successful")
 
     fetched_amount = int(fetched.get("amount") or 0)
-    expected_amount = int(payment.amount_inr or 0) * 100
+    expected_amount = _expected_payment_paise(payment, checkout_metadata)
     if fetched_amount != expected_amount:
         payment.status = "FAILED"
         payment.failure_reason = "amount_mismatch"
@@ -858,6 +916,7 @@ async def verify_subscription_payment(
         subscription=subscription,
         source="verify_endpoint",
     )
+    await _record_checkout_coupon_if_needed(db, payment, checkout_metadata)
     await db.commit()
 
     return success_response(
@@ -1146,6 +1205,7 @@ async def razorpay_subscription_webhook(
             subscription=subscription,
             source="webhook_payment_captured",
         )
+        await _record_checkout_coupon_if_needed(db, payment, checkout_metadata)
         await _record_webhook_event(
             db,
             event_type=event,

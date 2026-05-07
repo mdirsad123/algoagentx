@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   Check,
@@ -29,9 +30,10 @@ import { formatErrorMessage, parseApiError } from "@/lib/api/error";
 const EMPTY_PLANS: SubscriptionPlansGrouped = { free: [], monthly: [], yearly: [] };
 
 const CREDIT_PACKS = [
-  { label: "₹100", credits: 100 },
-  { label: "₹500", credits: 500 },
-  { label: "₹2000", credits: 2000 },
+  { label: "$1", credits: 100 },
+  { label: "$3", credits: 250 },
+  { label: "$5", credits: 500 },
+  { label: "$10", credits: 1000 },
 ];
 
 type BillingView = "MONTHLY" | "YEARLY";
@@ -58,11 +60,17 @@ const formatDateTime = (value?: string | null): string => {
 };
 
 const formatCurrency = (value: number): string =>
-  new Intl.NumberFormat("en-IN", {
+  new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
+    currency: "USD",
+    maximumFractionDigits: value % 1 === 0 ? 0 : 2,
   }).format(value || 0);
+
+const getPlanUsdPrice = (plan: SubscriptionPlan): number => {
+  const direct = Number((plan as any).price_usd || 0);
+  if (direct > 0 || Number(plan.price_inr || 0) <= 0) return direct;
+  return Number((Number(plan.price_inr || 0) / 83).toFixed(2));
+};
 
 const formatCount = (value?: number | null): string => (value || 0).toLocaleString();
 
@@ -127,7 +135,7 @@ const getPlanSubtitle = (plan: SubscriptionPlan): string => {
 const getPerText = (plan: SubscriptionPlan): string => {
   const period = normalizeUpper(plan.billing_period);
   if (period === "YEARLY" || period === "ANNUAL") return "per year";
-  if ((plan.price_inr || 0) <= 0) return "starter access";
+  if (getPlanUsdPrice(plan) <= 0) return "starter access";
   return "per month";
 };
 
@@ -202,6 +210,7 @@ export default function PricingPage() {
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
   const [processingPlanKey, setProcessingPlanKey] = useState<string | null>(null);
   const [billingView, setBillingView] = useState<BillingView>("MONTHLY");
+  const router = useRouter();
 
   const activePlanKey = useMemo(() => {
     if (!subscription) return null;
@@ -355,7 +364,7 @@ export default function PricingPage() {
     setProcessingPlanKey(planKey);
 
     try {
-      if ((plan.price_inr || 0) <= 0) {
+      if (getPlanUsdPrice(plan) <= 0) {
         await subscriptionsApi.activateFree({
           plan_code: plan.code,
           billing_period: plan.billing_period,
@@ -365,12 +374,7 @@ export default function PricingPage() {
         return;
       }
 
-      const order = await subscriptionsApi.createOrder({
-        plan_code: plan.code,
-        billing_period: plan.billing_period,
-      });
-
-      await openRazorpayCheckout(order, plan);
+      router.push(`/billing/checkout?type=subscription&plan=${encodeURIComponent(plan.code)}&period=${encodeURIComponent(plan.billing_period)}`);
     } catch (error) {
       const parsed = parseApiError(error);
       const message = formatErrorMessage(parsed);
@@ -466,7 +470,7 @@ export default function PricingPage() {
     const meta = extractPlanMeta(plan);
 
     const ctaLabel =
-      (plan.price_inr || 0) <= 0
+      getPlanUsdPrice(plan) <= 0
         ? "Start Free Trial"
         : `Buy ${normalizeUpper(plan.billing_period) === "YEARLY" ? "Yearly" : "Monthly"}`;
 
@@ -489,7 +493,7 @@ export default function PricingPage() {
 
         <CardContent className="space-y-4 p-5">
           <div>
-            <div className="text-5xl font-bold tracking-tight text-white">{formatCurrency(plan.price_inr || 0)}</div>
+            <div className="text-5xl font-bold tracking-tight text-white">{formatCurrency(getPlanUsdPrice(plan))}</div>
             <p className="mt-1 text-sm text-muted-foreground">{getPerText(plan)}</p>
           </div>
 
@@ -572,7 +576,7 @@ export default function PricingPage() {
         <section className="rounded-2xl border border-border/50 bg-card/30 p-5 shadow-xl backdrop-blur-xl">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-2xl font-semibold text-white">Pricing &amp; Subscriptions</h2>
+              <h2 className="text-2xl font-semibold text-white">USD Pricing &amp; Subscriptions</h2>
               <p className="mt-1 text-sm text-white/85">
                 Choose a plan with recurring included credits. If included credits are exhausted, wallet credits are used.
               </p>

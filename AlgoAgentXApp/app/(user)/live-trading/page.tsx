@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Eye, Pause, Play, Plus, Square, Zap } from "lucide-react";
+import { Eye, Pause, Play, Plus, ShieldAlert, ShieldCheck, Square, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -24,6 +25,29 @@ const money = (value: unknown, currency?: string | null) => {
 };
 const date = (value?: string | null) => (value ? new Date(value).toLocaleString() : "—");
 
+type LiveAccessStatus = {
+  allowed: boolean;
+  requires_subscription: boolean;
+  code?: string | null;
+  message?: string;
+  recommended_coupon?: string | null;
+  subscription?: Record<string, unknown> | null;
+};
+
+const extractGateDetail = (error: any): LiveAccessStatus | null => {
+  const detail = error?.response?.data?.detail;
+  if (detail && typeof detail === "object" && detail.code === "SUBSCRIPTION_REQUIRED") {
+    return {
+      allowed: false,
+      requires_subscription: true,
+      code: detail.code,
+      message: detail.message || "Active subscription required to deploy live strategies.",
+      recommended_coupon: detail.recommended_coupon || null,
+    };
+  }
+  return null;
+};
+
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     RUNNING: "border-lime-400/30 bg-lime-400/20 text-lime-100",
@@ -37,21 +61,26 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function LiveTradingPage() {
   const { showToast } = useToast();
+  const router = useRouter();
   const [deployments, setDeployments] = useState<StrategyDeployment[]>([]);
   const [summaries, setSummaries] = useState<Record<string, LiveDeploymentSummary>>({});
   const [strategies, setStrategies] = useState<StrategyCatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [accessStatus, setAccessStatus] = useState<LiveAccessStatus | null>(null);
+  const [showSubscribeModal, setShowSubscribeModal] = useState(false);
 
   const strategyName = (id: string) => strategies.find((s) => s.id === id)?.name || summaries[id]?.deployment?.strategy_name || id;
 
   const load = async () => {
     try {
       setLoading(true);
-      const [deploymentRows, strategyRows] = await Promise.all([
+      const [deploymentRows, strategyRows, access] = await Promise.all([
         liveTradingApi.listDeployments(),
         liveTradingApi.listStrategies(),
+        liveTradingApi.getLiveAccessStatus().catch(() => null),
       ]);
+      if (access) setAccessStatus(access);
       setDeployments(deploymentRows);
       setStrategies(strategyRows);
       const pairs = await Promise.all(deploymentRows.map(async (d) => [d.id, await liveTradingApi.getDeploymentSummary(d.id)] as const));
@@ -74,7 +103,13 @@ export default function LiveTradingPage() {
       showToast(`Deployment ${action} action completed`, "success");
       await load();
     } catch (error: any) {
-      showToast(error.message || `Failed to ${action} deployment`, "error");
+      const gate = extractGateDetail(error);
+      if (gate) {
+        setAccessStatus(gate);
+        setShowSubscribeModal(true);
+      } else {
+        showToast(error.message || `Failed to ${action} deployment`, "error");
+      }
     } finally {
       setBusyId(null);
     }
@@ -94,7 +129,33 @@ export default function LiveTradingPage() {
 
   return (
     <PageShell>
-      <PageHeader title="Live Trading" subtitle="Monitor PAPER and DEMO strategy deployments before real LIVE execution is enabled." actions={<Link href="/live-trading/new"><Button className="gap-2 border-0 bg-gradient-to-r from-lime-400 to-emerald-500 text-slate-950 hover:from-lime-300 hover:to-emerald-400"><Plus className="h-4 w-4" />New Deployment</Button></Link>} />
+      <PageHeader
+        title="Live Trading"
+        subtitle="Monitor PAPER and DEMO strategy deployments before real LIVE execution is enabled."
+        actions={accessStatus?.allowed === false ? (
+          <Button onClick={() => setShowSubscribeModal(true)} className="gap-2 border-0 bg-gradient-to-r from-fuchsia-500 to-blue-500 text-white hover:from-fuchsia-400 hover:to-blue-400"><Plus className="h-4 w-4" />New Deployment</Button>
+        ) : (
+          <Link href="/live-trading/new"><Button className="gap-2 border-0 bg-gradient-to-r from-lime-400 to-emerald-500 text-slate-950 hover:from-lime-300 hover:to-emerald-400"><Plus className="h-4 w-4" />New Deployment</Button></Link>
+        )}
+      />
+
+
+      <GlassCard className={`mb-6 rounded-3xl border p-5 ${accessStatus?.allowed === false ? "border-amber-300/25 bg-amber-400/10" : "border-lime-300/20 bg-lime-400/10"}`} hoverEffect={false}>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-start gap-3">
+            {accessStatus?.allowed === false ? <ShieldAlert className="mt-1 h-5 w-5 text-amber-200" /> : <ShieldCheck className="mt-1 h-5 w-5 text-lime-200" />}
+            <div>
+              <h3 className="font-semibold text-white">{accessStatus?.allowed === false ? "Subscription required for deployment" : "Live trading access enabled"}</h3>
+              <p className="mt-1 text-sm text-purple-100/75">
+                {accessStatus?.allowed === false
+                  ? `Live trading deployment is available for active subscribers.${accessStatus.recommended_coupon ? ` Use coupon ${accessStatus.recommended_coupon} for discount.` : ""}`
+                  : "Your live trading controls are available. Viewing, pausing, stopping, logs, and broker status remain safe at all times."}
+              </p>
+            </div>
+          </div>
+          {accessStatus?.allowed === false && <Button onClick={() => router.push("/pricing")} className="rounded-xl bg-gradient-to-r from-fuchsia-500 to-blue-500 text-white">View Plans</Button>}
+        </div>
+      </GlassCard>
 
       <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-5">
         <GlassCard className="p-5"><p className="text-sm text-purple-200">Running deployments</p><p className="mt-2 text-3xl font-bold text-lime-300">{summary.running}</p></GlassCard>
@@ -104,7 +165,7 @@ export default function LiveTradingPage() {
         <GlassCard className="p-5"><p className="text-sm text-purple-200">Orders today</p><p className="mt-2 text-3xl font-bold text-white">{summary.todayOrders}</p></GlassCard>
       </div>
 
-      {loading ? <GlassCard className="p-6 text-purple-100">Loading live deployments...</GlassCard> : deployments.length === 0 ? <EmptyState title="No deployments yet" description="Create your first PAPER or DEMO deployment from a published strategy." action={<Link href="/live-trading/new"><Button className="gap-2"><Zap className="h-4 w-4" />Create Deployment</Button></Link>} /> : (
+      {loading ? <GlassCard className="p-6 text-purple-100">Loading live deployments...</GlassCard> : deployments.length === 0 ? <EmptyState title="No deployments yet" description="Create your first PAPER or DEMO deployment from a published strategy." action={accessStatus?.allowed === false ? <Button onClick={() => setShowSubscribeModal(true)} className="gap-2"><Zap className="h-4 w-4" />Create Deployment</Button> : <Link href="/live-trading/new"><Button className="gap-2"><Zap className="h-4 w-4" />Create Deployment</Button></Link>} /> : (
         <GlassCard className="overflow-hidden" hoverEffect={false}>
           <div className="overflow-x-auto"><table className="w-full min-w-[1250px] text-left text-sm"><thead className="border-b border-white/10 bg-white/5 text-purple-100"><tr><th className="px-4 py-3">Name</th><th className="px-4 py-3">Strategy</th><th className="px-4 py-3">Instrument</th><th className="px-4 py-3">Timeframe</th><th className="px-4 py-3">Mode</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Broker</th><th className="px-4 py-3">PnL</th><th className="px-4 py-3">Auto Runner</th><th className="px-4 py-3">Last Signal</th><th className="px-4 py-3 text-right">Actions</th></tr></thead><tbody className="divide-y divide-white/10">{deployments.map((deployment) => {
             const sm = summaries[deployment.id];
@@ -112,6 +173,32 @@ export default function LiveTradingPage() {
           })}</tbody></table></div>
         </GlassCard>
       )}
+
+
+      {showSubscribeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-gradient-to-br from-slate-950 via-purple-950 to-slate-900 p-6 shadow-2xl shadow-fuchsia-950/40">
+            <div className="flex items-start gap-3">
+              <div className="rounded-2xl bg-fuchsia-500/20 p-3 text-fuchsia-100"><ShieldAlert className="h-6 w-6" /></div>
+              <div>
+                <h2 className="text-2xl font-bold text-white">Subscription required</h2>
+                <p className="mt-2 text-sm leading-6 text-purple-100/80">
+                  Live trading deployment is available for active subscribers.
+                  {accessStatus?.recommended_coupon ? ` Subscribe now and use coupon ${accessStatus.recommended_coupon} for discount.` : " Subscribe now to unlock deployment and start controls."}
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <Button variant="outline" onClick={() => setShowSubscribeModal(false)} className="border-white/10 bg-white/5 text-white hover:bg-white/10">Cancel</Button>
+              {accessStatus?.recommended_coupon && (
+                <Button onClick={() => router.push(`/billing/checkout?type=subscription&plan=PRO&period=MONTHLY&coupon=${encodeURIComponent(accessStatus.recommended_coupon || "")}`)} className="bg-gradient-to-r from-lime-400 to-emerald-500 text-slate-950">Apply Coupon</Button>
+              )}
+              <Button onClick={() => router.push("/pricing")} className="bg-gradient-to-r from-fuchsia-500 to-blue-500 text-white">View Plans</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </PageShell>
   );
 }

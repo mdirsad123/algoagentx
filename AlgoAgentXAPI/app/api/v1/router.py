@@ -1,6 +1,11 @@
 from fastapi import APIRouter
 from . import auth, users, strategies, backtests, signals, metrics, instruments, jobs, market_data, credits, billing, payments, subscriptions, ai_screener, notifications, strategy_requests, admin_strategy_requests, ai_screener_jobs, admin, admin_market_data, support_tickets, public, dashboard
 from . import admin_pricing
+from . import admin_coupons
+from . import admin_credit_rules
+from . import admin_credit_packs
+from . import admin_billing
+from . import settings
 from . import admin_risk_engine
 from . import admin_strategy_runtime_presets
 from . import market_master
@@ -25,12 +30,15 @@ api_router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
 api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 api_router.include_router(credits.router, prefix="/credits", tags=["credits"])
 api_router.include_router(billing.router, prefix="/billing", tags=["billing"])
+api_router.include_router(billing.admin_router, prefix="/admin/billing", tags=["admin-billing"])
 api_router.include_router(payments.router, prefix="/payments", tags=["payments"])
 api_router.include_router(subscriptions.router, prefix="/subscriptions", tags=["subscriptions"])
 api_router.include_router(public.router, prefix="/public", tags=["public"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(profile_settings.profile_router, prefix="/profile", tags=["profile"])
 api_router.include_router(profile_settings.settings_router, prefix="/settings", tags=["settings"])
+api_router.include_router(settings.router, prefix="/settings", tags=["settings"])
+api_router.include_router(settings.admin_router, prefix="/admin/settings", tags=["admin-settings"])
 api_router.include_router(ai_screener.router, prefix="/ai-screener", tags=["ai-screener"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(strategy_requests.router, prefix="/strategy-requests", tags=["strategy-requests"])
@@ -43,6 +51,10 @@ api_router.include_router(admin_risk_engine.router, prefix="/admin/risk-engine",
 api_router.include_router(market_master.router, prefix="/market-master", tags=["market-master"])
 api_router.include_router(market_master.admin_router, prefix="/admin/market-master", tags=["admin-market-master"])
 api_router.include_router(admin_pricing.router, prefix="/admin/pricing", tags=["admin-pricing"])
+api_router.include_router(admin_coupons.router, prefix="/admin/coupons", tags=["admin-coupons"])
+api_router.include_router(admin_credit_rules.router, prefix="/admin/credit-rules", tags=["admin-credit-rules"])
+api_router.include_router(admin_credit_packs.router, prefix="/admin/credit-packs", tags=["admin-credit-packs"])
+api_router.include_router(admin_billing.router, prefix="/admin/billing", tags=["admin-billing-audit"])
 api_router.include_router(admin_strategy_gate.router, prefix="/admin/strategies", tags=["admin-strategy-gate"])
 api_router.include_router(admin_strategy_runtime_presets.router, prefix="/admin", tags=["admin-strategy-runtime-presets"])
 api_router.include_router(support_tickets.router, prefix="/support-tickets", tags=["support-tickets"])

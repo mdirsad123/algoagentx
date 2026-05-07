@@ -303,6 +303,25 @@ class BacktestService:
         return await db.get(Instrument, instrument_id)
 
     @staticmethod
+    async def _get_instrument_details(db: AsyncSession, instrument_id: int | None) -> tuple[str, str | None]:
+        """Return instrument symbol and market for preview/filter helpers.
+
+        Some API preview paths historically called this helper directly while
+        the service later consolidated instrument loading into _get_instrument.
+        Keeping this compatibility method prevents advanced-filter cost preview
+        from failing and keeps run_backtest behaviour unchanged.
+        """
+        if instrument_id is None:
+            return "", None
+        instrument = await BacktestService._get_instrument(db, instrument_id)
+        if instrument is None:
+            return f"Instrument_{instrument_id}", None
+        return (
+            str(getattr(instrument, "symbol", None) or f"Instrument_{instrument_id}"),
+            getattr(instrument, "market", None),
+        )
+
+    @staticmethod
     def _instrument_to_spec(instrument: Instrument | None) -> dict[str, Any]:
         if instrument is None:
             return {}

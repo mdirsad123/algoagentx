@@ -44,10 +44,16 @@ interface CreditTransaction {
 
 interface TopUpPack {
   code: string;
+  title: string;
   credits: number;
-  amount_inr: number;
-  label: string;
+  bonus_credits?: number;
+  total_credits?: number;
+  price_usd: number;
+  amount_usd?: number;
+  description?: string | null;
+  is_popular?: boolean;
   popular?: boolean;
+  label?: string;
 }
 
 interface RazorpayConfigResponse {
@@ -84,12 +90,7 @@ interface VerifyPaymentResponse {
 
 const unwrapApiData = (payload: any) => payload?.success ? payload.data : payload;
 
-const DEFAULT_TOP_UP_PACKS: TopUpPack[] = [
-  { code: "PACK_100", credits: 100, amount_inr: 100, label: "₹100", popular: false },
-  { code: "PACK_250", credits: 250, amount_inr: 250, label: "₹250", popular: false },
-  { code: "PACK_500", credits: 500, amount_inr: 500, label: "₹500", popular: true },
-  { code: "PACK_1000", credits: 1000, amount_inr: 1000, label: "₹1000", popular: false },
-];
+const DEFAULT_TOP_UP_PACKS: TopUpPack[] = [];
 
 const getErrorMessage = (error: any): string =>
   error?.response?.data?.detail || error?.message || "Something went wrong";
@@ -100,11 +101,11 @@ export default function CreditsWalletPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [packs, setPacks] = useState<TopUpPack[]>(DEFAULT_TOP_UP_PACKS);
-  const [selectedPackCode, setSelectedPackCode] = useState<string>(DEFAULT_TOP_UP_PACKS[0].code);
+  const [selectedPackCode, setSelectedPackCode] = useState<string>("");
   const [customAmount, setCustomAmount] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [configured, setConfigured] = useState(false);
-  const [allowCustomTopup, setAllowCustomTopup] = useState(true);
+  const [allowCustomTopup, setAllowCustomTopup] = useState(false);
   const [minCustomCredits, setMinCustomCredits] = useState(1);
   const [maxCustomCredits, setMaxCustomCredits] = useState(100000);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -116,17 +117,32 @@ export default function CreditsWalletPage() {
   );
 
   const fetchPaymentConfig = useCallback(async () => {
-    const response = await axiosInstance.get('/api/v1/payments/razorpay/config');
-    const config: RazorpayConfigResponse = unwrapApiData(response.data);
+    const [configResponse, packsResponse] = await Promise.all([
+      axiosInstance.get('/api/v1/payments/razorpay/config'),
+      axiosInstance.get('/api/v1/billing/credit-packs'),
+    ]);
+    const config: RazorpayConfigResponse = unwrapApiData(configResponse.data);
+    const activePacks = unwrapApiData(packsResponse.data) as TopUpPack[];
     setConfigured(!!config?.configured);
-    setAllowCustomTopup(config?.allow_custom_topup !== false);
+    setAllowCustomTopup(false);
     setMinCustomCredits(Number(config?.min_custom_credits || 1));
     setMaxCustomCredits(Number(config?.max_custom_credits || 100000));
 
-    if (Array.isArray(config?.packs) && config.packs.length > 0) {
-      setPacks(config.packs);
-      const preferredPack = config.packs.find((pack) => pack.popular) || config.packs[0];
+    if (Array.isArray(activePacks) && activePacks.length > 0) {
+      const normalized = activePacks.map((pack) => ({
+        ...pack,
+        total_credits: Number(pack.total_credits ?? (Number(pack.credits || 0) + Number(pack.bonus_credits || 0))),
+        price_usd: Number(pack.price_usd ?? pack.amount_usd ?? 0),
+        amount_usd: Number(pack.price_usd ?? pack.amount_usd ?? 0),
+        popular: Boolean(pack.popular ?? pack.is_popular),
+        label: formatUsdPackLabel(pack),
+      }));
+      setPacks(normalized);
+      const preferredPack = normalized.find((pack) => pack.popular || pack.is_popular) || normalized[0];
       setSelectedPackCode(preferredPack.code);
+    } else {
+      setPacks([]);
+      setSelectedPackCode('');
     }
   }, []);
 
@@ -264,38 +280,24 @@ export default function CreditsWalletPage() {
   );
 
   const handleTopUp = async (creditsToBuy: number, packCode?: string) => {
-    try {
-      setIsProcessing(true);
-      setError(null);
+    setError(null);
 
-      // Check if user is authenticated
-      const token = localStorage.getItem('access_token');
-      if (!token) {
-        router.push('/auth/login');
-        return;
-      }
-
-      if (!configured) {
-        throw new Error('Razorpay is not configured. Please contact support.');
-      }
-
-      // Create order
-      const orderResponse = await axiosInstance.post('/api/v1/payments/razorpay/create-order',
-        packCode ? { pack_code: packCode } : { credits_to_buy: creditsToBuy },
-      );
-
-      const orderData: CreateOrderResponse = unwrapApiData(orderResponse.data);
-      await openRazorpayCheckout(orderData, creditsToBuy);
-    } catch (err: any) {
-      console.error('Error processing payment:', err);
-      const message = getErrorMessage(err);
-      if (String(message || '').toLowerCase() !== 'checkout_cancelled') {
-        setError(message || 'Failed to process payment. Please try again.');
-        toast.error(message || 'Failed to process payment. Please try again.');
-      }
-    } finally {
-      setIsProcessing(false);
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      router.push('/auth/login');
+      return;
     }
+
+    if (!creditsToBuy || creditsToBuy <= 0) {
+      setError('Please choose a valid credit amount.');
+      return;
+    }
+
+    if (!packCode) {
+      setError('Please choose a configured credit pack.');
+      return;
+    }
+    router.push(`/billing/checkout?type=credits&pack=${encodeURIComponent(packCode)}`);
   };
 
   const handleCustomTopUp = () => {
@@ -318,12 +320,19 @@ export default function CreditsWalletPage() {
     handleTopUp(amount);
   };
 
-  const formatCurrency = (amountInr: number) =>
-    new Intl.NumberFormat('en-IN', {
+  const getPackUsdAmount = (pack: TopUpPack | null | undefined): number => {
+    if (!pack) return 0;
+    return Number(pack.price_usd ?? pack.amount_usd ?? 0);
+  };
+
+  const formatCurrency = (amountUsd: number) =>
+    new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: 'INR',
-      maximumFractionDigits: 0,
-    }).format(amountInr || 0);
+      currency: 'USD',
+      maximumFractionDigits: amountUsd % 1 === 0 ? 0 : 2,
+    }).format(amountUsd || 0);
+
+  const formatUsdPackLabel = (pack: TopUpPack): string => formatCurrency(getPackUsdAmount(pack));
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString();
@@ -454,7 +463,7 @@ export default function CreditsWalletPage() {
                       }`}
                     >
                       <Plus className="h-4 w-4 mr-2" />
-                      {pack.label}
+                      {formatUsdPackLabel(pack)}
                     </Button>
                   ))}
                 </div>
@@ -492,13 +501,13 @@ export default function CreditsWalletPage() {
 
               {selectedPack && (
                 <div className="flex justify-between items-center p-3 bg-gradient-to-br from-white/10 to-purple-500/10 rounded-lg border border-white/20">
-                  <span className="text-purple-100/60">Selected: {selectedPack.credits} credits</span>
-                  <span className="text-green-400 font-bold">{formatCurrency(selectedPack.amount_inr)}</span>
+                  <span className="text-purple-100/60">Selected: {selectedPack.title || `${selectedPack.total_credits || selectedPack.credits} credits`}</span>
+                  <span className="text-green-400 font-bold">{formatCurrency(getPackUsdAmount(selectedPack))}</span>
                 </div>
               )}
               {!configured && (
                 <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-                  Razorpay configuration is missing. Please set backend Razorpay credentials.
+                  Razorpay routing is configured on the checkout page. You can preview billing before payment.
                 </div>
               )}
             </CardContent>
@@ -510,7 +519,7 @@ export default function CreditsWalletPage() {
             <CardHeader>
               <CardTitle className="text-white">Top Up Credits</CardTitle>
               <CardDescription className="text-purple-100/60">
-                Choose a pack or enter custom amount to add credits to your wallet
+                Choose an admin-managed pack to add credits to your wallet
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -525,24 +534,25 @@ export default function CreditsWalletPage() {
                     }`}
                     onClick={() => setSelectedPackCode(pack.code)}
                   >
-                    {pack.popular && (
+                    {(pack.popular || pack.is_popular) && (
                       <span className="inline-block mb-2 px-2 py-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs rounded shadow-lg">Popular</span>
                     )}
-                    <div className="text-2xl font-bold text-white">{pack.credits} Credits</div>
-                    <div className="text-purple-400 font-bold text-lg mt-1">{formatCurrency(pack.amount_inr)}</div>
-                    <div className="text-purple-100/60 text-sm mt-1">One-time purchase</div>
+                    <div className="text-2xl font-bold text-white">{pack.title || `${pack.total_credits || pack.credits} Credits`}</div>
+                    <div className="mt-1 text-sm text-purple-100/70">{Number(pack.credits || 0).toLocaleString()} base{Number(pack.bonus_credits || 0) > 0 ? ` + ${Number(pack.bonus_credits || 0).toLocaleString()} bonus` : ''}</div>
+                    <div className="text-purple-400 font-bold text-lg mt-1">{formatCurrency(getPackUsdAmount(pack))}</div>
+                    <div className="text-purple-100/60 text-sm mt-1">{pack.description || 'One-time purchase'}</div>
                   </div>
                 ))}
               </div>
               
               <div className="mt-6 flex justify-center space-x-4">
                 <Button
-                  onClick={() => selectedPack ? handleTopUp(selectedPack.credits, selectedPack.code) : null}
-                  disabled={isProcessing || !selectedPack || !configured}
+                  onClick={() => selectedPack ? handleTopUp(selectedPack.total_credits || selectedPack.credits, selectedPack.code) : null}
+                  disabled={isProcessing || !selectedPack}
                   className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-8 py-3 text-lg shadow-lg shadow-purple-500/30"
                 >
                   <CreditCard className="h-5 w-5 mr-3" />
-                  {isProcessing ? 'Processing...' : `Top Up ${selectedPack ? selectedPack.credits : ''} Credits`}
+                  {isProcessing ? 'Processing...' : `Top Up ${selectedPack ? (selectedPack.total_credits || selectedPack.credits) : ''} Credits`}
                 </Button>
               </div>
             </CardContent>

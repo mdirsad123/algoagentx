@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { adminApi, CreditTransaction } from "@/lib/api/admin"
+import { adminApi, CreditTransaction, CreditTopupPack } from "@/lib/api/admin"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -21,11 +21,100 @@ export default function AdminCreditsPage() {
   const [amount, setAmount] = useState(100)
   const [reason, setReason] = useState("")
   const [transactionType, setTransactionType] = useState("")
+  const [packs, setPacks] = useState<CreditTopupPack[]>([])
+  const [packsLoading, setPacksLoading] = useState(false)
+  const [packModalOpen, setPackModalOpen] = useState(false)
+  const [editingPack, setEditingPack] = useState<CreditTopupPack | null>(null)
+  const [packForm, setPackForm] = useState({
+    code: "",
+    title: "",
+    credits: 10,
+    price_usd: 1,
+    bonus_credits: 0,
+    description: "",
+    is_popular: false,
+    is_active: true,
+    sort_order: 100,
+  })
 
   const pageSize = 20
   const canSubmit = useMemo(() => {
     return userId.trim().length > 0 && Number.isFinite(amount) && amount > 0 && reason.trim().length > 0
   }, [userId, amount, reason])
+
+  const formatLedgerSource = (item: CreditTransaction) => {
+    const source = String(item.source || item.source_type || item.type || "").toLowerCase();
+    if (source.includes("backtest")) return "Backtest Credit Debit";
+    if (source.includes("included")) return "Subscription Included Credits";
+    if (source.includes("wallet")) return "Wallet Credits";
+    return item.source || item.source_type || item.type || "—";
+  }
+
+  const loadPacks = async () => {
+    try {
+      setPacksLoading(true)
+      setPacks(await adminApi.getCreditPacks())
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to load top-up packs")
+    } finally {
+      setPacksLoading(false)
+    }
+  }
+
+  const openCreatePack = () => {
+    setEditingPack(null)
+    setPackForm({ code: "", title: "", credits: 10, price_usd: 1, bonus_credits: 0, description: "", is_popular: false, is_active: true, sort_order: 100 })
+    setPackModalOpen(true)
+  }
+
+  const openEditPack = (pack: CreditTopupPack) => {
+    setEditingPack(pack)
+    setPackForm({
+      code: pack.code,
+      title: pack.title,
+      credits: Number(pack.credits || 0),
+      price_usd: Number(pack.price_usd || 0),
+      bonus_credits: Number(pack.bonus_credits || 0),
+      description: pack.description || "",
+      is_popular: Boolean(pack.is_popular),
+      is_active: Boolean(pack.is_active),
+      sort_order: Number(pack.sort_order || 100),
+    })
+    setPackModalOpen(true)
+  }
+
+  const savePack = async () => {
+    try {
+      const payload = {
+        ...packForm,
+        code: packForm.code.trim().toUpperCase().replace(/\s+/g, "_"),
+        credits: Number(packForm.credits),
+        price_usd: Number(packForm.price_usd),
+        bonus_credits: Number(packForm.bonus_credits || 0),
+        sort_order: Number(packForm.sort_order || 100),
+      }
+      if (!payload.code || !payload.title || payload.credits <= 0 || payload.price_usd <= 0 || payload.bonus_credits < 0) {
+        toast.error("Please enter valid pack details")
+        return
+      }
+      if (editingPack) await adminApi.updateCreditPack(editingPack.id, payload)
+      else await adminApi.createCreditPack(payload)
+      toast.success("Top-up pack saved")
+      setPackModalOpen(false)
+      await loadPacks()
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Unable to save top-up pack")
+    }
+  }
+
+  const togglePackStatus = async (pack: CreditTopupPack, field: "is_active" | "is_popular") => {
+    try {
+      await adminApi.updateCreditPackStatus(pack.id, { [field]: !pack[field] })
+      await loadPacks()
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Unable to update pack")
+    }
+  }
 
   const load = async (nextSkip = skip) => {
     try {
@@ -42,7 +131,7 @@ export default function AdminCreditsPage() {
     }
   }
 
-  useEffect(() => { load(0) }, [])
+  useEffect(() => { load(0); loadPacks() }, [])
 
   const submit = async () => {
     try {
@@ -69,6 +158,49 @@ export default function AdminCreditsPage() {
         <div className="flex gap-2">
           <Button onClick={() => load(skip)} variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10"><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>
           <Button onClick={() => setModalOpen(true)} className="bg-gradient-to-r from-fuchsia-500 to-blue-500 text-white">Adjust Credits</Button>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl shadow-xl">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-white">Top-up Packs</h2>
+            <p className="text-sm text-purple-200">Admin-managed credit packs shown on the user Credits page.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={loadPacks} variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10"><RefreshCw className="mr-2 h-4 w-4" />Reload Packs</Button>
+            <Button onClick={openCreatePack} className="bg-gradient-to-r from-emerald-500 to-cyan-500 text-white">Create Pack</Button>
+          </div>
+        </div>
+        <div className="overflow-auto rounded-2xl border border-white/10 bg-slate-950/30">
+          <table className="w-full min-w-[1050px] text-sm text-white">
+            <thead>
+              <tr className="border-b border-white/10 text-left text-purple-200">
+                <th className="px-3 py-3">Code</th>
+                <th className="px-3 py-3">Title</th>
+                <th className="px-3 py-3">Credits</th>
+                <th className="px-3 py-3">Price USD</th>
+                <th className="px-3 py-3">Popular</th>
+                <th className="px-3 py-3">Active</th>
+                <th className="px-3 py-3">Sort</th>
+                <th className="px-3 py-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {packsLoading ? <tr><td className="px-3 py-8 text-purple-200" colSpan={8}>Loading top-up packs...</td></tr> : packs.length === 0 ? <tr><td className="px-3 py-8 text-center text-purple-200" colSpan={8}>No packs found. Run migration or create one.</td></tr> : packs.map((pack) => (
+                <tr key={pack.id} className="border-b border-white/5">
+                  <td className="px-3 py-3 font-mono text-xs">{pack.code}</td>
+                  <td className="px-3 py-3"><div>{pack.title}</div><div className="text-xs text-purple-200/70">{pack.description || "—"}</div></td>
+                  <td className="px-3 py-3">{pack.credits.toLocaleString()}{pack.bonus_credits > 0 ? ` + ${pack.bonus_credits.toLocaleString()} bonus` : ""}</td>
+                  <td className="px-3 py-3 font-semibold text-emerald-300">${Number(pack.price_usd || 0).toFixed(2)}</td>
+                  <td className="px-3 py-3"><Button size="sm" variant="outline" onClick={() => togglePackStatus(pack, "is_popular")} className="border-white/15 bg-white/5 text-white hover:bg-white/10">{pack.is_popular ? "Popular" : "Mark"}</Button></td>
+                  <td className="px-3 py-3"><Button size="sm" variant="outline" onClick={() => togglePackStatus(pack, "is_active")} className={pack.is_active ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" : "border-rose-400/30 bg-rose-500/10 text-rose-200"}>{pack.is_active ? "Active" : "Inactive"}</Button></td>
+                  <td className="px-3 py-3">{pack.sort_order}</td>
+                  <td className="px-3 py-3"><Button size="sm" onClick={() => openEditPack(pack)} className="bg-gradient-to-r from-fuchsia-500 to-blue-500 text-white">Edit</Button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -105,8 +237,9 @@ export default function AdminCreditsPage() {
                     <td className="px-3 py-3 text-rose-300">{item.credits_used ?? ((item.credits ?? 0) < 0 ? Math.abs(item.credits || 0) : 0)}</td>
                     <td className="px-3 py-3">{item.remaining_credits ?? item.balance_after ?? 0}</td>
                     <td className="px-3 py-3">
-                      <div>{item.source || item.source_type || item.type}</div>
-                      <div className="text-xs text-purple-200">actor: {item.actor_user_id || '—'}{item.reason ? ` | ${item.reason}` : ''}</div>
+                      <div>{formatLedgerSource(item)}</div>
+                      <div className="text-xs text-purple-200">{item.reason || '—'}</div>
+                      <div className="text-xs text-purple-200/70">actor: {item.actor_user_id || '—'}</div>
                     </td>
                     <td className="px-3 py-3">{new Date(item.created_at).toLocaleString()}</td>
                   </tr>
@@ -124,6 +257,27 @@ export default function AdminCreditsPage() {
           </div>
         </div>
       </div>
+
+      <Dialog open={packModalOpen} onOpenChange={setPackModalOpen}>
+        <DialogContent className="max-w-2xl border-purple-400/20 bg-gradient-to-br from-purple-950 to-slate-950 text-white">
+          <DialogHeader><DialogTitle>{editingPack ? "Edit top-up pack" : "Create top-up pack"}</DialogTitle></DialogHeader>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Input placeholder="Code e.g. POPULAR_500" value={packForm.code} onChange={(e) => setPackForm({ ...packForm, code: e.target.value.toUpperCase().replace(/\s+/g, "_") })} className="border-white/20 bg-white/10 text-white" />
+            <Input placeholder="Title" value={packForm.title} onChange={(e) => setPackForm({ ...packForm, title: e.target.value })} className="border-white/20 bg-white/10 text-white" />
+            <Input type="number" placeholder="Credits" value={packForm.credits} onChange={(e) => setPackForm({ ...packForm, credits: Number(e.target.value) })} className="border-white/20 bg-white/10 text-white" />
+            <Input type="number" step="0.01" placeholder="Price USD" value={packForm.price_usd} onChange={(e) => setPackForm({ ...packForm, price_usd: Number(e.target.value) })} className="border-white/20 bg-white/10 text-white" />
+            <Input type="number" placeholder="Bonus Credits" value={packForm.bonus_credits} onChange={(e) => setPackForm({ ...packForm, bonus_credits: Number(e.target.value) })} className="border-white/20 bg-white/10 text-white" />
+            <Input type="number" placeholder="Sort Order" value={packForm.sort_order} onChange={(e) => setPackForm({ ...packForm, sort_order: Number(e.target.value) })} className="border-white/20 bg-white/10 text-white" />
+            <Input placeholder="Description" value={packForm.description} onChange={(e) => setPackForm({ ...packForm, description: e.target.value })} className="border-white/20 bg-white/10 text-white md:col-span-2" />
+            <label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={packForm.is_popular} onChange={(e) => setPackForm({ ...packForm, is_popular: e.target.checked })} /> Popular badge</label>
+            <label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={packForm.is_active} onChange={(e) => setPackForm({ ...packForm, is_active: e.target.checked })} /> Active</label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => setPackModalOpen(false)}>Cancel</Button>
+            <Button onClick={savePack} className="bg-gradient-to-r from-emerald-500 to-cyan-500 text-white">Save Pack</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
         <DialogContent className="border-purple-400/20 bg-gradient-to-br from-purple-950 to-slate-950 text-white">
