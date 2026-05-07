@@ -1,5 +1,6 @@
 "use client";
 
+import { clearAuthSession } from "@/lib/auth/session";
 import { Bell, ChevronDown, LogOut, Settings, User as UserIcon } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -23,6 +24,8 @@ export default function Topbar({ pageTitle }: TopbarProps) {
     name: "User",
     email: "",
     role: pathname.startsWith("/admin") ? "admin" : "user",
+    authProvider: "local",
+    avatarUrl: "",
   });
   const userRef = useRef<HTMLDivElement>(null);
 
@@ -44,7 +47,9 @@ export default function Topbar({ pageTitle }: TopbarProps) {
         email?.split("@")[0] ||
         (pathname.startsWith("/admin") ? "Admin User" : "User");
       const role = String(nextProfile?.role || getCookie("loggedinuserroleid") || getCookie("loggedinuserrole") || (pathname.startsWith("/admin") ? "admin" : "user")).toLowerCase();
-      setProfile({ name, email, role });
+      const authProvider = String(nextProfile?.auth_provider || "local").toLowerCase();
+      const avatarUrl = nextProfile?.avatar_url || "";
+      setProfile({ name, email, role, authProvider, avatarUrl });
     };
 
     syncProfile();
@@ -76,22 +81,9 @@ export default function Topbar({ pageTitle }: TopbarProps) {
   const avatar = profile.name.charAt(0).toUpperCase();
 
   const handleLogout = () => {
-    [
-      "accessToken",
-      "loggedinuserid",
-      "loggedinusername",
-      "loggedinuserfullname",
-      "loggedinuserroleid",
-      "loggedinuseremail",
-      "loggedinuserrole",
-    ].forEach((cookieName) => {
-      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; samesite=strict`;
-    });
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("currentUser");
+    clearAuthSession();
     router.push("/auth/login");
   };
-
   return (
     <header className="sticky top-0 z-30 border-b border-white/10 bg-[#1f123f]/80 backdrop-blur-xl">
       <div className="flex items-center justify-between px-6 py-5">
@@ -115,8 +107,8 @@ export default function Topbar({ pageTitle }: TopbarProps) {
               onClick={() => setIsUserOpen((v) => !v)}
               className="h-auto gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white hover:bg-white/10 hover:text-white"
             >
-              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-fuchsia-500 to-blue-500 font-semibold text-white shadow-lg">
-                {avatar}
+              <div className="flex h-11 w-11 overflow-hidden items-center justify-center rounded-full bg-gradient-to-br from-fuchsia-500 to-blue-500 font-semibold text-white shadow-lg">
+                {profile.avatarUrl ? <img src={profile.avatarUrl} alt="Profile" className="h-full w-full object-cover" /> : avatar}
               </div>
               <div className="hidden text-left md:block">
                 <div className="max-w-[160px] truncate text-sm font-semibold text-white">{profile.name}</div>
@@ -130,6 +122,9 @@ export default function Topbar({ pageTitle }: TopbarProps) {
                 <div className="border-b border-white/10 p-4">
                   <div className="text-sm font-semibold text-white">{profile.name}</div>
                   <div className="truncate text-xs text-purple-100/70">{profile.email || "No email available"}</div>
+                  <div className="mt-2 inline-flex rounded-full border border-white/10 bg-white/10 px-2 py-1 text-[11px] font-semibold text-purple-100">
+                    {profile.authProvider.includes("google") ? "Google Account" : "Local Account"}
+                  </div>
                 </div>
                 <div className="p-2">
                   <button onClick={() => { setIsUserOpen(false); router.push(profileHref); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-white hover:bg-white/10">

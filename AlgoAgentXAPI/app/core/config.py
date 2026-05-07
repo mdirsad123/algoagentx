@@ -25,6 +25,17 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "T2kiob1GPcJwNYBhAwvNE8kr1tJaQgH4"
     jwt_refresh_token_key: str = "lM0Y9gpK1TSzpreSDJgrjqnXY9qOvog5"
     jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 1440
+    remember_me_expire_days: int = 30
+
+    # Google OAuth / auth hardening
+    google_auth_enabled: bool = False
+    google_client_id: str = ""
+    google_allowed_email_domain: str = ""
+    google_admin_login_enabled: bool = False
+    frontend_url: str = "http://localhost:3000"
+    password_reset_token_minutes: int = 30
+
 
     # SMTP / Email notifications (do not hardcode credentials; use .env)
     smtp_enabled: bool = False

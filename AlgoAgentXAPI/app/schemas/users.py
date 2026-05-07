@@ -14,6 +14,18 @@ class UserCreate(UserBase):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+    remember_me: bool = False
+
+class GoogleLoginRequest(BaseModel):
+    credential: str
+    remember_me: bool = False
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
 
 class User(UserBase):
     id: UUID

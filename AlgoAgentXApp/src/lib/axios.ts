@@ -8,7 +8,7 @@ type ApiEnvelope<T> = {
 };
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_SERVER?.replace(/\/+$/, "") || "http://localhost:8000";
+  (process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_SERVER)?.replace(/\/+$/, "") || "http://localhost:8000";
 
 const SLOW_REQUEST_MESSAGE =
   "Request is still taking longer than expected. Please retry, or wait for backend to finish if this is a heavy report/backtest.";

@@ -1,4 +1,5 @@
 from .users import User
+from .password_reset_tokens import PasswordResetToken
 from .instruments import AssetClass, Timeframe, Instrument
 from .strategies import Strategy, StrategyRuntimePreset
 from .market_data import MarketData
@@ -45,6 +46,7 @@ from .live_trading import (
 
 __all__ = [
     "User",
+    "PasswordResetToken",
     "AssetClass",
     "Timeframe",
     "Instrument",
