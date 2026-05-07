@@ -34,3 +34,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+# Environment secrets
+.env
+.env.*
+!.env.example
+!.env.local.example
+!.env.prod.example
+
+AlgoAgentXAPI/.env
+AlgoAgentXAPI/.env.*
+!AlgoAgentXAPI/.env.example
+!AlgoAgentXAPI/.env.prod.example
