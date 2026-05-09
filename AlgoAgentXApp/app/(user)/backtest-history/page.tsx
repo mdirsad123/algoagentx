@@ -229,6 +229,18 @@ const downloadCsv = (filename: string, headers: string[], rows: Array<Array<unkn
   URL.revokeObjectURL(link.href);
 };
 
+const downloadBlob = (filename: string, blob: Blob) => {
+  if (typeof window === "undefined") return;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
 export default function BacktestHistoryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -939,8 +951,8 @@ export default function BacktestHistoryPage() {
             />
           ) : (
             <>
-              <div className="hidden overflow-x-auto rounded-xl border border-border/50 md:block">
-                <Table className="min-w-[1280px]">
+              <div className="responsive-table-wrapper hidden overflow-x-auto md:block">
+                <Table className="min-w-[1180px]">
                   <TableHeader>
                     <TableRow className="border-border/50 hover:bg-transparent">
                       <TableHead>Strategy</TableHead>
@@ -953,9 +965,9 @@ export default function BacktestHistoryPage() {
                       <TableHead className="text-right">Sharpe</TableHead>
                       <TableHead className="text-right">Drawdown</TableHead>
                       <TableHead className="text-right">Trades</TableHead>
-                      <TableHead>Runtime</TableHead>
-                      <TableHead>Filters</TableHead>
-                      <TableHead>Created</TableHead>
+                      <TableHead className="w-[120px]">Runtime</TableHead>
+                      <TableHead className="w-[120px]">Filters</TableHead>
+                      <TableHead className="w-[130px]">Created</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
@@ -979,8 +991,8 @@ export default function BacktestHistoryPage() {
                               key={item.id}
                               className="border-border/30 text-foreground transition-colors hover:bg-card/30"
                             >
-                              <TableCell className="font-medium">{item.strategy_name || "—"}</TableCell>
-                              <TableCell>{item.instrument_symbol || "—"}</TableCell>
+                              <TableCell className="max-w-[180px] truncate font-medium" title={item.strategy_name || ""}>{item.strategy_name || "—"}</TableCell>
+                              <TableCell className="whitespace-nowrap">{item.instrument_symbol || "—"}</TableCell>
                               <TableCell>{item.timeframe || "—"}</TableCell>
                               <TableCell className="text-right">{formatCurrency(item.initial_capital, rowCurrencySymbol(item))}</TableCell>
                               <TableCell className={`text-right font-medium ${pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
@@ -994,16 +1006,22 @@ export default function BacktestHistoryPage() {
                               <TableCell className="text-right">{formatPercentAuto(item.max_drawdown)}</TableCell>
                               <TableCell className="text-right">{formatNumber(item.total_trades, 0)}</TableCell>
                               <TableCell>
-                                <span className="inline-flex max-w-[260px] rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-1 text-xs text-violet-100">
-                                  {formatRuntimeSummary(item)}
+                                <span
+                                  title={formatRuntimeSummary(item)}
+                                  className="inline-flex max-w-[120px] items-center rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-1 text-xs font-semibold text-violet-100"
+                                >
+                                  Runtime
                                 </span>
                               </TableCell>
                               <TableCell>
-                                <span className="inline-flex max-w-[220px] rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary">
-                                  {formatFilterSummary(item)}
+                                <span
+                                  title={formatFilterSummary(item)}
+                                  className="inline-flex max-w-[120px] items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs font-semibold text-primary"
+                                >
+                                  Filters
                                 </span>
                               </TableCell>
-                              <TableCell>{formatDateTime(item.created_at)}</TableCell>
+                              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(item.created_at)}</TableCell>
                               <TableCell>
                                 <span className={`inline-flex rounded-full border px-2 py-1 text-xs ${statusTone(item.status)}`}>
                                   {humanize(item.status || "unknown")}

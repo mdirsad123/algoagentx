@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Dispatch, SetStateAction, useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   ChevronLeft,
   ChevronRight,
+  X,
   CreditCard,
   Database,
+  MapPinned,
   FileText,
   Headset,
   History,
@@ -24,6 +26,8 @@ import {
   Users,
   Wallet,
   BadgeDollarSign,
+  TicketPercent,
+  ReceiptText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -48,11 +52,14 @@ const adminMenuItems = [
   { icon: Users, label: "Users", href: "/admin/users" },
   { icon: CreditCard, label: "Subscriptions", href: "/admin/subscriptions" },
   { icon: BadgeDollarSign, label: "Pricing", href: "/admin/pricing" },
+  { icon: TicketPercent, label: "Coupons", href: "/admin/coupons" },
+  { icon: ReceiptText, label: "Credit Rules", href: "/admin/credit-rules" },
   { icon: Wallet, label: "Payments", href: "/admin/payments" },
   { icon: FileText, label: "Orders", href: "/admin/orders" },
   { icon: BarChart3, label: "Credits", href: "/admin/credits" },
   { icon: Layers, label: "Strategies", href: "/admin/strategy-requests" },
   { icon: Database, label: "Market Data", href: "/admin/market-data" },
+  { icon: MapPinned, label: "Market Master", href: "/admin/market-master" },
   { icon: TrendingUp, label: "Backtests", href: "/admin/backtests" },
   { icon: Activity, label: "Live Trading", href: "/admin/live-trading" },
   { icon: ShieldCheck, label: "Live Approvals", href: "/admin/live-approvals" },
@@ -73,18 +80,21 @@ function SidebarItem({
   href,
   isActive,
   isCollapsed,
+  onNavigate,
 }: {
   icon: any;
   label: string;
   href: string;
   isActive: boolean;
   isCollapsed: boolean;
+  onNavigate?: () => void;
 }) {
   return (
     <Link
       href={href}
+      onClick={onNavigate}
       className={[
-        "group flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-medium transition-all duration-200",
+        "group flex items-center gap-2 rounded-2xl px-2 py-2 text-sm font-medium transition-all duration-200 sm:gap-3 sm:px-3 sm:py-2.5",
         isCollapsed ? "justify-center" : "justify-start",
         isActive
           ? "bg-white/16 text-white shadow-lg shadow-purple-900/30 ring-1 ring-white/10"
@@ -93,28 +103,60 @@ function SidebarItem({
     >
       <span
         className={[
-          "flex h-10 w-10 items-center justify-center rounded-xl border transition-all duration-200",
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition-all duration-200",
           isActive
             ? "border-white/10 bg-gradient-to-br from-fuchsia-500 to-violet-500 text-white shadow-lg"
             : "border-white/5 bg-white/5 text-purple-100 group-hover:border-white/10 group-hover:bg-white/10",
         ].join(" ")}
       >
-        <Icon className="h-5 w-5" />
+        <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
       </span>
       {!isCollapsed && <span className="truncate">{label}</span>}
     </Link>
   );
 }
 
-export default function Sidebar() {
+export default function Sidebar({
+  isCollapsed: controlledCollapsed,
+  setIsCollapsed: controlledSetCollapsed,
+  isCompactViewport: controlledCompactViewport,
+  isMobileOpen = false,
+  onMobileClose,
+}: {
+  isCollapsed?: boolean;
+  setIsCollapsed?: Dispatch<SetStateAction<boolean>>;
+  isCompactViewport?: boolean;
+  isMobileOpen?: boolean;
+  onMobileClose?: () => void;
+} = {}) {
   const pathname = usePathname();
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const [role, setRole] = useState<string>("");
+  const [internalCollapsed, setInternalCollapsed] = useState(false);
+  const [internalCompactViewport, setInternalCompactViewport] = useState(false);
+  const [localMobileOpen, setLocalMobileOpen] = useState(isMobileOpen);
+
+  useEffect(() => {
+    setLocalMobileOpen(isMobileOpen);
+  }, [isMobileOpen]);
+
+  const closeMobileSidebar = () => {
+    setLocalMobileOpen(false);
+    onMobileClose?.();
+  };
+
+  const isControlled = typeof controlledCollapsed === "boolean" && typeof controlledSetCollapsed === "function";
+  const isCollapsed = isControlled ? controlledCollapsed! : internalCollapsed;
+  const setIsCollapsed = isControlled ? controlledSetCollapsed! : setInternalCollapsed;
+  const isCompactViewport = typeof controlledCompactViewport === "boolean" ? controlledCompactViewport : internalCompactViewport;
 
   useEffect(() => {
     const syncRole = () => {
-      const cookieRole = getCookie("loggedinuserroleid") || getCookie("loggedinuserrole") || "";
-      const storedUser = typeof window !== "undefined" ? localStorage.getItem("currentUser") : null;
+      const cookieRole =
+        getCookie("loggedinuserroleid") || getCookie("loggedinuserrole") || "";
+      const storedUser =
+        typeof window !== "undefined"
+          ? localStorage.getItem("currentUser")
+          : null;
       let nextRole = cookieRole;
       if (!nextRole && storedUser) {
         try {
@@ -125,22 +167,42 @@ export default function Sidebar() {
     };
 
     syncRole();
-    const onResize = () => setIsCollapsed(window.innerWidth < 1280);
-    onResize();
-    window.addEventListener("resize", onResize);
     window.addEventListener("storage", syncRole);
     return () => {
-      window.removeEventListener("resize", onResize);
       window.removeEventListener("storage", syncRole);
     };
   }, []);
 
+  useEffect(() => {
+    const syncViewport = () => {
+      const compact = window.innerWidth < 1024;
+      setInternalCompactViewport(compact);
+      if (compact && !isControlled) {
+        setInternalCollapsed(true);
+      }
+    };
+
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    return () => window.removeEventListener("resize", syncViewport);
+  }, [isControlled]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.dataset.sidebarCollapsed = String(isCollapsed);
+    document.documentElement.dataset.sidebarCompact = String(isCompactViewport);
+  }, [isCollapsed, isCompactViewport]);
+
+  const displayCollapsed = isCompactViewport ? false : isCollapsed;
   const isAdminSection = pathname.startsWith("/admin");
   const isAdminUser = role === "admin" || role === "1";
-  const menuItems = isAdminSection || isAdminUser ? adminMenuItems : userMenuItems;
-  const brandSubtitle = isAdminSection || isAdminUser ? "Admin Console" : "Trading Workspace";
+  const menuItems =
+    isAdminSection || isAdminUser ? adminMenuItems : userMenuItems;
+  const brandSubtitle =
+    isAdminSection || isAdminUser ? "Admin Console" : "Trading Workspace";
 
-  const getIsActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
+  const getIsActive = (href: string) =>
+    pathname === href || pathname.startsWith(`${href}/`);
 
   const footerLinks = useMemo(() => {
     if (isAdminSection || isAdminUser) {
@@ -158,35 +220,85 @@ export default function Sidebar() {
   return (
     <aside
       className={[
-        "fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-white/10 bg-gradient-to-b from-[#4f1d95] via-[#341672] to-[#1f2647] text-white shadow-2xl shadow-purple-950/35 backdrop-blur-2xl transition-all duration-300",
-        isCollapsed ? "w-[88px]" : "w-64",
+        "fixed inset-y-0 left-0 z-50 flex h-[100dvh] min-h-0 flex-col overflow-y-auto overflow-x-hidden overscroll-contain border-r border-white/10 bg-gradient-to-b from-[#4f1d95] via-[#341672] to-[#1f2647] text-white shadow-2xl shadow-purple-950/35 backdrop-blur-2xl transition-all duration-300 sidebar-scroll",
+        isCompactViewport
+          ? `w-72 max-w-[84vw] ${localMobileOpen ? "translate-x-0" : "-translate-x-full pointer-events-none"}`
+          : displayCollapsed
+            ? "w-24 translate-x-0"
+            : "w-64 translate-x-0",
       ].join(" ")}
     >
-      <div className={[
-        "flex h-20 items-center border-b border-white/10 px-4",
-        isCollapsed ? "justify-center" : "justify-between",
-      ].join(" ") }>
-        {!isCollapsed && (
+      <div
+        className={[
+          "sticky top-0 z-10 flex h-16 shrink-0 items-center border-b border-white/10 bg-[#4f1d95]/95 px-2 backdrop-blur-xl sm:h-[72px] sm:px-4",
+          displayCollapsed ? "justify-center" : "justify-between",
+        ].join(" ")}
+      >
+        {!displayCollapsed && (
           <div className="flex items-center gap-3 overflow-hidden">
-            <img src="/images/algoagentx_icon.jpeg" alt="AlgoAgentX" className="h-10 w-10 rounded-xl object-cover ring-1 ring-white/10" />
+            <img
+              src="/images/algoagentx_icon.jpeg"
+              alt="AlgoAgentX"
+              className="h-9 w-9 rounded-xl object-cover ring-1 ring-white/10 sm:h-10 sm:w-10"
+            />
             <div className="min-w-0">
-              <div className="truncate text-xl font-bold text-white">AlgoAgentX</div>
-              <div className="truncate text-sm text-purple-100/80">{brandSubtitle}</div>
+              <div className="truncate text-xl font-bold text-white">
+                AlgoAgentX
+              </div>
+              <div className="truncate text-sm text-purple-100/80">
+                {brandSubtitle}
+              </div>
             </div>
           </div>
         )}
-        {isCollapsed && <img src="/images/algoagentx_icon.jpeg" alt="AlgoAgentX" className="h-10 w-10 rounded-xl object-cover ring-1 ring-white/10" />}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="rounded-xl border border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white"
-          onClick={() => setIsCollapsed((v) => !v)}
-        >
-          {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-        </Button>
+        {displayCollapsed && (
+          <img
+            src="/images/algoagentx_icon.jpeg"
+            alt="AlgoAgentX"
+            className="h-9 w-9 rounded-xl object-cover ring-1 ring-white/10 sm:h-10 sm:w-10"
+          />
+        )}
+        {isCompactViewport ? (
+          <button
+            type="button"
+            aria-label="Close sidebar"
+            title="Close sidebar"
+            className="relative z-20 inline-flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl border border-white/10 bg-white/10 text-white shadow-lg shadow-purple-950/30 transition hover:bg-white/15 active:scale-95"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              closeMobileSidebar();
+            }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              closeMobileSidebar();
+            }}
+            onTouchStart={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              closeMobileSidebar();
+            }}
+          >
+            <X className="h-5 w-5" />
+          </button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="rounded-xl border border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white"
+            onClick={() => setIsCollapsed((v) => !v)}
+          >
+            {displayCollapsed ? (
+              <ChevronRight className="h-4 w-4" />
+            ) : (
+              <ChevronLeft className="h-4 w-4" />
+            )}
+          </Button>
+        )}
       </div>
 
-      <nav className="flex-1 space-y-2 overflow-y-auto px-3 py-5">
+      <nav className="min-h-0 flex-none space-y-1.5 px-2 py-3 pr-1 sm:space-y-1.5 sm:px-3 sm:py-4 sm:pr-2">
         {menuItems.map((item) => (
           <SidebarItem
             key={item.href}
@@ -194,12 +306,13 @@ export default function Sidebar() {
             label={item.label}
             href={item.href}
             isActive={getIsActive(item.href)}
-            isCollapsed={isCollapsed}
+            isCollapsed={displayCollapsed}
+            onNavigate={isCompactViewport ? closeMobileSidebar : undefined}
           />
         ))}
       </nav>
 
-      <div className="space-y-2 border-t border-white/10 px-3 py-4">
+      <div className="shrink-0 space-y-1.5 border-t border-white/10 px-2 py-3 sm:space-y-1.5 sm:px-3 sm:py-3">
         {footerLinks.map((item) => (
           <SidebarItem
             key={item.href}
@@ -207,7 +320,8 @@ export default function Sidebar() {
             label={item.label}
             href={item.href}
             isActive={getIsActive(item.href)}
-            isCollapsed={isCollapsed}
+            isCollapsed={displayCollapsed}
+            onNavigate={isCompactViewport ? closeMobileSidebar : undefined}
           />
         ))}
       </div>

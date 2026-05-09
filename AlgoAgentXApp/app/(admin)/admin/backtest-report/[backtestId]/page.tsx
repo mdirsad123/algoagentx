@@ -293,7 +293,7 @@ export default function BacktestReportPage() {
           <CardHeader><CardTitle>Trade List</CardTitle><CardDescription>{detail.trades.length} trades captured for this report.</CardDescription></CardHeader>
           <CardContent>
             <div className="max-h-[520px] overflow-auto rounded-lg border border-border/40">
-              <table className="min-w-[1500px] w-full text-sm">
+              <table className="admin-data-table min-w-[1500px] w-full text-sm">
                 <thead className="sticky top-0 bg-card/90 text-left text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2">Entry</th><th className="px-3 py-2">Exit</th><th className="px-3 py-2">Side</th><th className="px-3 py-2">Qty</th><th className="px-3 py-2">Entry Price</th><th className="px-3 py-2">Exit Price</th><th className="px-3 py-2">Stop Loss</th><th className="px-3 py-2">Target / TP</th><th className="px-3 py-2">Risk Pts</th><th className="px-3 py-2">Reward Pts</th><th className="px-3 py-2">RR</th><th className="px-3 py-2">Risk ₹</th><th className="px-3 py-2">Reward ₹</th><th className="px-3 py-2">R</th><th className="px-3 py-2">PnL</th><th className="px-3 py-2">Exit Type</th><th className="px-3 py-2">Signal Reason</th>

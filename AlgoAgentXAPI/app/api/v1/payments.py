@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import razorpay
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
-from sqlalchemy import select
+from sqlalchemy import or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -309,6 +309,46 @@ def _verify_webhook_signature(raw_body: bytes, signature: str | None) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
+
+
+async def _find_processed_webhook_event(
+    db: AsyncSession,
+    *,
+    event_key: str | None,
+    payload_hash: str | None,
+) -> BillingWebhookEvent | None:
+    """Return a previously handled Razorpay webhook event.
+
+    Razorpay can retry deliveries. Treat either the stable payment/event key or
+    the exact payload hash as a duplicate signal so processing stays idempotent.
+    """
+    if not await table_has_column(db, "billing_webhook_events", "id"):
+        return None
+
+    duplicate_clauses = []
+    if event_key:
+        duplicate_clauses.append(BillingWebhookEvent.event_key == event_key)
+    if payload_hash:
+        duplicate_clauses.append(BillingWebhookEvent.payload_hash == payload_hash)
+    if not duplicate_clauses:
+        return None
+
+    try:
+        return (
+            await db.execute(
+                select(BillingWebhookEvent)
+                .where(
+                    BillingWebhookEvent.provider == "RAZORPAY",
+                    BillingWebhookEvent.status.in_(["PROCESSED", "IGNORED"]),
+                    or_(*duplicate_clauses),
+                )
+                .order_by(BillingWebhookEvent.received_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    except Exception:
+        return None
+
 async def _record_webhook_event(
     db: AsyncSession,
     *,
@@ -386,6 +426,44 @@ def _credits_from_payment(payment: Payment, metadata: dict) -> int:
             continue
     # Legacy direct /payments/create-order used INR amount equal to credits.
     return max(0, int(payment.amount_inr or 0))
+
+
+async def _has_credit_grant_for_payment(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    razorpay_payment_id: str | None = None,
+    billing_order_id: str | None = None,
+) -> bool:
+    """Detect an already-written wallet credit grant for the same payment.
+
+    This is a defensive guard for retry/race cases where the payment row and
+    transaction ledger may have been partially updated by another path.
+    """
+    markers = [m for m in [razorpay_payment_id, billing_order_id] if m]
+    if not markers:
+        return False
+    clauses = []
+    params: dict[str, str] = {"user_id": str(user_id)}
+    for index, marker in enumerate(markers):
+        key = f"marker_{index}"
+        clauses.append(f"description ILIKE :{key}")
+        params[key] = f"%{str(marker)}%"
+    try:
+        result = await db.execute(
+            text(
+                f"""
+                SELECT COUNT(*)
+                FROM credit_transactions
+                WHERE CAST(user_id AS TEXT) = :user_id
+                  AND ({' OR '.join(clauses)})
+                """
+            ),
+            params,
+        )
+        return int(result.scalar() or 0) > 0
+    except Exception:
+        return False
 
 
 async def _record_checkout_coupon_if_needed(db: AsyncSession, payment: Payment, metadata: dict) -> None:
@@ -656,6 +734,36 @@ async def verify_payment(payload: VerifyPaymentRequest, db: AsyncSession = Depen
     granted_credits = _credits_from_payment(payment, checkout_metadata)
     if granted_credits <= 0:
         raise HTTPException(status_code=422, detail="Credit top-up metadata is missing credit_amount")
+
+    if await _has_credit_grant_for_payment(
+        db,
+        user_id=user_id,
+        razorpay_payment_id=payload.razorpay_payment_id,
+        billing_order_id=payment.billing_order_id,
+    ):
+        payment.razorpay_payment_id = payment.razorpay_payment_id or payload.razorpay_payment_id
+        payment.razorpay_signature = payment.razorpay_signature or payload.razorpay_signature
+        payment.status = 'PAID'
+        payment.purpose = TOPUP_PURPOSE
+        payment.verified_at = payment.verified_at or datetime.now(timezone.utc)
+        await _sync_billing_order(db, payment, metadata={"flow": "credits_topup_verify", "idempotent": True})
+        credit_row = await _ensure_credit_row(db, user_id)
+        await db.commit()
+        return success_response(
+            {
+                'success': True,
+                'payment_id': payment.razorpay_payment_id,
+                'order_id': payment.razorpay_order_id,
+                'billing_order_id': payment.billing_order_id,
+                'credits_granted': 0,
+                'balance': int(credit_row.balance or 0),
+                'status': payment.status,
+                'idempotent': True,
+                'message': 'Payment already credited',
+            },
+            'Payment already credited',
+        )
+
     try:
         payment.razorpay_payment_id = payload.razorpay_payment_id
         payment.razorpay_signature = payload.razorpay_signature
@@ -813,6 +921,17 @@ async def razorpay_topup_webhook(
     payment_entity = payload.get('payload', {}).get('payment', {}).get('entity', {})
     webhook_event_key = str(payment_entity.get('id') or payload.get('id') or '') or None
 
+    existing_webhook = await _find_processed_webhook_event(
+        db,
+        event_key=webhook_event_key,
+        payload_hash=payload_hash,
+    )
+    if existing_webhook:
+        return success_response(
+            {'event': event_type, 'status': 'already_processed'},
+            'Webhook already processed',
+        )
+
     if event_type not in {'payment.captured', 'payment.failed'}:
         await _record_webhook_event(
             db,
@@ -935,6 +1054,36 @@ async def razorpay_topup_webhook(
             )
             await db.commit()
             return success_response({'event': event_type, 'status': 'failed'}, 'Credit amount missing')
+        if await _has_credit_grant_for_payment(
+            db,
+            user_id=str(payment.user_id),
+            razorpay_payment_id=razorpay_payment_id,
+            billing_order_id=payment.billing_order_id,
+        ):
+            payment.purpose = TOPUP_PURPOSE
+            payment.status = 'PAID'
+            payment.failure_reason = None
+            payment.verified_at = payment.verified_at or datetime.now(timezone.utc)
+            payment.razorpay_payment_id = razorpay_payment_id or payment.razorpay_payment_id
+            await _sync_billing_order(
+                db,
+                payment,
+                metadata={"flow": "credits_topup_webhook_captured", "idempotent": True},
+            )
+            await _record_webhook_event(
+                db,
+                event_type=event_type,
+                payload_json=raw_body.decode('utf-8', errors='ignore'),
+                signature=x_razorpay_signature,
+                status='IGNORED',
+                event_key=webhook_event_key,
+                payload_hash=payload_hash,
+                payment=payment,
+                processing_error='already_credited',
+            )
+            await db.commit()
+            return success_response({'event': event_type, 'status': 'already_processed'}, 'Payment already credited')
+
         credit_row = await _ensure_credit_row(db, str(payment.user_id))
         new_balance = int(credit_row.balance or 0) + granted_credits
         credit_row.balance = new_balance

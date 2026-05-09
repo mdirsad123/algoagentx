@@ -712,7 +712,7 @@ export default function PricingPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="overflow-x-auto">
+                  <div className="responsive-table-wrapper overflow-x-auto">
                     <table className="min-w-full border-separate border-spacing-0 text-sm">
                       <thead>
                         <tr className="text-muted-foreground">

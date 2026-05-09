@@ -90,7 +90,7 @@ async def _create_admin_otp_session(db, user: User, request: Request) -> AdminLo
     except Exception as exc:
         logger.warning("[AUTH] Admin OTP email send skipped for %s: %s", user.email, exc)
         if not settings.is_production:
-            logger.info("[AUTH DEV] Admin login OTP for %s: %s", user.email, otp)
+            logger.info("[AUTH DEV] Admin login OTP generated for %s (last2=%s)", user.email, otp[-2:])
 
     logger.info("[AUTH] Admin password verified; OTP session created for user_id=%s", user.id)
     return otp_row
@@ -339,7 +339,7 @@ async def resend_admin_otp(body: AdminOtpResendRequest, request: Request):
         except Exception as exc:
             logger.warning("[AUTH] Admin OTP resend email skipped for %s: %s", user.email, exc)
             if not settings.is_production:
-                logger.info("[AUTH DEV] Resent admin login OTP for %s: %s", user.email, otp)
+                logger.info("[AUTH DEV] Resent admin login OTP generated for %s (last2=%s)", user.email, otp[-2:])
 
         logger.info("[AUTH] Admin OTP resent for user_id=%s", user.id)
         return {"message": "OTP sent to admin email", "resend_cooldown_seconds": cooldown_seconds}

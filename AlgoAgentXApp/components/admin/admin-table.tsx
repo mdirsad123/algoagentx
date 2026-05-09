@@ -5,8 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Search, RefreshCw, Eye, EyeOff } from "lucide-react"
-import { toast } from "sonner"
+import { Search, RefreshCw } from "lucide-react"
 import EmptyState from "@/components/shared/empty-state";
 
 interface AdminTableProps<T> {
@@ -55,9 +54,9 @@ export function AdminTable<T>({
 
   if (error) {
     return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold">{title}</h2>
+      <div className="rounded-2xl border border-rose-400/20 bg-rose-500/10 p-4 text-rose-100 shadow-xl">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-xl font-bold text-white">{title}</h2>
           <Button onClick={onRefresh} variant="outline">
             <RefreshCw className="mr-2 h-4 w-4" />
             Retry
@@ -66,8 +65,8 @@ export function AdminTable<T>({
         <div className="flex items-center justify-center py-8">
           <div className="text-center">
             <div className="text-4xl mb-2">⚠️</div>
-            <h3 className="text-lg font-medium mb-2">Error Loading Data</h3>
-            <p className="text-gray-600 mb-4">{error}</p>
+            <h3 className="text-lg font-semibold mb-2 text-white">Error Loading Data</h3>
+            <p className="text-rose-100/80 mb-4">{error}</p>
             <Button onClick={onRefresh}>Try Again</Button>
           </div>
         </div>
@@ -77,17 +76,17 @@ export function AdminTable<T>({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{title}</h2>
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-xl font-bold text-white">{title}</h2>
+        <div className="admin-action-bar">
           {onSearch && (
-            <div className="relative">
+            <div className="relative w-full sm:w-auto">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
               <Input
                 placeholder={searchPlaceholder}
                 value={search}
                 onChange={handleSearch}
-                className="pl-10 w-64"
+                className="w-full border-white/10 bg-white/5 pl-10 text-white placeholder:text-purple-100/50 sm:w-72"
               />
             </div>
           )}
@@ -98,8 +97,8 @@ export function AdminTable<T>({
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border shadow-sm">
-        <Table>
+      <div className="admin-table-scroll rounded-2xl border border-white/10 bg-white/[0.04] shadow-xl shadow-purple-950/20 backdrop-blur-xl">
+        <Table className="admin-data-table">
           <TableHeader>
             <TableRow>
               {columns.map((column) => (
@@ -115,23 +114,23 @@ export function AdminTable<T>({
                 <TableRow key={index}>
                   {columns.map((_, colIndex) => (
                     <TableCell key={colIndex}>
-                      <div className="h-4 bg-gray-200 rounded animate-pulse"></div>
+                      <div className="h-4 rounded bg-white/10 animate-pulse"></div>
                     </TableCell>
                   ))}
                   {actions.length > 0 && (
                     <TableCell>
-                      <div className="h-8 bg-gray-200 rounded animate-pulse w-16"></div>
+                      <div className="h-8 rounded bg-white/10 animate-pulse w-16"></div>
                     </TableCell>
                   )}
                 </TableRow>
               ))
             ) : data.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={columns.length + (actions.length > 0 ? 1 : 0)} className="py-8">
+                <TableCell colSpan={columns.length + (actions.length > 0 ? 1 : 0)} className="py-10">
                   <EmptyState
                     title="No Data Available"
                     description={emptyMessage}
-                    icon={<Search className="w-12 h-12 text-gray-400" />}
+                    icon={<Search className="w-12 h-12 text-purple-200/60" />}
                     actionLabel="Refresh"
                     onAction={onRefresh}
                   />
@@ -150,7 +149,7 @@ export function AdminTable<T>({
                   ))}
                   {actions.length > 0 && (
                     <TableCell>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         {actions.map((action, actionIndex) => (
                           <Button
                             key={actionIndex}

@@ -213,23 +213,36 @@ async def check_ai_screener_limits(
 
 
 async def get_admin_user(current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict:
-    # ✅ FIX: Always check actual user role from database, not just JWT token
-    # This fixes issue where JWT token has old role information
-    user_id = current_user["user_id"]
-    
+    """Require an active admin account from the database for every admin API call.
+
+    Production hardening note: a JWT with role=admin is not enough by itself.
+    The user may have been demoted, disabled, deleted, or the token may be stale.
+    """
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
+
     try:
-        result = await db.execute(text("SELECT role FROM users WHERE CAST(id AS TEXT) = :user_id LIMIT 1"), {"user_id": str(user_id)})
-        db_role = result.scalar()
-        
-        if db_role == "admin":
-            # Update current user with actual role from database
-            current_user["role"] = "admin"
-            return current_user
-    except Exception as e:
-        # Fallback to token if database check fails
-        pass
-    
-    if current_user.get("role") != "admin":
+        result = await db.execute(
+            text("""
+                SELECT role
+                FROM users
+                WHERE CAST(id AS TEXT) = :user_id
+                LIMIT 1
+            """),
+            {"user_id": str(user_id)},
+        )
+        row = result.first()
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Unable to verify admin session")
+
+    if not row:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
+
+    db_role = str(row[0] or "").lower()
+
+    if db_role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-    
+
+    current_user["role"] = "admin"
     return current_user

@@ -204,12 +204,6 @@ export default function LiveDeploymentDetailPage() {
       setBrokerAccounts(accounts);
       if (ready) setReadiness(ready);
       if (candles) setCandleSnapshot(candles);
-      // Final QA is intentionally not polled during silent summary refresh.
-      // It is heavy and should run only on initial page load or when user clicks QA buttons.
-      if (!silent) {
-        const qa = await liveTradingApi.getFinalQa(deploymentId).catch(() => null);
-        if (qa) setFinalQa(qa);
-      }
     } catch (error: any) {
       showToast(error.message || "Failed to load deployment summary", "error");
     } finally {
@@ -238,12 +232,6 @@ export default function LiveDeploymentDetailPage() {
       await liveTradingApi.syncDeploymentBroker(deploymentId);
       showToast("Broker orders/positions synced", "success");
       await loadSummary(true);
-      // Final QA is intentionally not polled during silent summary refresh.
-      // It is heavy and should run only on initial page load or when user clicks QA buttons.
-      if (!silent) {
-        const qa = await liveTradingApi.getFinalQa(deploymentId).catch(() => null);
-        if (qa) setFinalQa(qa);
-      }
     } catch (error: any) {
       showToast(error.message || "Failed to sync broker", "error");
     } finally {
@@ -374,12 +362,6 @@ export default function LiveDeploymentDetailPage() {
       await loadSummary(true);
       const candles = await liveTradingApi.getDeploymentCandles(deploymentId, 5).catch(() => null);
       if (candles) setCandleSnapshot(candles);
-      // Final QA is intentionally not polled during silent summary refresh.
-      // It is heavy and should run only on initial page load or when user clicks QA buttons.
-      if (!silent) {
-        const qa = await liveTradingApi.getFinalQa(deploymentId).catch(() => null);
-        if (qa) setFinalQa(qa);
-      }
     } catch (error: any) {
       showToast(error.message || "Strategy runner failed", "error");
     } finally {
@@ -795,7 +777,7 @@ export default function LiveDeploymentDetailPage() {
             </div>
             <Badge className="border-lime-400/30 bg-lime-400/20 text-lime-100">{metrics?.broker_synced ? `${brokerProviderLabel} synced` : "DB view"}</Badge>
           </div>
-          {openPositions.length === 0 ? <NoRows label="No open positions" /> : <div className="overflow-x-auto"><table className="w-full min-w-[860px] text-left text-sm"><thead className="text-purple-200"><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg Entry</th><th>Current</th><th>SL</th><th>Target</th><th>Unrealized PnL</th><th>Status</th><th>Managed By</th><th>Opened At</th></tr></thead><tbody className="divide-y divide-white/10">{openPositions.map((p) => <tr key={p.id} className="text-purple-50"><td className="py-3">{p.symbol}</td><td>{p.side}</td><td>{num(p.qty)}</td><td>{num(p.avg_entry_price)}</td><td>{num(p.current_price)}</td><td>{num(p.stop_loss)}</td><td>{num(p.target)}</td><td>{formatMoney(p.unrealized_pnl, currency)}</td><td>{p.status}</td><td>{mode === "PAPER" ? "AlgoAgentX Paper Engine" : "Broker SL/TP Sync"}</td><td>{date(p.opened_at)}</td></tr>)}</tbody></table></div>}
+          {openPositions.length === 0 ? <NoRows label="No open positions" /> : <div className="responsive-table-wrapper overflow-x-auto"><table className="w-full min-w-[860px] text-left text-sm"><thead className="text-purple-200"><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg Entry</th><th>Current</th><th>SL</th><th>Target</th><th>Unrealized PnL</th><th>Status</th><th>Managed By</th><th>Opened At</th></tr></thead><tbody className="divide-y divide-white/10">{openPositions.map((p) => <tr key={p.id} className="text-purple-50"><td className="py-3">{p.symbol}</td><td>{p.side}</td><td>{num(p.qty)}</td><td>{num(p.avg_entry_price)}</td><td>{num(p.current_price)}</td><td>{num(p.stop_loss)}</td><td>{num(p.target)}</td><td>{formatMoney(p.unrealized_pnl, currency)}</td><td>{p.status}</td><td>{mode === "PAPER" ? "AlgoAgentX Paper Engine" : "Broker SL/TP Sync"}</td><td>{date(p.opened_at)}</td></tr>)}</tbody></table></div>}
         </GlassCard>
         <GlassCard className="p-6" hoverEffect={false}>
           <h2 className="text-xl font-bold text-white">Latest Activity</h2>
@@ -868,7 +850,7 @@ export default function LiveDeploymentDetailPage() {
             </div>
             <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-purple-100">Latest candle time: <span className="font-semibold text-white">{date(candleSnapshot?.latest_candle_time)}</span></div>
             {latestCandles.length === 0 ? <div className="mt-4"><NoRows label="No broker candles stored yet. For Upstox, make sure instrument_key is set. For MT5, open Market Watch → Show All and open the symbol chart once." /></div> : (
-              <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="text-purple-200"><tr><th>Time</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody className="divide-y divide-white/10">{latestCandles.map((candle, index) => <tr key={candle.id || `${candle.candle_time}-${index}`} className="text-purple-50"><td className="py-3">{date(candle.candle_time)}</td><td>{num(candle.open)}</td><td>{num(candle.high)}</td><td>{num(candle.low)}</td><td>{num(candle.close)}</td><td>{num(candle.volume)}</td></tr>)}</tbody></table></div>
+              <div className="responsive-table-wrapper mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="text-purple-200"><tr><th>Time</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody className="divide-y divide-white/10">{latestCandles.map((candle, index) => <tr key={candle.id || `${candle.candle_time}-${index}`} className="text-purple-50"><td className="py-3">{date(candle.candle_time)}</td><td>{num(candle.open)}</td><td>{num(candle.high)}</td><td>{num(candle.low)}</td><td>{num(candle.close)}</td><td>{num(candle.volume)}</td></tr>)}</tbody></table></div>
             )}
           </GlassCard>
 
@@ -907,17 +889,17 @@ export default function LiveDeploymentDetailPage() {
           <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
             <GlassCard className="p-6" hoverEffect={false}>
               <div className="mb-4 flex items-center justify-between gap-2"><div><h2 className="text-xl font-bold text-white">Recent Signals</h2><p className="mt-1 text-sm text-purple-200">Detailed signal history.</p></div><Button size="sm" onClick={() => setShowSignals((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{showSignals ? "Hide" : "Open Signals"}</Button></div>
-              {!showSignals ? <NoRows label={`Signals are hidden. Total today: ${metrics?.signals_today ?? 0}.`} /> : recentSignals.length === 0 ? <NoRows label="No signals yet" /> : <div className="max-h-[360px] overflow-auto rounded-xl border border-white/10"><table className="w-full min-w-[760px] text-left text-sm"><thead className="sticky top-0 bg-purple-950 text-purple-200"><tr><th className="p-3">Time</th><th>Source</th><th>Signal</th><th>Symbol</th><th>Price</th><th>Status</th><th>Reason</th></tr></thead><tbody className="divide-y divide-white/10">{recentSignals.map((sig) => <tr key={sig.id} className="text-purple-50"><td className="p-3">{date(sig.created_at)}</td><td>{sig.source}</td><td>{sig.signal_type}</td><td>{sig.symbol}</td><td>{num(sig.price)}</td><td>{sig.status}</td><td className="max-w-[260px] truncate" title={sig.rejection_reason || sig.reason || "-"}>{sig.rejection_reason || sig.reason || "-"}</td></tr>)}</tbody></table></div>}
+              {!showSignals ? <NoRows label={`Signals are hidden. Total today: ${metrics?.signals_today ?? 0}.`} /> : recentSignals.length === 0 ? <NoRows label="No signals yet" /> : <div className="responsive-table-wrapper max-h-[360px] overflow-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="sticky top-0 bg-purple-950 text-purple-200"><tr><th className="p-3">Time</th><th>Source</th><th>Signal</th><th>Symbol</th><th>Price</th><th>Status</th><th>Reason</th></tr></thead><tbody className="divide-y divide-white/10">{recentSignals.map((sig) => <tr key={sig.id} className="text-purple-50"><td className="p-3">{date(sig.created_at)}</td><td>{sig.source}</td><td>{sig.signal_type}</td><td>{sig.symbol}</td><td>{num(sig.price)}</td><td>{sig.status}</td><td className="max-w-[260px] truncate" title={sig.rejection_reason || sig.reason || "-"}>{sig.rejection_reason || sig.reason || "-"}</td></tr>)}</tbody></table></div>}
             </GlassCard>
             <GlassCard className="p-6" hoverEffect={false}>
               <div className="mb-4 flex items-center justify-between gap-2"><div><h2 className="text-xl font-bold text-white">Recent Orders</h2><p className="mt-1 text-sm text-purple-200">Detailed order history.</p></div><Button size="sm" onClick={() => setShowOrders((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{showOrders ? "Hide" : "Open Orders"}</Button></div>
-              {!showOrders ? <NoRows label={`Orders are hidden. Total today: ${metrics?.orders_today ?? 0}.`} /> : recentOrders.length === 0 ? <NoRows label="No orders yet" /> : <div className="max-h-[360px] overflow-auto rounded-xl border border-white/10"><table className="w-full min-w-[980px] text-left text-sm"><thead className="sticky top-0 bg-purple-950 text-purple-200"><tr><th className="p-3">Time</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Entry</th><th>Executed</th><th>SL</th><th>Target</th><th>Status</th><th>Broker Order ID</th><th>Error</th></tr></thead><tbody className="divide-y divide-white/10">{recentOrders.map((o) => <tr key={o.id} className="text-purple-50"><td className="p-3">{date(o.created_at)}</td><td>{o.side}</td><td>{o.symbol}</td><td>{num(o.qty)}</td><td>{num(o.entry_price)}</td><td>{num(o.executed_price)}</td><td>{num(o.stop_loss)}</td><td>{num(o.target)}</td><td>{o.status}</td><td>{o.broker_order_id || "-"}</td><td className="max-w-[260px] truncate" title={o.error_message || "-"}>{o.error_message || "-"}</td></tr>)}</tbody></table></div>}
+              {!showOrders ? <NoRows label={`Orders are hidden. Total today: ${metrics?.orders_today ?? 0}.`} /> : recentOrders.length === 0 ? <NoRows label="No orders yet" /> : <div className="responsive-table-wrapper max-h-[360px] overflow-auto"><table className="w-full min-w-[980px] text-left text-sm"><thead className="sticky top-0 bg-purple-950 text-purple-200"><tr><th className="p-3">Time</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Entry</th><th>Executed</th><th>SL</th><th>Target</th><th>Status</th><th>Broker Order ID</th><th>Error</th></tr></thead><tbody className="divide-y divide-white/10">{recentOrders.map((o) => <tr key={o.id} className="text-purple-50"><td className="p-3">{date(o.created_at)}</td><td>{o.side}</td><td>{o.symbol}</td><td>{num(o.qty)}</td><td>{num(o.entry_price)}</td><td>{num(o.executed_price)}</td><td>{num(o.stop_loss)}</td><td>{num(o.target)}</td><td>{o.status}</td><td>{o.broker_order_id || "-"}</td><td className="max-w-[260px] truncate" title={o.error_message || "-"}>{o.error_message || "-"}</td></tr>)}</tbody></table></div>}
             </GlassCard>
           </div>
 
           <GlassCard className="p-6" hoverEffect={false}>
             <div className="mb-4 flex items-center justify-between gap-2"><h2 className="text-xl font-bold text-white">Execution Logs</h2><Button size="sm" onClick={() => setShowLogs((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{showLogs ? "Hide" : "Open Logs"}</Button></div>
-            {!showLogs ? <NoRows label="Logs are hidden by default. Click Open Logs when you need execution details." /> : recentLogs.length === 0 ? <NoRows label="No logs yet" /> : <div className="max-h-[360px] overflow-auto rounded-xl border border-white/10"><table className="w-full min-w-[760px] text-left text-sm"><thead className="sticky top-0 bg-purple-950 text-purple-200"><tr><th className="p-3">Time</th><th>Level</th><th>Event Type</th><th>Message</th></tr></thead><tbody className="divide-y divide-white/10">{recentLogs.map((l) => <tr key={l.id} className="text-purple-50"><td className="p-3">{date(l.created_at)}</td><td>{l.level}</td><td>{l.event_type}</td><td>{l.message}</td></tr>)}</tbody></table></div>}
+            {!showLogs ? <NoRows label="Logs are hidden by default. Click Open Logs when you need execution details." /> : recentLogs.length === 0 ? <NoRows label="No logs yet" /> : <div className="responsive-table-wrapper max-h-[360px] overflow-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="sticky top-0 bg-purple-950 text-purple-200"><tr><th className="p-3">Time</th><th>Level</th><th>Event Type</th><th>Message</th></tr></thead><tbody className="divide-y divide-white/10">{recentLogs.map((l) => <tr key={l.id} className="text-purple-50"><td className="p-3">{date(l.created_at)}</td><td>{l.level}</td><td>{l.event_type}</td><td>{l.message}</td></tr>)}</tbody></table></div>}
           </GlassCard>
         </>
       )}

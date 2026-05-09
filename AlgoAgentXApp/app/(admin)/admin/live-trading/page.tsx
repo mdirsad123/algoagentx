@@ -151,8 +151,8 @@ export default function AdminLiveTradingPage() {
 
       {loading ? <GlassCard className="p-6 text-purple-100">Loading deployments...</GlassCard> : rows.length === 0 ? <EmptyState title="No record found" description="No live trading deployments found for this filter." /> : (
         <GlassCard className="overflow-hidden" hoverEffect={false}>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1880px] text-left text-sm">
+          <div className="admin-table-scroll overflow-x-auto">
+            <table className="admin-data-table w-full min-w-[1880px] text-left text-sm">
               <thead className="border-b border-white/10 bg-white/5 text-purple-100">
                 <tr>
                   <th className="px-4 py-3">User</th>

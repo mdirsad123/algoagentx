@@ -665,8 +665,8 @@ export default function AdminMarketDataPage() {
         ) : datasets.length === 0 ? (
           <div className="p-8 text-center text-muted-foreground">No datasets found for selected filters.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[920px] text-sm">
+          <div className="admin-table-scroll overflow-x-auto">
+            <table className="admin-data-table w-full min-w-[920px] text-sm">
               <thead>
                 <tr className="border-b border-border/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="px-4 py-3">Instrument</th>
@@ -771,8 +771,8 @@ export default function AdminMarketDataPage() {
         ) : jobs.length === 0 ? (
           <div className="p-8 text-center text-muted-foreground">No import/refresh job records for selected filters.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] text-sm">
+          <div className="admin-table-scroll overflow-x-auto">
+            <table className="admin-data-table w-full min-w-[980px] text-sm">
               <thead>
                 <tr className="border-b border-border/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="px-4 py-3">Job</th>

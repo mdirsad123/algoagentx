@@ -824,7 +824,7 @@ export default function AdminStrategyRequestsPage() {
       )}
 
       <Dialog open={!!selectedRequest} onOpenChange={(open) => !open && setSelectedRequest(null)}>
-        <DialogContent className="max-w-2xl rounded-xl border border-border/60 bg-card/95 text-foreground">
+        <DialogContent className="max-h-[90vh] overflow-y-auto max-w-2xl rounded-xl border border-border/60 bg-card/95 text-foreground">
           <DialogHeader>
             <DialogTitle>Manage Strategy Request</DialogTitle>
           </DialogHeader>

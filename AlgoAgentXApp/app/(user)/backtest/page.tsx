@@ -2052,7 +2052,7 @@ const FieldLabel = ({ label, help }: { label: string; help?: string }) => (
             {!!resultDetail?.trades?.length && (
               <div className="rounded-xl border border-border/50 bg-card/20 p-4">
                 <p className="mb-3 text-sm font-medium text-foreground">Recent Trades</p>
-                <div className="overflow-x-auto">
+                <div className="responsive-table-wrapper overflow-x-auto">
                   <table className="w-full min-w-[760px] text-left text-sm">
                     <thead>
                       <tr className="border-b border-border/50 text-xs uppercase tracking-wide text-muted-foreground">

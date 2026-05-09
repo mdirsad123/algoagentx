@@ -47,7 +47,6 @@ FastAPI backend for the AlgoAgentX trading platform.
    cd AlgoAgentXApp
    npm run dev
    ```
-   
 
 4. **Health Checks**
    - Database: http://localhost:8000/health/db

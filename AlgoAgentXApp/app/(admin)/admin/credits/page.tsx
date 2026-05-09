@@ -172,8 +172,8 @@ export default function AdminCreditsPage() {
             <Button onClick={openCreatePack} className="bg-gradient-to-r from-emerald-500 to-cyan-500 text-white">Create Pack</Button>
           </div>
         </div>
-        <div className="overflow-auto rounded-2xl border border-white/10 bg-slate-950/30">
-          <table className="w-full min-w-[1050px] text-sm text-white">
+        <div className="admin-table-scroll overflow-auto rounded-2xl border border-white/10 bg-slate-950/30">
+          <table className="admin-data-table w-full min-w-[1050px] text-sm text-white">
             <thead>
               <tr className="border-b border-white/10 text-left text-purple-200">
                 <th className="px-3 py-3">Code</th>
@@ -217,8 +217,8 @@ export default function AdminCreditsPage() {
         </div>
 
         {error ? <div className="rounded-2xl border border-rose-400/20 bg-rose-500/10 p-5 text-rose-200">{error}</div> : (
-          <div className="overflow-auto rounded-2xl border border-white/10 bg-slate-950/30">
-            <table className="w-full min-w-[1100px] text-sm text-white">
+          <div className="admin-table-scroll overflow-auto rounded-2xl border border-white/10 bg-slate-950/30">
+            <table className="admin-data-table w-full min-w-[1100px] text-sm text-white">
               <thead>
                 <tr className="border-b border-white/10 text-left text-purple-200">
                   <th className="px-3 py-3">User</th>
@@ -259,7 +259,7 @@ export default function AdminCreditsPage() {
       </div>
 
       <Dialog open={packModalOpen} onOpenChange={setPackModalOpen}>
-        <DialogContent className="max-w-2xl border-purple-400/20 bg-gradient-to-br from-purple-950 to-slate-950 text-white">
+        <DialogContent className="max-h-[90vh] overflow-y-auto max-w-2xl border-purple-400/20 bg-gradient-to-br from-purple-950 to-slate-950 text-white">
           <DialogHeader><DialogTitle>{editingPack ? "Edit top-up pack" : "Create top-up pack"}</DialogTitle></DialogHeader>
           <div className="grid gap-3 md:grid-cols-2">
             <Input placeholder="Code e.g. POPULAR_500" value={packForm.code} onChange={(e) => setPackForm({ ...packForm, code: e.target.value.toUpperCase().replace(/\s+/g, "_") })} className="border-white/20 bg-white/10 text-white" />
@@ -280,7 +280,7 @@ export default function AdminCreditsPage() {
       </Dialog>
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="border-purple-400/20 bg-gradient-to-br from-purple-950 to-slate-950 text-white">
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-purple-400/20 bg-gradient-to-br from-purple-950 to-slate-950 text-white">
           <DialogHeader><DialogTitle>Adjust credits</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <select value={mode} onChange={(e) => setMode(e.target.value as any)} className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-white"><option value="add">Add credits</option><option value="deduct">Deduct credits</option></select>

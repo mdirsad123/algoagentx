@@ -355,7 +355,7 @@ export default function LandingPage() {
           <Button asChild variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10 hover:text-white"><Link href="/pricing">Open Pricing <ChevronRight className="ml-2 h-4 w-4" /></Link></Button>
         </div>
         <div className="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
-          {plansLoading ? [0, 1, 2, 3].map((i) => <Card key={i} className="h-64 animate-pulse border-white/10 bg-white/[0.05]" />) : displayedPlans.length > 0 ? displayedPlans.map((plan) => (
+          {plansLoading ? [0, 1, 2, 3].map((i) => <Card key={i} className="h-64 animate-pulse border-white/10 bg-white/[0.05]"><span className="sr-only">Loading plan</span></Card>) : displayedPlans.length > 0 ? displayedPlans.map((plan) => (
             <Card key={plan.plan_key || plan.id} className="border-white/10 bg-white/[0.065]">
               <CardContent className="p-6">
                 <Badge className="bg-purple-400/15 text-purple-100 hover:bg-purple-400/15">{plan.code}</Badge>

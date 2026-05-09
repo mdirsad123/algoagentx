@@ -226,8 +226,8 @@ export default function AdminCouponsPage() {
             <Button variant="outline" onClick={load} className="gap-2 border-white/15 bg-white/5 text-white hover:bg-white/10"><RefreshCw className="h-4 w-4" />Refresh</Button>
           </div>
         </div>
-        <div className="overflow-x-auto rounded-2xl border border-white/10">
-          <table className="min-w-full divide-y divide-white/10 text-sm">
+        <div className="admin-table-scroll overflow-x-auto rounded-2xl border border-white/10">
+          <table className="admin-data-table min-w-full divide-y divide-white/10 text-sm">
             <thead className="bg-white/[0.06] text-left text-xs uppercase tracking-wide text-purple-100/70"><tr><th className="px-4 py-3">Code</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Applies</th><th className="px-4 py-3">Scope</th><th className="px-4 py-3">Limits</th><th className="px-4 py-3">Dates</th><th className="px-4 py-3">Audit</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th></tr></thead>
             <tbody className="divide-y divide-white/10 text-purple-100/85">
               {loading ? <tr><td colSpan={9} className="px-4 py-8 text-center text-purple-100/65">Loading coupons...</td></tr> : items.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-purple-100/65">No coupons found. Create HELLO or TEST5 to start.</td></tr> : items.map((coupon) => (

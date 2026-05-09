@@ -1,13 +1,16 @@
 "use client";
 
 import { clearAuthSession } from "@/lib/auth/session";
-import { Bell, ChevronDown, LogOut, Settings, User as UserIcon } from "lucide-react";
+import { ChevronDown, LogOut, Menu, Settings, User as UserIcon } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import NotificationBell from "@/components/layout/NotificationBell";
 
 interface TopbarProps {
   pageTitle?: string;
+  onMenuClick?: () => void;
+  showMenuButton?: boolean;
 }
 
 function getCookie(name: string): string | null {
@@ -16,7 +19,7 @@ function getCookie(name: string): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-export default function Topbar({ pageTitle }: TopbarProps) {
+export default function Topbar({ pageTitle, onMenuClick, showMenuButton = false }: TopbarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [isUserOpen, setIsUserOpen] = useState(false);
@@ -86,39 +89,45 @@ export default function Topbar({ pageTitle }: TopbarProps) {
   };
   return (
     <header className="sticky top-0 z-30 border-b border-white/10 bg-[#1f123f]/80 backdrop-blur-xl">
-      <div className="flex items-center justify-between px-6 py-5">
-        <div>
-          <h1 className="text-3xl font-bold text-white">{title}</h1>
-          <p className="mt-1 text-sm text-purple-100/80">
-            {isAdmin ? "System management and business controls" : "Manage your trading workspace"}
-          </p>
+      <div className="flex min-w-0 items-center justify-between gap-2 px-3 py-2 sm:gap-3 sm:px-5 sm:py-3 lg:px-6">
+        {showMenuButton && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label="Open sidebar"
+            onClick={onMenuClick}
+            className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-2 text-white hover:bg-white/10 hover:text-white lg:hidden"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+        )}
+        <div className="min-w-0 flex-1">
+          <h1 className="max-w-[44vw] truncate text-base font-bold leading-tight text-white min-[390px]:max-w-[52vw] sm:max-w-[62vw] sm:text-xl lg:max-w-[70vw] lg:text-2xl xl:max-w-none">{title}</h1>
         </div>
 
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" className="relative rounded-2xl border border-white/10 bg-white/5 text-white hover:bg-white/10 hover:text-white">
-            <Bell className="h-5 w-5" />
-            <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-fuchsia-400" />
-          </Button>
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
+          <NotificationBell />
 
           <div className="relative" ref={userRef}>
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setIsUserOpen((v) => !v)}
-              className="h-auto gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white hover:bg-white/10 hover:text-white"
+              className="h-auto gap-1 rounded-2xl border border-white/10 bg-white/5 px-1.5 py-1.5 text-white hover:bg-white/10 hover:text-white sm:gap-3 sm:px-3 sm:py-2"
             >
-              <div className="flex h-11 w-11 overflow-hidden items-center justify-center rounded-full bg-gradient-to-br from-fuchsia-500 to-blue-500 font-semibold text-white shadow-lg">
+              <div className="flex h-9 w-9 overflow-hidden items-center justify-center rounded-full bg-gradient-to-br from-fuchsia-500 to-blue-500 text-sm font-semibold text-white shadow-lg sm:h-10 sm:w-10 sm:text-base">
                 {profile.avatarUrl ? <img src={profile.avatarUrl} alt="Profile" className="h-full w-full object-cover" /> : avatar}
               </div>
               <div className="hidden text-left md:block">
                 <div className="max-w-[160px] truncate text-sm font-semibold text-white">{profile.name}</div>
                 <div className="text-xs uppercase tracking-wide text-purple-100/70">{isAdmin ? "Admin" : "User"}</div>
               </div>
-              <ChevronDown className="h-4 w-4 text-purple-100/80" />
+              <ChevronDown className="hidden h-4 w-4 text-purple-100/80 sm:block" />
             </Button>
 
             {isUserOpen && (
-              <div className="absolute right-0 mt-3 w-72 overflow-hidden rounded-2xl border border-white/10 bg-[#08031f]/95 shadow-2xl shadow-purple-950/50 backdrop-blur-2xl">
+              <div className="absolute right-0 mt-3 w-[min(18rem,calc(100vw-92px))] overflow-hidden rounded-2xl border border-white/10 bg-[#08031f]/95 shadow-2xl shadow-purple-950/50 backdrop-blur-2xl sm:w-72">
                 <div className="border-b border-white/10 p-4">
                   <div className="text-sm font-semibold text-white">{profile.name}</div>
                   <div className="truncate text-xs text-purple-100/70">{profile.email || "No email available"}</div>

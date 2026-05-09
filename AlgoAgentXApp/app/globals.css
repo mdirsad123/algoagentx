@@ -189,7 +189,8 @@ html, body {
     inset 0 1px 0 0 hsla(var(--glass-foreground), 0.15),
     inset 0 -1px 0 0 hsla(var(--glass-foreground), 0.08),
     0 0 0 1px hsla(var(--glass-border), 0.2);
-  border-radius: hsl(var(--radius));
+  border-radius: 1rem;
+  overflow: visible;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
@@ -212,7 +213,7 @@ html, body {
 }
 
 .glass-card:hover {
-  transform: translateY(-4px) scale(1.01);
+  transform: translateY(-2px);
   box-shadow: 
     0 20px 40px 0 hsla(var(--glass-bg), 0.45),
     0 0 0 1px hsla(var(--glass-border), 0.6),
@@ -494,3 +495,398 @@ html, body {
   }
 }
 .coupon-marquee:hover { animation-play-state: paused; }
+
+
+@layer components {
+  .workspace-page {
+    @apply mx-auto w-full max-w-[1600px] space-y-6;
+  }
+
+  .workspace-card {
+    @apply rounded-2xl border border-white/10 bg-white/[0.05] shadow-xl shadow-purple-950/20 backdrop-blur-xl;
+  }
+
+  .workspace-section-title {
+    @apply text-lg font-bold tracking-tight text-white;
+  }
+
+  .workspace-muted-text {
+    @apply text-sm leading-6 text-purple-100/70;
+  }
+
+  .workspace-actions {
+    @apply flex flex-wrap items-center gap-2 sm:gap-3;
+  }
+
+  .responsive-table-wrapper table {
+    @apply w-full border-separate border-spacing-0 text-left text-sm;
+  }
+
+  .responsive-table-wrapper thead {
+    @apply sticky top-0 z-10 bg-[#25104a]/95 text-xs uppercase tracking-wide text-purple-100/80 backdrop-blur-xl;
+  }
+
+  .responsive-table-wrapper th {
+    @apply whitespace-nowrap px-4 py-3 font-semibold;
+  }
+
+  .responsive-table-wrapper td {
+    @apply whitespace-nowrap px-4 py-3 align-middle text-purple-50/90;
+  }
+
+  .responsive-table-wrapper tbody tr {
+    @apply border-b border-white/10 transition-colors hover:bg-white/[0.06];
+  }
+
+  .workspace-input,
+  .workspace-select,
+  .workspace-textarea {
+    @apply rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-purple-100/40 outline-none transition focus:border-fuchsia-300/50 focus:ring-2 focus:ring-fuchsia-400/20;
+  }
+}
+
+@media (max-width: 640px) {
+  .responsive-table-wrapper {
+    margin-left: -0.25rem;
+    margin-right: -0.25rem;
+  }
+}
+
+@layer utilities {
+  .safe-mobile-width {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .workspace-actions > * {
+    max-width: 100%;
+  }
+
+  .workspace-actions .inline-flex,
+  .workspace-actions button,
+  .workspace-actions a {
+    white-space: normal;
+  }
+
+  .responsive-table-wrapper {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .responsive-table-wrapper th,
+  .responsive-table-wrapper td {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    max-width: 100%;
+  }
+}
+
+/* RESP-PRO-1 visual hotfix: desktop uses full sidebar, tablet/mobile use compact rail. */
+.user-shell-content {
+  margin-left: 16rem;
+  min-width: 0;
+  transition: margin-left 300ms ease-in-out;
+}
+
+html[data-sidebar-collapsed="true"] .user-shell-content {
+  margin-left: 96px;
+}
+
+@media (max-width: 1023px) {
+  .user-shell-content,
+  html[data-sidebar-collapsed="true"] .user-shell-content,
+  html[data-sidebar-collapsed="false"] .user-shell-content {
+    margin-left: 0;
+  }
+}
+
+.responsive-table-wrapper [title] {
+  cursor: help;
+}
+
+
+/* QA-PROD-1 hotfix: keep the fixed sidebar usable when nav items exceed viewport height. */
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(216, 180, 254, 0.45) transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(216, 180, 254, 0.35);
+  border-radius: 999px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(216, 180, 254, 0.6);
+}
+
+/* QA-PROD-1 sidebar scroll hotfix: make the whole fixed sidebar scrollable,
+   so all route links remain reachable at 100% browser zoom and smaller heights. */
+.sidebar-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  width: 7px;
+}
+
+
+/* ADMIN-PRO-1: Admin console density, table, filter and action polish. */
+.admin-shell-content .admin-main {
+  background:
+    radial-gradient(900px 420px at 8% 0%, rgba(168, 85, 247, 0.18), transparent 65%),
+    radial-gradient(780px 520px at 100% 15%, rgba(59, 130, 246, 0.14), transparent 70%);
+}
+
+.admin-shell-content .workspace-page,
+.admin-shell-content .admin-page-shell {
+  max-width: 1700px;
+}
+
+.admin-shell-content .rounded-xl.border:not(button):not(input):not(select):not(textarea),
+.admin-shell-content .rounded-2xl.border:not(button):not(input):not(select):not(textarea),
+.admin-shell-content .rounded-3xl.border:not(button):not(input):not(select):not(textarea) {
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 18px 45px rgba(20, 6, 52, 0.22);
+}
+
+.admin-shell-content input,
+.admin-shell-content select,
+.admin-shell-content textarea {
+  min-width: 0;
+}
+
+.admin-shell-content button,
+.admin-shell-content a {
+  max-width: 100%;
+}
+
+.admin-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 1rem;
+}
+
+.admin-table-scroll::-webkit-scrollbar {
+  height: 9px;
+}
+
+.admin-table-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 999px;
+}
+
+.admin-table-scroll::-webkit-scrollbar-thumb {
+  background: rgba(216, 180, 254, 0.38);
+  border-radius: 999px;
+}
+
+.admin-table-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(216, 180, 254, 0.62);
+}
+
+.admin-data-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.admin-data-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: rgba(33, 13, 70, 0.96);
+  backdrop-filter: blur(14px);
+}
+
+.admin-data-table th {
+  white-space: nowrap;
+  padding: 0.85rem 0.8rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  color: rgba(233, 213, 255, 0.82);
+}
+
+.admin-data-table td {
+  padding: 0.9rem 0.8rem;
+  vertical-align: middle;
+  color: rgba(250, 245, 255, 0.92);
+}
+
+.admin-data-table tbody tr {
+  transition: background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.admin-data-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.admin-data-table td .font-mono,
+.admin-data-table td.font-mono {
+  word-break: break-all;
+}
+
+.admin-shell-content .admin-filter-bar,
+.admin-shell-content .admin-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.admin-shell-content .admin-action-bar > *,
+.admin-shell-content .admin-filter-bar > * {
+  min-width: 0;
+}
+
+.admin-shell-content [role="dialog"] {
+  max-width: calc(100vw - 1rem);
+}
+
+@media (max-width: 768px) {
+  .admin-shell-content .admin-data-table th,
+  .admin-shell-content .admin-data-table td {
+    padding-left: 0.7rem;
+    padding-right: 0.7rem;
+    font-size: 0.78rem;
+  }
+
+  .admin-shell-content .grid {
+    min-width: 0;
+  }
+
+  .admin-shell-content .flex.items-center.justify-between {
+    gap: 0.75rem;
+  }
+}
+
+/* ADMIN-PRO-1: keep non-PageShell admin pages aligned with shared workspace width. */
+.admin-shell-content .admin-main > div > .space-y-6,
+.admin-shell-content .admin-main > div > .space-y-5,
+.admin-shell-content .admin-main > div > .space-y-4 {
+  width: 100%;
+  max-width: 1700px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.admin-shell-content .admin-main > div > .space-y-6 > .flex:first-child,
+.admin-shell-content .admin-main > div > .space-y-5 > .flex:first-child,
+.admin-shell-content .admin-main > div > .space-y-4 > .flex:first-child {
+  flex-wrap: wrap;
+  row-gap: 0.75rem;
+}
+
+/* RESP-PRO-1 Admin: auth/login and admin responsive hardening. */
+.admin-login-page {
+  background:
+    radial-gradient(900px 520px at 20% 0%, rgba(168, 85, 247, 0.28), transparent 65%),
+    radial-gradient(740px 460px at 100% 15%, rgba(59, 130, 246, 0.16), transparent 68%);
+}
+
+.admin-login-card {
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.admin-login-card::-webkit-scrollbar {
+  width: 6px;
+}
+
+.admin-login-card::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.admin-login-card::-webkit-scrollbar-thumb {
+  background: rgba(216, 180, 254, 0.35);
+  border-radius: 999px;
+}
+
+@media (max-width: 639px) {
+  .admin-login-card {
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .admin-shell-content .admin-main > div {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .admin-shell-content .admin-action-bar,
+  .admin-shell-content .admin-filter-bar {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .admin-shell-content .admin-action-bar > *,
+  .admin-shell-content .admin-filter-bar > * {
+    width: 100%;
+  }
+}
+
+@media (max-width: 1023px) {
+  .admin-shell-content [role="dialog"] {
+    width: calc(100vw - 1rem);
+    max-height: 90dvh;
+    overflow-y: auto;
+  }
+
+  .admin-shell-content .grid,
+  .admin-shell-content .flex {
+    min-width: 0;
+  }
+}
+
+
+/* RESP-PRO-2: keep admin table action buttons readable and non-wrapping. */
+.admin-actions-cell {
+  min-width: 20rem;
+  white-space: nowrap;
+}
+
+.admin-actions-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.admin-actions-row button,
+.admin-actions-row a {
+  width: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .admin-actions-cell {
+    min-width: 18rem;
+  }
+}

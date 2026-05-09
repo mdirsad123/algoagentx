@@ -154,6 +154,7 @@ class Settings(BaseSettings):
             return
 
         missing_vars = []
+        insecure_vars = []
         required_vars = [
             ('database_url', self.database_url),
             ('jwt_secret_key', self.jwt_secret_key),
@@ -162,14 +163,31 @@ class Settings(BaseSettings):
             ('razorpay_webhook_secret', self.razorpay_webhook_secret),
         ]
 
+        default_jwt_secret = "T2kiob1GPcJwNYBhAwvNE8kr1tJaQgH4"
+        default_refresh_secret = "lM0Y9gpK1TSzpreSDJgrjqnXY9qOvog5"
+
         for var_name, var_value in required_vars:
             if not var_value or var_value == "":
                 missing_vars.append(var_name)
 
-        if missing_vars:
-            error_msg = f"Production environment requires the following environment variables: {', '.join(missing_vars)}"
+        if self.jwt_secret_key == default_jwt_secret:
+            insecure_vars.append('jwt_secret_key')
+        if self.jwt_refresh_token_key == default_refresh_secret:
+            insecure_vars.append('jwt_refresh_token_key')
+        if 'localhost' in str(self.web_origin).lower() or '127.0.0.1' in str(self.web_origin).lower():
+            insecure_vars.append('web_origin')
+        if 'localhost' in str(self.frontend_url).lower() or '127.0.0.1' in str(self.frontend_url).lower():
+            insecure_vars.append('frontend_url')
+
+        if missing_vars or insecure_vars:
+            parts = []
+            if missing_vars:
+                parts.append(f"missing: {', '.join(missing_vars)}")
+            if insecure_vars:
+                parts.append(f"must be changed from development defaults: {', '.join(insecure_vars)}")
+            error_msg = "Production environment configuration is not safe (" + "; ".join(parts) + ")"
             print(f"ERROR: {error_msg}", file=sys.stderr)
-            print("Application startup failed due to missing critical configuration.", file=sys.stderr)
+            print("Application startup failed due to missing or unsafe production configuration.", file=sys.stderr)
             sys.exit(1)
 
     @property
@@ -225,11 +243,11 @@ class Settings(BaseSettings):
     @property
     def allowed_origins(self) -> List[str]:
         """Get allowed CORS origins based on environment"""
+        configured = [origin.strip() for origin in str(self.web_origin or "").split(",") if origin.strip()]
         if self.is_development:
-            return ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"]
-        else:
-            # Production and staging - only allow configured web origin
-            return [self.web_origin]
+            dev_origins = ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"]
+            return list(dict.fromkeys(dev_origins + configured))
+        return configured or [self.web_origin]
 
     model_config = ConfigDict(
         env_file=(".env", ".env.local"),

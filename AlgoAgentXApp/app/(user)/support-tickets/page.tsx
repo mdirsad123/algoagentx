@@ -340,11 +340,11 @@ export default function SupportTicketsPage() {
   const canClose = selectedTicket && ["open", "in_progress", "waiting_user"].includes(selectedTicket.status);
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-4 sm:space-y-6">
       <PageHeader title="Support Tickets" subtitle="Create requests, upload proof, track admin replies, and close resolved conversations." />
 
-      <div className="grid gap-6 xl:grid-cols-[1.05fr_1.55fr]">
-        <GlassCard className="rounded-3xl border border-white/10 p-6 hover:scale-100">
+      <div className="grid min-w-0 gap-4 sm:gap-6 xl:grid-cols-[1.05fr_1.55fr]">
+        <GlassCard className="min-w-0 rounded-3xl border border-white/10 p-4 hover:scale-100 sm:p-6">
           <div className="mb-5 flex items-center gap-3">
             <div className="rounded-2xl bg-gradient-to-br from-fuchsia-500 to-blue-500 p-3 text-white shadow-lg">
               <MessageSquarePlus className="h-5 w-5" />
@@ -452,9 +452,9 @@ export default function SupportTicketsPage() {
           </div>
         </GlassCard>
 
-        <div className="grid gap-6 2xl:grid-cols-[0.9fr_1.1fr]">
-          <GlassCard className="rounded-3xl border border-white/10 p-6 hover:scale-100">
-            <div className="mb-5 flex items-center justify-between gap-3">
+        <div className="grid min-w-0 gap-4 sm:gap-6 2xl:grid-cols-[0.9fr_1.1fr]">
+          <GlassCard className="min-w-0 rounded-3xl border border-white/10 p-4 hover:scale-100 sm:p-6">
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-white">My tickets</h2>
                 <p className="text-sm text-purple-100/75">Only live backend tickets are shown here.</p>
@@ -497,7 +497,7 @@ export default function SupportTicketsPage() {
                       {ticket.unread || Number(ticket.unread_count || 0) > 0 ? <span className="h-2.5 w-2.5 rounded-full bg-fuchsia-300 shadow-[0_0_12px_rgba(240,171,252,0.9)]" /> : null}
                     </div>
                     <h3 className="line-clamp-2 text-base font-semibold text-white">{ticket.subject}</h3>
-                    <div className="mt-3 grid gap-1 text-xs text-purple-100/55">
+                    <div className="mt-3 grid min-w-0 gap-1 break-words text-xs text-purple-100/55">
                       <span>Category: {labelize(ticket.category)}</span>
                       <span>Created: {formatDate(ticket.created_at)}</span>
                       <span>Last reply: {formatDate(ticket.last_reply_at || ticket.updated_at)}</span>
@@ -508,7 +508,7 @@ export default function SupportTicketsPage() {
             )}
           </GlassCard>
 
-          <GlassCard className="rounded-3xl border border-white/10 p-6 hover:scale-100">
+          <GlassCard className="min-w-0 rounded-3xl border border-white/10 p-4 hover:scale-100 sm:p-6">
             {!selectedTicket ? (
               <div className="flex min-h-[520px] flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 bg-white/5 p-8 text-center">
                 <MessageCircle className="mb-4 h-10 w-10 text-fuchsia-300" />
@@ -529,7 +529,7 @@ export default function SupportTicketsPage() {
                         <Pill className={priorityClasses[selectedTicket.priority] || priorityClasses.medium}>{selectedTicket.priority}</Pill>
                         <Pill className="border-white/10 bg-white/10 text-purple-100">{labelize(selectedTicket.category)}</Pill>
                       </div>
-                      <h2 className="text-xl font-semibold text-white">{selectedTicket.subject}</h2>
+                      <h2 className="break-words text-lg font-semibold text-white sm:text-xl">{selectedTicket.subject}</h2>
                       <p className="mt-1 text-xs text-purple-100/55">Created {formatDate(selectedTicket.created_at)} • Last reply {formatDate(selectedTicket.last_reply_at || selectedTicket.updated_at)}</p>
                     </div>
                     {canClose && (
@@ -541,7 +541,7 @@ export default function SupportTicketsPage() {
                   </div>
                 </div>
 
-                <div className="max-h-[520px] space-y-4 overflow-y-auto rounded-2xl border border-white/10 bg-black/10 p-4">
+                <div className="max-h-[min(520px,62dvh)] space-y-4 overflow-y-auto rounded-2xl border border-white/10 bg-black/10 p-3 sm:p-4">
                   {selectedMessages.length === 0 ? (
                     <div className="p-8 text-center text-purple-100/65"><Clock3 className="mx-auto mb-3 h-8 w-8" />No messages yet.</div>
                   ) : (

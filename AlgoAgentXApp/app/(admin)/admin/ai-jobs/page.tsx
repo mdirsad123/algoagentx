@@ -296,7 +296,7 @@ export default function AdminAIJobsPage() {
             </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              <div className="admin-table-scroll overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>

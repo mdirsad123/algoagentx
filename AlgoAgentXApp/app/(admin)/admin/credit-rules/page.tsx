@@ -195,8 +195,8 @@ export default function AdminCreditRulesPage() {
           <div><h2 className="text-xl font-semibold text-white">Rules Table</h2><p className="mt-1 text-sm text-purple-100/65">Lower priority number wins when multiple rules match.</p></div>
           <div className="flex gap-2"><div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-purple-200/70" /><Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search rule" className="w-64 border-white/10 bg-white/10 pl-9 text-white" /></div><Button variant="outline" onClick={load} className="gap-2 border-white/15 bg-white/5 text-white hover:bg-white/10"><RefreshCw className="h-4 w-4" />Refresh</Button></div>
         </div>
-        <div className="overflow-auto rounded-2xl border border-white/10 bg-slate-950/30">
-          <table className="w-full min-w-[1200px] text-sm text-white">
+        <div className="admin-table-scroll overflow-auto rounded-2xl border border-white/10 bg-slate-950/30">
+          <table className="admin-data-table w-full min-w-[1200px] text-sm text-white">
             <thead><tr className="border-b border-white/10 text-left text-purple-100/80"><th className="px-4 py-3">Rule</th><th className="px-4 py-3">Scope</th><th className="px-4 py-3">Base</th><th className="px-4 py-3">Per 1000</th><th className="px-4 py-3">Min/Max</th><th className="px-4 py-3">Filter Mult.</th><th className="px-4 py-3">Priority</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th></tr></thead>
             <tbody>
               {loading ? <tr><td colSpan={9} className="px-4 py-8 text-purple-100/70">Loading rules...</td></tr> : items.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-purple-100/70">No rules found</td></tr> : items.map((rule) => (

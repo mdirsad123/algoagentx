@@ -29,6 +29,7 @@ export interface SafeBrokerStatus {
   id?: string;
   broker_account_id?: string;
   broker_name?: string;
+  broker_code?: string | null;
   account_label?: string;
   mode?: LiveMode | string;
   status?: BrokerStatus | string;
@@ -218,14 +219,6 @@ export interface StrategyDeployment {
   runner_last_error?: string | null;
   runner_stale?: boolean;
   mt5_demo_max_lot?: number | string | null;
-  product_type?: string | null;
-  order_variety?: string | null;
-  quantity_mode?: string | null;
-  fixed_quantity?: number | string | null;
-  max_quantity?: number | string | null;
-  max_order_value?: number | string | null;
-  square_off_time?: string | null;
-  upstox_order_confirmed?: boolean;
   tradingview_secret?: string | null;
   webhook_url?: string;
   example_payload?: Record<string, unknown>;
@@ -280,14 +273,6 @@ export interface DeploymentPayload {
   runner_last_error?: string | null;
   runner_stale?: boolean;
   mt5_demo_max_lot?: number | string | null;
-  product_type?: string | null;
-  order_variety?: string | null;
-  quantity_mode?: string | null;
-  fixed_quantity?: number | string | null;
-  max_quantity?: number | string | null;
-  max_order_value?: number | string | null;
-  square_off_time?: string | null;
-  upstox_order_confirmed?: boolean;
   tradingview_secret?: string | null;
 }
 

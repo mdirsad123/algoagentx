@@ -226,8 +226,8 @@ export default function AdminLoginPage() {
 
   return (
     <AuthShell>
-      <div className="min-h-screen w-full flex">
-        <div className="hidden lg:flex lg:w-1/2 app-gradient-bg items-center justify-center p-12">
+      <div className="admin-login-page min-h-[100dvh] w-full overflow-y-auto overflow-x-hidden lg:flex">
+        <div className="hidden lg:flex lg:min-h-[100dvh] lg:w-1/2 app-gradient-bg items-center justify-center p-8 xl:p-12">
           <div className="text-center text-white">
             <div className="mb-8">
               <Image src="/images/algoagentx_icon.jpeg" alt="AlgoAgentX Logo" width={120} height={120} className="mx-auto mb-4 rounded-xl shadow-2xl" />
@@ -242,19 +242,24 @@ export default function AdminLoginPage() {
           </div>
         </div>
 
-        <div className="w-full lg:w-1/2 flex items-center justify-center p-5 sm:p-8">
-          <div className="w-full max-w-md rounded-3xl border border-white/15 bg-white/10 p-6 sm:p-8 shadow-2xl backdrop-blur-2xl">
+        <div className="flex min-h-[100dvh] w-full items-center justify-center px-4 py-6 sm:px-6 sm:py-8 lg:w-1/2 lg:px-8">
+          <div className="admin-login-card w-full max-w-[440px] rounded-3xl border border-white/15 bg-white/10 p-4 shadow-2xl backdrop-blur-2xl sm:p-6 md:p-8">
+            <div className="mb-5 text-center lg:hidden">
+              <Image src="/images/algoagentx_icon.jpeg" alt="AlgoAgentX Logo" width={64} height={64} className="mx-auto mb-3 rounded-2xl shadow-2xl" />
+              <div className="text-2xl font-black gradient-text">AlgoAgentX</div>
+              <p className="text-sm text-purple-100/80">Secure Admin Console</p>
+            </div>
             {step === 'password' ? (
               <>
-                <div className="mb-7 text-center">
-                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-purple-300/30 bg-purple-500/20 shadow-xl">
+                <div className="mb-5 text-center sm:mb-7">
+                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-purple-300/30 bg-purple-500/20 shadow-xl sm:mb-4 sm:h-14 sm:w-14">
                     <ShieldCheck className="h-7 w-7 text-purple-100" />
                   </div>
-                  <h2 className="text-2xl font-bold gradient-text mb-2">Admin Login</h2>
+                  <h2 className="mb-2 text-2xl font-bold gradient-text sm:text-3xl">Admin Login</h2>
                   <p className="text-sm text-purple-100">Admin accounts require email OTP.</p>
                 </div>
 
-                <div className="mb-5 rounded-2xl border border-purple-300/20 bg-purple-500/10 p-4 text-sm text-purple-100">
+                <div className="mb-4 rounded-2xl border border-purple-300/20 bg-purple-500/10 p-3 text-sm text-purple-100 sm:mb-5 sm:p-4">
                   <div className="flex gap-3">
                     <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-purple-200" />
                     <div>
@@ -264,7 +269,7 @@ export default function AdminLoginPage() {
                   </div>
                 </div>
 
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 sm:space-y-5">
                   <div>
                     <label htmlFor="admin-email" className="block text-sm font-semibold text-purple-100 mb-2">Email Address</label>
                     <div className="relative">
@@ -299,15 +304,15 @@ export default function AdminLoginPage() {
               </>
             ) : (
               <>
-                <div className="mb-7 text-center">
-                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-purple-300/30 bg-purple-500/20 shadow-xl">
+                <div className="mb-5 text-center sm:mb-7">
+                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-purple-300/30 bg-purple-500/20 shadow-xl sm:mb-4 sm:h-14 sm:w-14">
                     <Mail className="h-7 w-7 text-purple-100" />
                   </div>
-                  <h2 className="text-2xl font-bold gradient-text mb-2">Verify Admin OTP</h2>
+                  <h2 className="mb-2 text-2xl font-bold gradient-text sm:text-3xl">Verify Admin OTP</h2>
                   <p className="text-sm text-purple-100">Enter the 6-digit code sent to your admin email.</p>
                 </div>
 
-                <div className="mb-5 rounded-2xl border border-purple-300/20 bg-purple-500/10 p-4 text-sm text-purple-100">
+                <div className="mb-4 rounded-2xl border border-purple-300/20 bg-purple-500/10 p-3 text-sm text-purple-100 sm:mb-5 sm:p-4">
                   <p className="font-semibold text-white">We sent a 6-digit OTP to your admin email.</p>
                   <p className="mt-1 text-purple-100/80">{maskedEmail}</p>
                 </div>
@@ -330,7 +335,7 @@ export default function AdminLoginPage() {
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' && otp.length === 6) verifyOtp(event as any)
                       }}
-                      className="h-14 w-full rounded-xl border-white/15 bg-white/10 text-center text-2xl font-bold tracking-[0.45em] text-white placeholder:text-purple-200/40 focus:border-purple-300"
+                      className="h-14 w-full rounded-xl border-white/15 bg-white/10 text-center text-2xl font-bold tracking-[0.28em] text-white placeholder:text-purple-200/40 focus:border-purple-300 sm:tracking-[0.45em]"
                     />
                     {otpError ? <p className="mt-2 text-sm text-red-300">{otpError}</p> : <p className="mt-2 text-xs text-purple-100/70">OTP expires in 10 minutes. Never share this code with anyone.</p>}
                   </div>

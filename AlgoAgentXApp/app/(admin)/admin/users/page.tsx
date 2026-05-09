@@ -93,15 +93,15 @@ export default function AdminUsersPage() {
       </div>
 
       <div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl shadow-xl">
-        <div className="mb-4 flex gap-3">
+        <div className="admin-filter-bar mb-4 flex gap-3">
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by email or name" className="max-w-sm border-white/10 bg-white/5 text-white placeholder:text-purple-200/70" />
           <Button onClick={() => fetchUsers(0)} variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10">Search</Button>
         </div>
 
         {error && <div className="mb-4 rounded-2xl border border-rose-400/20 bg-rose-500/10 p-4 text-rose-200">{error}</div>}
 
-        <div className="overflow-auto">
-          <table className="w-full min-w-[1080px] text-sm text-white">
+        <div className="admin-table-scroll overflow-auto">
+          <table className="admin-data-table w-full min-w-[1080px] text-sm text-white">
             <thead>
               <tr className="border-b border-white/10 text-left text-purple-200">
                 <th className="px-3 py-3">User</th>
@@ -111,7 +111,7 @@ export default function AdminUsersPage() {
                 <th className="px-3 py-3">Status</th>
                 <th className="px-3 py-3">Mobile</th>
                 <th className="px-3 py-3">Joined</th>
-                <th className="px-3 py-3">Actions</th>
+                <th className="admin-actions-cell px-3 py-3">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -134,8 +134,8 @@ export default function AdminUsersPage() {
                   </td>
                   <td className="px-3 py-3">{user.mobile || '—'}</td>
                   <td className="px-3 py-3">{new Date(user.created_at).toLocaleDateString()}</td>
-                  <td className="px-3 py-3">
-                    <div className="flex flex-wrap gap-2">
+                  <td className="admin-actions-cell px-3 py-3">
+                    <div className="admin-actions-row">
                       <Button variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => { setEditing(user); setForm({ ...emptyForm, ...user }); setModalOpen(true) }}><Pencil className="mr-2 h-4 w-4" />Edit</Button>
                       <Button variant="outline" className="border-cyan-400/20 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20" onClick={() => { setCreditUser(user); setCreditMode("add"); setCreditReason(""); setCreditModalOpen(true) }}><Coins className="mr-2 h-4 w-4" />Credits</Button>
                       <Button variant="outline" className="border-rose-400/20 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20" onClick={async () => { if (!window.confirm(`Delete ${user.email}?`)) return; try { await adminApi.deleteUser(user.id); toast.success("User deleted"); fetchUsers(skip) } catch (err: any) { toast.error(err?.response?.data?.detail || "Unable to delete user") } }}><Trash2 className="mr-2 h-4 w-4" />Delete</Button>
@@ -157,7 +157,7 @@ export default function AdminUsersPage() {
       </div>
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="border-purple-400/20 bg-gradient-to-br from-purple-950 to-slate-950 p-6 text-white shadow-2xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-purple-400/20 bg-gradient-to-br from-purple-950 to-slate-950 p-6 text-white shadow-2xl">
           <DialogHeader><DialogTitle>{editing ? 'Edit user' : 'Create user'}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <Input placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="border-white/20 bg-white/10 text-white placeholder:text-purple-200/70" />
@@ -174,7 +174,7 @@ export default function AdminUsersPage() {
       </Dialog>
 
       <Dialog open={creditModalOpen} onOpenChange={setCreditModalOpen}>
-        <DialogContent className="border-purple-400/20 bg-gradient-to-br from-purple-950 to-slate-950 p-6 text-white shadow-2xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-purple-400/20 bg-gradient-to-br from-purple-950 to-slate-950 p-6 text-white shadow-2xl">
           <DialogHeader><DialogTitle>Adjust credits {creditUser ? `for ${creditUser.email}` : ''}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <select value={creditMode} onChange={(e) => setCreditMode(e.target.value as any)} className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-white"><option value="add">Add credits</option><option value="deduct">Deduct credits</option></select>

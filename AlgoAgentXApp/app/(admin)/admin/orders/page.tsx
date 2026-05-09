@@ -85,8 +85,8 @@ export default function AdminOrdersPage() {
       <div className="mt-3 flex gap-2"><Button onClick={() => load(1)} className="rounded-xl">Apply Filters</Button><Button onClick={reset} variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"><RotateCcw className="mr-2 h-4 w-4" />Reset</Button></div>
     </div>
 
-    {error ? <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-rose-200">{error}</div> : <div className="overflow-auto rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
-      <table className="w-full min-w-[1600px] text-sm"><thead><tr className="border-b border-border/60 text-left text-muted-foreground">
+    {error ? <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-rose-200">{error}</div> : <div className="admin-table-scroll overflow-auto rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+      <table className="admin-data-table w-full min-w-[1600px] text-sm"><thead><tr className="border-b border-border/60 text-left text-muted-foreground">
         <th className="px-3 py-3">Date</th><th className="px-3 py-3">User</th><th className="px-3 py-3">Purchase</th><th className="px-3 py-3">Subtotal</th><th className="px-3 py-3">Coupon</th><th className="px-3 py-3">Discount</th><th className="px-3 py-3">Final USD</th><th className="px-3 py-3">Method</th><th className="px-3 py-3">Payable</th><th className="px-3 py-3">GST INR</th><th className="px-3 py-3">Provider</th><th className="px-3 py-3">Status</th><th className="px-3 py-3">Reference</th><th className="px-3 py-3">Action</th>
       </tr></thead><tbody>
         {loading ? <tr><td colSpan={14} className="px-3 py-8 text-muted-foreground">Loading orders...</td></tr> : items.length === 0 ? <tr><td colSpan={14} className="px-3 py-8 text-center text-muted-foreground">No data found</td></tr> : items.map(item => <tr key={item.id} className="border-b border-border/30 hover:bg-card/50 transition-colors">
@@ -106,7 +106,7 @@ export default function AdminOrdersPage() {
 
     <div className="flex items-center justify-between text-sm text-muted-foreground"><div>Showing {items.length} of {total}</div><div className="flex gap-2"><Button disabled={page <= 1} onClick={() => load(page - 1)} variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">Previous</Button><Button disabled={page * pageSize >= total} onClick={() => load(page + 1)} variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40">Next</Button></div></div>
 
-    <Dialog open={!!selected} onOpenChange={() => setSelected(null)}><DialogContent className="max-w-2xl rounded-xl border border-border/60 bg-card/95 text-foreground"><DialogHeader><DialogTitle>Order audit details</DialogTitle></DialogHeader>{selected && <div className="grid gap-2 text-sm md:grid-cols-2">
+    <Dialog open={!!selected} onOpenChange={() => setSelected(null)}><DialogContent className="max-h-[90vh] overflow-y-auto max-w-2xl rounded-xl border border-border/60 bg-card/95 text-foreground"><DialogHeader><DialogTitle>Order audit details</DialogTitle></DialogHeader>{selected && <div className="grid gap-2 text-sm md:grid-cols-2">
       {Object.entries(selected).map(([key, value]) => <div key={key} className="rounded-lg border border-border/40 bg-card/30 p-2"><div className="text-xs text-muted-foreground">{key}</div><div className="break-words text-foreground">{String(value ?? "—")}</div></div>)}
     </div>}<DialogFooter><Button variant="outline" onClick={() => setSelected(null)}>Close</Button></DialogFooter></DialogContent></Dialog>
   </div>

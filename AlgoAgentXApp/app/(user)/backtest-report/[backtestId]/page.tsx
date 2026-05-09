@@ -505,7 +505,7 @@ export default function BacktestReportPage() {
         <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl xl:col-span-2">
           <CardHeader><CardTitle>Trade List</CardTitle><CardDescription>{detail.trades.length} trades captured. Click any trade for full risk calculation details.</CardDescription></CardHeader>
           <CardContent>
-            <div className="max-h-[520px] overflow-auto rounded-lg border border-border/40">
+            <div className="responsive-table-wrapper max-h-[520px] overflow-auto rounded-lg border border-border/40">
               <table className="min-w-[1900px] w-full text-sm">
                 <thead className="sticky top-0 bg-card/90 text-left text-muted-foreground">
                   <tr>

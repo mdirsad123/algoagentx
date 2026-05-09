@@ -1,12 +1,10 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
 import { Toaster } from "sonner";
 import { cn } from "../lib/utils";
 import { ToastProvider } from "../components/shared/toast";
 
-const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "AlgoAgentX - AI Trading Intelligence",
@@ -21,8 +19,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={cn(inter.className, {
-        })}
+        className={cn("font-sans", {})}
       >
         <ToastProvider>
           <Providers>

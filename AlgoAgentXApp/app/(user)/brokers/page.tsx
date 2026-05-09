@@ -10,6 +10,7 @@ import { PageShell } from "@/components/ui/PageShell";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
 import type { BrokerAccount, BrokerConnectionResult, BrokerProvider, LiveMode } from "@/types/live-trading";
+import { getBackendCallbackUrl } from "@/lib/api-base";
 
 const emptyMt5Form = {
   account_label: "MT5 Demo",
@@ -21,12 +22,15 @@ const emptyMt5Form = {
   encrypted_password: "",
 };
 
-const emptyUpstoxForm = {
+const getDefaultUpstoxRedirectUri = () =>
+  process.env.NEXT_PUBLIC_UPSTOX_REDIRECT_URI || getBackendCallbackUrl("/api/v1/broker-accounts/upstox/callback");
+
+const makeEmptyUpstoxForm = () => ({
   account_label: "Upstox India",
   client_id: "",
   client_secret: "",
-  redirect_uri: "http://localhost:8000/api/v1/broker-accounts/upstox/callback",
-};
+  redirect_uri: getDefaultUpstoxRedirectUri(),
+});
 
 const formatDate = (value?: string | null) => (value ? new Date(value).toLocaleString() : "Not connected yet");
 const money = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -88,7 +92,7 @@ export default function BrokersPage() {
   const [showUpstoxForm, setShowUpstoxForm] = useState(false);
   const [editing, setEditing] = useState<BrokerAccount | null>(null);
   const [form, setForm] = useState(emptyMt5Form);
-  const [upstoxForm, setUpstoxForm] = useState(emptyUpstoxForm);
+  const [upstoxForm, setUpstoxForm] = useState(makeEmptyUpstoxForm);
   const [connectionResults, setConnectionResults] = useState<Record<string, BrokerConnectionResult>>({});
   const [connectingUpstox, setConnectingUpstox] = useState(false);
 
@@ -125,7 +129,7 @@ export default function BrokersPage() {
   };
 
   const openUpstox = () => {
-    setUpstoxForm(emptyUpstoxForm);
+    setUpstoxForm(makeEmptyUpstoxForm());
     setShowUpstoxForm(true);
   };
 
@@ -135,7 +139,7 @@ export default function BrokersPage() {
         account_label: broker.account_label || "Upstox India",
         client_id: broker.oauth_client_id || "",
         client_secret: "",
-        redirect_uri: broker.oauth_redirect_uri || emptyUpstoxForm.redirect_uri,
+        redirect_uri: broker.oauth_redirect_uri || getDefaultUpstoxRedirectUri(),
       });
       setEditing(broker);
       setShowUpstoxForm(true);
@@ -273,7 +277,7 @@ export default function BrokersPage() {
               <label className="text-sm text-purple-100">Upstox Client Secret<input value={upstoxForm.client_secret} onChange={(e) => setUpstoxForm({ ...upstoxForm, client_secret: e.target.value })} type="password" className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
               <label className="text-sm text-purple-100">Redirect URI<input value={upstoxForm.redirect_uri} onChange={(e) => setUpstoxForm({ ...upstoxForm, redirect_uri: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
             </div>
-            <div className="mt-4 rounded-xl border border-yellow-500/20 bg-yellow-500/10 p-3 text-sm text-yellow-100">This Redirect URI must match exactly inside Upstox Developer &gt; Apps. Default: http://localhost:8000/api/v1/broker-accounts/upstox/callback</div>
+            <div className="mt-4 rounded-xl border border-yellow-500/20 bg-yellow-500/10 p-3 text-sm text-yellow-100">This Redirect URI must match exactly inside Upstox Developer &gt; Apps. Default: {getDefaultUpstoxRedirectUri()}</div>
             <Button type="submit" disabled={saving || connectingUpstox} className="mt-5 gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400"><ExternalLink className="h-4 w-4" />{saving || connectingUpstox ? "Opening Upstox..." : "Save & Open Upstox OAuth"}</Button>
           </form>
         )}

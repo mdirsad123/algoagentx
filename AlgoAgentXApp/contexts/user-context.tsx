@@ -33,6 +33,17 @@ interface UserProviderProps {
   children: ReactNode;
 }
 
+const getCookieValue = (name: string): string | undefined => {
+  if (typeof document === "undefined") return undefined;
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : undefined;
+};
+
+const hasAuthToken = (): boolean => {
+  if (typeof window === "undefined") return false;
+  return Boolean(localStorage.getItem("access_token") || getCookieValue("accessToken"));
+};
+
 export const UserProvider: React.FC<UserProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -108,9 +119,17 @@ export const UserProvider: React.FC<UserProviderProps> = ({ children }) => {
     localStorage.removeItem('currentUser');
   };
 
-  // Initial fetch
+  // Initial fetch: only call /users/me when a session exists.
+  // Public pages like / must stay accessible without being redirected by a 401.
   useEffect(() => {
-    fetchUser();
+    if (hasAuthToken()) {
+      fetchUser();
+    } else {
+      setUser(null);
+      setIsLoading(false);
+      setError(null);
+      localStorage.removeItem('currentUser');
+    }
   }, []);
 
   const value: UserContextType = {

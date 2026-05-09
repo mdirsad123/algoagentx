@@ -493,7 +493,7 @@ export default function AdminPricingPage() {
               No pricing plans found. Create your first plan using <span className="font-medium text-foreground">Create Plan</span>.
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-border/50 bg-card/20">
+            <div className="admin-table-scroll overflow-x-auto rounded-xl border border-border/50 bg-card/20">
               <Table className="min-w-[1900px]">
                 <TableHeader>
                   <TableRow className="border-border/60 hover:bg-transparent">

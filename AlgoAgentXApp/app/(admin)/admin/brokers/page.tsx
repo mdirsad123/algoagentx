@@ -65,7 +65,7 @@ export default function AdminBrokersPage() {
         </div>
 
         <div className="mt-8 overflow-x-auto rounded-2xl border border-white/10">
-          <table className="min-w-full text-left text-sm text-purple-100">
+          <table className="admin-data-table min-w-full text-left text-sm text-purple-100">
             <thead className="bg-white/8 text-xs uppercase tracking-wide text-purple-200">
               <tr>
                 <th className="px-4 py-3">Code</th><th className="px-4 py-3">Name</th><th className="px-4 py-3">Market</th><th className="px-4 py-3">Auth</th><th className="px-4 py-3">Data</th><th className="px-4 py-3">Orders</th><th className="px-4 py-3">Websocket</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Action</th>

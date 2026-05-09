@@ -93,8 +93,8 @@ export default function AdminBacktestsPage() {
           {loading ? <div className="h-40 animate-pulse rounded-xl bg-card/20" /> : items.length === 0 ? (
             <div className="flex h-40 items-center justify-center text-muted-foreground">No backtests found</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
+            <div className="admin-table-scroll overflow-x-auto">
+              <table className="admin-data-table min-w-full text-sm">
                 <thead>
                   <tr className="border-b border-border/40 text-left text-muted-foreground">
                     {['Strategy','User','Instrument','TF','PnL','Return','Win Rate','Trades','Created','Actions'].map((h)=><th key={h} className="px-3 py-3 font-medium">{h}</th>)}

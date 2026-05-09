@@ -291,7 +291,7 @@ async def send_admin_login_otp_email(
     """
     sent = await send_email(email, "AlgoAgentX Admin Login OTP", html_body, message)
     if not sent and not settings.is_production:
-        logger.info("[AUTH DEV] Admin login OTP for %s: %s", email, otp)
+        logger.info("[AUTH DEV] Admin login OTP generated for %s (last2=%s)", email, otp[-2:])
     return sent
 
 

@@ -71,8 +71,8 @@ export default function AdminSubscriptionsPage() {
         </div>
 
         {error ? <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-rose-200">{error}</div> : (
-          <div className="overflow-auto rounded-xl border border-border/50 bg-card/20">
-            <table className="w-full min-w-[1240px] text-sm">
+          <div className="admin-table-scroll overflow-auto rounded-xl border border-border/50 bg-card/20">
+            <table className="admin-data-table w-full min-w-[1240px] text-sm">
               <thead>
                 <tr className="border-b border-border/60 text-left text-muted-foreground">
                   <th className="px-3 py-3">User</th>

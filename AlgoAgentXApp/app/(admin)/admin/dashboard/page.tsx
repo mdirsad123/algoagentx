@@ -159,8 +159,8 @@ function MiniBar({ label, value, total, tone = "bg-fuchsia-400" }: { label: stri
 function SimpleTable({ title, rows, columns, empty, href }: { title: string; rows: any[]; columns: { key: string; label: string; render?: (row: any) => React.ReactNode }[]; empty: string; href?: string }) {
   return (
     <SectionCard title={title} action={href ? <Button asChild size="sm" variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10"><Link href={href}>Open</Link></Button> : null}>
-      <div className="overflow-auto">
-        <table className="w-full min-w-[560px] text-sm">
+      <div className="admin-table-scroll overflow-auto">
+        <table className="admin-data-table w-full min-w-[560px] text-sm">
           <thead>
             <tr className="border-b border-white/10 text-left text-purple-200">
               {columns.map((col) => <th key={col.key} className="px-3 py-3 text-xs font-bold uppercase tracking-wider">{col.label}</th>)}
