@@ -1,0 +1,43 @@
+# AlgoAgentX API - Production Dockerfile
+# Place this file at: AlgoAgentXAPI/Dockerfile.prod
+FROM python:3.12-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PIP_NO_CACHE_DIR=1 \
+    POETRY_VERSION=1.8.5
+
+WORKDIR /app
+
+# System packages needed for PostgreSQL client, Python wheels, healthcheck, reports/data libs.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    curl \
+    libpq-dev \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir "poetry==$POETRY_VERSION" gunicorn
+
+# Install dependencies first for better build cache.
+COPY pyproject.toml poetry.lock* ./
+RUN poetry config virtualenvs.create false \
+    && poetry install --only main --no-interaction --no-ansi
+
+# Copy application code.
+COPY . .
+
+# Never run production API as root.
+RUN useradd --create-home --shell /bin/bash appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
+
+# Production command. Tune WEB_CONCURRENCY in .env if needed.
+CMD ["sh", "-c", "gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers ${WEB_CONCURRENCY:-2} --bind 0.0.0.0:8000 --timeout ${GUNICORN_TIMEOUT:-600} --access-logfile - --error-logfile -"]
