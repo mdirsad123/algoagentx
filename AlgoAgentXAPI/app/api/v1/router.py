@@ -14,7 +14,7 @@ from . import live_runner
 from . import live_trading_preview
 from . import profile_settings
 from . import admin_strategy_gate
-from . import broker_accounts, live_deployments, live_signals, live_orders, live_positions, live_logs, webhooks, admin_live, admin_live_settings, admin_live_trading_actions, admin_broker_providers, broker_instruments, live_approvals
+from . import broker_accounts, live_deployments, live_signals, live_orders, live_positions, live_logs, webhooks, admin_live, admin_live_settings, admin_live_trading_actions, admin_broker_providers, broker_instruments, live_approvals, mt5_agent
 
 api_router = APIRouter()
 
@@ -61,6 +61,7 @@ api_router.include_router(support_tickets.router, prefix="/support-tickets", tag
 api_router.include_router(support_tickets.admin_router, prefix="/admin/support-tickets", tags=["admin-support-tickets"])
 api_router.include_router(broker_accounts.router, prefix="/broker-accounts", tags=["broker-accounts"])
 api_router.include_router(broker_instruments.router, prefix="/broker-instruments", tags=["broker-instruments"])
+api_router.include_router(mt5_agent.router, prefix="/mt5-agent", tags=["mt5-agent"])
 api_router.include_router(live_deployments.router, prefix="/live/deployments", tags=["live-deployments"])
 api_router.include_router(live_signals.router, prefix="/live/signals", tags=["live-signals"])
 api_router.include_router(live_orders.router, prefix="/live/orders", tags=["live-orders"])

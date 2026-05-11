@@ -131,7 +131,7 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
     resolved_symbol = _resolve_symbol(deployment, broker)
     await _write_log(db, deployment, "CANDLE_REFRESH_STARTED", f"{source} candle refresh started for {resolved_symbol} {deployment.timeframe}", metadata={"count": safe_count, "source": source})
 
-    adapter = get_broker_adapter(broker)
+    adapter = get_broker_adapter(broker, db)
     try:
         rates = await adapter.get_rates(resolved_symbol, deployment.timeframe, safe_count)
     except Exception as exc:

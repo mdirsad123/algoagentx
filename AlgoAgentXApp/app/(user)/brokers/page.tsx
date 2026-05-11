@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle, Clock, Edit3, ExternalLink, Plus, RefreshCw, Trash2, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle, Clock, Copy, Download, Edit3, ExternalLink, KeyRound, Plus, RefreshCw, Trash2, WifiOff, X, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -9,8 +9,12 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { PageShell } from "@/components/ui/PageShell";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
-import type { BrokerAccount, BrokerConnectionResult, BrokerProvider, LiveMode } from "@/types/live-trading";
+import type { BrokerAccount, BrokerConnectionResult, BrokerProvider, LiveMode, MT5AgentStatus } from "@/types/live-trading";
 import { getBackendCallbackUrl } from "@/lib/api-base";
+
+const CRYPTO_CODES = new Set(["BINANCE", "BYBIT", "OKX"]);
+
+type ActiveForm = null | "MT5" | "UPSTOX" | "CRYPTO";
 
 const emptyMt5Form = {
   account_label: "MT5 Demo",
@@ -19,66 +23,69 @@ const emptyMt5Form = {
   mode: "DEMO" as LiveMode,
   server_name: "",
   login_id: "",
-  encrypted_password: "",
 };
-
-const getDefaultUpstoxRedirectUri = () =>
-  process.env.NEXT_PUBLIC_UPSTOX_REDIRECT_URI || getBackendCallbackUrl("/api/v1/broker-accounts/upstox/callback");
 
 const makeEmptyUpstoxForm = () => ({
   account_label: "Upstox India",
   client_id: "",
   client_secret: "",
-  redirect_uri: getDefaultUpstoxRedirectUri(),
+  redirect_uri: process.env.NEXT_PUBLIC_UPSTOX_REDIRECT_URI || getBackendCallbackUrl("/api/v1/broker-accounts/upstox/callback"),
 });
+
+const makeEmptyCryptoForm = (code = "BINANCE") => ({
+  code,
+  account_label: `${displayBrokerName(code)} API`,
+  api_key: "",
+  api_secret: "",
+  passphrase: "",
+});
+
+function displayBrokerName(code?: string | null) {
+  const value = String(code || "").toUpperCase();
+  if (value === "UPSTOX") return "Upstox India";
+  if (value === "MT5") return "MT5 Agent / MetaTrader 5";
+  if (value === "ANGEL_ONE") return "Angel One";
+  if (value === "BINANCE") return "Binance";
+  if (value === "BYBIT") return "Bybit";
+  if (value === "OKX") return "OKX";
+  if (value === "ZERODHA") return "Zerodha Kite";
+  if (value === "DHAN") return "Dhan";
+  if (value === "GROWW") return "Groww";
+  return value || "Broker";
+}
 
 const formatDate = (value?: string | null) => (value ? new Date(value).toLocaleString() : "Not connected yet");
 const money = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+const brokerCodeOf = (broker: BrokerAccount) => (broker.broker_code || broker.broker_name || "").toUpperCase();
+const statusOf = (broker: BrokerAccount, agent?: MT5AgentStatus | null) => {
+  const code = brokerCodeOf(broker);
+  if (code === "MT5" && agent?.status !== "CONNECTED" && broker.status === "CONNECTED") return "AGENT_OFFLINE";
+  return String(broker.status || "DISCONNECTED").toUpperCase();
+};
 
 function statusBadge(status: string) {
-  const normalized = status?.toUpperCase();
+  const normalized = String(status || "DISCONNECTED").toUpperCase();
   if (normalized === "CONNECTED") return <Badge className="border-green-500/30 bg-green-500/20 text-green-100">Connected</Badge>;
+  if (normalized === "PENDING_AUTH") return <Badge className="border-blue-500/30 bg-blue-500/20 text-blue-100">Pending Auth</Badge>;
+  if (normalized === "AGENT_OFFLINE") return <Badge className="border-orange-500/30 bg-orange-500/20 text-orange-100">Agent Offline</Badge>;
+  if (normalized === "COMING_SOON") return <Badge className="border-white/20 bg-white/10 text-purple-100">Coming Soon</Badge>;
   if (normalized === "ERROR") return <Badge className="border-yellow-500/30 bg-yellow-500/20 text-yellow-100">Error</Badge>;
-  if (normalized === "EXPIRED") return <Badge className="border-orange-500/30 bg-orange-500/20 text-orange-100">Expired</Badge>;
   return <Badge className="border-red-500/30 bg-red-500/20 text-red-100">Disconnected</Badge>;
 }
 
-function providerCard(provider: BrokerProvider, onMt5: () => void, onUpstox: () => void, connectingUpstox: boolean) {
-  const code = provider.code?.toUpperCase();
-  const isMt5 = code === "MT5";
-  const isUpstox = code === "UPSTOX";
-  const canConnect = provider.is_enabled && (isMt5 || isUpstox);
-  return (
-    <div key={provider.id} className="rounded-2xl border border-white/10 bg-white/5 p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-lg font-bold text-white">{provider.name}</div>
-          <div className="mt-1 text-sm text-purple-200">{provider.market_type} • {provider.auth_type}</div>
-        </div>
-        {provider.is_enabled ? <Badge className="bg-lime-500/20 text-lime-100">Enabled</Badge> : <Badge className="bg-red-500/20 text-red-100">Disabled</Badge>}
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2 text-xs">
-        {provider.supports_market_data && <Badge className="bg-white/10 text-purple-100">Market data</Badge>}
-        {provider.supports_orders && <Badge className="bg-white/10 text-purple-100">Orders</Badge>}
-        {provider.supports_websocket && <Badge className="bg-white/10 text-purple-100">Websocket</Badge>}
-        {provider.supports_demo && <Badge className="bg-white/10 text-purple-100">Demo</Badge>}
-      </div>
-      <p className="mt-4 min-h-[42px] text-sm text-purple-200">
-        {isMt5
-          ? "Connect your local MT5 demo terminal for DEMO execution."
-          : isUpstox
-            ? "Connect your own Upstox developer app credentials. OAuth tokens stay encrypted."
-            : "Future broker placeholder."}
-      </p>
-      <Button
-        disabled={!canConnect || connectingUpstox}
-        onClick={isMt5 ? onMt5 : onUpstox}
-        className={canConnect ? "mt-4 gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400" : "mt-4 bg-white/10 text-purple-200"}
-      >
-        {isMt5 ? "Add MT5 Demo" : isUpstox ? <><ExternalLink className="h-4 w-4" /> {connectingUpstox ? "Opening..." : "Connect Upstox"}</> : "Coming later"}
-      </Button>
-    </div>
+function agentStatusBadge(agent?: MT5AgentStatus | null) {
+  return agent?.status === "CONNECTED" ? (
+    <Badge className="border-green-500/30 bg-green-500/20 text-green-100">Agent Connected</Badge>
+  ) : (
+    <Badge className="border-orange-500/30 bg-orange-500/20 text-orange-100">Agent Disconnected</Badge>
   );
+}
+
+function categoryTitle(provider: BrokerProvider) {
+  const code = provider.code?.toUpperCase();
+  if (CRYPTO_CODES.has(code)) return "Crypto API Broker";
+  if (code === "MT5") return "MT5 Agent Broker";
+  return provider.broker_category || "Cloud Broker";
 }
 
 export default function BrokersPage() {
@@ -88,16 +95,33 @@ export default function BrokersPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
-  const [showMt5Form, setShowMt5Form] = useState(false);
-  const [showUpstoxForm, setShowUpstoxForm] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [activeForm, setActiveForm] = useState<ActiveForm>(null);
   const [editing, setEditing] = useState<BrokerAccount | null>(null);
   const [form, setForm] = useState(emptyMt5Form);
   const [upstoxForm, setUpstoxForm] = useState(makeEmptyUpstoxForm);
+  const [cryptoForm, setCryptoForm] = useState(makeEmptyCryptoForm("BINANCE"));
   const [connectionResults, setConnectionResults] = useState<Record<string, BrokerConnectionResult>>({});
   const [connectingUpstox, setConnectingUpstox] = useState(false);
+  const [agentStatuses, setAgentStatuses] = useState<Record<string, MT5AgentStatus | null>>({});
+  const [generatedAgentToken, setGeneratedAgentToken] = useState("");
+  const [generatingAgentToken, setGeneratingAgentToken] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<BrokerAccount | null>(null);
+  const [deleteWarning, setDeleteWarning] = useState<string | null>(null);
+  const [deleteForce, setDeleteForce] = useState(false);
 
   const mt5Provider = providers.find((p) => p.code === "MT5");
-  const connectedCount = useMemo(() => brokers.filter((b) => b.status === "CONNECTED").length, [brokers]);
+  const connectedCount = useMemo(() => brokers.filter((b) => statusOf(b, agentStatuses[b.id]) === "CONNECTED").length, [brokers, agentStatuses]);
+  const groupedProviders = useMemo(() => {
+    const groups: Record<string, BrokerProvider[]> = { "Cloud Brokers": [], "Crypto API Brokers": [], "Forex / MT5 Brokers": [] };
+    providers.forEach((provider) => {
+      const code = provider.code.toUpperCase();
+      if (CRYPTO_CODES.has(code)) groups["Crypto API Brokers"].push(provider);
+      else if (code === "MT5" || code === "CTRADER_API") groups["Forex / MT5 Brokers"].push(provider);
+      else groups["Cloud Brokers"].push(provider);
+    });
+    return groups;
+  }, [providers]);
 
   const load = async () => {
     try {
@@ -105,6 +129,11 @@ export default function BrokersPage() {
       const [providerRows, accountRows] = await Promise.all([liveTradingApi.listAvailableBrokerProviders(), liveTradingApi.listBrokerAccounts()]);
       setProviders(providerRows);
       setBrokers(accountRows);
+      const mt5Rows = accountRows.filter((b) => brokerCodeOf(b) === "MT5");
+      const statusEntries = await Promise.all(mt5Rows.map(async (b) => {
+        try { return [b.id, await liveTradingApi.getMt5AgentStatus(b.id)] as const; } catch { return [b.id, null] as const; }
+      }));
+      setAgentStatuses(Object.fromEntries(statusEntries));
     } catch (error: any) {
       showToast(error.message || "Failed to load broker accounts", "error");
     } finally {
@@ -122,32 +151,54 @@ export default function BrokersPage() {
     }
   }, []);
 
-  const openCreate = () => {
+  const closeConnect = () => {
+    setConnectOpen(false);
+    setActiveForm(null);
     setEditing(null);
-    setForm(emptyMt5Form);
-    setShowMt5Form(true);
+    setGeneratedAgentToken("");
   };
 
-  const openUpstox = () => {
-    setUpstoxForm(makeEmptyUpstoxForm());
-    setShowUpstoxForm(true);
+  const openSelector = () => {
+    setEditing(null);
+    setActiveForm(null);
+    setGeneratedAgentToken("");
+    setConnectOpen(true);
   };
 
-  const openEdit = (broker: BrokerAccount) => {
-    if ((broker.broker_code || broker.broker_name || "").toUpperCase() === "UPSTOX") {
-      setUpstoxForm({
-        account_label: broker.account_label || "Upstox India",
-        client_id: broker.oauth_client_id || "",
-        client_secret: "",
-        redirect_uri: broker.oauth_redirect_uri || getDefaultUpstoxRedirectUri(),
-      });
-      setEditing(broker);
-      setShowUpstoxForm(true);
-      return;
-    }
-    setEditing(broker);
-    setForm({ account_label: broker.account_label || "MT5 Demo", broker_name: broker.broker_name || "MT5", broker_code: broker.broker_code || broker.broker_name || "MT5", mode: "DEMO", server_name: broker.server_name || "", login_id: broker.login_id || "", encrypted_password: "" });
-    setShowMt5Form(true);
+  const openMt5Form = (broker?: BrokerAccount | null) => {
+    setEditing(broker || null);
+    setGeneratedAgentToken("");
+    setForm(broker ? { ...emptyMt5Form, account_label: broker.account_label || "MT5 Demo", server_name: broker.server_name || "", login_id: broker.login_id || "" } : emptyMt5Form);
+    setActiveForm("MT5");
+    setConnectOpen(true);
+  };
+
+  const openUpstoxForm = (broker?: BrokerAccount | null) => {
+    setEditing(broker || null);
+    setUpstoxForm(broker ? {
+      account_label: broker.account_label || "Upstox India",
+      client_id: broker.oauth_client_id || "",
+      client_secret: "",
+      redirect_uri: broker.oauth_redirect_uri || makeEmptyUpstoxForm().redirect_uri,
+    } : makeEmptyUpstoxForm());
+    setActiveForm("UPSTOX");
+    setConnectOpen(true);
+  };
+
+  const openCryptoForm = (code: string, broker?: BrokerAccount | null) => {
+    const normalized = code.toUpperCase();
+    setEditing(broker || null);
+    setCryptoForm({ ...makeEmptyCryptoForm(normalized), account_label: broker?.account_label || `${displayBrokerName(normalized)} API` });
+    setActiveForm("CRYPTO");
+    setConnectOpen(true);
+  };
+
+  const reconnect = (broker: BrokerAccount) => {
+    const code = brokerCodeOf(broker);
+    if (code === "MT5") return openMt5Form(broker);
+    if (code === "UPSTOX") return openUpstoxForm(broker);
+    if (CRYPTO_CODES.has(code)) return openCryptoForm(code, broker);
+    showToast("This broker is coming soon. Connection flow is not implemented yet.", "error");
   };
 
   const submitMt5 = async (event: FormEvent) => {
@@ -158,26 +209,22 @@ export default function BrokersPage() {
         broker_provider_id: mt5Provider?.id || null,
         broker_name: "MT5",
         broker_code: "MT5",
-        auth_type: "PASSWORD",
+        auth_type: "MT5_AGENT",
         account_label: form.account_label,
         mode: "DEMO" as const,
         status: editing?.status || "DISCONNECTED" as const,
         server_name: form.server_name || null,
         login_id: form.login_id || null,
-        encrypted_password: form.encrypted_password || null,
-        metadata_json: { provider: "MT5", phase: "phase14-1-safe" },
+        metadata_json: { provider: "MT5", setup_mode: "MT5_AGENT", mt5_agent: { status: "AGENT_REQUIRED", message: "Install AlgoAgentX MT5 Agent on your Windows PC or VPS where MetaTrader 5 is running." } },
       };
-      if (editing) {
-        await liveTradingApi.updateBrokerAccount(editing.id, payload);
-        showToast("MT5 demo account updated", "success");
-      } else {
-        await liveTradingApi.createBrokerAccount(payload);
-        showToast("MT5 demo account added", "success");
-      }
-      setShowMt5Form(false);
+      const savedAccount = editing ? await liveTradingApi.updateBrokerAccount(editing.id, payload) : await liveTradingApi.createBrokerAccount(payload);
+      const tokenResult = await liveTradingApi.generateMt5AgentToken(savedAccount.id, "DEMO");
+      setGeneratedAgentToken(tokenResult.agent_token);
+      setEditing(savedAccount);
+      showToast("MT5 Agent token generated. Copy it now; it is shown only once.", "success");
       await load();
     } catch (error: any) {
-      showToast(error.message || "Failed to save broker account", "error");
+      showToast(error.message || "Failed to save MT5 Agent account", "error");
     } finally {
       setSaving(false);
     }
@@ -192,24 +239,19 @@ export default function BrokersPage() {
     try {
       setSaving(true);
       setConnectingUpstox(true);
-      let account: BrokerAccount;
-      if (editing) {
-        account = await liveTradingApi.updateBrokerAccount(editing.id, {
-          account_label: upstoxForm.account_label,
-          broker_name: "UPSTOX",
-          broker_code: "UPSTOX",
-          auth_type: "OAUTH2",
-          mode: "DEMO",
-          status: "DISCONNECTED",
-          server_name: "Upstox API v2",
-          oauth_client_id: upstoxForm.client_id,
-          encrypted_client_secret: upstoxForm.client_secret,
-          oauth_redirect_uri: upstoxForm.redirect_uri,
-          metadata_json: { provider: "UPSTOX", market: "INDIAN_EQUITY", credential_mode: "BYO" },
-        });
-      } else {
-        account = await liveTradingApi.createUpstoxBrokerAccount({ ...upstoxForm, redirect_after: "/brokers" });
-      }
+      const account = editing ? await liveTradingApi.updateBrokerAccount(editing.id, {
+        account_label: upstoxForm.account_label,
+        broker_name: "UPSTOX",
+        broker_code: "UPSTOX",
+        auth_type: "OAUTH2",
+        mode: "DEMO",
+        status: "PENDING_AUTH",
+        server_name: "Upstox API v2",
+        oauth_client_id: upstoxForm.client_id,
+        encrypted_client_secret: upstoxForm.client_secret,
+        oauth_redirect_uri: upstoxForm.redirect_uri,
+        metadata_json: { provider: "UPSTOX", market: "INDIAN_EQUITY", credential_mode: "BYO" },
+      }) : await liveTradingApi.createUpstoxBrokerAccount({ ...upstoxForm, redirect_after: "/brokers" });
       const result = await liveTradingApi.getUpstoxAccountConnectUrl(account.id, "/brokers");
       window.location.href = result.auth_url;
     } catch (error: any) {
@@ -220,9 +262,60 @@ export default function BrokersPage() {
     }
   };
 
-  const remove = async (id: string) => {
-    if (!confirm("Delete this broker account?")) return;
-    try { await liveTradingApi.deleteBrokerAccount(id); showToast("Broker account deleted", "success"); await load(); } catch (error: any) { showToast(error.message || "Failed to delete broker account", "error"); }
+  const submitCrypto = async (event: FormEvent) => {
+    event.preventDefault();
+    const code = cryptoForm.code.toUpperCase();
+    try {
+      setSaving(true);
+      const payload = {
+        broker_name: code,
+        broker_code: code,
+        auth_type: "API_KEY_SECRET",
+        account_label: cryptoForm.account_label,
+        mode: "DEMO" as const,
+        status: "DISCONNECTED" as const,
+        server_name: `${displayBrokerName(code)} API`,
+        login_id: "API key saved",
+        encrypted_api_key: cryptoForm.api_key,
+        encrypted_api_secret: cryptoForm.api_secret,
+        encrypted_api_passphrase: code === "OKX" ? cryptoForm.passphrase : null,
+        metadata_json: { provider: code, market: "CRYPTO", setup_mode: "API_KEY_SECRET", live_orders_enabled: false },
+      };
+      const account = editing ? await liveTradingApi.updateBrokerAccount(editing.id, payload) : await liveTradingApi.createBrokerAccount(payload);
+      const result = await liveTradingApi.testBrokerConnection(account.id);
+      setConnectionResults((prev) => ({ ...prev, [account.id]: result.connection }));
+      showToast(result.connection.message || "Crypto API connection checked", result.connection.connected ? "success" : "error");
+      closeConnect();
+      await load();
+    } catch (error: any) {
+      showToast(error.message || "Failed to save crypto API broker", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const copyText = async (text: string, label = "Copied") => {
+    try { await navigator.clipboard.writeText(text); showToast(label, "success"); } catch { showToast("Copy failed. Please copy manually.", "error"); }
+  };
+
+  const downloadMt5Agent = () => window.open(liveTradingApi.getMt5AgentDownloadUrl(), "_blank", "noopener,noreferrer");
+
+  const generateAgentToken = async (broker: BrokerAccount) => {
+    try {
+      setGeneratingAgentToken(true);
+      const result = await liveTradingApi.generateMt5AgentToken(broker.id, "DEMO");
+      setGeneratedAgentToken(result.agent_token);
+      setEditing(broker);
+      setForm({ ...emptyMt5Form, account_label: broker.account_label || "MT5 Demo", server_name: broker.server_name || "", login_id: broker.login_id || "" });
+      setActiveForm("MT5");
+      setConnectOpen(true);
+      showToast("MT5 Agent token generated. Copy it now; it is shown only once.", "success");
+      await load();
+    } catch (error: any) {
+      showToast(error.message || "Failed to generate MT5 Agent token", "error");
+    } finally {
+      setGeneratingAgentToken(false);
+    }
   };
 
   const testConnection = async (broker: BrokerAccount) => {
@@ -232,16 +325,43 @@ export default function BrokersPage() {
       setConnectionResults((prev) => ({ ...prev, [broker.id]: result.connection }));
       showToast(result.connection.message || (result.connection.connected ? "Broker connected" : "Broker connection failed"), result.connection.connected ? "success" : "error");
       await load();
-    } catch (error: any) { showToast(error.message || "Connection test failed", "error"); } finally { setTestingId(null); }
+    } catch (error: any) {
+      showToast(error.message || "Connection test failed", "error");
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await liveTradingApi.deleteBrokerAccount(deleteTarget.id, deleteForce);
+      showToast("Broker account deleted", "success");
+      setDeleteTarget(null);
+      setDeleteWarning(null);
+      setDeleteForce(false);
+      await load();
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail;
+      if (error?.response?.status === 409) {
+        setDeleteWarning(typeof detail === "string" ? detail : detail?.message || error.message || "This broker is used by active deployments.");
+        setDeleteForce(true);
+      } else {
+        showToast(error.message || "Failed to delete broker account", "error");
+      }
+    }
   };
 
   return (
     <PageShell>
-      <PageHeader title="Brokers" subtitle="Manage your trading workspace" />
+      <PageHeader title="Brokers" subtitle="Manage broker connections with safe status, test, reconnect, edit, and delete flows." />
       <GlassCard className="p-6" hoverEffect={false}>
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
-          <div><h1 className="text-2xl font-bold text-lime-300">Broker Accounts</h1><p className="mt-2 text-purple-100">Multi-broker framework is ready. MT5 works now; Upstox uses SaaS-safe BYO OAuth credentials per user.</p></div>
-          <Button onClick={openCreate} className="gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400"><Plus className="h-4 w-4" /> Add MT5 Demo Account</Button>
+          <div>
+            <h1 className="text-2xl font-bold text-white">Broker Accounts</h1>
+            <p className="mt-2 text-purple-100">Connect Cloud, Crypto API, and MT5 Agent brokers. Secrets stay encrypted and are never returned to the frontend.</p>
+          </div>
+          <Button onClick={openSelector} className="gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400"><Plus className="h-4 w-4" /> Connect Broker</Button>
         </div>
 
         <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -250,57 +370,131 @@ export default function BrokersPage() {
           <div className="rounded-xl border border-white/10 bg-white/5 p-4"><p className="text-sm text-purple-200">Available Providers</p><p className="mt-2 text-2xl font-bold text-white">{providers.length}</p></div>
         </div>
 
-        <h2 className="mt-8 text-xl font-bold text-white">Choose Broker Provider</h2>
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">{providers.map((p) => providerCard(p, openCreate, openUpstox, connectingUpstox))}</div>
-
-        {showMt5Form && (
-          <form onSubmit={submitMt5} className="mt-8 rounded-2xl border border-white/10 bg-black/10 p-5">
-            <div className="mb-4 flex items-center justify-between gap-4"><div><h2 className="text-lg font-bold text-white">{editing ? "Edit MT5 Demo Account" : "Add MT5 Demo Account"}</h2><p className="text-sm text-purple-200">Credentials are encrypted on backend and never returned to frontend.</p></div><Button type="button" variant="ghost" className="text-purple-100 hover:bg-white/10" onClick={() => setShowMt5Form(false)}>Cancel</Button></div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <label className="text-sm text-purple-100">Account Label<input value={form.account_label} onChange={(e) => setForm({ ...form, account_label: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
-              <label className="text-sm text-purple-100">Provider<input value="MT5 / MetaTrader 5" readOnly className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" /></label>
-              <label className="text-sm text-purple-100">Mode<input value="DEMO" readOnly className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" /></label>
-              <label className="text-sm text-purple-100">Server Name<input value={form.server_name} onChange={(e) => setForm({ ...form, server_name: e.target.value })} placeholder="Exness-MT5Trial17" className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
-              <label className="text-sm text-purple-100">Login ID<input value={form.login_id} onChange={(e) => setForm({ ...form, login_id: e.target.value })} placeholder="463345714" className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
-              <label className="text-sm text-purple-100">Password<input value={form.encrypted_password} onChange={(e) => setForm({ ...form, encrypted_password: e.target.value })} type="password" placeholder={editing ? "Leave blank to keep existing" : "Investor/trading password"} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required={!editing} /></label>
+        {connectOpen && (
+          <div className="mt-8 rounded-2xl border border-white/10 bg-black/20 p-5 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between gap-4">
+              <div><h2 className="text-xl font-bold text-white">{activeForm ? (editing ? "Reconnect / Edit Broker" : "Connect Broker") : "Connect Broker"}</h2><p className="text-sm text-purple-200">Choose a provider and complete the correct setup flow.</p></div>
+              <Button type="button" variant="ghost" className="text-purple-100 hover:bg-white/10" onClick={closeConnect}><X className="mr-2 h-4 w-4" /> Close</Button>
             </div>
-            <Button type="submit" disabled={saving} className="mt-5 bg-lime-500 text-slate-950 hover:bg-lime-400">{saving ? "Saving..." : "Save Broker Account"}</Button>
-          </form>
-        )}
 
-        {showUpstoxForm && (
-          <form onSubmit={submitUpstox} className="mt-8 rounded-2xl border border-white/10 bg-black/10 p-5">
-            <div className="mb-4 flex items-center justify-between gap-4"><div><h2 className="text-lg font-bold text-white">{editing ? "Reconnect Upstox" : "Connect Upstox"}</h2><p className="text-sm text-purple-200">Use the exact Client ID and Redirect URI registered in your Upstox Developer app.</p></div><Button type="button" variant="ghost" className="text-purple-100 hover:bg-white/10" onClick={() => { setShowUpstoxForm(false); setEditing(null); }}>Cancel</Button></div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <label className="text-sm text-purple-100">Account Label<input value={upstoxForm.account_label} onChange={(e) => setUpstoxForm({ ...upstoxForm, account_label: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
-              <label className="text-sm text-purple-100">Upstox Client ID / API Key<input value={upstoxForm.client_id} onChange={(e) => setUpstoxForm({ ...upstoxForm, client_id: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
-              <label className="text-sm text-purple-100">Upstox Client Secret<input value={upstoxForm.client_secret} onChange={(e) => setUpstoxForm({ ...upstoxForm, client_secret: e.target.value })} type="password" className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
-              <label className="text-sm text-purple-100">Redirect URI<input value={upstoxForm.redirect_uri} onChange={(e) => setUpstoxForm({ ...upstoxForm, redirect_uri: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
-            </div>
-            <div className="mt-4 rounded-xl border border-yellow-500/20 bg-yellow-500/10 p-3 text-sm text-yellow-100">This Redirect URI must match exactly inside Upstox Developer &gt; Apps. Default: {getDefaultUpstoxRedirectUri()}</div>
-            <Button type="submit" disabled={saving || connectingUpstox} className="mt-5 gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400"><ExternalLink className="h-4 w-4" />{saving || connectingUpstox ? "Opening Upstox..." : "Save & Open Upstox OAuth"}</Button>
-          </form>
+            {!activeForm && (
+              <div className="space-y-6">
+                {Object.entries(groupedProviders).map(([title, rows]) => rows.length ? (
+                  <div key={title}>
+                    <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-purple-200">{title}</h3>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {rows.map((provider) => {
+                        const code = provider.code.toUpperCase();
+                        const isReady = provider.is_enabled && (code === "MT5" || code === "UPSTOX" || CRYPTO_CODES.has(code));
+                        return (
+                          <button key={provider.id} type="button" disabled={!isReady} onClick={() => code === "MT5" ? openMt5Form() : code === "UPSTOX" ? openUpstoxForm() : CRYPTO_CODES.has(code) ? openCryptoForm(code) : undefined} className={`rounded-2xl border p-4 text-left transition ${isReady ? "border-white/10 bg-white/5 hover:bg-white/10" : "border-white/5 bg-white/[0.03] opacity-60"}`}>
+                            <div className="flex items-start justify-between gap-3"><div><div className="font-bold text-white">{provider.display_name || provider.name || displayBrokerName(code)}</div><div className="mt-1 text-xs text-purple-200">{categoryTitle(provider)} • {provider.setup_mode || provider.auth_type}</div></div>{isReady ? <Badge className="bg-lime-500/20 text-lime-100">Ready</Badge> : <Badge className="bg-white/10 text-purple-100">Coming Soon</Badge>}</div>
+                            <p className="mt-3 text-sm text-purple-200">{provider.description || (code === "MT5" ? "Use the Windows MT5 Agent where your terminal is running." : CRYPTO_CODES.has(code) ? "Connect with exchange API key and secret. Live orders stay disabled in this phase." : "Cloud broker OAuth/API setup.")}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null)}
+              </div>
+            )}
+
+            {activeForm === "MT5" && (
+              <form onSubmit={submitMt5} className="space-y-4">
+                <div className="rounded-xl border border-blue-400/20 bg-blue-500/10 p-4 text-sm text-blue-100">
+                  <div className="font-semibold text-white">Install AlgoAgentX MT5 Agent on your Windows PC or VPS where MetaTrader 5 is running.</div>
+                  <ol className="mt-3 list-decimal space-y-1 pl-5"><li>Install MetaTrader 5 on Windows/VPS.</li><li>Login to your broker account.</li><li>Enable Algo Trading.</li><li>Download AlgoAgentX MT5 Agent.</li><li>Paste the Agent Token into config.json.</li><li>Run the Agent.</li></ol>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <label className="text-sm text-purple-100">Account Label<input value={form.account_label} onChange={(e) => setForm({ ...form, account_label: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
+                  <label className="text-sm text-purple-100">Provider<input value="MT5 Agent / MetaTrader 5" readOnly className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" /></label>
+                  <label className="text-sm text-purple-100">Trading Mode<input value="DEMO" readOnly className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" /></label>
+                </div>
+                {editing && agentStatuses[editing.id] && <AgentStatusPanel agent={agentStatuses[editing.id]} />}
+                {generatedAgentToken && <TokenPanel token={generatedAgentToken} onCopy={() => copyText(generatedAgentToken, "Agent token copied")} />}
+                <div className="flex flex-wrap gap-2"><Button type="submit" disabled={saving || generatingAgentToken} className="bg-lime-500 text-slate-950 hover:bg-lime-400">{saving ? "Saving..." : editing ? "Generate New Agent Token" : "Save & Generate Agent Token"}</Button><Button type="button" onClick={downloadMt5Agent} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Download className="h-4 w-4" /> Download Agent</Button>{editing && <Button type="button" onClick={() => testConnection(editing)} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Test Agent Connection</Button>}</div>
+              </form>
+            )}
+
+            {activeForm === "UPSTOX" && (
+              <form onSubmit={submitUpstox} className="space-y-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <label className="text-sm text-purple-100">Account Label<input value={upstoxForm.account_label} onChange={(e) => setUpstoxForm({ ...upstoxForm, account_label: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
+                  <label className="text-sm text-purple-100">Client ID / API Key<input value={upstoxForm.client_id} onChange={(e) => setUpstoxForm({ ...upstoxForm, client_id: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
+                  <label className="text-sm text-purple-100">Client Secret<input value={upstoxForm.client_secret} onChange={(e) => setUpstoxForm({ ...upstoxForm, client_secret: e.target.value })} type="password" className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
+                  <label className="text-sm text-purple-100">Redirect URI<div className="mt-1 flex gap-2"><input value={upstoxForm.redirect_uri} readOnly className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" /><Button type="button" onClick={() => copyText(upstoxForm.redirect_uri, "Redirect URI copied")} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Copy className="h-4 w-4" /> Copy</Button></div></label>
+                </div>
+                <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/10 p-3 text-sm text-yellow-100">Use this exact Redirect URI in your broker developer app.</div>
+                <Button type="submit" disabled={saving || connectingUpstox} className="gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400"><ExternalLink className="h-4 w-4" />{saving || connectingUpstox ? "Opening OAuth..." : "Save & Open OAuth"}</Button>
+              </form>
+            )}
+
+            {activeForm === "CRYPTO" && (
+              <form onSubmit={submitCrypto} className="space-y-4">
+                <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/10 p-3 text-sm text-yellow-100">Create API key with read/trade permission only. Do not enable withdrawal permission.</div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <label className="text-sm text-purple-100">Broker<input value={displayBrokerName(cryptoForm.code)} readOnly className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" /></label>
+                  <label className="text-sm text-purple-100">Account Label<input value={cryptoForm.account_label} onChange={(e) => setCryptoForm({ ...cryptoForm, account_label: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
+                  <label className="text-sm text-purple-100">API Key<input value={cryptoForm.api_key} onChange={(e) => setCryptoForm({ ...cryptoForm, api_key: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
+                  <label className="text-sm text-purple-100">API Secret<input value={cryptoForm.api_secret} onChange={(e) => setCryptoForm({ ...cryptoForm, api_secret: e.target.value })} type="password" className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
+                  {cryptoForm.code.toUpperCase() === "OKX" && <label className="text-sm text-purple-100">API Passphrase<input value={cryptoForm.passphrase} onChange={(e) => setCryptoForm({ ...cryptoForm, passphrase: e.target.value })} type="password" className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>}
+                </div>
+                <Button type="submit" disabled={saving} className="gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400"><KeyRound className="h-4 w-4" />{saving ? "Testing..." : "Save & Test Connection"}</Button>
+              </form>
+            )}
+          </div>
         )}
 
         <div className="mt-8 space-y-4">
           {loading && <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-purple-100">Loading broker accounts...</div>}
-          {!loading && brokers.length === 0 && <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-purple-100">No broker accounts yet. Add MT5 demo or connect Upstox to start.</div>}
+          {!loading && brokers.length === 0 && <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-purple-100">No broker accounts yet. Click Connect Broker to start.</div>}
           {brokers.map((broker) => {
             const result = connectionResults[broker.id];
-            const last = (broker.metadata_json as any)?.last_test;
-            const isUpstox = (broker.broker_code || broker.broker_name || "").toUpperCase() === "UPSTOX";
+            const last = result || (broker.last_connection_result as any) || (broker.metadata_json as any)?.last_test;
+            const code = brokerCodeOf(broker);
+            const isUpstox = code === "UPSTOX";
+            const isMt5 = code === "MT5";
+            const isCrypto = CRYPTO_CODES.has(code);
+            const agent = isMt5 ? agentStatuses[broker.id] : null;
+            const normalizedStatus = statusOf(broker, agent);
             return (
               <div key={broker.id} className="rounded-2xl border border-white/10 bg-white/5 p-5">
                 <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-                  <div className="flex items-start gap-3">{broker.status === "CONNECTED" ? <CheckCircle className="h-5 w-5 text-green-300" /> : broker.status === "ERROR" ? <AlertCircle className="h-5 w-5 text-yellow-300" /> : <XCircle className="h-5 w-5 text-red-300" />}<div><div className="flex flex-wrap items-center gap-2"><h3 className="text-lg font-bold text-white">{broker.account_label}</h3>{statusBadge(broker.status)}<Badge className="bg-white/10 text-purple-100">{broker.broker_code || broker.broker_name}</Badge>{isUpstox && <Badge className="bg-white/10 text-purple-100">Indian Equity</Badge>}</div><p className="mt-1 text-sm text-purple-200">{isUpstox ? (broker.login_id || "OAuth pending") : broker.login_id} • {broker.server_name}</p>{isUpstox && (broker.metadata_json as any)?.profile?.user_name && <p className="mt-1 text-xs text-purple-300">{String((broker.metadata_json as any).profile.user_name)} • {String((broker.metadata_json as any).profile.broker || "Upstox")}</p>}<p className="mt-1 flex items-center gap-1 text-xs text-purple-300"><Clock className="h-3 w-3" /> Last connected: {formatDate(broker.last_connected_at)}</p></div></div>
-                  <div className="flex flex-wrap gap-2"><Button onClick={() => testConnection(broker)} disabled={testingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Test</Button><Button onClick={() => openEdit(broker)} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Edit3 className="h-4 w-4" /> {isUpstox ? "Reconnect" : "Edit"}</Button><Button onClick={() => remove(broker.id)} className="gap-2 bg-red-500/15 text-red-100 hover:bg-red-500/25"><Trash2 className="h-4 w-4" /> Delete</Button></div>
+                  <div className="flex items-start gap-3">
+                    {normalizedStatus === "CONNECTED" ? <CheckCircle className="h-5 w-5 text-green-300" /> : normalizedStatus === "ERROR" ? <AlertCircle className="h-5 w-5 text-yellow-300" /> : normalizedStatus === "AGENT_OFFLINE" ? <WifiOff className="h-5 w-5 text-orange-300" /> : <XCircle className="h-5 w-5 text-red-300" />}
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2"><h3 className="text-lg font-bold text-white">{broker.account_label}</h3>{statusBadge(normalizedStatus)}<Badge className="bg-white/10 text-purple-100">{code}</Badge>{isCrypto && <Badge className="bg-white/10 text-purple-100">Crypto API</Badge>}{isUpstox && <Badge className="bg-white/10 text-purple-100">Indian Equity</Badge>}{isMt5 && agentStatusBadge(agent)}</div>
+                      <p className="mt-1 text-sm text-purple-200">{isMt5 ? `${agent?.mt5_account_login || "Agent waiting"} • ${agent?.server_name || broker.server_name || "MT5 Agent"}` : isCrypto ? `${displayBrokerName(code)} API • Live orders disabled` : isUpstox ? (broker.login_id || "OAuth pending") : broker.login_id} {isMt5 || isCrypto ? "" : ` • ${broker.server_name || ""}`}</p>
+                      <p className="mt-1 flex items-center gap-1 text-xs text-purple-300"><Clock className="h-3 w-3" /> Last connected: {formatDate(broker.last_connected_at)}</p>
+                      {isMt5 && <p className="mt-1 text-xs text-purple-300">Terminal: {agent?.terminal_status || "Waiting for Agent"} • Server: {agent?.server_name || "—"} • Last heartbeat: {formatDate(agent?.last_heartbeat_at)} • Balance/Equity: {money(agent?.balance)} / {money(agent?.equity)} {agent?.currency || ""}</p>}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2"><Button onClick={() => testConnection(broker)} disabled={testingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Test</Button><Button onClick={() => reconnect(broker)} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Reconnect</Button><Button onClick={() => reconnect(broker)} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Edit3 className="h-4 w-4" /> Edit</Button>{isMt5 && <Button onClick={() => generateAgentToken(broker)} disabled={generatingAgentToken} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Copy className="h-4 w-4" /> Generate Token</Button>}<Button onClick={() => { setDeleteTarget(broker); setDeleteWarning(null); setDeleteForce(false); }} className="gap-2 bg-red-500/15 text-red-100 hover:bg-red-500/25"><Trash2 className="h-4 w-4" /> Delete</Button></div>
                 </div>
-                {(result || last) && <div className="mt-4 rounded-xl border border-white/10 bg-black/10 p-4 text-sm text-purple-100"><div className="font-semibold text-white">Last connection result</div><p className="mt-1">{result?.message || last?.message || "No details"}</p><div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3"><span>Balance: {isUpstox ? "—" : `$${money(result?.balance || last?.balance)}`}</span><span>Equity: {isUpstox ? "—" : `$${money(result?.equity || last?.equity)}`}</span><span>Currency: {result?.currency || last?.currency || (isUpstox ? "INR" : "—")}</span></div></div>}
+                {last && <div className="mt-4 rounded-xl border border-white/10 bg-black/10 p-4 text-sm text-purple-100"><div className="font-semibold text-white">Last connection result</div><p className="mt-1">{last?.message || "No details"}</p><div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3"><span>Balance: {isUpstox ? "—" : money(last?.balance)}</span><span>Equity: {isUpstox ? "—" : money(last?.equity)}</span><span>Currency: {last?.currency || (isUpstox ? "INR" : "—")}</span></div></div>}
               </div>
             );
           })}
         </div>
       </GlassCard>
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#241047] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4"><div><h2 className="text-xl font-bold text-white">Delete broker account?</h2><p className="mt-2 text-sm text-purple-200">{deleteTarget.account_label} will be removed. Stored credentials will be cleared and never exposed.</p></div><Button variant="ghost" onClick={() => setDeleteTarget(null)} className="text-purple-100 hover:bg-white/10"><X className="h-4 w-4" /></Button></div>
+            {deleteWarning && <div className="mt-4 rounded-xl border border-yellow-400/30 bg-yellow-500/10 p-3 text-sm text-yellow-100">{deleteWarning}<div className="mt-2 font-semibold">Click Confirm Force Delete only after stopping or moving related deployments.</div></div>}
+            <div className="mt-6 flex flex-wrap justify-end gap-2"><Button onClick={() => setDeleteTarget(null)} className="bg-white/10 text-white hover:bg-white/15">Cancel</Button><Button onClick={confirmDelete} className="bg-red-500/20 text-red-100 hover:bg-red-500/30"><Trash2 className="mr-2 h-4 w-4" />{deleteForce ? "Confirm Force Delete" : "Delete"}</Button></div>
+          </div>
+        </div>
+      )}
     </PageShell>
   );
+}
+
+function AgentStatusPanel({ agent }: { agent?: MT5AgentStatus | null }) {
+  return <div className="rounded-xl border border-white/10 bg-black/10 p-4 text-sm text-purple-100"><div className="mb-2 flex flex-wrap items-center gap-2"><span className="font-semibold text-white">Agent Status</span>{agentStatusBadge(agent)}</div><div className="grid grid-cols-1 gap-2 md:grid-cols-3"><span>Last heartbeat: {formatDate(agent?.last_heartbeat_at)}</span><span>Terminal: {agent?.terminal_status || "Waiting"}</span><span>Login: {agent?.mt5_account_login || "—"}</span><span>Balance: {money(agent?.balance)}</span><span>Equity: {money(agent?.equity)}</span><span>Currency: {agent?.currency || "—"}</span></div></div>;
+}
+
+function TokenPanel({ token, onCopy }: { token: string; onCopy: () => void }) {
+  return <div className="rounded-xl border border-yellow-400/30 bg-yellow-500/10 p-4 text-sm text-yellow-100"><div className="font-semibold text-white">Copy this Agent Token now. It is shown only once.</div><div className="mt-2 flex flex-col gap-2 md:flex-row md:items-center"><code className="min-w-0 flex-1 overflow-auto rounded-lg bg-black/30 px-3 py-2 text-xs text-yellow-50">{token}</code><Button type="button" onClick={onCopy} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Copy className="h-4 w-4" /> Copy Agent Token</Button></div></div>;
 }

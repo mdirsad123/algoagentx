@@ -107,7 +107,7 @@ docker compose --env-file .env.prod rm -sf api web
 docker compose --env-file .env.prod up -d api web
 
 
-## If .env.prod changed NEXT_PUBLIC_* frontend values
+## If .env.prod changed NEXT_PUBLIC_* frontend values and also if changes in code page or api
 # Use build for web, because Next.js frontend env is baked during build:
 
 cd D:\Stock_market\algoagentx

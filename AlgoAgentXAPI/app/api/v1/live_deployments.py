@@ -200,7 +200,7 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
     if broker_code != "MT5":
         return None
 
-    adapter = get_broker_adapter(broker_row)
+    adapter = get_broker_adapter(broker_row, db)
     account_info = await adapter.get_account_info()
     if account_info.get("connected"):
         broker_row.last_connected_at = datetime.now(timezone.utc)
@@ -314,7 +314,7 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
 async def _sync_upstox_broker_state(db: AsyncSession, row: StrategyDeployment, broker_row: BrokerAccount | None) -> dict | None:
     if row.mode != "DEMO" or broker_row is None or broker_row.status != "CONNECTED" or get_broker_code(broker_row) != "UPSTOX":
         return None
-    adapter = get_broker_adapter(broker_row)
+    adapter = get_broker_adapter(broker_row, db)
     raw_orders = await adapter.get_orders() if hasattr(adapter, "get_orders") else []
     raw_positions = await adapter.get_positions() if hasattr(adapter, "get_positions") else []
     if raw_orders and isinstance(raw_orders[0], dict) and raw_orders[0].get("success") is False:
@@ -656,7 +656,7 @@ async def get_deployment_broker_status(deployment_id: UUID, db: AsyncSession = D
     broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == row.broker_account_id))).scalar_one_or_none()
     if broker is None:
         return success_response({"connected": False, "message": "Broker account not found", "broker": None})
-    adapter = get_broker_adapter(broker)
+    adapter = get_broker_adapter(broker, db)
     info = await adapter.get_account_info()
     connected = bool(info.get("connected"))
     broker.status = "CONNECTED" if connected else "ERROR"

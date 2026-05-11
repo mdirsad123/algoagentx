@@ -329,7 +329,7 @@ async def sync_deployment_broker_state(db: AsyncSession, deployment_id: UUID | s
     if broker is None:
         raise ValueError("Broker account not found")
     provider_code = get_broker_code(broker)
-    adapter = get_broker_adapter(broker)
+    adapter = get_broker_adapter(broker, db)
     now = datetime.now(timezone.utc)
 
     orders: list[dict[str, Any]] = []

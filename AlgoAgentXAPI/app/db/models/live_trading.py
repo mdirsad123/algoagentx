@@ -17,7 +17,9 @@ class BrokerProvider(Base):
     id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     code = Column(String(50), nullable=False, index=True)
     name = Column(String(255), nullable=False)
+    display_name = Column(String(255), nullable=True)
     market_type = Column(String(50), nullable=False, server_default="MULTI")
+    broker_category = Column(String(80), nullable=False, server_default="Cloud Broker")
     auth_type = Column(String(50), nullable=False, server_default="PASSWORD")
     supports_paper = Column(Boolean, nullable=False, server_default="true")
     supports_demo = Column(Boolean, nullable=False, server_default="false")
@@ -26,7 +28,10 @@ class BrokerProvider(Base):
     supports_orders = Column(Boolean, nullable=False, server_default="false")
     supports_websocket = Column(Boolean, nullable=False, server_default="false")
     is_enabled = Column(Boolean, nullable=False, server_default="true", index=True)
+    is_live_enabled = Column(Boolean, nullable=False, server_default="false")
     admin_notes = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+    setup_mode = Column(String(50), nullable=False, server_default="COMING_SOON")
     config_schema = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -75,18 +80,79 @@ class BrokerAccount(Base):
     login_id = Column(String(255), nullable=True)
     oauth_client_id = Column(String(255), nullable=True)
     encrypted_client_secret = Column(Text, nullable=True)
+    encrypted_api_key = Column(Text, nullable=True)
+    encrypted_api_secret = Column(Text, nullable=True)
+    encrypted_api_passphrase = Column(Text, nullable=True)
     oauth_redirect_uri = Column(String(1000), nullable=True)
     encrypted_password = Column(Text, nullable=True)
     encrypted_token = Column(Text, nullable=True)
     encrypted_refresh_token = Column(Text, nullable=True)
     token_expires_at = Column(DateTime(timezone=True), nullable=True)
     metadata_json = Column(JSONB, nullable=False, server_default="{}")
+    last_connection_result = Column(JSONB, nullable=True)
     last_connected_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     user = relationship("User", lazy="joined")
     broker_provider = relationship("BrokerProvider", lazy="joined")
+
+
+class MT5Agent(Base):
+    __tablename__ = "mt5_agents"
+    __table_args__ = (
+        Index("idx_mt5_agents_user_account", "user_id", "broker_account_id"),
+        Index("idx_mt5_agents_status_heartbeat", "status", "last_heartbeat_at"),
+        UniqueConstraint("agent_token_hash", name="uq_mt5_agents_token_hash"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    broker_account_id = Column(PG_UUID(as_uuid=True), ForeignKey("broker_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_token_hash = Column(String(128), nullable=False, unique=True, index=True)
+    status = Column(String(30), nullable=False, server_default="DISCONNECTED", index=True)
+    last_heartbeat_at = Column(DateTime(timezone=True), nullable=True)
+    terminal_status = Column(String(50), nullable=True)
+    mt5_account_login = Column(String(255), nullable=True)
+    server_name = Column(String(255), nullable=True)
+    trading_mode = Column(String(20), nullable=False, server_default="DEMO")
+    balance = Column(Numeric(18, 4), nullable=True)
+    equity = Column(Numeric(18, 4), nullable=True)
+    currency = Column(String(20), nullable=True)
+    algo_trading_enabled = Column(Boolean, nullable=True)
+    agent_version = Column(String(80), nullable=True)
+    metadata_json = Column(JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    user = relationship("User", lazy="joined")
+    broker_account = relationship("BrokerAccount", lazy="joined")
+
+
+class MT5AgentCommand(Base):
+    __tablename__ = "mt5_agent_commands"
+    __table_args__ = (
+        Index("idx_mt5_agent_commands_agent_status", "agent_id", "status"),
+        Index("idx_mt5_agent_commands_account_status", "broker_account_id", "status"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    agent_id = Column(PG_UUID(as_uuid=True), ForeignKey("mt5_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    broker_account_id = Column(PG_UUID(as_uuid=True), ForeignKey("broker_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    command_type = Column(String(50), nullable=False, server_default="PLACE_ORDER")
+    status = Column(String(30), nullable=False, server_default="PENDING", index=True)
+    request_payload = Column(JSONB, nullable=False, server_default="{}")
+    result_payload = Column(JSONB, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    picked_up_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    agent = relationship("MT5Agent", lazy="joined")
+    user = relationship("User", lazy="joined")
+    broker_account = relationship("BrokerAccount", lazy="joined")
 
 
 class BrokerInstrument(Base):

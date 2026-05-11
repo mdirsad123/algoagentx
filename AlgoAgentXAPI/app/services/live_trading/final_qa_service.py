@@ -271,7 +271,7 @@ async def run_demo_micro_order_test(db: AsyncSession, deployment: StrategyDeploy
     db.add(signal)
     await db.flush()
 
-    adapter = get_broker_adapter(broker)
+    adapter = get_broker_adapter(broker, db)
     result = await adapter.place_market_order(BrokerOrderRequest(symbol=broker_symbol, side=side, qty=qty, price=entry, stop_loss=sl, target=tp, comment="AlgoAgentX QA Demo Micro", max_lot=safe_cap))
     signal.status = "EXECUTED" if result.success else "ERROR"
     signal.rejection_reason = None if result.success else result.message

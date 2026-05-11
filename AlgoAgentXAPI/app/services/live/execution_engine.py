@@ -145,7 +145,7 @@ async def _execute_demo_entry(
         signal.rejection_reason = msg
         return await _create_error_order(db, deployment, signal, order_side, qty, price, msg, stop_loss=stop_loss, target=target)
 
-    adapter = get_broker_adapter(broker)
+    adapter = get_broker_adapter(broker, db)
     await _log(db, deployment, "BROKER_EXECUTION_STARTED", "MT5 demo order send started", metadata={"broker_account_id": str(broker.id), "signal_id": str(signal.id), "sizing": sizing_metadata or {}})
     broker_symbol = getattr(deployment, "broker_symbol", None) or signal.symbol
     result = await adapter.place_market_order(BrokerOrderRequest(
@@ -219,7 +219,7 @@ async def _execute_demo_close(db: AsyncSession, deployment: StrategyDeployment, 
         signal.status = "REJECTED"
         signal.rejection_reason = "DEMO close requires CONNECTED broker account"
         return await _create_error_order(db, deployment, signal, close_side, to_decimal(position.qty), price, signal.rejection_reason)
-    adapter = get_broker_adapter(broker)
+    adapter = get_broker_adapter(broker, db)
     await _log(db, deployment, "BROKER_CLOSE_STARTED", "MT5 demo close order send started", metadata={"signal_id": str(signal.id), "position_id": str(position.id), "symbol": position.symbol})
     result = await adapter.close_position(position.symbol, position.side, to_decimal(position.qty))
     actual_qty = _result_volume(result, to_decimal(position.qty))
@@ -279,7 +279,7 @@ async def _execute_upstox_entry(
         return await _create_error_order(db, deployment, signal, order_side, qty, price, risk.reason or "Upstox risk rejected", stop_loss=stop_loss, target=target)
 
     instrument_key = getattr(deployment, "instrument_key", None) or getattr(deployment, "broker_symbol", None) or signal.symbol
-    adapter = get_broker_adapter(broker)
+    adapter = get_broker_adapter(broker, db)
     await _log(db, deployment, "UPSTOX_ORDER_STARTED", "Upstox order send started", metadata={"instrument_key": instrument_key, "signal_id": str(signal.id), "side": order_side, "qty": str(qty), "sizing": sizing_metadata or {}})
     result = await adapter.place_market_order(BrokerOrderRequest(
         symbol=signal.symbol,
@@ -344,7 +344,7 @@ async def _execute_upstox_close(db: AsyncSession, deployment: StrategyDeployment
         signal.rejection_reason = risk.reason
         return await _create_error_order(db, deployment, signal, close_side, to_decimal(position.qty), price, risk.reason or "Upstox close rejected")
 
-    adapter = get_broker_adapter(broker)
+    adapter = get_broker_adapter(broker, db)
     result = await adapter.place_market_order(BrokerOrderRequest(
         symbol=position.symbol, instrument_key=position.symbol, side=close_side, qty=to_decimal(position.qty), price=price, product_type=getattr(deployment, "product_type", "MIS"), tag=f"AAX-EXIT-{str(deployment.id)[:8]}"
     ))

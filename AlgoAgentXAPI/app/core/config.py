@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     upstox_client_secret: Optional[str] = None
     upstox_redirect_uri: Optional[str] = None
 
+    # MT5 execution architecture
+    # AGENT is the production-safe default. LOCAL is only for Windows development where MetaTrader5 is installed beside the API.
+    mt5_execution_mode: str = Field(default="AGENT", description="MT5 execution mode: AGENT or LOCAL")
+    mt5_agent_heartbeat_stale_seconds: int = Field(default=90, description="Seconds after which an MT5 agent heartbeat is considered stale")
+
     # Live auto strategy runner
     live_runner_enabled: bool = Field(default=True, description="Enable background live strategy auto runner")
     live_runner_interval_seconds: int = Field(default=10, description="Auto runner loop interval in seconds")

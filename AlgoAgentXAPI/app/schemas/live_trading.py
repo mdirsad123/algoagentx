@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 BROKER_MODES = {"PAPER", "DEMO", "LIVE"}
-BROKER_STATUSES = {"CONNECTED", "DISCONNECTED", "EXPIRED", "ERROR"}
+BROKER_STATUSES = {"CONNECTED", "DISCONNECTED", "ERROR", "PENDING_AUTH", "AGENT_OFFLINE", "COMING_SOON", "EXPIRED"}
 DEPLOYMENT_STATUSES = {"DRAFT", "RUNNING", "PAUSED", "STOPPED", "ERROR"}
 SIGNAL_SOURCES = {"TRADINGVIEW", "ENGINE", "MANUAL"}
 SIGNAL_TYPES = {"BUY", "SELL", "EXIT", "HOLD"}
@@ -32,7 +32,9 @@ class LiveBaseModel(BaseModel):
 class BrokerProviderBase(LiveBaseModel):
     code: str = Field(..., min_length=2, max_length=50)
     name: str = Field(..., min_length=2, max_length=255)
+    display_name: Optional[str] = Field(default=None, max_length=255)
     market_type: str = Field(default="MULTI", max_length=50)
+    broker_category: str = Field(default="Cloud Broker", max_length=80)
     auth_type: str = Field(default="PASSWORD", max_length=50)
     supports_paper: bool = True
     supports_demo: bool = False
@@ -41,10 +43,13 @@ class BrokerProviderBase(LiveBaseModel):
     supports_orders: bool = False
     supports_websocket: bool = False
     is_enabled: bool = True
+    is_live_enabled: bool = False
     admin_notes: Optional[str] = None
+    description: Optional[str] = None
+    setup_mode: str = Field(default="COMING_SOON", max_length=50)
     config_schema: Optional[dict[str, Any]] = None
 
-    @field_validator("code", "market_type", "auth_type")
+    @field_validator("code", "market_type", "auth_type", "setup_mode")
     @classmethod
     def normalize_provider_enums(cls, value: str):
         return _upper(value) or value
@@ -57,7 +62,9 @@ class BrokerProviderCreate(BrokerProviderBase):
 class BrokerProviderUpdate(LiveBaseModel):
     code: Optional[str] = None
     name: Optional[str] = None
+    display_name: Optional[str] = None
     market_type: Optional[str] = None
+    broker_category: Optional[str] = None
     auth_type: Optional[str] = None
     supports_paper: Optional[bool] = None
     supports_demo: Optional[bool] = None
@@ -66,10 +73,13 @@ class BrokerProviderUpdate(LiveBaseModel):
     supports_orders: Optional[bool] = None
     supports_websocket: Optional[bool] = None
     is_enabled: Optional[bool] = None
+    is_live_enabled: Optional[bool] = None
     admin_notes: Optional[str] = None
+    description: Optional[str] = None
+    setup_mode: Optional[str] = None
     config_schema: Optional[dict[str, Any]] = None
 
-    @field_validator("code", "market_type", "auth_type")
+    @field_validator("code", "market_type", "auth_type", "setup_mode")
     @classmethod
     def normalize_provider_update_enums(cls, value: Optional[str]):
         return _upper(value) if value is not None else value
@@ -118,6 +128,9 @@ class BrokerAccountCreate(LiveBaseModel):
     login_id: Optional[str] = None
     oauth_client_id: Optional[str] = None
     encrypted_client_secret: Optional[str] = None
+    encrypted_api_key: Optional[str] = None
+    encrypted_api_secret: Optional[str] = None
+    encrypted_api_passphrase: Optional[str] = None
     oauth_redirect_uri: Optional[str] = None
     encrypted_password: Optional[str] = None
     encrypted_token: Optional[str] = None
@@ -147,12 +160,16 @@ class BrokerAccountUpdate(LiveBaseModel):
     login_id: Optional[str] = None
     oauth_client_id: Optional[str] = None
     encrypted_client_secret: Optional[str] = None
+    encrypted_api_key: Optional[str] = None
+    encrypted_api_secret: Optional[str] = None
+    encrypted_api_passphrase: Optional[str] = None
     oauth_redirect_uri: Optional[str] = None
     encrypted_password: Optional[str] = None
     encrypted_token: Optional[str] = None
     encrypted_refresh_token: Optional[str] = None
     token_expires_at: Optional[datetime] = None
     metadata_json: Optional[dict[str, Any]] = None
+    last_connection_result: Optional[dict[str, Any]] = None
     last_connected_at: Optional[datetime] = None
 
     @field_validator("mode", "status")
@@ -182,6 +199,7 @@ class BrokerAccountOut(LiveBaseModel):
     oauth_client_id: Optional[str] = None
     oauth_redirect_uri: Optional[str] = None
     metadata_json: dict[str, Any] = Field(default_factory=dict)
+    last_connection_result: Optional[dict[str, Any]] = None
     token_expires_at: Optional[datetime] = None
     last_connected_at: Optional[datetime] = None
     created_at: datetime

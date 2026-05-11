@@ -5,14 +5,14 @@ import secrets
 from uuid import UUID
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_current_user, get_db
 from ...core.config import settings
-from ...db.models import BrokerAccount, BrokerProvider, BrokerOAuthState
+from ...db.models import BrokerAccount, BrokerProvider, BrokerOAuthState, StrategyDeployment
 from ...schemas.live_trading import BrokerAccountCreate, BrokerAccountOut, BrokerAccountUpdate, BrokerProviderOut, UpstoxBrokerAccountCreate
 from ...services.brokers.factory import get_broker_adapter
 from ...services.brokers.upstox import UpstoxAdapter
@@ -21,6 +21,40 @@ from ...utils.credential_crypto import encrypt_credential
 from .live_common import dump_list, dump_one, get_broker_account_or_404, is_admin, user_id_from
 
 router = APIRouter()
+
+
+BROKER_STATUS_CONNECTED = "CONNECTED"
+BROKER_STATUS_DISCONNECTED = "DISCONNECTED"
+BROKER_STATUS_ERROR = "ERROR"
+BROKER_STATUS_PENDING_AUTH = "PENDING_AUTH"
+BROKER_STATUS_AGENT_OFFLINE = "AGENT_OFFLINE"
+BROKER_STATUS_COMING_SOON = "COMING_SOON"
+CRYPTO_BROKER_CODES = {"BINANCE", "BYBIT", "OKX"}
+ACTIVE_DEPLOYMENT_STATUSES = {"RUNNING", "PAUSED", "DRAFT", "PENDING", "APPROVED"}
+
+
+def _safe_message(message: str | None) -> str:
+    text = str(message or "").strip()
+    lower = text.lower()
+    if "metatrader5" in lower or "python package" in lower or "terminal is not available" in lower:
+        return "MT5 Agent is not connected. Please start AlgoAgentX MT5 Agent on your Windows PC or VPS."
+    if "unsupported broker adapter" in lower:
+        return "This broker is prepared but connection is not implemented yet."
+    return text or "Broker connection check completed."
+
+
+def _standard_status_for(row: BrokerAccount, connected: bool, message: str | None = None) -> str:
+    code = str(row.broker_code or row.broker_name or "").upper()
+    lower = str(message or "").lower()
+    if connected:
+        return BROKER_STATUS_CONNECTED
+    if code == "MT5" and ("agent" in lower or "terminal" in lower or "heartbeat" in lower):
+        return BROKER_STATUS_AGENT_OFFLINE
+    if code == "UPSTOX" and ("missing" in lower or "expired" in lower or "reconnect" in lower or "token" in lower):
+        return BROKER_STATUS_PENDING_AUTH
+    if "coming soon" in lower or "not implemented" in lower:
+        return BROKER_STATUS_COMING_SOON
+    return BROKER_STATUS_ERROR
 
 
 def _connection_payload(result) -> dict:
@@ -228,11 +262,19 @@ async def create_broker_account(payload: BrokerAccountCreate, db: AsyncSession =
         values["auth_type"] = provider.auth_type
     values["broker_name"] = str(values.get("broker_name") or values.get("broker_code") or "MT5").upper()
     values["broker_code"] = str(values.get("broker_code") or values["broker_name"]).upper()
-    values["auth_type"] = str(values.get("auth_type") or ("PASSWORD" if values["broker_code"] == "MT5" else "OAUTH2")).upper()
-    if values.get("mode") == "LIVE":
+    values["auth_type"] = str(values.get("auth_type") or ("MT5_AGENT" if values["broker_code"] == "MT5" else "OAUTH2")).upper()
+    if values["broker_code"] in CRYPTO_BROKER_CODES:
+        values["auth_type"] = "API_KEY_SECRET"
         values["mode"] = "DEMO"
-    values["status"] = values.get("status") or "DISCONNECTED"
-    for secret_key in ("encrypted_password", "encrypted_token", "encrypted_refresh_token", "encrypted_client_secret"):
+        values["server_name"] = values.get("server_name") or f"{values['broker_code']} API"
+        values["login_id"] = "API key saved"
+        values["oauth_client_id"] = None
+        if values["broker_code"] == "OKX" and not values.get("encrypted_api_passphrase"):
+            raise HTTPException(status_code=400, detail="OKX API Passphrase is required")
+    if values.get("mode") == "LIVE" and not (provider and getattr(provider, "is_live_enabled", False)):
+        values["mode"] = "DEMO"
+    values["status"] = values.get("status") or (BROKER_STATUS_PENDING_AUTH if values["broker_code"] == "UPSTOX" else BROKER_STATUS_DISCONNECTED)
+    for secret_key in ("encrypted_password", "encrypted_token", "encrypted_refresh_token", "encrypted_client_secret", "encrypted_api_key", "encrypted_api_secret", "encrypted_api_passphrase"):
         if values.get(secret_key):
             values[secret_key] = encrypt_credential(values.get(secret_key))
     row = BrokerAccount(user_id=user_id_from(current_user), **values)
@@ -258,7 +300,16 @@ async def update_broker_account(broker_account_id: UUID, payload: BrokerAccountU
         values["broker_name"] = provider.code
         values["broker_code"] = provider.code
         values["auth_type"] = provider.auth_type
-    for secret_key in ("encrypted_password", "encrypted_token", "encrypted_refresh_token", "encrypted_client_secret"):
+    active_code = str(values.get("broker_code") or row.broker_code or row.broker_name or "").upper()
+    if active_code in CRYPTO_BROKER_CODES:
+        values["auth_type"] = "API_KEY_SECRET"
+        values["mode"] = "DEMO"
+        values["server_name"] = values.get("server_name") or f"{active_code} API"
+        values["login_id"] = "API key saved"
+        values["oauth_client_id"] = None
+        if active_code == "OKX" and not row.encrypted_api_passphrase and not values.get("encrypted_api_passphrase"):
+            raise HTTPException(status_code=400, detail="OKX API Passphrase is required")
+    for secret_key in ("encrypted_password", "encrypted_token", "encrypted_refresh_token", "encrypted_client_secret", "encrypted_api_key", "encrypted_api_secret", "encrypted_api_passphrase"):
         if values.get(secret_key) in {None, ""}:
             values.pop(secret_key, None)
         elif values.get(secret_key):
@@ -277,34 +328,75 @@ async def update_broker_account(broker_account_id: UUID, payload: BrokerAccountU
 
 
 @router.delete("/{broker_account_id}")
-async def delete_broker_account(broker_account_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def delete_broker_account(
+    broker_account_id: UUID,
+    force: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     row = await get_broker_account_or_404(db, broker_account_id, current_user)
+    active_rows = (await db.execute(
+        select(StrategyDeployment)
+        .where(StrategyDeployment.broker_account_id == row.id)
+        .where(StrategyDeployment.status.in_(ACTIVE_DEPLOYMENT_STATUSES))
+        .order_by(StrategyDeployment.created_at.desc())
+        .limit(5)
+    )).scalars().all()
+    if active_rows and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "This broker is used by active live deployments. Stop or move those deployments before deleting, or confirm force delete.",
+                "requires_confirmation": True,
+                "active_deployments": [
+                    {"id": str(item.id), "name": item.name, "status": item.status, "instrument": item.instrument}
+                    for item in active_rows
+                ],
+            },
+        )
+    # Safe delete: clear sensitive fields before removing the account row. Credentials are never returned to the frontend.
+    row.encrypted_password = None
+    row.encrypted_token = None
+    row.encrypted_refresh_token = None
+    row.encrypted_client_secret = None
+    if hasattr(row, "encrypted_api_key"):
+        row.encrypted_api_key = None
+    if hasattr(row, "encrypted_api_secret"):
+        row.encrypted_api_secret = None
+    if hasattr(row, "encrypted_api_passphrase"):
+        row.encrypted_api_passphrase = None
     await db.delete(row)
     await db.commit()
-    return success_response({"id": str(broker_account_id)}, "Broker account deleted")
+    return success_response({"id": str(broker_account_id), "forced": force}, "Broker account deleted")
 
 
 @router.post("/{broker_account_id}/test")
 async def test_broker_connection(broker_account_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     row = await get_broker_account_or_404(db, broker_account_id, current_user)
-    adapter = get_broker_adapter(row)
-    result = await adapter.test_connection()
+    try:
+        adapter = get_broker_adapter(row, db)
+        result = await adapter.test_connection()
+        result.message = _safe_message(result.message)
+    except Exception as exc:
+        from ...services.brokers.base import BrokerConnectionResult
+        result = BrokerConnectionResult(False, _safe_message(str(exc)), account_login=row.login_id, server=row.server_name, raw={"broker_code": row.broker_code or row.broker_name})
+    payload = _connection_payload(result)
+    row.status = _standard_status_for(row, result.connected, result.message)
     if result.connected:
-        row.status = "CONNECTED"
         row.last_connected_at = datetime.now(timezone.utc)
-    else:
-        row.status = "EXPIRED" if "expired" in str(result.message).lower() else "ERROR"
     existing_meta = row.metadata_json or {}
-    row.metadata_json = {**existing_meta, "last_test": _connection_payload(result), "provider": row.broker_code or row.broker_name, "safe_message": result.message}
+    row.metadata_json = {**existing_meta, "last_test": payload, "provider": row.broker_code or row.broker_name, "safe_message": result.message}
+    if hasattr(row, "last_connection_result"):
+        row.last_connection_result = payload
     await db.commit()
     await db.refresh(row)
-    return success_response({"broker_account": dump_one(BrokerAccountOut, row), "connection": _connection_payload(result)}, "Broker connection tested")
+    return success_response({"broker_account": dump_one(BrokerAccountOut, row), "connection": payload}, "Broker connection tested")
 
 
 @router.get("/{broker_account_id}/account-info")
 async def get_broker_account_info(broker_account_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     row = await get_broker_account_or_404(db, broker_account_id, current_user)
-    adapter = get_broker_adapter(row)
+    adapter = get_broker_adapter(row, db)
     info = await adapter.get_account_info()
     return success_response(info)
 
@@ -312,7 +404,7 @@ async def get_broker_account_info(broker_account_id: UUID, db: AsyncSession = De
 @router.get("/{broker_account_id}/symbols")
 async def list_broker_symbols(broker_account_id: UUID, query: str | None = None, limit: int = 200, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     row = await get_broker_account_or_404(db, broker_account_id, current_user)
-    adapter = get_broker_adapter(row)
+    adapter = get_broker_adapter(row, db)
     symbols = await adapter.get_symbols(query=query, limit=limit)
     return success_response(symbols)
 
@@ -320,6 +412,6 @@ async def list_broker_symbols(broker_account_id: UUID, query: str | None = None,
 @router.get("/{broker_account_id}/positions")
 async def get_broker_positions(broker_account_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     row = await get_broker_account_or_404(db, broker_account_id, current_user)
-    adapter = get_broker_adapter(row)
+    adapter = get_broker_adapter(row, db)
     positions = await adapter.get_positions()
     return success_response(positions)

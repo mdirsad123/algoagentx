@@ -1,0 +1,9 @@
+{
+  "API_BASE_URL": "http://localhost:8000",
+  "AGENT_TOKEN": "paste-your-agent-token-here",
+  "POLL_INTERVAL_SECONDS": 5,
+  "ENABLE_ORDER_EXECUTION": false,
+  "MT5_PATH": "",
+  "DEFAULT_DEVIATION": 20,
+  "AGENT_VERSION": "0.1.0"
+}

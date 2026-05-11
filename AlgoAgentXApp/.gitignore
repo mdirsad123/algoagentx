@@ -45,3 +45,7 @@ AlgoAgentXAPI/.env
 AlgoAgentXAPI/.env.*
 !AlgoAgentXAPI/.env.example
 !AlgoAgentXAPI/.env.prod.example
+# Build cache
+tsconfig.tsbuildinfo
+.next/
+node_modules/

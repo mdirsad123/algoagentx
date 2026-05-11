@@ -1,8 +1,35 @@
 export type LiveMode = "PAPER" | "DEMO" | "LIVE";
-export type BrokerStatus = "CONNECTED" | "DISCONNECTED" | "EXPIRED" | "ERROR";
+export type BrokerStatus = "CONNECTED" | "DISCONNECTED" | "ERROR" | "PENDING_AUTH" | "AGENT_OFFLINE" | "COMING_SOON" | "EXPIRED";
 export type DeploymentStatus = "DRAFT" | "RUNNING" | "PAUSED" | "STOPPED" | "ERROR";
 export type SignalType = "BUY" | "SELL" | "EXIT" | "HOLD";
 export type PositionSide = "LONG" | "SHORT";
+
+
+export interface MT5AgentStatus {
+  id: string;
+  user_id?: string;
+  broker_account_id: string;
+  status: string;
+  last_heartbeat_at?: string | null;
+  terminal_status?: string | null;
+  mt5_account_login?: string | null;
+  server_name?: string | null;
+  trading_mode?: LiveMode | string;
+  balance?: number | string | null;
+  equity?: number | string | null;
+  currency?: string | null;
+  algo_trading_enabled?: boolean | null;
+  agent_version?: string | null;
+  metadata_json?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MT5AgentRegisterResponse {
+  agent: MT5AgentStatus;
+  agent_token: string;
+  message: string;
+}
 
 export interface BrokerAccount {
   id: string;
@@ -19,6 +46,7 @@ export interface BrokerAccount {
   oauth_client_id?: string | null;
   oauth_redirect_uri?: string | null;
   metadata_json?: Record<string, unknown>;
+  last_connection_result?: Record<string, unknown> | null;
   token_expires_at?: string | null;
   last_connected_at?: string | null;
   created_at?: string;
@@ -141,6 +169,9 @@ export interface BrokerAccountPayload {
   login_id?: string | null;
   oauth_client_id?: string | null;
   encrypted_client_secret?: string | null;
+  encrypted_api_key?: string | null;
+  encrypted_api_secret?: string | null;
+  encrypted_api_passphrase?: string | null;
   oauth_redirect_uri?: string | null;
   encrypted_password?: string | null;
   encrypted_token?: string | null;
@@ -784,8 +815,10 @@ export interface BrokerProvider {
   id: string;
   code: string;
   name: string;
+  display_name?: string | null;
   market_type: "FOREX" | "INDIAN_EQUITY" | "CRYPTO" | "MULTI" | string;
-  auth_type: "PASSWORD" | "OAUTH2" | "API_KEY" | string;
+  broker_category?: string | null;
+  auth_type: "PASSWORD" | "OAUTH2" | "API_KEY" | "API_KEY_SECRET" | "MT5_AGENT" | string;
   supports_paper: boolean;
   supports_demo: boolean;
   supports_live: boolean;
@@ -793,7 +826,10 @@ export interface BrokerProvider {
   supports_orders: boolean;
   supports_websocket: boolean;
   is_enabled: boolean;
+  is_live_enabled?: boolean;
   admin_notes?: string | null;
+  description?: string | null;
+  setup_mode?: string | null;
   config_schema?: Record<string, unknown> | null;
   created_at?: string;
   updated_at?: string;
@@ -802,6 +838,7 @@ export interface BrokerProvider {
 export interface BrokerProviderPayload {
   code: string;
   name: string;
+  display_name?: string | null;
   market_type: string;
   auth_type: string;
   supports_paper?: boolean;
@@ -811,7 +848,10 @@ export interface BrokerProviderPayload {
   supports_orders?: boolean;
   supports_websocket?: boolean;
   is_enabled?: boolean;
+  is_live_enabled?: boolean;
   admin_notes?: string | null;
+  description?: string | null;
+  setup_mode?: string | null;
   config_schema?: Record<string, unknown> | null;
 }
 

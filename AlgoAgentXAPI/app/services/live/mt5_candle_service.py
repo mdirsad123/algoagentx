@@ -92,7 +92,7 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
     safe_count = max(1, min(int(count or 300), 2000))
     await _write_log(db, deployment, "CANDLE_REFRESH_STARTED", f"MT5 candle refresh started for {deployment.instrument} {deployment.timeframe}", metadata={"count": safe_count})
 
-    adapter = get_broker_adapter(broker)
+    adapter = get_broker_adapter(broker, db)
     rates = await adapter.get_rates(deployment.instrument, deployment.timeframe, safe_count)
     if rates and rates[0].get("success") is False:
         message = str(rates[0].get("message") or "MT5 candle refresh failed")
