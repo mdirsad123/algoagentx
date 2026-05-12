@@ -252,7 +252,7 @@ export default function BacktestHistoryPage() {
   const [draftFilters, setDraftFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [quickRange, setQuickRange] = useState<QuickRange>(null);
-  const [advancedOpen, setAdvancedOpen] = useState(true);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [rows, setRows] = useState<BacktestHistoryItem[]>([]);
   const [pagination, setPagination] = useState<BacktestHistoryPagination | null>(null);
@@ -580,7 +580,7 @@ export default function BacktestHistoryPage() {
       />
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <Card className="h-full min-h-[116px] rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
           <CardHeader className="pb-2">
             <CardDescription>Total Runs</CardDescription>
             <CardTitle className="text-2xl text-foreground">{formatNumber(summaryStats.totalRuns, 0)}</CardTitle>
@@ -588,7 +588,7 @@ export default function BacktestHistoryPage() {
           <CardContent className="pt-0 text-xs text-muted-foreground">Across current filter scope</CardContent>
         </Card>
 
-        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <Card className="h-full min-h-[116px] rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
           <CardHeader className="pb-2">
             <CardDescription>Profitable Runs</CardDescription>
             <CardTitle className="text-2xl text-emerald-300">{formatNumber(summaryStats.profitableRuns, 0)}</CardTitle>
@@ -596,7 +596,7 @@ export default function BacktestHistoryPage() {
           <CardContent className="pt-0 text-xs text-muted-foreground">Calculated on visible results</CardContent>
         </Card>
 
-        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <Card className="h-full min-h-[116px] rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
           <CardHeader className="pb-2">
             <CardDescription>Avg Return</CardDescription>
             <CardTitle className="text-2xl text-foreground">{formatPercentAuto(summaryStats.avgReturn)}</CardTitle>
@@ -604,7 +604,7 @@ export default function BacktestHistoryPage() {
           <CardContent className="pt-0 text-xs text-muted-foreground">Visible result set average</CardContent>
         </Card>
 
-        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <Card className="h-full min-h-[116px] rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
           <CardHeader className="pb-2">
             <CardDescription>Avg Drawdown</CardDescription>
             <CardTitle className="text-2xl text-foreground">{formatPercentAuto(summaryStats.avgDrawdown)}</CardTitle>
@@ -612,7 +612,7 @@ export default function BacktestHistoryPage() {
           <CardContent className="pt-0 text-xs text-muted-foreground">Lower is better</CardContent>
         </Card>
 
-        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <Card className="h-full min-h-[116px] rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
           <CardHeader className="pb-2">
             <CardDescription>Total PnL</CardDescription>
             <CardTitle className={`text-2xl ${summaryStats.totalProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
@@ -664,6 +664,17 @@ export default function BacktestHistoryPage() {
               </Button>
               <Button
                 variant="outline"
+                onClick={() => setAdvancedOpen((prev) => !prev)}
+                className={`rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40 ${
+                  advancedOpen ? "border-primary/50 bg-primary/15 text-primary" : ""
+                }`}
+              >
+                <SlidersHorizontal className="mr-2 h-4 w-4" />
+                {advancedOpen ? "Hide Advanced" : "Advanced Filters"}
+                {activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+              </Button>
+              <Button
+                variant="outline"
                 onClick={clearAllFilters}
                 className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40"
               >
@@ -674,27 +685,8 @@ export default function BacktestHistoryPage() {
           </div>
 
           <div className="rounded-xl border border-border/50 bg-card/20">
-            <button
-              type="button"
-              onClick={() => setAdvancedOpen((prev) => !prev)}
-              className="flex w-full items-center justify-between px-4 py-3 text-left"
-            >
-              <div>
-                <p className="flex items-center gap-2 text-sm font-medium text-foreground">
-                  <SlidersHorizontal className="h-4 w-4 text-primary" />
-                  Advanced Filters
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Strategy, instrument, timeframe, date, profitability, drawdown, and status.
-                </p>
-              </div>
-              <span className="text-xs text-muted-foreground">
-                {activeFilterCount > 0 ? `${activeFilterCount} active` : "No active filters"}
-              </span>
-            </button>
-
-            {advancedOpen && (
-              <div className="space-y-4 border-t border-border/50 p-4">
+            {advancedOpen ? (
+              <div className="space-y-4 p-4">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <div className="space-y-2">
                     <Label className="text-muted-foreground">Strategy</Label>
@@ -886,6 +878,11 @@ export default function BacktestHistoryPage() {
                   </Button>
                 </div>
               </div>
+            ) : (
+              <div className="flex flex-col gap-2 px-4 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                <span>Advanced filters are hidden to keep this page compact.</span>
+                <span>{activeFilterCount > 0 ? `${activeFilterCount} active filters applied` : "No active filters"}</span>
+              </div>
             )}
           </div>
         </CardHeader>
@@ -952,24 +949,20 @@ export default function BacktestHistoryPage() {
           ) : (
             <>
               <div className="responsive-table-wrapper hidden overflow-x-auto md:block">
-                <Table className="min-w-[1180px]">
+                <Table className="min-w-[1040px]">
                   <TableHeader>
                     <TableRow className="border-border/50 hover:bg-transparent">
-                      <TableHead>Strategy</TableHead>
+                      <TableHead className="w-[220px]">Strategy</TableHead>
                       <TableHead>Instrument</TableHead>
                       <TableHead>Timeframe</TableHead>
-                      <TableHead className="text-right">Capital</TableHead>
                       <TableHead className="text-right">PnL</TableHead>
                       <TableHead className="text-right">Return %</TableHead>
                       <TableHead className="text-right">Win Rate</TableHead>
-                      <TableHead className="text-right">Sharpe</TableHead>
                       <TableHead className="text-right">Drawdown</TableHead>
                       <TableHead className="text-right">Trades</TableHead>
-                      <TableHead className="w-[120px]">Runtime</TableHead>
-                      <TableHead className="w-[120px]">Filters</TableHead>
-                      <TableHead className="w-[130px]">Created</TableHead>
+                      <TableHead className="w-[145px]">Created</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead className="w-[260px] text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
 
@@ -977,7 +970,7 @@ export default function BacktestHistoryPage() {
                     {loading
                       ? Array.from({ length: 6 }).map((_, idx) => (
                           <TableRow key={`skeleton-${idx}`} className="border-border/30 hover:bg-transparent">
-                            <TableCell colSpan={15} className="py-4">
+                            <TableCell colSpan={11} className="py-4">
                               <div className="h-6 animate-pulse rounded-lg bg-card/40" />
                             </TableCell>
                           </TableRow>
@@ -991,10 +984,27 @@ export default function BacktestHistoryPage() {
                               key={item.id}
                               className="border-border/30 text-foreground transition-colors hover:bg-card/30"
                             >
-                              <TableCell className="max-w-[180px] truncate font-medium" title={item.strategy_name || ""}>{item.strategy_name || "—"}</TableCell>
+                              <TableCell className="max-w-[220px]">
+                                <div className="truncate font-medium" title={item.strategy_name || ""}>{item.strategy_name || "—"}</div>
+                                <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+                                  <span title="Initial capital" className="rounded-full border border-border/40 bg-card/20 px-2 py-0.5">
+                                    Cap {formatCurrency(item.initial_capital, rowCurrencySymbol(item))}
+                                  </span>
+                                  <span title="Sharpe ratio" className="rounded-full border border-border/40 bg-card/20 px-2 py-0.5">
+                                    Sharpe {formatNumber(item.sharpe_ratio, 2)}
+                                  </span>
+                                </div>
+                                <div className="mt-1 flex flex-wrap gap-1.5">
+                                  <span title={formatRuntimeSummary(item)} className="rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-0.5 text-[11px] font-medium text-violet-100">
+                                    Runtime
+                                  </span>
+                                  <span title={formatFilterSummary(item)} className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                                    Filters
+                                  </span>
+                                </div>
+                              </TableCell>
                               <TableCell className="whitespace-nowrap">{item.instrument_symbol || "—"}</TableCell>
                               <TableCell>{item.timeframe || "—"}</TableCell>
-                              <TableCell className="text-right">{formatCurrency(item.initial_capital, rowCurrencySymbol(item))}</TableCell>
                               <TableCell className={`text-right font-medium ${pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                                 {formatCurrency(item.net_profit, rowCurrencySymbol(item))}
                               </TableCell>
@@ -1002,25 +1012,8 @@ export default function BacktestHistoryPage() {
                                 {formatPercentAuto(returnPct)}
                               </TableCell>
                               <TableCell className="text-right">{formatPercentAuto(item.win_rate)}</TableCell>
-                              <TableCell className="text-right">{formatNumber(item.sharpe_ratio, 2)}</TableCell>
                               <TableCell className="text-right">{formatPercentAuto(item.max_drawdown)}</TableCell>
                               <TableCell className="text-right">{formatNumber(item.total_trades, 0)}</TableCell>
-                              <TableCell>
-                                <span
-                                  title={formatRuntimeSummary(item)}
-                                  className="inline-flex max-w-[120px] items-center rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-1 text-xs font-semibold text-violet-100"
-                                >
-                                  Runtime
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <span
-                                  title={formatFilterSummary(item)}
-                                  className="inline-flex max-w-[120px] items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs font-semibold text-primary"
-                                >
-                                  Filters
-                                </span>
-                              </TableCell>
                               <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(item.created_at)}</TableCell>
                               <TableCell>
                                 <span className={`inline-flex rounded-full border px-2 py-1 text-xs ${statusTone(item.status)}`}>
@@ -1028,14 +1021,15 @@ export default function BacktestHistoryPage() {
                                 </span>
                               </TableCell>
                               <TableCell>
-                                <div className="flex justify-end gap-2">
+                                <div className="flex flex-wrap justify-end gap-2">
                                   <Button
                                     size="sm"
                                     variant="outline"
                                     onClick={() => void openDetail(item)}
                                     className="rounded-lg border-border/60 bg-card/20 text-foreground hover:bg-card/40"
                                   >
-                                    <Eye className="h-3.5 w-3.5" />
+                                    <Eye className="mr-1.5 h-3.5 w-3.5" />
+                                    View Report
                                   </Button>
                                   <Button
                                     size="sm"
@@ -1043,7 +1037,8 @@ export default function BacktestHistoryPage() {
                                     onClick={() => rerunBacktest(item)}
                                     className="rounded-lg border-border/60 bg-card/20 text-foreground hover:bg-card/40"
                                   >
-                                    <Play className="h-3.5 w-3.5" />
+                                    <Play className="mr-1.5 h-3.5 w-3.5" />
+                                    Rerun
                                   </Button>
                                   <Button
                                     size="sm"
@@ -1051,7 +1046,8 @@ export default function BacktestHistoryPage() {
                                     onClick={() => exportRunSummary(item)}
                                     className="rounded-lg border-border/60 bg-card/20 text-foreground hover:bg-card/40"
                                   >
-                                    <Download className="h-3.5 w-3.5" />
+                                    <Download className="mr-1.5 h-3.5 w-3.5" />
+                                    Export
                                   </Button>
                                 </div>
                               </TableCell>
@@ -1083,8 +1079,8 @@ export default function BacktestHistoryPage() {
 
                       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                         <div className="rounded-lg border border-border/40 bg-card/20 p-2">
-                          <p className="text-muted-foreground">Capital</p>
-                          <p className="font-medium text-foreground">{formatCurrency(item.initial_capital, rowCurrencySymbol(item))}</p>
+                          <p className="text-muted-foreground">Drawdown</p>
+                          <p className="font-medium text-foreground">{formatPercentAuto(item.max_drawdown)}</p>
                         </div>
                         <div className="rounded-lg border border-border/40 bg-card/20 p-2">
                           <p className="text-muted-foreground">PnL</p>
@@ -1102,6 +1098,11 @@ export default function BacktestHistoryPage() {
                           <p className="text-muted-foreground">Win Rate</p>
                           <p className="font-medium text-foreground">{formatPercentAuto(item.win_rate)}</p>
                         </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+                        <span className="rounded-full border border-border/40 bg-card/20 px-2 py-0.5">Cap {formatCurrency(item.initial_capital, rowCurrencySymbol(item))}</span>
+                        <span className="rounded-full border border-border/40 bg-card/20 px-2 py-0.5">Sharpe {formatNumber(item.sharpe_ratio, 2)}</span>
                       </div>
 
                       <div className="mt-3 rounded-lg border border-violet-400/40 bg-violet-500/10 px-3 py-2 text-xs text-violet-100">

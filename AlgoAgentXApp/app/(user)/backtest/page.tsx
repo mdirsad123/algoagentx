@@ -328,6 +328,91 @@ const formatPercent = (value: number | null | undefined, multiplyBy100 = false):
   return `${formatNumber(display, 2)}%`;
 };
 
+
+type NormalizedPreviewEquityPoint = {
+  label: string;
+  timestamp?: string | null;
+  equity: number;
+  pnl: number | null;
+  index: number;
+};
+
+const getPreviewRecordNumber = (value: unknown, keys: string[]): number | null => {
+  const record = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+  if (!record) return null;
+  for (const key of keys) {
+    const raw = record[key];
+    if (raw === null || raw === undefined || raw === "") continue;
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+const getPreviewRecordString = (value: unknown, keys: string[]): string | null => {
+  const record = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+  if (!record) return null;
+  for (const key of keys) {
+    const raw = record[key];
+    if (raw !== null && raw !== undefined && String(raw).trim()) return String(raw);
+  }
+  return null;
+};
+
+const formatPreviewChartLabel = (timestamp: string | null | undefined, index: number): string => {
+  if (!timestamp) return `Point ${index + 1}`;
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return String(timestamp);
+  return parsed.toLocaleString(undefined, { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+};
+
+const formatAxisCurrency = (value: number, symbol?: string | null): string => {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${symbol || "₹"}${formatNumber(value / 1_000_000, 1)}M`;
+  if (abs >= 1_000) return `${symbol || "₹"}${formatNumber(value / 1_000, 1)}K`;
+  return formatCurrency(value, symbol || "₹");
+};
+
+const normalizePreviewEquityCurve = (points: unknown[] | undefined, initialCapital?: number | null): NormalizedPreviewEquityPoint[] => {
+  const initial = Number(initialCapital);
+  const hasInitial = Number.isFinite(initial) && initial > 0;
+  return (points || []).map((point, index) => {
+    const timestamp = getPreviewRecordString(point, ["timestamp", "time", "date", "datetime", "created_at"]);
+    const explicitEquity = getPreviewRecordNumber(point, ["equity", "equity_value", "balance", "capital"]);
+    const pnlValue = getPreviewRecordNumber(point, ["pnl", "net_pnl", "profit", "net_profit"]);
+    const genericValue = getPreviewRecordNumber(point, ["value"]);
+    let equity: number | null = explicitEquity;
+    if (equity === null && pnlValue !== null && hasInitial) equity = initial + pnlValue;
+    if (equity === null && genericValue !== null) {
+      const looksLikePnl = hasInitial && (genericValue < 0 || Math.abs(genericValue) < Math.max(Math.abs(initial) * 0.5, 1));
+      equity = looksLikePnl ? initial + genericValue : genericValue;
+    }
+    if (equity !== null && equity < 0 && hasInitial && pnlValue === null && explicitEquity === null) {
+      equity = initial + equity;
+    }
+    const finalEquity = Number.isFinite(Number(equity)) ? Number(equity) : 0;
+    return {
+      label: formatPreviewChartLabel(timestamp, index),
+      timestamp,
+      equity: finalEquity,
+      pnl: hasInitial ? finalEquity - initial : pnlValue,
+      index,
+    };
+  });
+};
+
+const EquityPreviewTooltip = ({ active, payload, currencySymbol }: { active?: boolean; payload?: Array<{ payload?: NormalizedPreviewEquityPoint }>; currencySymbol?: string | null }) => {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) return null;
+  return (
+    <div className="rounded-xl border border-border/50 bg-background/95 px-3 py-2 text-xs shadow-xl backdrop-blur">
+      <p className="font-semibold text-foreground">{point.label}</p>
+      <p className="mt-1 text-primary">Equity: {formatCurrency(point.equity, currencySymbol || "₹")}</p>
+      {point.pnl !== null && <p className={point.pnl >= 0 ? "text-emerald-300" : "text-rose-300"}>PnL: {formatCurrency(point.pnl, currencySymbol || "₹")}</p>}
+    </div>
+  );
+};
+
 const humanLabel = (key: string): string =>
   key
     .replace(/_/g, " ")
@@ -1158,13 +1243,11 @@ export default function BacktestPage() {
   const resultCurrencySymbol = resultSummary?.currency_symbol || currencySymbolForCode(resultSummary?.account_currency) || selectedInstrument?.currency_symbol || currencySymbolForCode(selectedInstrument?.account_currency);
   const resultQuantityMode = resultSummary?.quantity_mode || selectedInstrument?.quantity_mode || "SHARES";
 
+  const resultInitialCapitalForChart = safeNumber(resultSummary?.initial_capital, safeNumber(initialCapital, 0));
+
   const equityChartRows = useMemo(
-    () =>
-      (resultDetail?.equity_curve || []).slice(-240).map((point) => ({
-        label: point.timestamp ? new Date(point.timestamp).toLocaleDateString() : "",
-        equity: safeNumber(point.equity, 0),
-      })),
-    [resultDetail?.equity_curve],
+    () => normalizePreviewEquityCurve((resultDetail?.equity_curve || []).slice(-240) as unknown[], resultInitialCapitalForChart),
+    [resultDetail?.equity_curve, resultInitialCapitalForChart],
   );
 
   if (initialLoading) {
@@ -2032,16 +2115,13 @@ const FieldLabel = ({ label, help }: { label: string; help?: string }) => (
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={equityChartRows}>
                       <XAxis dataKey="label" hide />
-                      <YAxis hide domain={["dataMin", "dataMax"]} />
-                      <Tooltip
-                        formatter={(value: number) => [formatCurrency(value, resultCurrencySymbol), "Equity"]}
-                        labelFormatter={(label) => `Date: ${label}`}
-                        contentStyle={{
-                          borderRadius: 12,
-                          borderColor: "rgba(148, 163, 184, 0.4)",
-                          background: "rgba(15, 23, 42, 0.9)",
-                        }}
+                      <YAxis
+                        domain={["dataMin", "dataMax"]}
+                        tickFormatter={(value) => formatAxisCurrency(Number(value), resultCurrencySymbol)}
+                        width={64}
+                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
                       />
+                      <Tooltip content={<EquityPreviewTooltip currencySymbol={resultCurrencySymbol} />} />
                       <Line type="monotone" dataKey="equity" stroke="hsl(var(--primary))" strokeWidth={2.5} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>

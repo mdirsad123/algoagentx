@@ -106,12 +106,13 @@ docker compose --env-file .env.prod stop api web
 docker compose --env-file .env.prod rm -sf api web
 docker compose --env-file .env.prod up -d api web
 
+# if you want to start dev database
+docker stop algoagentx_postgres
 
 ## If .env.prod changed NEXT_PUBLIC_* frontend values and also if changes in code page or api
 # Use build for web, because Next.js frontend env is baked during build:
 
 cd D:\Stock_market\algoagentx
-
 docker compose --env-file .env.prod stop api web
 docker compose --env-file .env.prod rm -sf api web
 docker compose --env-file .env.prod up -d --build api web

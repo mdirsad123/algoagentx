@@ -568,13 +568,16 @@ def _normalise_trade_detail_rows(value) -> list[dict]:
     if not isinstance(value, list):
         return []
     rows: list[dict] = []
-    for item in value:
+    for trade_index, item in enumerate(value):
         if not isinstance(item, dict):
             continue
-        row = dict(item)
+        row = _normalise_chart_trade_aliases(item, trade_index=trade_index)
+        row["id"] = str(row.get("id")) if row.get("id") is not None else None
         row["quantity"] = _to_float(row.get("quantity"), None)
         for key in ["entry_price", "exit_price", "stop_loss", "target", "risk_points", "risk_ticks", "risk_pips", "reward_points", "reward_ticks", "rr_ratio", "risk_amount", "actual_risk_amount", "reward_amount", "expected_reward_amount", "r_multiple", "pnl", "lot_size"]:
             row[key] = _to_float(row.get(key), None)
+        row["entry_time"] = _chart_iso_datetime(row.get("entry_time"))
+        row["exit_time"] = _chart_iso_datetime(row.get("exit_time"))
         row["lifecycle_events"] = _jsonish(row.get("lifecycle_events")) or []
         if not row.get("risk_points") or not row.get("reward_points") or not row.get("risk_amount"):
             row.update(_risk_values_from_row(row))
@@ -1358,51 +1361,295 @@ def _runtime_summary_text(runtime_config: dict | None, filter_summary: str | Non
         base = f"{base} · Advanced Filters: {filter_summary}"
     return base
 
+
+def _excel_percent_value(value):
+    """Return a workbook-friendly percent fraction while preserving missing values."""
+    numeric = _to_float(value, None)
+    if numeric is None:
+        return None
+    return numeric / 100.0 if abs(numeric) > 1 else numeric
+
+
+def _excel_result_label(value) -> str:
+    numeric = _to_float(value, 0.0)
+    if numeric > 0:
+        return "Green"
+    if numeric < 0:
+        return "Red"
+    return "Neutral"
+
+
+def _date_key_from_trade(trade: dict) -> str | None:
+    raw = (trade or {}).get("exit_time") or (trade or {}).get("entry_time")
+    if not raw:
+        return None
+    try:
+        parsed = pd.to_datetime(raw, errors="coerce")
+        if pd.isna(parsed):
+            return None
+        return parsed.date().isoformat()
+    except Exception:
+        return str(raw)[:10] if str(raw) else None
+
+
+def _month_key_from_date(value) -> str | None:
+    try:
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.isna(parsed):
+            return None
+        return parsed.strftime("%Y-%m")
+    except Exception:
+        return None
+
+
+def _excel_cell_value(value: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, default=str, ensure_ascii=False)
+        except Exception:
+            return str(value)
+    return value
+
+
+def _excel_safe_dataframe(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    return frame.map(_excel_cell_value) if hasattr(frame, "map") else frame.applymap(_excel_cell_value)
+
+
+def _json_flat_rows(value: Any, prefix: str = "") -> list[list[Any]]:
+    rows: list[list[Any]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            label = f"{prefix}.{key}" if prefix else str(key)
+            if isinstance(child, (dict, list)):
+                rows.extend(_json_flat_rows(child, label))
+            else:
+                rows.append([label, child])
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            label = f"{prefix}[{index}]" if prefix else f"[{index}]"
+            if isinstance(child, (dict, list)):
+                rows.extend(_json_flat_rows(child, label))
+            else:
+                rows.append([label, child])
+    elif prefix:
+        rows.append([prefix, value])
+    return rows
+
+
 def _build_detail_export_frames(detail: dict):
     summary = detail.get("summary", {}) if isinstance(detail, dict) else {}
-    metrics_rows = [
+    trades = detail.get("trades", []) if isinstance(detail, dict) else []
+    pnl_calendar = detail.get("pnl_calendar", []) if isinstance(detail, dict) else []
+    equity_curve = detail.get("equity_curve", []) if isinstance(detail, dict) else []
+
+    date_range = ""
+    if summary.get("start_date") or summary.get("end_date"):
+        date_range = f"{summary.get('start_date') or '-'} to {summary.get('end_date') or '-'}"
+
+    summary_rows = [
         ["Backtest ID", summary.get("id")],
         ["Strategy", summary.get("strategy_name")],
         ["Instrument", summary.get("instrument_symbol")],
         ["Asset Class", summary.get("asset_class")],
-        ["Account Currency", summary.get("account_currency")],
-        ["Quantity Mode", summary.get("quantity_mode")],
-        ["Position Size Mode", summary.get("position_size_mode")],
-        ["SL Mode", summary.get("sl_mode")],
-        ["RR Ratio", summary.get("rr_ratio")],
-        ["Risk %", summary.get("risk_percent")],
         ["Timeframe", summary.get("timeframe")],
+        ["Date Range", date_range],
         ["Initial Capital", summary.get("initial_capital")],
         ["Final Capital", summary.get("final_capital")],
-        ["Net Profit", summary.get("net_profit")],
-        ["Return %", summary.get("return_pct")],
-        ["Win Rate", summary.get("win_rate")],
-        ["Sharpe Ratio", summary.get("sharpe_ratio")],
-        ["Max Drawdown", summary.get("max_drawdown")],
+        ["Net PnL", summary.get("net_profit")],
+        ["Return %", _excel_percent_value(summary.get("return_pct"))],
+        ["Win Rate", _excel_percent_value(summary.get("win_rate"))],
+        ["Drawdown", _excel_percent_value(summary.get("max_drawdown"))],
         ["Profit Factor", summary.get("profit_factor")],
+        ["Sharpe", summary.get("sharpe_ratio")],
+        ["Total Trades", summary.get("total_trades")],
+        ["Created At", summary.get("created_at")],
+    ]
+    summary_df = pd.DataFrame(summary_rows, columns=["Metric", "Value"])
+
+    performance_rows = [
+        ["Initial Capital", summary.get("initial_capital")],
+        ["Final Capital", summary.get("final_capital")],
+        ["Gross Profit", summary.get("gross_profit")],
+        ["Gross Loss", summary.get("gross_loss")],
+        ["Net PnL", summary.get("net_profit")],
+        ["Return %", _excel_percent_value(summary.get("return_pct"))],
+        ["Win Rate", _excel_percent_value(summary.get("win_rate"))],
+        ["Max Drawdown", _excel_percent_value(summary.get("max_drawdown"))],
+        ["Profit Factor", summary.get("profit_factor")],
+        ["Sharpe", summary.get("sharpe_ratio")],
         ["Avg Win", summary.get("avg_win")],
         ["Avg Loss", summary.get("avg_loss")],
         ["Expectancy", summary.get("expectancy")],
-        ["Total Trades", summary.get("total_trades")],
-        ["Winning Trades", summary.get("winning_trades")],
-        ["Losing Trades", summary.get("losing_trades")],
-        ["Advanced Filters", summary.get("filter_summary") or "Not used"],
-        ["Candles Before Filter", summary.get("candles_before_filter")],
-        ["Candles After Filter", summary.get("candles_after_filter")],
-        ["Filter Reduction %", summary.get("filter_reduction_pct")],
-        ["Created At", summary.get("created_at")],
+        ["Avg Actual Risk", summary.get("avg_actual_risk")],
     ]
+    performance_df = pd.DataFrame(performance_rows, columns=["Metric", "Value"])
+
+    outcome_rows = [
+        ["Winning Trades", summary.get("winning_trades_count")],
+        ["Losing Trades", summary.get("losing_trades_count")],
+        ["Breakeven Trades", summary.get("breakeven_trades_count")],
+        ["TP Hits", summary.get("tp_hit_count")],
+        ["SL Hits", summary.get("sl_hit_count")],
+        ["Other Exits", summary.get("other_exit_count")],
+        ["Best Trade", summary.get("best_trade_pnl")],
+        ["Worst Trade", summary.get("worst_trade_pnl")],
+        ["Avg R", summary.get("avg_r_multiple")],
+        ["Best R", summary.get("best_r_multiple")],
+        ["Worst R", summary.get("worst_r_multiple")],
+        ["Gross Profit", summary.get("gross_profit")],
+        ["Gross Loss", summary.get("gross_loss")],
+        ["Avg Win", summary.get("avg_win")],
+        ["Avg Loss", summary.get("avg_loss")],
+        ["Expectancy", summary.get("expectancy")],
+    ]
+    outcome_df = pd.DataFrame(outcome_rows, columns=["Metric", "Value"])
+
     runtime_config = _jsonish(summary.get("runtime_config_snapshot"))
-    if not isinstance(runtime_config, dict):
-        runtime_config = {}
-    runtime_rows = _runtime_section_rows(runtime_config)
+    runtime_rows = _runtime_section_rows(runtime_config) if isinstance(runtime_config, dict) else []
+    if not runtime_rows and isinstance(runtime_config, dict):
+        runtime_rows = _json_flat_rows(runtime_config)
     runtime_rows.append(["Advanced Filters", summary.get("filter_summary") or "Not used"])
-    metrics_df = pd.DataFrame(metrics_rows, columns=["Metric", "Value"])
+    runtime_rows.append(["Candles Before Filter", summary.get("candles_before_filter")])
+    runtime_rows.append(["Candles After Filter", summary.get("candles_after_filter")])
+    runtime_rows.append(["Filter Reduction %", _excel_percent_value(summary.get("filter_reduction_pct"))])
     runtime_df = pd.DataFrame(runtime_rows, columns=["Runtime Setting", "Value"])
-    trades_df = pd.DataFrame(detail.get("trades", []))
-    equity_df = pd.DataFrame(detail.get("equity_curve", []))
-    pnl_df = pd.DataFrame(detail.get("pnl_calendar", []))
-    return metrics_df, runtime_df, trades_df, equity_df, pnl_df
+
+    trade_rows: list[dict[str, Any]] = []
+    trade_count_by_date: dict[str, dict[str, int]] = defaultdict(lambda: {"Trades": 0, "Wins": 0, "Losses": 0})
+    for index, trade in enumerate(trades or [], start=1):
+        if not isinstance(trade, dict):
+            continue
+        pnl = _to_float(trade.get("pnl"), 0.0)
+        date_key = _date_key_from_trade(trade)
+        if date_key:
+            trade_count_by_date[date_key]["Trades"] += 1
+            if pnl > 0:
+                trade_count_by_date[date_key]["Wins"] += 1
+            elif pnl < 0:
+                trade_count_by_date[date_key]["Losses"] += 1
+        trade_rows.append(
+            {
+                "Trade #": index,
+                "Entry Time": trade.get("entry_time"),
+                "Exit Time": trade.get("exit_time"),
+                "Side": trade.get("side"),
+                "Size / Lot / Qty": trade.get("lot_size") if trade.get("lot_size") is not None else trade.get("quantity"),
+                "Entry": trade.get("entry_price"),
+                "Exit": trade.get("exit_price"),
+                "SL": trade.get("stop_loss"),
+                "TP": trade.get("target"),
+                "Risk Amount": trade.get("risk_amount"),
+                "Actual Risk": trade.get("actual_risk_amount"),
+                "PnL": trade.get("pnl"),
+                "R": trade.get("r_multiple"),
+                "Exit Reason": trade.get("exit_reason") or trade.get("exit_type"),
+                "Signal Reason": trade.get("signal_reason"),
+            }
+        )
+    trades_df = pd.DataFrame(trade_rows, columns=[
+        "Trade #", "Entry Time", "Exit Time", "Side", "Size / Lot / Qty", "Entry", "Exit", "SL", "TP",
+        "Risk Amount", "Actual Risk", "PnL", "R", "Exit Reason", "Signal Reason",
+    ])
+
+    daily_rows: list[dict[str, Any]] = []
+    for row in pnl_calendar or []:
+        if not isinstance(row, dict):
+            continue
+        date_key = str(row.get("date") or "")[:10]
+        if not date_key:
+            continue
+        counts = trade_count_by_date.get(date_key, {"Trades": 0, "Wins": 0, "Losses": 0})
+        pnl_value = _to_float(row.get("pnl"), 0.0)
+        daily_rows.append({
+            "Date": date_key,
+            "Trades": counts.get("Trades", 0),
+            "Wins": counts.get("Wins", 0),
+            "Losses": counts.get("Losses", 0),
+            "Net PnL": pnl_value,
+            "Result": _excel_result_label(pnl_value),
+        })
+
+    if not daily_rows and trade_count_by_date:
+        pnl_by_date: dict[str, float] = defaultdict(float)
+        for trade in trades or []:
+            if isinstance(trade, dict):
+                key = _date_key_from_trade(trade)
+                if key:
+                    pnl_by_date[key] += _to_float(trade.get("pnl"), 0.0)
+        for date_key in sorted(trade_count_by_date):
+            counts = trade_count_by_date[date_key]
+            pnl_value = pnl_by_date.get(date_key, 0.0)
+            daily_rows.append({
+                "Date": date_key,
+                "Trades": counts.get("Trades", 0),
+                "Wins": counts.get("Wins", 0),
+                "Losses": counts.get("Losses", 0),
+                "Net PnL": pnl_value,
+                "Result": _excel_result_label(pnl_value),
+            })
+    daily_df = pd.DataFrame(daily_rows, columns=["Date", "Trades", "Wins", "Losses", "Net PnL", "Result"])
+
+    monthly_rows: list[dict[str, Any]] = []
+    if not daily_df.empty:
+        temp = daily_df.copy()
+        temp["Month"] = temp["Date"].map(_month_key_from_date)
+        for month, group in temp.groupby("Month", dropna=True):
+            pnls = pd.to_numeric(group["Net PnL"], errors="coerce").fillna(0.0)
+            monthly_rows.append({
+                "Month": month,
+                "Trading Days": int(len(group)),
+                "Green Days": int((pnls > 0).sum()),
+                "Red Days": int((pnls < 0).sum()),
+                "Net PnL": float(pnls.sum()),
+                "Best Day": float(pnls.max()) if len(pnls) else None,
+                "Worst Day": float(pnls.min()) if len(pnls) else None,
+            })
+    monthly_df = pd.DataFrame(monthly_rows, columns=["Month", "Trading Days", "Green Days", "Red Days", "Net PnL", "Best Day", "Worst Day"])
+
+    equity_df = pd.DataFrame(equity_curve or [])
+    if not equity_df.empty:
+        equity_df = equity_df.rename(columns={"timestamp": "Timestamp", "equity": "Equity"})
+        equity_df = equity_df[[col for col in ["Timestamp", "Equity"] if col in equity_df.columns]]
+    else:
+        equity_df = pd.DataFrame(columns=["Timestamp", "Equity"])
+
+    side_breakdown, _, highlights_df = _build_trade_analysis_frames(detail)
+    breakdown_sections = []
+    if not side_breakdown.empty:
+        breakdown_sections.append(side_breakdown.rename(columns={"side": "Side", "trades": "Trades", "total_pnl": "Total PnL", "avg_pnl": "Avg PnL"}))
+    if not highlights_df.empty:
+        breakdown_sections.append(highlights_df)
+    breakdown_df = pd.concat(breakdown_sections, ignore_index=True, sort=False) if breakdown_sections else pd.DataFrame(columns=["Metric", "Value"])
+
+    readme_rows = [
+        ["Sheet", "Description"],
+        ["Summary", "High-level identity, scope, and primary performance metrics."],
+        ["Performance", "Capital, return, risk, profit quality, and expectancy metrics."],
+        ["Trade Outcome", "Winning/losing trade counts, TP/SL hit counts, R-multiple stats, and win/loss quality."],
+        ["Runtime Settings", "Runtime configuration snapshot and advanced filter impact used for this backtest."],
+        ["Trades Full", "Complete audit trade list with entry, exit, levels, risk, PnL, R, exit reason, and signal reason."],
+        ["Daily PnL", "Daily profit/loss with trade, win, and loss counts."],
+        ["Monthly PnL", "Monthly grouped daily PnL summary."],
+        ["Equity Curve", "Saved equity timeline for charting or audit review."],
+        ["Trade Breakdown", "Side-based and highlight trade analytics."],
+        ["README", "Workbook guide."],
+    ]
+    readme_df = pd.DataFrame(readme_rows[1:], columns=readme_rows[0])
+
+    return {
+        "Summary": summary_df,
+        "Performance": performance_df,
+        "Trade Outcome": outcome_df,
+        "Runtime Settings": runtime_df,
+        "Trades Full": trades_df,
+        "Daily PnL": daily_df,
+        "Monthly PnL": monthly_df,
+        "Equity Curve": equity_df,
+        "Trade Breakdown": breakdown_df,
+        "README": readme_df,
+    }
 
 
 async def _detail_payload_for_export(backtest_id: str, db: AsyncSession, current_user: dict) -> dict:
@@ -1411,18 +1658,77 @@ async def _detail_payload_for_export(backtest_id: str, db: AsyncSession, current
     return payload
 
 
-def _autosize_excel_sheet(ws):
+
+def _format_excel_sheet(ws):
+    """Fast professional styling without expensive full-sheet autosize scans."""
     header_fill = PatternFill(fill_type="solid", fgColor="2F1B57")
     header_font = Font(color="FFFFFF", bold=True)
-    for row in ws.iter_rows(min_row=1, max_row=1):
-        for cell in row:
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+
+    if ws.max_row >= 1:
+        for cell in ws[1]:
             cell.fill = header_fill
             cell.font = header_font
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-    for column_cells in ws.columns:
-        values = ["" if cell.value is None else str(cell.value) for cell in column_cells]
-        width = min(max(len(v) for v in values) + 2, 42) if values else 12
-        ws.column_dimensions[get_column_letter(column_cells[0].column)].width = max(width, 12)
+            cell.alignment = header_alignment
+
+    header_by_col = {cell.column: str(cell.value or "") for cell in ws[1]}
+    currency_headers = {
+        "Initial Capital", "Final Capital", "Net PnL", "Gross Profit", "Gross Loss", "Avg Win", "Avg Loss",
+        "Expectancy", "Best Trade", "Worst Trade", "Risk Amount", "Actual Risk", "PnL", "Total PnL",
+        "Avg PnL", "Best Day", "Worst Day", "Equity",
+    }
+    percent_metric_names = {"Return %", "Win Rate", "Drawdown", "Max Drawdown", "Filter Reduction %"}
+    currency_metric_names = {
+        "Initial Capital", "Final Capital", "Net PnL", "Gross Profit", "Gross Loss", "Avg Win", "Avg Loss",
+        "Expectancy", "Avg Actual Risk", "Best Trade", "Worst Trade"
+    }
+    integer_metric_names = {"Total Trades", "Winning Trades", "Losing Trades", "Breakeven Trades", "TP Hits", "SL Hits", "Other Exits", "Candles Before Filter", "Candles After Filter"}
+    decimal_metric_names = {"Profit Factor", "Sharpe", "RR Ratio", "Risk %", "Avg R", "Best R", "Worst R"}
+    integer_headers = {"Trade #", "Trades", "Wins", "Losses", "Trading Days", "Green Days", "Red Days", "Total Trades"}
+    decimal_headers = {"Entry", "Exit", "SL", "TP", "R", "Avg R", "Best R", "Worst R", "Profit Factor", "Sharpe", "Size / Lot / Qty"}
+
+    # Limit autosize to the first 200 rows and cap width to avoid slow exports and oversized columns.
+    max_scan_row = min(ws.max_row, 201)
+    for col_idx in range(1, ws.max_column + 1):
+        header = header_by_col.get(col_idx, "")
+        max_len = len(header)
+        for row_idx in range(2, max_scan_row + 1):
+            value = ws.cell(row=row_idx, column=col_idx).value
+            if value is not None:
+                max_len = max(max_len, len(str(value)))
+        width = max(12, min(max_len + 2, 42))
+        if header in {"Signal Reason", "Description", "Runtime Setting"}:
+            width = min(max(width, 28), 50)
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        metric_label = str(row[0].value or "") if row else ""
+        for cell in row:
+            header = header_by_col.get(cell.column, "")
+            cell.alignment = Alignment(vertical="top", wrap_text=header in {"Signal Reason", "Description", "Runtime Setting"})
+            if header in integer_headers:
+                cell.number_format = '#,##0'
+            elif header in decimal_headers:
+                cell.number_format = '#,##0.00'
+            elif header == "Value":
+                if metric_label in percent_metric_names:
+                    cell.number_format = '0.00%'
+                elif metric_label in integer_metric_names:
+                    cell.number_format = '#,##0'
+                elif metric_label in decimal_metric_names:
+                    cell.number_format = '#,##0.00'
+                elif metric_label in currency_metric_names and isinstance(cell.value, (int, float)):
+                    cell.number_format = '$#,##0.00;-$#,##0.00;0.00'
+            elif header in currency_headers and isinstance(cell.value, (int, float)):
+                cell.number_format = '$#,##0.00;-$#,##0.00;0.00'
+            if header in {"Return %", "Win Rate", "Drawdown", "Max Drawdown", "Filter Reduction %"}:
+                cell.number_format = '0.00%'
+            if header in {"Entry Time", "Exit Time", "Created At", "Timestamp"}:
+                cell.number_format = 'yyyy-mm-dd hh:mm'
+            if header == "Date":
+                cell.number_format = 'yyyy-mm-dd'
 
 
 def _build_trade_analysis_frames(detail: dict):
@@ -1439,9 +1745,12 @@ def _build_trade_analysis_frames(detail: dict):
         trades_df["quantity"] = pd.to_numeric(trades_df.get("quantity"), errors="coerce").fillna(0)
         trades_df["duration_minutes"] = ((trades_df["exit_time"] - trades_df["entry_time"]).dt.total_seconds() / 60.0).fillna(0.0)
 
+    if not trades_df.empty and "_trade_count" not in trades_df.columns:
+        trades_df["_trade_count"] = 1
+
     side_breakdown = (
         trades_df.groupby("side", dropna=False)
-        .agg(trades=("id", "count"), total_pnl=("pnl", "sum"), avg_pnl=("pnl", "mean"))
+        .agg(trades=("_trade_count", "sum"), total_pnl=("pnl", "sum"), avg_pnl=("pnl", "mean"))
         .reset_index()
     ) if not trades_df.empty else pd.DataFrame(columns=["side", "trades", "total_pnl", "avg_pnl"])
 
@@ -1449,7 +1758,7 @@ def _build_trade_analysis_frames(detail: dict):
     if not trades_df.empty and "exit_time" in trades_df.columns:
         temp = trades_df.copy()
         temp["date"] = temp["exit_time"].dt.date
-        daily_trades = temp.groupby("date").agg(trade_count=("id", "count"), daily_pnl=("pnl", "sum")).reset_index()
+        daily_trades = temp.groupby("date").agg(trade_count=("_trade_count", "sum"), daily_pnl=("pnl", "sum")).reset_index()
 
     highlights = pd.DataFrame([
         ["Largest Win", float(trades_df["pnl"].max()) if not trades_df.empty else 0.0],
@@ -1462,41 +1771,55 @@ def _build_trade_analysis_frames(detail: dict):
     return side_breakdown, daily_trades, highlights
 
 
+
 @router.get("/{backtest_id}/export/excel")
 async def export_backtest_excel(backtest_id: str, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    detail = await _detail_payload_for_export(backtest_id, db, current_user)
-    metrics_df, runtime_df, trades_df, equity_df, pnl_df = _build_detail_export_frames(detail)
-    side_df, daily_trades_df, highlights_df = _build_trade_analysis_frames(detail)
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        metrics_df.to_excel(writer, sheet_name="Summary", index=False)
-        highlights_df.to_excel(writer, sheet_name="Highlights", index=False)
-        runtime_df.to_excel(writer, sheet_name="Runtime Settings", index=False)
-        trades_df.to_excel(writer, sheet_name="Trades", index=False)
-        side_df.to_excel(writer, sheet_name="Trade Breakdown", index=False)
-        daily_trades_df.to_excel(writer, sheet_name="Daily Trades", index=False)
-        equity_df.to_excel(writer, sheet_name="Equity Curve", index=False)
-        pnl_df.to_excel(writer, sheet_name="PnL Calendar", index=False)
-    output.seek(0)
-    workbook = load_workbook(output)
-    for sheet in workbook.worksheets:
-        _autosize_excel_sheet(sheet)
-        sheet.freeze_panes = "A2"
-    formatted = BytesIO()
-    workbook.save(formatted)
-    formatted.seek(0)
-    filename = f"backtest-{backtest_id}-full-report.xlsx"
-    return StreamingResponse(formatted, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    request_id = str(uuid4())
+    try:
+        detail = await _detail_payload_for_export(backtest_id, db, current_user)
+        frames_by_sheet = _build_detail_export_frames(detail)
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            for sheet_name, frame in frames_by_sheet.items():
+                safe_frame = frame if isinstance(frame, pd.DataFrame) else pd.DataFrame(frame)
+                safe_frame = _excel_safe_dataframe(safe_frame)
+                safe_frame.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+
+            workbook = writer.book
+            # Apply formatting directly before saving, avoiding a second load_workbook pass.
+            for worksheet in workbook.worksheets:
+                _format_excel_sheet(worksheet)
+
+        output.seek(0)
+        filename = f"backtest-{backtest_id}-professional-report.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Excel export failed for backtest %s request_id=%s", backtest_id, request_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Excel export failed. Please retry or contact support with request ID {request_id}.",
+        ) from exc
 
 
 @router.get("/{backtest_id}/export/pdf")
-async def export_backtest_pdf(backtest_id: str, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def export_backtest_pdf(
+    backtest_id: str,
+    mode: str = Query("executive"),
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     request_id = str(uuid4())
     try:
         from ...services.reports.backtest_pdf_report import build_backtest_pdf
 
         detail = await _detail_payload_for_export(backtest_id, db, current_user)
-        output, filename = build_backtest_pdf(detail)
+        output, filename = build_backtest_pdf(detail, mode=mode)
         return StreamingResponse(
             output,
             media_type="application/pdf",
@@ -1505,7 +1828,7 @@ async def export_backtest_pdf(backtest_id: str, db: AsyncSession = Depends(get_d
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("PDF export failed for backtest %s request_id=%s", backtest_id, request_id)
+        logger.exception("PDF export failed for backtest %s mode=%s request_id=%s", backtest_id, mode, request_id)
         raise HTTPException(
             status_code=500,
             detail=f"PDF export failed. Please retry or contact support with request ID {request_id}.",
@@ -2318,6 +2641,62 @@ def _infer_currency_payload(*, instrument_symbol: str | None = None, asset_class
         "is_legacy_currency": not bool(account_currency or spec.get("account_currency")),
     }
 
+
+
+def _compute_trade_outcome_summary(trades_data: list[dict]) -> dict:
+    """Compute reusable trade outcome metrics for report/detail responses.
+
+    This is intentionally defensive so legacy runs with missing fields,
+    JSON trade_details fallbacks, or partial trade rows do not crash the
+    detail endpoint.
+    """
+    total = len(trades_data or [])
+    winning = 0
+    losing = 0
+    breakeven = 0
+    tp_hits = 0
+    sl_hits = 0
+    pnl_values: list[float] = []
+    r_values: list[float] = []
+
+    for trade in trades_data or []:
+        if not isinstance(trade, dict):
+            continue
+
+        pnl = _to_float(trade.get("pnl"), 0.0)
+        pnl_values.append(pnl)
+        if pnl > 0:
+            winning += 1
+        elif pnl < 0:
+            losing += 1
+        if abs(pnl) < 0.000001:
+            breakeven += 1
+
+        exit_text = f"{trade.get('exit_reason') or ''} {trade.get('exit_type') or ''}".upper()
+        if "TAKE_PROFIT" in exit_text or "TARGET" in exit_text or "TP" in exit_text:
+            tp_hits += 1
+        elif "STOP_LOSS" in exit_text or "SL" in exit_text:
+            sl_hits += 1
+
+        r_value = _to_float(trade.get("r_multiple"), None)
+        if r_value is not None:
+            r_values.append(r_value)
+
+    return {
+        "winning_trades_count": winning,
+        "losing_trades_count": losing,
+        "breakeven_trades_count": breakeven,
+        "tp_hit_count": tp_hits,
+        "sl_hit_count": sl_hits,
+        "other_exit_count": max(total - tp_hits - sl_hits, 0),
+        "best_trade_pnl": max(pnl_values) if pnl_values else None,
+        "worst_trade_pnl": min(pnl_values) if pnl_values else None,
+        "avg_r_multiple": (sum(r_values) / len(r_values)) if r_values else None,
+        "total_r_multiple": sum(r_values) if r_values else None,
+        "best_r_multiple": max(r_values) if r_values else None,
+        "worst_r_multiple": min(r_values) if r_values else None,
+    }
+
 async def _professional_summary_overlay(db: AsyncSession, backtest_id: str, trades_data: list[dict]) -> dict:
     """Best-effort Phase 2F report metadata overlay for new and legacy runs."""
     overlay: dict = {}
@@ -2405,6 +2784,425 @@ async def _professional_summary_overlay(db: AsyncSession, backtest_id: str, trad
             overlay[key] = value
     return overlay
 
+
+
+def _timeframe_to_minutes(timeframe: str | None) -> int:
+    value = str(timeframe or "5m").strip().lower()
+    mapping = {
+        "1m": 1,
+        "3m": 3,
+        "5m": 5,
+        "15m": 15,
+        "30m": 30,
+        "1h": 60,
+        "60m": 60,
+        "4h": 240,
+        "240m": 240,
+        "1d": 1440,
+        "d": 1440,
+        "day": 1440,
+    }
+    if value in mapping:
+        return mapping[value]
+    try:
+        if value.endswith("m"):
+            return max(1, int(value[:-1]))
+        if value.endswith("h"):
+            return max(1, int(value[:-1]) * 60)
+        if value.endswith("d"):
+            return max(1, int(value[:-1]) * 1440)
+    except Exception:
+        return 5
+    return 5
+
+
+def _parse_chart_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo else value
+    try:
+        parsed = pd.Timestamp(value)
+        if parsed.tzinfo is not None:
+            parsed = parsed.tz_convert(MARKET_DATA_TZ).tz_localize(None)
+        return parsed.to_pydatetime()
+    except Exception:
+        return None
+
+
+def _chart_iso_datetime(value: Any) -> str | None:
+    parsed = _parse_chart_datetime(value)
+    if parsed is not None:
+        return parsed.isoformat()
+    return str(value) if value else None
+
+
+def _first_present(row: dict, *keys: str) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _normalise_chart_trade_aliases(row_dict: dict, *, backtest_id: str | None = None, instrument_id: Any = None, trade_index: int | None = None) -> dict:
+    """Normalize legacy trade_details JSON rows into the same shape as saved Trade rows."""
+    row = dict(row_dict or {})
+    row["id"] = _first_present(row, "id", "trade_id")
+    row["backtest_id"] = _first_present(row, "backtest_id") or backtest_id
+    row["instrument_id"] = _first_present(row, "instrument_id") or instrument_id
+    row["entry_time"] = _first_present(row, "entry_time", "entry_datetime", "entry_date", "open_time", "opened_at")
+    row["exit_time"] = _first_present(row, "exit_time", "exit_datetime", "close_time", "closed_at")
+    row["side"] = _first_present(row, "side", "direction", "trade_side")
+    row["quantity"] = _first_present(row, "quantity", "qty", "size")
+    row["lot_size"] = _first_present(row, "lot_size", "lot", "lots", "size")
+    row["entry_price"] = _first_present(row, "entry_price", "entry", "open_price")
+    row["exit_price"] = _first_present(row, "exit_price", "exit", "close_price")
+    row["stop_loss"] = _first_present(row, "stop_loss", "sl", "stop")
+    row["target"] = _first_present(row, "target", "tp", "take_profit")
+    row["pnl"] = _first_present(row, "pnl", "profit", "net_pnl")
+    row["r_multiple"] = _first_present(row, "r_multiple", "r", "r_value")
+    row["exit_reason"] = _first_present(row, "exit_reason", "exit_type", "reason")
+    row["exit_type"] = _first_present(row, "exit_type", "exit_reason", "reason")
+    row["signal_reason"] = _first_present(row, "signal_reason", "entry_reason", "reason_detail", "notes")
+    if trade_index is not None:
+        row["trade_index"] = trade_index
+        row["row_index"] = trade_index
+        row["sequence"] = trade_index + 1
+    return row
+
+
+def _serialise_chart_trade(row_dict: dict) -> dict:
+    risk_values = _risk_values_from_row(row_dict)
+    return {
+        "id": str(row_dict.get("id")) if row_dict.get("id") is not None else None,
+        "backtest_id": str(row_dict.get("backtest_id")) if row_dict.get("backtest_id") is not None else None,
+        "instrument_id": row_dict.get("instrument_id"),
+        "entry_time": _chart_iso_datetime(row_dict.get("entry_time")),
+        "exit_time": _chart_iso_datetime(row_dict.get("exit_time")),
+        "side": row_dict.get("side"),
+        "quantity": _to_float(row_dict.get("quantity"), None),
+        "lot_size": _to_float(row_dict.get("lot_size"), None),
+        "entry_price": _to_float(row_dict.get("entry_price"), None),
+        "exit_price": _to_float(row_dict.get("exit_price"), None),
+        "pnl": _to_float(row_dict.get("pnl"), None),
+        "exit_type": row_dict.get("exit_type") or row_dict.get("exit_reason"),
+        "exit_reason": row_dict.get("exit_reason") or row_dict.get("exit_type"),
+        "account_currency": row_dict.get("account_currency"),
+        "currency_symbol": row_dict.get("currency_symbol"),
+        "asset_class": row_dict.get("asset_class"),
+        "quantity_mode": row_dict.get("quantity_mode"),
+        "actual_risk_amount": _to_float(row_dict.get("actual_risk_amount"), None),
+        "risk_ticks": _to_float(row_dict.get("risk_ticks"), None),
+        "risk_pips": _to_float(row_dict.get("risk_pips"), None),
+        "reward_ticks": _to_float(row_dict.get("reward_ticks"), None),
+        "expected_reward_amount": _to_float(row_dict.get("expected_reward_amount"), None),
+        "sl_mode": row_dict.get("sl_mode"),
+        "position_size_mode": row_dict.get("position_size_mode"),
+        "runtime_config_snapshot": _jsonish(row_dict.get("runtime_config_snapshot")),
+        "instrument_spec_snapshot": _jsonish(row_dict.get("instrument_spec_snapshot")),
+        "lifecycle_events": _jsonish(row_dict.get("lifecycle_events")) or [],
+        "signal_reason": row_dict.get("signal_reason"),
+        **risk_values,
+    }
+
+
+async def _load_backtest_for_chart(db: AsyncSession, backtest_id: str, current_user: dict):
+    backtest_row = (
+        await db.execute(
+            select(PerformanceMetric, Instrument.symbol)
+            .outerjoin(Instrument, Instrument.id == PerformanceMetric.instrument_id)
+            .where(cast(PerformanceMetric.id, String) == str(backtest_id))
+        )
+    ).first()
+    if not backtest_row:
+        raise HTTPException(status_code=404, detail="Backtest or trade not found")
+
+    performance_metric, instrument_symbol = backtest_row
+    if str(performance_metric.user_id) != str(current_user["user_id"]):
+        raise HTTPException(status_code=404, detail="Backtest or trade not found")
+    return performance_metric, instrument_symbol
+
+
+async def _trade_chart_select_columns(db: AsyncSession) -> tuple[list[str], list[str]]:
+    trade_columns = [meta["column_name"] for meta in await _table_columns_meta(db, "trades")]
+    wanted = [
+        "id", "backtest_id", "instrument_id", "entry_time", "exit_time", "side", "quantity", "lot_size",
+        "entry_price", "exit_price", "pnl", "exit_type", "exit_reason", "account_currency", "currency_symbol",
+        "asset_class", "quantity_mode", "stop_loss", "target", "risk_points", "risk_ticks", "risk_pips",
+        "reward_points", "reward_ticks", "rr_ratio", "risk_amount", "actual_risk_amount", "reward_amount",
+        "expected_reward_amount", "r_multiple", "sl_mode", "position_size_mode", "runtime_config_snapshot",
+        "instrument_spec_snapshot", "lifecycle_events", "signal_reason",
+    ]
+    return trade_columns, [column for column in wanted if column in trade_columns]
+
+
+def _trade_chart_order_sql(trade_columns: list[str]) -> str:
+    order_parts = []
+    if "entry_time" in trade_columns:
+        order_parts.append("entry_time ASC NULLS LAST")
+    if "exit_time" in trade_columns:
+        order_parts.append("exit_time ASC NULLS LAST")
+    if "id" in trade_columns:
+        order_parts.append("id ASC")
+    return ", ".join(order_parts) or "1 ASC"
+
+
+async def _load_legacy_chart_trade_by_index(
+    db: AsyncSession,
+    backtest_id: str,
+    performance_metric: PerformanceMetric,
+    trade_index: int,
+) -> dict | None:
+    """Return a legacy trade_details row by displayed zero-based index.
+
+    Some older backtests saved trades inside performance_metrics.trade_details instead of
+    the trades table. The report page still renders those rows, so chart verification must
+    use the same array index as the frontend when a database trade id is unavailable.
+    """
+    if trade_index < 0 or not await _column_exists(db, "performance_metrics", "trade_details"):
+        return None
+
+    fallback_row = (
+        await db.execute(
+            text("SELECT trade_details FROM performance_metrics WHERE id::text = :backtest_id LIMIT 1"),
+            {"backtest_id": str(backtest_id)},
+        )
+    ).mappings().first()
+    if not fallback_row:
+        return None
+
+    legacy_rows = _normalise_trade_detail_rows(fallback_row.get("trade_details"))
+    if trade_index >= len(legacy_rows):
+        return None
+
+    row = _normalise_chart_trade_aliases(
+        legacy_rows[trade_index],
+        backtest_id=str(backtest_id),
+        instrument_id=getattr(performance_metric, "instrument_id", None),
+        trade_index=trade_index,
+    )
+    row["backtest_id"] = str(backtest_id)
+    row["instrument_id"] = row.get("instrument_id") or getattr(performance_metric, "instrument_id", None)
+    return row
+
+
+async def _build_trade_chart_context_payload(
+    *,
+    db: AsyncSession,
+    backtest_id: str,
+    performance_metric: PerformanceMetric,
+    instrument_symbol: str | None,
+    trade_dict: dict,
+    source: str = "id",
+    trade_index: int | None = None,
+) -> dict:
+    trade_payload = _serialise_chart_trade(trade_dict)
+    if trade_index is not None:
+        trade_payload["trade_index"] = trade_index
+        trade_payload["row_index"] = trade_index
+        trade_payload["sequence"] = trade_index + 1
+    trade_payload["backtest_id"] = str(backtest_id)
+    if trade_payload.get("instrument_id") is None and trade_dict.get("instrument_id") is not None:
+        trade_payload["instrument_id"] = trade_dict.get("instrument_id")
+
+    timeframe = getattr(performance_metric, "timeframe", None) or "5m"
+    instrument_id = trade_dict.get("instrument_id") or getattr(performance_metric, "instrument_id", None)
+    entry_time = _parse_chart_datetime(trade_dict.get("entry_time"))
+    exit_time = _parse_chart_datetime(trade_dict.get("exit_time"))
+    if entry_time and not exit_time:
+        exit_time = entry_time + timedelta(minutes=_timeframe_to_minutes(timeframe) * 30)
+
+    candles: list[dict] = []
+    warning = None
+    if instrument_id is not None and entry_time is not None:
+        try:
+            prev_rows = (
+                await db.execute(
+                    text(
+                        """
+                        SELECT timestamp, open, high, low, close, volume
+                        FROM market_data
+                        WHERE instrument_id = :instrument_id
+                          AND timeframe = :timeframe
+                          AND timestamp < :entry_time
+                        ORDER BY timestamp DESC
+                        LIMIT 50
+                        """
+                    ),
+                    {"instrument_id": instrument_id, "timeframe": timeframe, "entry_time": entry_time},
+                )
+            ).mappings().all()
+            range_rows = (
+                await db.execute(
+                    text(
+                        """
+                        SELECT timestamp, open, high, low, close, volume
+                        FROM market_data
+                        WHERE instrument_id = :instrument_id
+                          AND timeframe = :timeframe
+                          AND timestamp >= :entry_time
+                          AND timestamp <= :exit_time
+                        ORDER BY timestamp ASC
+                        """
+                    ),
+                    {"instrument_id": instrument_id, "timeframe": timeframe, "entry_time": entry_time, "exit_time": exit_time or entry_time},
+                )
+            ).mappings().all()
+            after_rows = (
+                await db.execute(
+                    text(
+                        """
+                        SELECT timestamp, open, high, low, close, volume
+                        FROM market_data
+                        WHERE instrument_id = :instrument_id
+                          AND timeframe = :timeframe
+                          AND timestamp > :exit_time
+                        ORDER BY timestamp ASC
+                        LIMIT 30
+                        """
+                    ),
+                    {"instrument_id": instrument_id, "timeframe": timeframe, "exit_time": exit_time or entry_time},
+                )
+            ).mappings().all()
+
+            dedup: dict[str, dict] = {}
+            for candle_row in list(reversed(prev_rows)) + list(range_rows) + list(after_rows):
+                ts = candle_row.get("timestamp")
+                key = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                dedup[key] = {
+                    "timestamp": key,
+                    "open": _to_float(candle_row.get("open"), 0.0),
+                    "high": _to_float(candle_row.get("high"), 0.0),
+                    "low": _to_float(candle_row.get("low"), 0.0),
+                    "close": _to_float(candle_row.get("close"), 0.0),
+                    "volume": _to_float(candle_row.get("volume"), 0.0),
+                }
+            candles = sorted(dedup.values(), key=lambda item: item.get("timestamp") or "")
+        except Exception as exc:
+            logger.warning("Unable to load chart candles for backtest %s trade %s: %s", backtest_id, trade_dict.get("id") or trade_index, exc)
+            warning = "No candle data found for this trade context."
+    else:
+        warning = "No candle data found for this trade context."
+
+    if not candles and warning is None:
+        warning = "No candle data found for this trade context."
+
+    return {
+        "trade": trade_payload,
+        "candles": candles,
+        "overlays": {
+            "side": trade_payload.get("side"),
+            "entry_price": trade_payload.get("entry_price"),
+            "exit_price": trade_payload.get("exit_price"),
+            "stop_loss": trade_payload.get("stop_loss"),
+            "target": trade_payload.get("target"),
+            "entry_time": trade_payload.get("entry_time"),
+            "exit_time": trade_payload.get("exit_time"),
+            "exit_reason": trade_payload.get("exit_reason") or trade_payload.get("exit_type"),
+            "signal_reason": trade_payload.get("signal_reason"),
+            "pnl": trade_payload.get("pnl"),
+            "r_multiple": trade_payload.get("r_multiple"),
+        },
+        "meta": {
+            "instrument_symbol": instrument_symbol,
+            "timeframe": timeframe,
+            "backtest_id": str(backtest_id),
+            "candles_before": 50,
+            "candles_after": 30,
+            "warning": warning,
+            "source": source,
+            "trade_index": trade_index,
+        },
+    }
+
+
+@router.get("/{backtest_id}/trades/{trade_id}/chart-context")
+async def get_trade_chart_context(
+    backtest_id: str,
+    trade_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    performance_metric, instrument_symbol = await _load_backtest_for_chart(db, backtest_id, current_user)
+    trade_columns, select_columns = await _trade_chart_select_columns(db)
+    if not select_columns:
+        raise HTTPException(status_code=404, detail="Backtest or trade not found")
+
+    trade_row = (
+        await db.execute(
+            text(f"SELECT {', '.join(select_columns)} FROM trades WHERE id::text = :trade_id AND backtest_id::text = :backtest_id LIMIT 1"),
+            {"trade_id": str(trade_id), "backtest_id": str(backtest_id)},
+        )
+    ).mappings().first()
+    if not trade_row:
+        raise HTTPException(status_code=404, detail="Backtest or trade not found")
+
+    payload = await _build_trade_chart_context_payload(
+        db=db,
+        backtest_id=backtest_id,
+        performance_metric=performance_metric,
+        instrument_symbol=instrument_symbol,
+        trade_dict=dict(trade_row),
+        source="id",
+        trade_index=None,
+    )
+    return success_response(payload)
+
+
+@router.get("/{backtest_id}/trades/by-index/{trade_index}/chart-context")
+async def get_trade_chart_context_by_index(
+    backtest_id: str,
+    trade_index: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Fallback chart context for legacy detail rows that do not carry a saved trade id.
+
+    The frontend sends the zero-based row index from the displayed detail.trades array. The backend
+    applies the same stable ordering used by the detail endpoint: entry_time ASC, exit_time ASC, id ASC.
+    """
+    if trade_index < 0:
+        raise HTTPException(status_code=404, detail="Backtest or trade not found")
+
+    performance_metric, instrument_symbol = await _load_backtest_for_chart(db, backtest_id, current_user)
+    trade_columns, select_columns = await _trade_chart_select_columns(db)
+
+    trade_row = None
+    if select_columns:
+        order_sql = _trade_chart_order_sql(trade_columns)
+        trade_row = (
+            await db.execute(
+                text(
+                    f"SELECT {', '.join(select_columns)} FROM trades "
+                    f"WHERE backtest_id::text = :backtest_id ORDER BY {order_sql} LIMIT 1 OFFSET :trade_index"
+                ),
+                {"backtest_id": str(backtest_id), "trade_index": int(trade_index)},
+            )
+        ).mappings().first()
+
+    if trade_row:
+        trade_dict = dict(trade_row)
+        source = "index"
+    else:
+        trade_dict = await _load_legacy_chart_trade_by_index(db, backtest_id, performance_metric, int(trade_index))
+        source = "legacy_index"
+
+    if not trade_dict:
+        raise HTTPException(status_code=404, detail="Backtest or trade not found")
+
+    payload = await _build_trade_chart_context_payload(
+        db=db,
+        backtest_id=backtest_id,
+        performance_metric=performance_metric,
+        instrument_symbol=instrument_symbol,
+        trade_dict=trade_dict,
+        source=source,
+        trade_index=int(trade_index),
+    )
+    return success_response(payload)
+
+
 @router.get("/{backtest_id}/detail")
 async def get_backtest_detail(
     backtest_id: str,
@@ -2423,7 +3221,7 @@ async def get_backtest_detail(
         trade_columns = [meta["column_name"] for meta in await _table_columns_meta(db, "trades")]
         if trade_columns:
             wanted = [
-                "id", "entry_time", "exit_time", "side", "quantity", "lot_size", "entry_price", "exit_price", "pnl", "exit_type", "exit_reason",
+                "id", "backtest_id", "instrument_id", "entry_time", "exit_time", "side", "quantity", "lot_size", "entry_price", "exit_price", "pnl", "exit_type", "exit_reason",
                 "account_currency", "currency_symbol", "asset_class", "quantity_mode",
                 "stop_loss", "target", "risk_points", "risk_ticks", "risk_pips", "reward_points", "reward_ticks",
                 "rr_ratio", "risk_amount", "actual_risk_amount", "reward_amount", "expected_reward_amount", "r_multiple",
@@ -2431,18 +3229,31 @@ async def get_backtest_detail(
             ]
             select_columns = [column for column in wanted if column in trade_columns]
             select_sql = ", ".join(select_columns)
+            order_parts = []
+            if "entry_time" in trade_columns:
+                order_parts.append("entry_time ASC NULLS LAST")
+            if "exit_time" in trade_columns:
+                order_parts.append("exit_time ASC NULLS LAST")
+            if "id" in trade_columns:
+                order_parts.append("id ASC")
+            order_sql = ", ".join(order_parts) or "1 ASC"
             rows = (
                 await db.execute(
-                    text(f"SELECT {select_sql} FROM trades WHERE backtest_id::text = :backtest_id ORDER BY entry_time ASC"),
+                    text(f"SELECT {select_sql} FROM trades WHERE backtest_id::text = :backtest_id ORDER BY {order_sql}"),
                     {"backtest_id": str(backtest_id)},
                 )
             ).mappings().all()
-            for row_map in rows:
+            for trade_index, row_map in enumerate(rows):
                 row_dict = dict(row_map)
                 risk_values = _risk_values_from_row(row_dict)
                 trades_data.append(
                     {
                         "id": str(row_dict.get("id")) if row_dict.get("id") is not None else None,
+                        "trade_index": trade_index,
+                        "row_index": trade_index,
+                        "sequence": trade_index + 1,
+                        "backtest_id": str(row_dict.get("backtest_id")) if row_dict.get("backtest_id") is not None else str(backtest_id),
+                        "instrument_id": row_dict.get("instrument_id") if row_dict.get("instrument_id") is not None else getattr(row, "instrument_id", None),
                         "entry_time": row_dict.get("entry_time").isoformat() if row_dict.get("entry_time") else None,
                         "exit_time": row_dict.get("exit_time").isoformat() if row_dict.get("exit_time") else None,
                         "side": row_dict.get("side"),
@@ -2467,6 +3278,7 @@ async def get_backtest_detail(
                         "runtime_config_snapshot": _jsonish(row_dict.get("runtime_config_snapshot")),
                         "instrument_spec_snapshot": _jsonish(row_dict.get("instrument_spec_snapshot")),
                         "lifecycle_events": _jsonish(row_dict.get("lifecycle_events")) or [],
+                        "signal_reason": row_dict.get("signal_reason"),
                         **risk_values,
                     }
                 )
@@ -2531,6 +3343,7 @@ async def get_backtest_detail(
         debit_transaction_id=debit.get("debit_transaction_id"),
     )
     summary.update(await _professional_summary_overlay(db, str(backtest_id), trades_data))
+    summary.update(_compute_trade_outcome_summary(trades_data))
     currency_payload = _infer_currency_payload(
         instrument_symbol=summary.get("instrument_symbol"),
         asset_class=summary.get("asset_class"),
@@ -2540,7 +3353,17 @@ async def get_backtest_detail(
         instrument_spec=summary.get("instrument_spec_snapshot") if isinstance(summary.get("instrument_spec_snapshot"), dict) else None,
     )
     summary.update({k: v for k, v in currency_payload.items() if summary.get(k) in (None, "Legacy")})
-    for trade in trades_data:
+    for idx, trade in enumerate(trades_data):
+        if trade.get("trade_index") is None:
+            trade["trade_index"] = idx
+        if trade.get("row_index") is None:
+            trade["row_index"] = idx
+        if trade.get("sequence") is None:
+            trade["sequence"] = idx + 1
+        if trade.get("backtest_id") is None:
+            trade["backtest_id"] = str(backtest_id)
+        if trade.get("instrument_id") is None:
+            trade["instrument_id"] = getattr(row, "instrument_id", None)
         trade_payload = _infer_currency_payload(
             instrument_symbol=summary.get("instrument_symbol"),
             asset_class=trade.get("asset_class") or summary.get("asset_class"),
