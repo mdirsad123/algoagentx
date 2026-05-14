@@ -65,6 +65,24 @@ class Strategy(Base):
     creator = relationship("User", foreign_keys=[created_by], lazy="joined")
 
 
+class StrategyAsset(Base):
+    __tablename__ = "strategy_assets"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    strategy_id = Column(String(64), ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_name = Column(String(255), nullable=False)
+    original_name = Column(String(255), nullable=True)
+    file_path = Column(Text, nullable=False)
+    public_url = Column(Text, nullable=True)
+    mime_type = Column(String(100), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    sort_order = Column(Integer, nullable=False, server_default="0")
+    is_public = Column(Boolean, nullable=False, server_default="true", index=True)
+    uploaded_by = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    strategy = relationship("Strategy", lazy="joined")
+
 class StrategyRuntimePreset(Base):
     __tablename__ = "strategy_runtime_presets"
 

@@ -7,6 +7,7 @@ import {
   BarChart3,
   CheckCircle2,
   Clock3,
+  ImageIcon,
   Loader2,
   Plus,
   RefreshCcw,
@@ -14,7 +15,7 @@ import {
   Target,
   TrendingUp,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,16 @@ import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import apiClient from "../../../lib/axios";
+
+type StrategyAttachment = {
+  id: string;
+  publicUrl?: string | null;
+  public_url?: string | null;
+  originalName?: string | null;
+  original_name?: string | null;
+  mimeType?: string | null;
+  sizeBytes?: number | null;
+};
 
 type StrategyItem = {
   id: string;
@@ -48,6 +59,9 @@ type StrategyItem = {
   isDeployableDemo?: boolean;
   is_live_approved?: boolean;
   isLiveApproved?: boolean;
+  attachments?: StrategyAttachment[];
+  attachmentCount?: number;
+  attachment_count?: number;
 };
 
 type StrategyRequestItem = {
@@ -61,6 +75,12 @@ type StrategyRequestItem = {
   timeframe?: string | null;
   status: string;
   admin_notes?: string | null;
+  user_update_notes?: string | null;
+  userUpdateNotes?: string | null;
+  clarification_submitted_at?: string | null;
+  clarificationSubmittedAt?: string | null;
+  request_kind?: string | null;
+  requestKind?: string | null;
   deployed_strategy_id?: string | null;
   deployedStrategyId?: string | null;
   created_at?: string | null;
@@ -68,6 +88,9 @@ type StrategyRequestItem = {
   updated_at?: string | null;
   updatedAt?: string | null;
   lastUpdated?: string | null;
+  attachments?: StrategyAttachment[];
+  attachmentCount?: number;
+  attachment_count?: number;
 };
 
 type MyStrategiesResponse =
@@ -80,6 +103,8 @@ type MyStrategiesResponse =
 type StrategyRequestPayload = {
   title: string;
   strategy_type: string;
+  market: string;
+  timeframe: string;
   entry_rules: string;
   exit_rules: string;
   confirmation_rules: string;
@@ -92,6 +117,8 @@ type StrategyRequestPayload = {
 const initialForm: StrategyRequestPayload = {
   title: "",
   strategy_type: "",
+  market: "",
+  timeframe: "",
   entry_rules: "",
   exit_rules: "",
   confirmation_rules: "",
@@ -102,18 +129,61 @@ const initialForm: StrategyRequestPayload = {
 };
 
 const STATUS_LABEL: Record<string, string> = {
+  DRAFT: "Draft",
+  PENDING: "Pending Review",
+  SUBMITTED: "Pending Review",
+  UNDER_REVIEW: "Under Review",
   UNDER_DEVELOPMENT: "Under Development",
   NEEDS_CLARIFICATION: "Needs Clarification",
   REJECTED: "Rejected",
   DEPLOYED: "Deployed",
+  PUBLISHED: "Published",
+  CANCELLED: "Cancelled",
+  ARCHIVED: "Archived",
 };
 
 const statusBadgeClass: Record<string, string> = {
-  UNDER_DEVELOPMENT: "border-amber-500/30 bg-amber-500/10 text-amber-200",
-  NEEDS_CLARIFICATION: "border-sky-500/30 bg-sky-500/10 text-sky-200",
+  DRAFT: "border-border/60 bg-card/40 text-muted-foreground",
+  PENDING: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+  SUBMITTED: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+  UNDER_REVIEW: "border-sky-500/30 bg-sky-500/10 text-sky-200",
+  UNDER_DEVELOPMENT: "border-violet-500/30 bg-violet-500/10 text-violet-200",
+  NEEDS_CLARIFICATION: "border-yellow-500/30 bg-yellow-500/10 text-yellow-200",
   REJECTED: "border-rose-500/30 bg-rose-500/10 text-rose-200",
   DEPLOYED: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+  PUBLISHED: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+  CANCELLED: "border-rose-500/30 bg-rose-500/10 text-rose-200",
+  ARCHIVED: "border-border/60 bg-card/40 text-muted-foreground",
 };
+
+function normalizeRequestStatus(status?: string | null) {
+  const key = String(status || "SUBMITTED").trim().replace(/[\s-]+/g, "_").toUpperCase();
+  if (key === "PENDING_REVIEW") return "PENDING";
+  return STATUS_LABEL[key] ? key : "SUBMITTED";
+}
+
+function requestMessage(status: string) {
+  switch (status) {
+    case "NEEDS_CLARIFICATION":
+      return "Admin requested clarification. Please update your request.";
+    case "UNDER_DEVELOPMENT":
+      return "Admin is building your strategy.";
+    case "DEPLOYED":
+      return "Your private strategy is ready.";
+    case "PUBLISHED":
+      return "This strategy is now published.";
+    case "REJECTED":
+      return "Request was rejected.";
+    case "UNDER_REVIEW":
+      return "Submitted for admin review.";
+    case "PENDING":
+    case "SUBMITTED":
+    default:
+      return "Waiting for admin review.";
+  }
+}
+
+const canEditRequest = (status: string) => ["DRAFT", "PENDING", "SUBMITTED", "UNDER_REVIEW", "NEEDS_CLARIFICATION"].includes(status);
 
 const inputClassName =
   "w-full rounded-xl border border-border/60 bg-card/25 px-4 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/35";
@@ -174,6 +244,7 @@ function integerMetricValue(value: number | null | undefined): string {
 
 export default function StrategiesPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [activeTab, setActiveTab] = useState<"templates" | "request" | "my">("templates");
   const [templates, setTemplates] = useState<StrategyItem[]>([]);
@@ -190,6 +261,7 @@ export default function StrategiesPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [form, setForm] = useState<StrategyRequestPayload>(initialForm);
+  const [screenshots, setScreenshots] = useState<File[]>([]);
 
   const isAuthenticated = useMemo(() => Boolean(getToken()), []);
 
@@ -239,6 +311,13 @@ export default function StrategiesPage() {
   }, []);
 
   useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab === "request" || tab === "my" || tab === "templates") {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
     void loadTemplates();
   }, [loadTemplates]);
 
@@ -248,14 +327,23 @@ export default function StrategiesPage() {
     }
   }, [activeTab, loadMyStrategies]);
 
-  const pendingRequests = useMemo(
-    () => myRequests.filter((item) => item.status !== "DEPLOYED"),
+  const reviewRequests = useMemo(
+    () => myRequests.filter((item) => ["DRAFT", "PENDING", "SUBMITTED", "UNDER_REVIEW", "NEEDS_CLARIFICATION"].includes(normalizeRequestStatus(item.status))),
     [myRequests],
   );
-  const deployedRequests = useMemo(
-    () => myRequests.filter((item) => item.status === "DEPLOYED"),
+  const developmentRequests = useMemo(
+    () => myRequests.filter((item) => normalizeRequestStatus(item.status) === "UNDER_DEVELOPMENT"),
     [myRequests],
   );
+  const readyRequests = useMemo(
+    () => myRequests.filter((item) => ["DEPLOYED", "PUBLISHED"].includes(normalizeRequestStatus(item.status))),
+    [myRequests],
+  );
+  const closedRequests = useMemo(
+    () => myRequests.filter((item) => ["REJECTED", "CANCELLED", "ARCHIVED"].includes(normalizeRequestStatus(item.status))),
+    [myRequests],
+  );
+  const pendingRequests = [...reviewRequests, ...developmentRequests];
 
   const privateStrategies = useMemo(
     () => myStrategies.filter((item) => (item.visibility || "PRIVATE") !== "PUBLIC"),
@@ -278,6 +366,17 @@ export default function StrategiesPage() {
     }
 
     router.push(`/backtest?strategyId=${strategyId}`);
+  };
+
+  const handleScreenshotsChange = (files: FileList | null) => {
+    const next = Array.from(files || []);
+    const allowed = ["image/png", "image/jpeg", "image/webp"];
+    const valid = next.filter((file) => allowed.includes(file.type) && file.size <= 5 * 1024 * 1024);
+    setScreenshots((prev) => [...prev, ...valid].slice(0, 6));
+  };
+
+  const removeScreenshot = (index: number) => {
+    setScreenshots((prev) => prev.filter((_, idx) => idx !== index));
   };
 
   const submitRequest = async (event: React.FormEvent) => {
@@ -309,25 +408,32 @@ export default function StrategiesPage() {
       return;
     }
 
+    if (screenshots.length < 2) {
+      setSubmitError("Upload at least 2 chart screenshots before submitting.");
+      return;
+    }
+
     setSubmitLoading(true);
 
     try {
-      await apiPost("/api/v1/strategies/request", {
-        title: form.title.trim(),
-        strategy_type: form.strategy_type.trim() || null,
-        market: null,
-        timeframe: null,
-        indicators: null,
-        entry_rules: form.entry_rules.trim(),
-        exit_rules: form.exit_rules.trim(),
-        confirmation_rules: form.confirmation_rules.trim() || null,
-        risk_rules: form.risk_rules.trim(),
-        invalidation_rules: form.invalidation_rules.trim() || null,
-        trade_management_rules: form.trade_management_rules.trim() || null,
-        notes: form.notes.trim() || null,
-      });
+      const body = new FormData();
+      body.append("title", form.title.trim());
+      body.append("strategy_type", form.strategy_type.trim());
+      body.append("market", form.market.trim());
+      body.append("timeframe", form.timeframe.trim());
+      body.append("indicators", "{}");
+      body.append("entry_rules", form.entry_rules.trim());
+      body.append("exit_rules", form.exit_rules.trim());
+      body.append("confirmation_rules", form.confirmation_rules.trim());
+      body.append("risk_rules", form.risk_rules.trim());
+      body.append("invalidation_rules", form.invalidation_rules.trim());
+      body.append("trade_management_rules", form.trade_management_rules.trim());
+      body.append("notes", form.notes.trim());
+      screenshots.forEach((file) => body.append("attachments", file));
+      await apiPost("/api/v1/strategies/request", body);
 
       setForm(initialForm);
+      setScreenshots([]);
       setSubmitMessage("Strategy request submitted successfully. Track progress in My Strategies.");
       setActiveTab("my");
       void loadMyStrategies();
@@ -404,7 +510,7 @@ export default function StrategiesPage() {
                   : "border-border/60 bg-card/40 text-muted-foreground"
               }
             >
-              {visibility === "PUBLIC" ? "Published" : "Private"}
+              {mode === "template" ? "Public Template" : visibility === "PUBLIC" ? "Published From My Request" : "My Private Strategy"}
             </Badge>
           </div>
 
@@ -425,7 +531,15 @@ export default function StrategiesPage() {
               {mode === "template" ? <span>Template Strategy</span> : <span>Your Strategy</span>}
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Button
+                variant="outline"
+                onClick={() => router.push(`/strategies/${strategy.id}`)}
+                className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50"
+              >
+                <ArrowUpRight className="mr-2 h-4 w-4" />
+                View Details
+              </Button>
               <Button
                 onClick={() => openBacktest(strategy.id)}
                 className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
@@ -435,7 +549,7 @@ export default function StrategiesPage() {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => setActiveTab("request")}
+                onClick={() => mode === "my" ? router.push(`/strategies/${strategy.id}/refine`) : setActiveTab("request")}
                 className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50"
               >
                 <Sparkles className="mr-2 h-4 w-4" />
@@ -449,7 +563,10 @@ export default function StrategiesPage() {
   };
 
   const renderRequestCard = (request: StrategyRequestItem) => {
-    const statusClass = statusBadgeClass[request.status] || "border-border/60 bg-card/40 text-muted-foreground";
+    const status = normalizeRequestStatus(request.status);
+    const statusClass = statusBadgeClass[status] || "border-border/60 bg-card/40 text-muted-foreground";
+    const linkedStrategyId = request.deployed_strategy_id || request.deployedStrategyId;
+    const isRefinement = (request.request_kind || request.requestKind || "").toUpperCase() === "REFINEMENT";
 
     return (
       <GlassCard
@@ -459,14 +576,15 @@ export default function StrategiesPage() {
         <div className="flex h-full flex-col gap-4 p-6">
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-2">
-              <h3 className="line-clamp-2 text-lg font-semibold tracking-tight text-foreground">
-                {request.title || request.name || "Untitled request"}
-              </h3>
-              <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">
-                {request.description || "Your request has been submitted for strategy engineering review."}
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="line-clamp-2 text-lg font-semibold tracking-tight text-foreground">
+                  {request.title || request.name || "Untitled request"}
+                </h3>
+                {isRefinement ? <Badge className="border-primary/30 bg-primary/10 text-primary">Refinement Request</Badge> : null}
+              </div>
+              <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">{requestMessage(status)}</p>
             </div>
-            <Badge className={statusClass}>{STATUS_LABEL[request.status] || request.status}</Badge>
+            <Badge className={statusClass}>{STATUS_LABEL[status] || status}</Badge>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -475,36 +593,68 @@ export default function StrategiesPage() {
                 {request.strategyType || request.strategy_type}
               </Badge>
             )}
-            {request.market && (
-              <Badge variant="secondary" className="border-border/60 bg-card/40 text-foreground">
-                {request.market}
-              </Badge>
-            )}
-            {request.timeframe && (
-              <Badge variant="secondary" className="border-border/60 bg-card/40 text-foreground">
-                {request.timeframe}
-              </Badge>
-            )}
+            {request.market && <Badge variant="secondary" className="border-border/60 bg-card/40 text-foreground">{request.market}</Badge>}
+            {request.timeframe && <Badge variant="secondary" className="border-border/60 bg-card/40 text-foreground">{request.timeframe}</Badge>}
           </div>
 
           <div className="rounded-xl border border-border/50 bg-card/20 p-4 text-sm">
+            <div className="mb-2 flex items-center gap-2 text-muted-foreground">
+              <ImageIcon className="h-4 w-4" />
+              {(request.attachmentCount ?? request.attachment_count ?? request.attachments?.length ?? 0)} screenshot(s) attached
+            </div>
             <div className="flex items-center gap-2 text-muted-foreground">
               <Clock3 className="h-4 w-4" />
               Submitted: {formatDateTime(request.createdAt || request.created_at)}
             </div>
 
-            {request.deployed_strategy_id || request.deployedStrategyId ? (
+            {status === "DEPLOYED" || status === "PUBLISHED" ? (
               <div className="mt-2 flex items-center gap-2 text-emerald-300">
                 <CheckCircle2 className="h-4 w-4" />
-                Strategy has been deployed.
+                {requestMessage(status)}
               </div>
             ) : null}
 
             {request.admin_notes ? (
-              <div className="mt-3 rounded-lg border border-border/50 bg-card/30 p-3 text-xs leading-5 text-muted-foreground">
-                <p className="font-medium text-foreground">Admin Notes</p>
+              <div className="mt-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-xs leading-5 text-yellow-100">
+                <p className="font-medium text-yellow-50">Admin Notes</p>
                 <p className="mt-1 whitespace-pre-wrap">{request.admin_notes}</p>
               </div>
+            ) : null}
+
+            {(request.userUpdateNotes || request.user_update_notes) ? (
+              <div className="mt-3 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-xs leading-5 text-sky-100">
+                <p className="font-medium text-sky-50">Your Clarification Reply</p>
+                <p className="mt-1 whitespace-pre-wrap">{request.userUpdateNotes || request.user_update_notes}</p>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-auto grid gap-3 sm:grid-cols-2">
+            <Button
+              variant="outline"
+              onClick={() => router.push(`/strategies/requests/${request.id}`)}
+              className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50"
+            >
+              <ArrowUpRight className="mr-2 h-4 w-4" />
+              View Request
+            </Button>
+            {status === "NEEDS_CLARIFICATION" || canEditRequest(status) ? (
+              <Button
+                onClick={() => router.push(`/strategies/requests/${request.id}/edit`)}
+                className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                Update Request
+              </Button>
+            ) : null}
+            {(status === "DEPLOYED" || status === "PUBLISHED") && linkedStrategyId ? (
+              <>
+                <Button onClick={() => router.push(`/strategies/${linkedStrategyId}`)} className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90">
+                  Open Strategy
+                </Button>
+                <Button variant="outline" onClick={() => router.push(`/strategies/${linkedStrategyId}/refine`)} className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50">
+                  Request Refinement
+                </Button>
+              </>
             ) : null}
           </div>
         </div>
@@ -635,29 +785,55 @@ export default function StrategiesPage() {
 
     return (
       <div className="space-y-8">
-        {pendingRequests.length > 0 && (
+        {reviewRequests.length > 0 && (
           <section className="space-y-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold tracking-tight text-foreground">Pending Requests</h2>
-                <p className="text-sm text-muted-foreground">Requests currently under development or clarification.</p>
+                <h2 className="text-lg font-semibold tracking-tight text-foreground">Pending / Review Requests</h2>
+                <p className="text-sm text-muted-foreground">Pending, under review, or waiting for your clarification.</p>
               </div>
-              <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-200">{pendingRequests.length}</Badge>
+              <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-200">{reviewRequests.length}</Badge>
             </div>
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">{pendingRequests.map(renderRequestCard)}</div>
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">{reviewRequests.map(renderRequestCard)}</div>
           </section>
         )}
 
-        {deployedRequests.length > 0 && (
+        {developmentRequests.length > 0 && (
           <section className="space-y-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold tracking-tight text-foreground">Processed Requests</h2>
-                <p className="text-sm text-muted-foreground">Requests already deployed or published into strategy records.</p>
+                <h2 className="text-lg font-semibold tracking-tight text-foreground">In Development</h2>
+                <p className="text-sm text-muted-foreground">Admin is building or testing these strategy workspaces.</p>
               </div>
-              <Badge className="border-emerald-500/30 bg-emerald-500/10 text-emerald-200">{deployedRequests.length}</Badge>
+              <Badge className="border-violet-500/30 bg-violet-500/10 text-violet-200">{developmentRequests.length}</Badge>
             </div>
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">{deployedRequests.map(renderRequestCard)}</div>
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">{developmentRequests.map(renderRequestCard)}</div>
+          </section>
+        )}
+
+        {readyRequests.length > 0 && (
+          <section className="space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight text-foreground">Ready Strategies</h2>
+                <p className="text-sm text-muted-foreground">Requests deployed privately or published publicly.</p>
+              </div>
+              <Badge className="border-emerald-500/30 bg-emerald-500/10 text-emerald-200">{readyRequests.length}</Badge>
+            </div>
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">{readyRequests.map(renderRequestCard)}</div>
+          </section>
+        )}
+
+        {closedRequests.length > 0 && (
+          <section className="space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight text-foreground">Closed Requests</h2>
+                <p className="text-sm text-muted-foreground">Rejected, cancelled, or archived requests.</p>
+              </div>
+              <Badge className="border-rose-500/30 bg-rose-500/10 text-rose-200">{closedRequests.length}</Badge>
+            </div>
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">{closedRequests.map(renderRequestCard)}</div>
           </section>
         )}
 
@@ -827,6 +1003,26 @@ export default function StrategiesPage() {
                       placeholder="Example: Swing / Momentum / Reversal"
                     />
                   </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm text-muted-foreground">Market</label>
+                    <input
+                      value={form.market}
+                      onChange={(event) => handleChange("market", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Example: Forex / Crypto / Indian Equity"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm text-muted-foreground">Timeframe</label>
+                    <input
+                      value={form.timeframe}
+                      onChange={(event) => handleChange("timeframe", event.target.value)}
+                      className={inputClassName}
+                      placeholder="Example: 5m / 15m / 1h"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -916,6 +1112,36 @@ export default function StrategiesPage() {
                     />
                   </div>
                 </div>
+              </div>
+
+              <div className={sectionCardClass}>
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Chart Screenshots *</h3>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  Upload at least 2 chart screenshots so admin can understand entry, exit, invalidation, and trade management visually. PNG, JPEG, or WEBP only. Max 6 images, 5 MB each.
+                </p>
+                <div className="mt-4 rounded-xl border border-dashed border-border/60 bg-card/20 p-4">
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={(event) => handleScreenshotsChange(event.target.files)}
+                    className="block w-full text-sm text-muted-foreground file:mr-4 file:rounded-lg file:border-0 file:bg-primary file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary-foreground hover:file:bg-primary/90"
+                  />
+                </div>
+                {screenshots.length > 0 ? (
+                  <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
+                    {screenshots.map((file, index) => (
+                      <div key={`${file.name}-${index}`} className="overflow-hidden rounded-xl border border-border/50 bg-card/25">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={URL.createObjectURL(file)} alt={file.name} className="h-28 w-full object-cover" />
+                        <div className="flex items-center justify-between gap-2 p-2 text-xs text-muted-foreground">
+                          <span className="truncate">{file.name}</span>
+                          <button type="button" onClick={() => removeScreenshot(index)} className="text-rose-300 hover:text-rose-200">Remove</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

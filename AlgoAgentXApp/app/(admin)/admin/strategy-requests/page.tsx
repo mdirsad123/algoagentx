@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
+  Code2,
   Clock3,
   Edit3,
   Eye,
@@ -16,6 +17,7 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  ImageIcon,
   XCircle,
 } from "lucide-react";
 import Link from "next/link";
@@ -34,6 +36,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { StrategyAttachmentGallery } from "@/components/strategies/StrategyAttachmentGallery";
 
 type TabKey = "requests" | "strategies";
 type EditorMode = "create" | "edit";
@@ -60,21 +63,28 @@ type StrategyEditorForm = {
   profitFactor: string;
 };
 
-const REQUEST_STATUSES = ["UNDER_DEVELOPMENT", "NEEDS_CLARIFICATION", "REJECTED", "DEPLOYED"];
+const REQUEST_STATUSES = ["SUBMITTED", "UNDER_REVIEW", "UNDER_DEVELOPMENT", "NEEDS_CLARIFICATION", "REJECTED", "DEPLOYED", "PUBLISHED"];
 
 const STATUS_LABEL: Record<string, string> = {
+  SUBMITTED: "Pending Review",
+  UNDER_REVIEW: "Under Review",
   UNDER_DEVELOPMENT: "Under Development",
   NEEDS_CLARIFICATION: "Needs Clarification",
   REJECTED: "Rejected",
   DEPLOYED: "Deployed",
+  PUBLISHED: "Published",
 };
 
 const STATUS_BADGE_CLASS: Record<string, string> = {
-  UNDER_DEVELOPMENT: "border-amber-500/30 bg-amber-500/10 text-amber-200",
-  NEEDS_CLARIFICATION: "border-sky-500/30 bg-sky-500/10 text-sky-200",
+  SUBMITTED: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+  UNDER_REVIEW: "border-sky-500/30 bg-sky-500/10 text-sky-200",
+  UNDER_DEVELOPMENT: "border-violet-500/30 bg-violet-500/10 text-violet-200",
+  NEEDS_CLARIFICATION: "border-yellow-500/30 bg-yellow-500/10 text-yellow-200",
   REJECTED: "border-rose-500/30 bg-rose-500/10 text-rose-200",
   DEPLOYED: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+  PUBLISHED: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
 };
+const normalizeRequestStatus = (status?: string | null) => String(status || "SUBMITTED").trim().replace(/[\s-]+/g, "_").toUpperCase();
 
 const fieldClass =
   "w-full rounded-xl border border-border/60 bg-card/25 px-4 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/35";
@@ -274,13 +284,6 @@ export default function AdminStrategyRequestsPage() {
     setEditorOpen(true);
   };
 
-  const openRequestModal = (request: StrategyRequest) => {
-    setSelectedRequest(request);
-    setRequestStatusDraft(request.status || "UNDER_DEVELOPMENT");
-    setRequestNotesDraft(request.admin_notes || "");
-    setRequestDeployTargetId("");
-  };
-
   const handleRequestUpdate = async () => {
     if (!selectedRequest) return;
 
@@ -317,6 +320,22 @@ export default function AdminStrategyRequestsPage() {
       await loadData(requestSkip, strategySkip);
     } catch (err: any) {
       toast.error(err?.message || "Unable to deploy request");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+
+  const handleStartWorkspace = async (request: StrategyRequest) => {
+    setSaving(true);
+    try {
+      const response = await adminApi.createStrategyWorkspace(request.id);
+      const strategyId = response?.strategy?.id || request.deployedStrategyId || request.deployed_strategy_id;
+      toast.success(strategyId ? "Opening strategy workspace" : "Workspace created");
+      if (strategyId) window.location.href = `/admin/strategy-requests/strategies/${strategyId}`;
+      else await loadData(requestSkip, strategySkip);
+    } catch (err: any) {
+      toast.error(err?.message || "Unable to create workspace");
     } finally {
       setSaving(false);
     }
@@ -408,6 +427,20 @@ export default function AdminStrategyRequestsPage() {
     }
   };
 
+
+  const handleDeployPrivateStrategy = async (strategy: ImplementedStrategy) => {
+    setSaving(true);
+    try {
+      await adminApi.deployPrivateAdminStrategyById(strategy.id);
+      toast.success("Strategy deployed privately to requesting user");
+      await loadData(requestSkip, strategySkip);
+    } catch (err: any) {
+      toast.error(err?.message || "Unable to deploy private strategy");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const strategyOptions = useMemo(
     () => strategies.map((item) => ({ id: item.id, label: item.name })),
     [strategies],
@@ -443,10 +476,12 @@ export default function AdminStrategyRequestsPage() {
               <RefreshCcw className="mr-2 h-4 w-4" />
               Refresh
             </Button>
-            <Button onClick={openCreateEditor} className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90">
-              <Plus className="mr-2 h-4 w-4" />
-              Create Strategy
-            </Button>
+            <Link href="/admin/strategy-requests/strategies/new">
+              <Button className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90">
+                <Plus className="mr-2 h-4 w-4" />
+                Create Strategy
+              </Button>
+            </Link>
           </div>
         }
       />
@@ -549,7 +584,8 @@ export default function AdminStrategyRequestsPage() {
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {requests.map((request) => {
-                const statusClass = STATUS_BADGE_CLASS[request.status] || "border-border/60 bg-card/40 text-muted-foreground";
+                const normalizedStatus = normalizeRequestStatus(request.status);
+                const statusClass = STATUS_BADGE_CLASS[normalizedStatus] || "border-border/60 bg-card/40 text-muted-foreground";
 
                 return (
                   <GlassCard key={request.id} className="border border-border/60 bg-card/30 shadow-xl">
@@ -558,13 +594,30 @@ export default function AdminStrategyRequestsPage() {
                         <div>
                           <h3 className="text-lg font-semibold tracking-tight text-foreground">{request.title}</h3>
                           <p className="mt-1 text-sm text-muted-foreground">{request.user_name || request.user_email || "Unknown user"}</p>
+                          <p className="mt-1 text-xs text-primary">Requested User Strategy</p>
+                          {(request.requestKind || request.request_kind || "").toUpperCase() === "REFINEMENT" ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <Badge className="border-primary/30 bg-primary/10 text-primary">Refinement Request</Badge>
+                              {(request.originalStrategyName || request.original_strategy_name) ? (
+                                <Badge variant="secondary" className="border-border/60 bg-card/40 text-foreground">Original: {request.originalStrategyName || request.original_strategy_name}</Badge>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
-                        <Badge className={statusClass}>{STATUS_LABEL[request.status] || request.status}</Badge>
+                        <Badge className={statusClass}>{STATUS_LABEL[normalizedStatus] || request.status}</Badge>
                       </div>
 
                       <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">
-                        {request.description || request.entry_rules || "No description available"}
+                        {(request.requestKind || request.request_kind || "").toUpperCase() === "REFINEMENT"
+                          ? (request.refinementNotes || request.refinement_notes || request.userUpdateNotes || request.user_update_notes || request.notes)
+                          : (request.description || request.entry_rules) || "No description available"}
                       </p>
+                      {(request.userUpdateNotes || request.user_update_notes) ? (
+                        <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3 text-xs leading-5 text-sky-100">
+                          <p className="font-semibold text-sky-50">Updated by User</p>
+                          <p className="mt-1 line-clamp-3 whitespace-pre-wrap">{request.userUpdateNotes || request.user_update_notes}</p>
+                        </div>
+                      ) : null}
 
                       <div className="flex flex-wrap gap-2">
                         {(request.strategyType || request.strategy_type) && (
@@ -584,6 +637,20 @@ export default function AdminStrategyRequestsPage() {
                         )}
                       </div>
 
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span className="inline-flex items-center gap-1">
+                          <ImageIcon className="h-3.5 w-3.5" />
+                          {(request.attachmentCount ?? request.attachment_count ?? request.attachments?.length ?? 0)} images
+                        </span>
+                        <Badge className="border-sky-500/30 bg-sky-500/10 text-sky-200">
+                          {request.workspaceStatus || request.workspace_status || ((request.deployedStrategyId || request.deployed_strategy_id) ? "Workspace Created" : "Not Started")}
+                        </Badge>
+                      </div>
+
+                      {(request.attachments?.length || 0) > 0 && (
+                        <StrategyAttachmentGallery attachments={request.attachments?.slice(0, 3)} compact />
+                      )}
+
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
                         <span className="inline-flex items-center gap-1">
                           <Clock3 className="h-3.5 w-3.5" />
@@ -600,11 +667,12 @@ export default function AdminStrategyRequestsPage() {
                       <div className="grid grid-cols-2 gap-2">
                         <Button
                           variant="outline"
-                          className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50"
-                          onClick={() => openRequestModal(request)}
+                          className="rounded-xl border-primary/40 bg-primary/15 text-primary hover:bg-primary/25"
+                          onClick={() => void handleStartWorkspace(request)}
+                          disabled={saving}
                         >
-                          <Eye className="mr-2 h-4 w-4" />
-                          Manage
+                          <Code2 className="mr-2 h-4 w-4" />
+                          {(request.deployedStrategyId || request.deployed_strategy_id) ? "Open Workspace" : "Start Development"}
                         </Button>
                         <Link href={`/admin/strategy-requests/${request.id}`}>
                           <Button variant="outline" className="w-full rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50">
@@ -722,6 +790,17 @@ export default function AdminStrategyRequestsPage() {
                         </Badge>
                       </div>
 
+                      <div className="flex flex-wrap gap-2">
+                        {strategy.sourceRequestId || strategy.source_request_id ? (
+                          <Badge className="border-sky-500/30 bg-sky-500/10 text-sky-200">Requested User Strategy</Badge>
+                        ) : (
+                          <Badge className="border-border/60 bg-card/40 text-muted-foreground">Manual Admin Strategy</Badge>
+                        )}
+                        <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-200">
+                          {strategy.workspaceStatus || strategy.workspace_status || "Workspace Created"}
+                        </Badge>
+                      </div>
+
                       <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">
                         {strategy.description || "No description provided."}
                       </p>
@@ -738,7 +817,7 @@ export default function AdminStrategyRequestsPage() {
                         {strategy.sourceRequestId || strategy.source_request_id ? (
                           <span className="inline-flex items-center gap-1">
                             <Sparkles className="h-3.5 w-3.5" />
-                            Requested
+                            Request: {strategy.sourceRequestId || strategy.source_request_id}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1">
@@ -772,13 +851,25 @@ export default function AdminStrategyRequestsPage() {
                           Verify Code
                         </Button>
 
+                        {strategy.sourceRequestId || strategy.source_request_id ? (
+                          <Button
+                            variant="outline"
+                            className="rounded-xl border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+                            onClick={() => void handleDeployPrivateStrategy(strategy)}
+                            disabled={saving || isPublic}
+                          >
+                            <Send className="mr-2 h-4 w-4" />
+                            Deploy Private
+                          </Button>
+                        ) : null}
+
                         <Button
                           variant="outline"
                           className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50"
                           onClick={() => void handleTogglePublish(strategy)}
                         >
                           <Upload className="mr-2 h-4 w-4" />
-                          {isPublic ? "Unpublish" : "Publish"}
+                          {isPublic ? "Unpublish" : "Publish Public"}
                         </Button>
 
                         <Button
@@ -824,7 +915,7 @@ export default function AdminStrategyRequestsPage() {
       )}
 
       <Dialog open={!!selectedRequest} onOpenChange={(open) => !open && setSelectedRequest(null)}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto max-w-2xl rounded-xl border border-border/60 bg-card/95 text-foreground">
+        <DialogContent className="max-h-[calc(100vh-80px)] max-w-2xl overflow-y-auto rounded-xl border border-border/60 bg-card/95 text-foreground">
           <DialogHeader>
             <DialogTitle>Manage Strategy Request</DialogTitle>
           </DialogHeader>
@@ -838,6 +929,10 @@ export default function AdminStrategyRequestsPage() {
                   {selectedRequest.description || selectedRequest.entry_rules || "No details available."}
                 </p>
               </div>
+
+              {(selectedRequest.attachments?.length || 0) > 0 && (
+                <StrategyAttachmentGallery attachments={selectedRequest.attachments} />
+              )}
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
@@ -903,7 +998,7 @@ export default function AdminStrategyRequestsPage() {
               onClick={() => void handleDeploy(false)}
             >
               <CheckCircle2 className="mr-2 h-4 w-4" />
-              Deploy Private
+              Deploy Private to User
             </Button>
 
             <Button
@@ -913,7 +1008,7 @@ export default function AdminStrategyRequestsPage() {
               onClick={() => void handleDeploy(true)}
             >
               <Upload className="mr-2 h-4 w-4" />
-              Deploy & Publish
+              Publish Public for All
             </Button>
 
             <Button
@@ -933,7 +1028,7 @@ export default function AdminStrategyRequestsPage() {
       </Dialog>
 
       <Dialog open={editorOpen} onOpenChange={(open) => !open && setEditorOpen(false)}>
-        <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto rounded-xl border border-border/60 bg-card/95 text-foreground">
+        <DialogContent className="max-h-[calc(100vh-80px)] max-w-4xl overflow-y-auto rounded-xl border border-border/60 bg-card/95 text-foreground">
           <DialogHeader>
             <DialogTitle>{editorMode === "create" ? "Create Strategy" : "Edit Strategy"}</DialogTitle>
           </DialogHeader>
@@ -961,8 +1056,8 @@ export default function AdminStrategyRequestsPage() {
                 }
                 className={fieldClass}
               >
-                <option value="PRIVATE">Private</option>
-                <option value="PUBLIC">Published</option>
+                <option value="PRIVATE">Private Admin Draft</option>
+                <option value="PUBLIC">Public Template</option>
               </select>
             </div>
           </div>

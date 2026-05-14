@@ -51,6 +51,25 @@ import {
 } from "@/lib/api/backtests";
 
 
+const BACKTEST_READY_STATUSES = new Set(["PUBLISHED", "DEPLOYED", "BACKTEST_READY", "LIVE_APPROVED", "PRIVATE_DEPLOYED", "PRIVATE"]);
+const BACKTEST_BLOCKED_STATUSES = new Set(["UNDER_DEVELOPMENT", "DRAFT", "WORKSPACE_CREATED", "NEEDS_CLARIFICATION", "SUBMITTED", "UNDER_REVIEW", "REJECTED", "ARCHIVED", "CANCELLED", "PENDING"]);
+
+const isBacktestEligibleStrategyOption = (strategy: StrategyOption): boolean => {
+  const lifecycle = String(strategy.lifecycleStatus || strategy.lifecycle_status || strategy.status || "").toUpperCase();
+  const visibility = String(strategy.visibility || "").toUpperCase();
+  const requestKind = String(strategy.requestKind || strategy.request_kind || "").toUpperCase();
+  const params = strategy.parameters && typeof strategy.parameters === "object" ? strategy.parameters : {};
+  const sourceCode = String((params as Record<string, unknown>).source_code || "").trim();
+  const hasCode = Boolean(sourceCode || strategy.codeAttached || strategy.code_attached || (params as Record<string, unknown>).code_attached || (params as Record<string, unknown>).codeAttached || (params as Record<string, unknown>).engine_mode !== "DYNAMIC_DB");
+
+  if (!hasCode) return false;
+  if (BACKTEST_BLOCKED_STATUSES.has(lifecycle)) return false;
+  if (requestKind === "REFINEMENT" && !BACKTEST_READY_STATUSES.has(lifecycle)) return false;
+  if (visibility === "PUBLIC") return BACKTEST_READY_STATUSES.has(lifecycle) || !lifecycle;
+  if (visibility === "PRIVATE") return BACKTEST_READY_STATUSES.has(lifecycle);
+  return BACKTEST_READY_STATUSES.has(lifecycle) || !lifecycle;
+};
+
 const FIELD_HELP: Record<string, string> = {
   "Initial Capital": "Starting capital used for this backtest. It affects risk sizing, equity curve, and drawdown calculations. Example: 100,000. Keep it close to the account size you want to simulate.",
   "Capital Risk %": "Percentage of capital risked per trade when using risk-based sizing. Example: 1% of $100,000 means $1,000 risk per trade. Higher values can create large drawdowns.",
@@ -867,6 +886,8 @@ export default function BacktestPage() {
         nextStrategies = Array.from(byId.values());
       }
 
+      nextStrategies = nextStrategies.filter(isBacktestEligibleStrategyOption);
+
       if (!nextStrategies.length) {
         throw new Error("Unable to load strategy catalog. Please refresh and try again.");
       }
@@ -1629,11 +1650,14 @@ const FieldLabel = ({ label, help }: { label: string; help?: string }) => (
                   <SelectValue placeholder="Select strategy" />
                 </SelectTrigger>
                 <SelectContent className="z-[90] rounded-xl border-border/60 bg-[#34135c] text-foreground">
-                  {strategies.map((strategy) => (
-                    <SelectItem key={strategy.id} value={strategy.id}>
-                      {strategy.name}
-                    </SelectItem>
-                  ))}
+                  {strategies.map((strategy) => {
+                    const visibilityLabel = String(strategy.visibility || "").toUpperCase() === "PUBLIC" ? "Public" : "My Deployed Strategy";
+                    return (
+                      <SelectItem key={strategy.id} value={strategy.id}>
+                        {strategy.name} · {visibilityLabel}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>

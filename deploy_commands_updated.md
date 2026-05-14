@@ -108,6 +108,7 @@ docker compose --env-file .env.prod up -d api web
 
 # if you want to start dev database
 docker stop algoagentx_postgres
+docker start algoagentx_postgres
 
 ## If .env.prod changed NEXT_PUBLIC_* frontend values and also if changes in code page or api
 # Use build for web, because Next.js frontend env is baked during build:

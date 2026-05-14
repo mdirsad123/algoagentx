@@ -29,7 +29,13 @@ def _serialize(req: StrategyRequest) -> dict:
         "entry_rules": req.entry_rules,
         "exit_rules": req.exit_rules,
         "risk_rules": req.risk_rules,
+        "confirmation_rules": getattr(req, "confirmation_rules", None),
+        "invalidation_rules": getattr(req, "invalidation_rules", None),
+        "trade_management_rules": getattr(req, "trade_management_rules", None),
         "notes": req.notes,
+        "attachments": [],
+        "attachment_count": 0,
+        "attachmentCount": 0,
         "description": req.notes or req.entry_rules,
         "status": req.status,
         "admin_notes": req.admin_notes,
@@ -54,7 +60,10 @@ async def _create_request_row(
     entry_rules: str,
     exit_rules: str,
     risk_rules: str,
-    notes: str | None,
+    confirmation_rules: str | None = None,
+    invalidation_rules: str | None = None,
+    trade_management_rules: str | None = None,
+    notes: str | None = None,
 ) -> StrategyRequest:
     request_id = uuid4()
     has_legacy_strategy_name = await table_has_column(db, "strategy_requests", "strategy_name")
@@ -72,6 +81,9 @@ async def _create_request_row(
             "entry_rules",
             "exit_rules",
             "risk_rules",
+            "confirmation_rules",
+            "invalidation_rules",
+            "trade_management_rules",
             "notes",
             "status",
         ]
@@ -86,6 +98,9 @@ async def _create_request_row(
             "entry_rules": entry_rules,
             "exit_rules": exit_rules,
             "risk_rules": risk_rules,
+            "confirmation_rules": confirmation_rules,
+            "invalidation_rules": invalidation_rules,
+            "trade_management_rules": trade_management_rules,
             "notes": notes,
             "status": "UNDER_DEVELOPMENT",
         }
@@ -124,6 +139,9 @@ async def _create_request_row(
         entry_rules=entry_rules,
         exit_rules=exit_rules,
         risk_rules=risk_rules,
+        confirmation_rules=getattr(request_data, "confirmation_rules", None),
+        invalidation_rules=getattr(request_data, "invalidation_rules", None),
+        trade_management_rules=getattr(request_data, "trade_management_rules", None),
         notes=notes,
         status="UNDER_DEVELOPMENT",
     )

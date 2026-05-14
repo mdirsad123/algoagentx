@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, Dict, Any
 from datetime import datetime
 from uuid import UUID
@@ -13,7 +13,27 @@ class StrategyRequestBase(BaseModel):
     entry_rules: str = Field(..., description="Entry rules for the strategy")
     exit_rules: str = Field(..., description="Exit rules for the strategy")
     risk_rules: str = Field(..., description="Risk management rules")
+    confirmation_rules: Optional[str] = Field(None, description="Confirmation rules")
+    invalidation_rules: Optional[str] = Field(None, description="Invalidation rules")
+    trade_management_rules: Optional[str] = Field(None, description="Trade management rules")
     notes: Optional[str] = Field(None, description="Additional notes")
+
+    @field_validator("indicators", mode="before")
+    @classmethod
+    def normalize_indicators(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            try:
+                import json
+                parsed = json.loads(stripped)
+                return parsed if isinstance(parsed, dict) else None
+            except Exception:
+                return None
+        return value
 
 
 class StrategyRequestCreate(StrategyRequestBase):
@@ -29,6 +49,9 @@ class StrategyRequestUpdate(BaseModel):
     entry_rules: Optional[str] = Field(None, description="Entry rules for the strategy")
     exit_rules: Optional[str] = Field(None, description="Exit rules for the strategy")
     risk_rules: Optional[str] = Field(None, description="Risk management rules")
+    confirmation_rules: Optional[str] = Field(None, description="Confirmation rules")
+    invalidation_rules: Optional[str] = Field(None, description="Invalidation rules")
+    trade_management_rules: Optional[str] = Field(None, description="Trade management rules")
     notes: Optional[str] = Field(None, description="Additional notes")
 
 

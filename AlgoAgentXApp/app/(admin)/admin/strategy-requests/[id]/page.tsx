@@ -11,6 +11,7 @@ import {
   Send,
   Upload,
   XCircle,
+  Code2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -18,20 +19,28 @@ import { adminApi, StrategyRequest } from "@/lib/api/admin";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { StrategyAttachmentGallery } from "@/components/strategies/StrategyAttachmentGallery";
 
 const STATUS_LABEL: Record<string, string> = {
+  SUBMITTED: "Pending Review",
+  UNDER_REVIEW: "Under Review",
   UNDER_DEVELOPMENT: "Under Development",
   NEEDS_CLARIFICATION: "Needs Clarification",
   REJECTED: "Rejected",
   DEPLOYED: "Deployed",
+  PUBLISHED: "Published",
 };
 
 const STATUS_BADGE_CLASS: Record<string, string> = {
-  UNDER_DEVELOPMENT: "border-amber-500/30 bg-amber-500/10 text-amber-200",
-  NEEDS_CLARIFICATION: "border-sky-500/30 bg-sky-500/10 text-sky-200",
+  SUBMITTED: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+  UNDER_REVIEW: "border-sky-500/30 bg-sky-500/10 text-sky-200",
+  UNDER_DEVELOPMENT: "border-violet-500/30 bg-violet-500/10 text-violet-200",
+  NEEDS_CLARIFICATION: "border-yellow-500/30 bg-yellow-500/10 text-yellow-200",
   REJECTED: "border-rose-500/30 bg-rose-500/10 text-rose-200",
   DEPLOYED: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+  PUBLISHED: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
 };
+const normalizeRequestStatus = (status?: string | null) => String(status || "SUBMITTED").trim().replace(/[\s-]+/g, "_").toUpperCase();
 
 const fieldClass =
   "w-full rounded-xl border border-border/60 bg-card/25 px-4 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/35";
@@ -59,6 +68,7 @@ export default function AdminStrategyRequestDetailPage() {
   const [adminNotes, setAdminNotes] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [startingWorkspace, setStartingWorkspace] = useState(false);
 
   const loadRequest = async () => {
     setLoading(true);
@@ -81,7 +91,7 @@ export default function AdminStrategyRequestDetailPage() {
 
   const statusBadgeClass = useMemo(() => {
     if (!request) return "border-border/60 bg-card/40 text-muted-foreground";
-    return STATUS_BADGE_CLASS[request.status] || "border-border/60 bg-card/40 text-muted-foreground";
+    return STATUS_BADGE_CLASS[normalizeRequestStatus(request.status)] || "border-border/60 bg-card/40 text-muted-foreground";
   }, [request]);
 
   const saveStatus = async () => {
@@ -99,6 +109,28 @@ export default function AdminStrategyRequestDetailPage() {
       toast.error(error?.message || "Unable to update request");
     } finally {
       setSaving(false);
+    }
+  };
+
+
+  const startWorkspace = async () => {
+    if (!request) return;
+
+    setStartingWorkspace(true);
+    try {
+      const response = await adminApi.createStrategyWorkspace(request.id);
+      const strategyId = response?.strategy?.id || request.deployedStrategyId || request.deployed_strategy_id;
+      if (!strategyId) {
+        toast.error("Workspace was created but no strategy id was returned");
+        await loadRequest();
+        return;
+      }
+      toast.success(request.deployedStrategyId || request.deployed_strategy_id ? "Opening existing workspace" : "Strategy workspace created");
+      router.push(`/admin/strategy-requests/strategies/${strategyId}`);
+    } catch (error: any) {
+      toast.error(error?.message || "Unable to create strategy workspace");
+    } finally {
+      setStartingWorkspace(false);
     }
   };
 
@@ -159,7 +191,12 @@ export default function AdminStrategyRequestDetailPage() {
           <p className="mt-1 text-sm text-muted-foreground">Request ID: {request.id}</p>
         </div>
 
-        <Badge className={statusBadgeClass}>{STATUS_LABEL[request.status] || request.status}</Badge>
+        <div className="flex flex-wrap gap-2">
+          {(request.requestKind || request.request_kind || "").toUpperCase() === "REFINEMENT" ? (
+            <Badge className="border-primary/30 bg-primary/10 text-primary">Refinement Request</Badge>
+          ) : null}
+          <Badge className={statusBadgeClass}>{STATUS_LABEL[normalizeRequestStatus(request.status)] || request.status}</Badge>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
@@ -180,6 +217,40 @@ export default function AdminStrategyRequestDetailPage() {
               <p className="mt-1 text-foreground">{formatDateTime(request.updatedAt || request.updated_at)}</p>
             </div>
           </div>
+
+          {(request.userUpdateNotes || request.user_update_notes) ? (
+            <div className="mt-4 rounded-2xl border border-sky-500/30 bg-sky-500/10 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-base font-semibold text-sky-50">User Clarification Reply</h3>
+                <Badge className="border-sky-500/30 bg-sky-500/10 text-sky-100">Updated by User</Badge>
+              </div>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-sky-100">{request.userUpdateNotes || request.user_update_notes}</p>
+              <p className="mt-3 text-xs text-sky-200/80">Submitted: {formatDateTime(request.clarificationSubmittedAt || request.clarification_submitted_at || request.lastUserUpdateAt || request.last_user_update_at)}</p>
+            </div>
+          ) : null}
+
+          {(request.requestKind || request.request_kind || "").toUpperCase() === "REFINEMENT" ? (
+            <div className="mt-4 rounded-2xl border border-primary/30 bg-primary/10 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-base font-semibold text-primary">Refinement Context</h3>
+                <Badge className="border-primary/30 bg-primary/10 text-primary">V2 Request</Badge>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Original Strategy</p>
+                  <p className="mt-1 text-sm text-foreground">{request.originalStrategyName || request.original_strategy_name || request.parentStrategyId || request.parent_strategy_id || "—"}</p>
+                </div>
+                <div className="rounded-xl border border-border/50 bg-card/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Original Request</p>
+                  <p className="mt-1 text-sm text-foreground">{request.originalRequest?.title || request.original_request?.title || request.parentRequestId || request.parent_request_id || "—"}</p>
+                </div>
+              </div>
+              <div className="mt-3 rounded-xl border border-border/50 bg-card/20 p-3">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">User Requested Changes</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">{request.refinementNotes || request.refinement_notes || request.userUpdateNotes || request.user_update_notes || request.notes || "—"}</p>
+              </div>
+            </div>
+          ) : null}
 
           <div className="mt-4 flex flex-wrap gap-2">
             {(request.strategyType || request.strategy_type) && (
@@ -203,19 +274,40 @@ export default function AdminStrategyRequestDetailPage() {
                 Linked Strategy
               </Badge>
             )}
+            <Badge className="border-sky-500/30 bg-sky-500/10 text-sky-200">
+              {request.workspaceStatus || request.workspace_status || ((request.deployedStrategyId || request.deployed_strategy_id) ? "Workspace Created" : "Not Started")}
+            </Badge>
           </div>
 
-          {[
-            ["Entry Rules", request.entry_rules],
-            ["Exit Rules", request.exit_rules],
-            ["Risk Rules", request.risk_rules],
-            ["Additional Notes", request.notes],
-          ].map(([label, value]) => (
-            <div key={label} className="mt-4 rounded-xl border border-border/50 bg-card/20 p-4">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">{value || "—"}</p>
+          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+            {[
+              ["Entry Rules", request.entry_rules],
+              ["Exit Rules", request.exit_rules],
+              ["Risk Rules", request.risk_rules],
+              ["Confirmation Rules", request.confirmation_rules],
+              ["Invalidation Rules", request.invalidation_rules],
+              ["Trade Management Rules", request.trade_management_rules],
+              ["Additional Notes", request.notes],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-xl border border-border/50 bg-card/20 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">{value || "—"}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-border/50 bg-card/20 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold text-foreground">Request Screenshots</h3>
+                <p className="text-xs text-muted-foreground">Uploaded chart evidence for entry, exit, invalidation, and trade management review.</p>
+              </div>
+              <Badge className="border-primary/40 bg-primary/15 text-primary">
+                {request.attachmentCount ?? request.attachment_count ?? request.attachments?.length ?? 0} image(s)
+              </Badge>
             </div>
-          ))}
+            <StrategyAttachmentGallery attachments={request.attachments} emptyText="No screenshots uploaded with this request." />
+          </div>
         </GlassCard>
 
         <GlassCard className="border border-border/60 bg-card/30 p-5">
@@ -225,10 +317,13 @@ export default function AdminStrategyRequestDetailPage() {
             <div>
               <label className="mb-2 block text-sm text-muted-foreground">Status</label>
               <select value={statusDraft} onChange={(e) => setStatusDraft(e.target.value)} className={fieldClass}>
+                <option value="SUBMITTED">Pending Review</option>
+                <option value="UNDER_REVIEW">Under Review</option>
                 <option value="UNDER_DEVELOPMENT">Under Development</option>
                 <option value="NEEDS_CLARIFICATION">Needs Clarification</option>
                 <option value="REJECTED">Rejected</option>
                 <option value="DEPLOYED">Deployed</option>
+                <option value="PUBLISHED">Published</option>
               </select>
             </div>
 
@@ -244,6 +339,15 @@ export default function AdminStrategyRequestDetailPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-2">
+              <Button
+                onClick={() => void startWorkspace()}
+                disabled={startingWorkspace || saving}
+                className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                {startingWorkspace ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Code2 className="mr-2 h-4 w-4" />}
+                {(request.deployedStrategyId || request.deployed_strategy_id) ? "Open Workspace" : "Start Development"}
+              </Button>
+
               <Button
                 onClick={() => void saveStatus()}
                 disabled={saving}

@@ -32,6 +32,7 @@ from ...db.models import (
     PerformanceMetric,
     PnLCalendar,
     Strategy,
+    StrategyRequest,
     Trade,
 )
 from ...schemas.backtests import BacktestCostPreviewRequest, BacktestRunRequest
@@ -66,6 +67,45 @@ def _to_int(value, default: int = 0) -> int:
         return default
 
 
+
+
+READY_BACKTEST_LIFECYCLES = {"PUBLISHED", "DEPLOYED", "BACKTEST_READY", "LIVE_APPROVED", "PRIVATE_DEPLOYED", "PRIVATE"}
+BLOCKED_BACKTEST_LIFECYCLES = {"UNDER_DEVELOPMENT", "DRAFT", "WORKSPACE_CREATED", "NEEDS_CLARIFICATION", "SUBMITTED", "UNDER_REVIEW", "REJECTED", "ARCHIVED", "CANCELLED"}
+READY_REQUEST_STATUSES = {"DEPLOYED", "PUBLISHED"}
+BLOCKED_REQUEST_STATUSES = {"UNDER_DEVELOPMENT", "DRAFT", "WORKSPACE_CREATED", "NEEDS_CLARIFICATION", "SUBMITTED", "UNDER_REVIEW", "REJECTED", "ARCHIVED", "CANCELLED", "PENDING"}
+
+
+def _strategy_has_backtest_code(strategy: Strategy) -> bool:
+    params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
+    return bool(str(params.get("source_code") or "").strip() or params.get("code_attached") or params.get("codeAttached") or params.get("engine_mode") != "DYNAMIC_DB")
+
+
+def _is_backtest_dropdown_eligible(strategy: Strategy, user_id: Any, request_status_by_id: dict[str, str]) -> bool:
+    visibility = str(getattr(strategy, "visibility", "") or "PRIVATE").upper()
+    lifecycle = str(getattr(strategy, "lifecycle_status", "") or "").upper()
+    source_request_id = getattr(strategy, "source_request_id", None)
+    request_status = str(request_status_by_id.get(str(source_request_id), "") or "").upper()
+
+    if not _strategy_has_backtest_code(strategy):
+        return False
+    if lifecycle in BLOCKED_BACKTEST_LIFECYCLES or request_status in BLOCKED_REQUEST_STATUSES:
+        return False
+    if visibility == "PUBLIC":
+        return lifecycle in READY_BACKTEST_LIFECYCLES or not lifecycle
+    if visibility == "PRIVATE" and str(getattr(strategy, "created_by", "")) == str(user_id):
+        return lifecycle in READY_BACKTEST_LIFECYCLES or request_status in READY_REQUEST_STATUSES
+    return False
+
+
+async def _request_status_map_for_backtest_strategies(db: AsyncSession, strategies: list[Strategy]) -> dict[str, str]:
+    request_ids = [getattr(strategy, "source_request_id", None) for strategy in strategies if getattr(strategy, "source_request_id", None)]
+    if not request_ids:
+        return {}
+    try:
+        rows = (await db.execute(select(StrategyRequest.id, StrategyRequest.status).where(StrategyRequest.id.in_(request_ids)))).all()
+        return {str(req_id): str(status or "").upper() for req_id, status in rows}
+    except Exception:
+        return {}
 
 
 def _advanced_filters_to_json(value) -> dict | None:
@@ -1851,6 +1891,8 @@ async def get_backtest_config(
             .order_by(Strategy.created_at.desc())
         )
     ).scalars().all()
+    request_status_by_id = await _request_status_map_for_backtest_strategies(db, strategies)
+    strategies = [s for s in strategies if _is_backtest_dropdown_eligible(s, uid, request_status_by_id)]
     instruments = (await db.execute(select(Instrument).order_by(Instrument.symbol.asc()))).scalars().all()
     timeframes = (
         await db.execute(select(MarketData.timeframe).distinct().order_by(MarketData.timeframe.asc()))

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, CheckCircle2, Code2, GitCompareArrows, History, Play, RotateCcw, Save, ShieldCheck, UploadCloud } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Code2, GitCompareArrows, History, Play, RotateCcw, Save, Send, ShieldCheck, UploadCloud } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { toast } from "sonner";
 
@@ -21,6 +21,7 @@ import { FieldHelpTooltip } from "@/components/common/FieldHelpTooltip";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { StrategyAttachmentGallery } from "@/components/strategies/StrategyAttachmentGallery";
 
 
 const RUNTIME_FIELD_HELP: Record<string, string> = {"Initial Capital": "Starting capital used in this runtime preset. It affects backtest sizing, equity curve and drawdown calculations.", "Risk Percent": "Percentage of capital risked per trade for risk-based sizing. Example: 1% means 0.01 in config. High risk can create large drawdowns.", "Position Size Mode": "Risk Based calculates size from stop loss and risk percent. Fixed Lot/Quantity uses a manual size.", "Max Lot Cap": "Maximum allowed lot size to prevent oversized trades.", "Fixed Lot": "Manual lot size used for every trade in this preset. High fixed lots can create unrealistic risk.", "Fixed Quantity": "Manual quantity used for non-lot instruments.", "Max Quantity Cap": "Maximum quantity cap for non-lot instruments.", "SL Mode": "Defines how stop loss is calculated: Fixed Percent, ATR volatility, recent swing, or strategy suggested.", "RR Ratio": "Reward-to-risk ratio. Example: 2 means target is twice the stop loss distance.", "ATR Period": "Number of candles used to calculate Average True Range. Higher values smooth the volatility estimate.", "ATR Multiplier": "Multiplier applied to ATR for stop distance. Higher multiplier means wider stop.", "Swing Lookback": "Number of candles used to find recent swing high/low for stop placement.", "Fixed Price Risk %": "Stop loss distance as a fixed percent of entry price.", "Entry Mode": "Controls when trade enters after signal. Next Candle Open is safer for realistic backtests.", "Max Open Positions": "Limits simultaneous open positions.", "Max Trades Per Day": "Limits daily trade count to reduce overtrading.", "Square Off Time": "Time used to close intraday Indian-market positions.", "Break Even Trigger R": "Profit multiple required before stop loss moves to entry.", "Trailing Mode": "Method used to trail stop. ATR trail uses volatility.", "Trail Start R": "Profit multiple after which trailing starts.", "Trail ATR Multiplier": "ATR multiplier used for trailing stop distance.", "Partial Exit At R": "R multiple where partial exit happens.", "Partial Exit Percent": "Percent of position closed during partial exit."};
@@ -334,6 +335,8 @@ export default function AdminStrategyWorkspacePage() {
   const runtimePresetValidation = useMemo(() => validatePresetFormConfig(runtimePresetConfig, { name: runtimePresetForm.name, advancedJsonError: runtimePresetJsonState.ok ? null : runtimePresetJsonState.error }), [runtimePresetConfig, runtimePresetForm.name, runtimePresetJsonState.ok, runtimePresetJsonState.error]);
   const runtimeConfigSchema = useMemo(() => ((strategy as any)?.runtime_config_schema || (strategy as any)?.runtimeConfigSchema || {}) as Record<string, any>, [strategy]);
   const strategyParamSchema = useMemo(() => (runtimeConfigSchema?.strategy_params || {}) as Record<string, any>, [runtimeConfigSchema]);
+  const sourceRequest = useMemo(() => (strategy?.sourceRequest || strategy?.source_request || null) as any, [strategy]);
+  const strategyAssets = useMemo(() => ((strategy as any)?.assets || (strategy as any)?.strategyAssets || (strategy as any)?.strategy_assets || []) as any[], [strategy]);
 
   useEffect(() => {
     if (recommendedPresetKey && !selectedPreset) setSelectedPreset(recommendedPresetKey);
@@ -446,6 +449,21 @@ export default function AdminStrategyWorkspacePage() {
       await refreshWorkflowAndVersions();
     } catch (error: any) {
       toast.error(error?.message || "Rollback failed");
+    }
+  };
+
+  const deployPrivateStrategy = async () => {
+    setPublishing(true);
+    try {
+      const updated = await adminApi.deployPrivateAdminStrategyById(strategyId);
+      setStrategy(updated);
+      setForm(strategyToForm(updated));
+      toast.success("Strategy deployed privately to requesting user");
+      await refreshWorkflowAndVersions();
+    } catch (error: any) {
+      toast.error(error?.message || "Private deployment failed");
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -625,6 +643,9 @@ export default function AdminStrategyWorkspacePage() {
             </Button>
             <Button variant="outline" className="rounded-xl" asChild><Link href="/admin/backtest-engine"><Code2 className="mr-2 h-4 w-4" />Engine Workspace</Link></Button>
             <Button variant="outline" onClick={() => void verifyCode()} disabled={verifying} className="rounded-xl"><ShieldCheck className="mr-2 h-4 w-4" />{verifying ? "Verifying..." : "Verify Code"}</Button>
+            {(strategy?.sourceRequestId || strategy?.source_request_id) && String(form.visibility).toUpperCase() !== "PUBLIC" ? (
+              <Button variant="outline" onClick={() => void deployPrivateStrategy()} disabled={publishing} className="rounded-xl border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"><Send className="mr-2 h-4 w-4" />{publishing ? "Deploying..." : "Deploy Private to User"}</Button>
+            ) : null}
             {String(form.visibility).toUpperCase() === "PUBLIC" ? (
               <Button variant="outline" onClick={() => void unpublishStrategy()} disabled={publishing} className="rounded-xl">{publishing ? "Updating..." : "Unpublish"}</Button>
             ) : (
@@ -634,6 +655,67 @@ export default function AdminStrategyWorkspacePage() {
           </div>
         }
       />
+
+      {sourceRequest ? (
+        <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+          <Card className="rounded-xl border border-sky-400/30 bg-card/30 shadow-xl backdrop-blur-xl">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><Code2 className="h-4 w-4 text-sky-300" />Source Request Context</CardTitle>
+              <CardDescription>Original user request rules used to build this workspace.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="rounded-xl border border-border/50 bg-card/20 p-3"><p className="text-xs uppercase text-muted-foreground">User</p><p className="mt-1 text-foreground">{sourceRequest.user_name || sourceRequest.user_email || "—"}</p></div>
+                <div className="rounded-xl border border-border/50 bg-card/20 p-3"><p className="text-xs uppercase text-muted-foreground">Status</p><p className="mt-1 text-foreground">{sourceRequest.status || "—"}</p></div>
+                <div className="rounded-xl border border-border/50 bg-card/20 p-3"><p className="text-xs uppercase text-muted-foreground">Submitted</p><p className="mt-1 text-foreground">{formatDateTime(sourceRequest.createdAt || sourceRequest.created_at)}</p></div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {[
+                  ["Entry Rules", sourceRequest.entry_rules],
+                  ["Exit Rules", sourceRequest.exit_rules],
+                  ["Risk Rules", sourceRequest.risk_rules],
+                  ["Confirmation", sourceRequest.confirmation_rules],
+                  ["Invalidation", sourceRequest.invalidation_rules],
+                  ["Trade Management", sourceRequest.trade_management_rules],
+                  ["Notes", sourceRequest.notes],
+                ].map(([label, value]) => (
+                  <div key={String(label)} className="rounded-xl border border-border/50 bg-card/20 p-3">
+                    <p className="text-xs uppercase text-muted-foreground">{String(label)}</p>
+                    <p className="mt-2 whitespace-pre-wrap text-foreground">{String(value || "—")}</p>
+                  </div>
+                ))}
+              </div>
+              {sourceRequest.admin_notes ? (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-amber-100">
+                  <p className="text-xs uppercase">Admin Notes</p>
+                  <p className="mt-2 whitespace-pre-wrap">{sourceRequest.admin_notes}</p>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+          <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+            <CardHeader>
+              <CardTitle className="text-base">Request Screenshots</CardTitle>
+              <CardDescription>Chart evidence from the requesting user.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <StrategyAttachmentGallery attachments={sourceRequest.attachments || strategy?.attachments || []} emptyText="No screenshots attached." />
+            </CardContent>
+          </Card>
+        </section>
+      ) : null}
+
+      {!sourceRequest && strategyAssets.length ? (
+        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+          <CardHeader>
+            <CardTitle className="text-base">Strategy Concept Images</CardTitle>
+            <CardDescription>Documentation screenshots attached to this manual strategy.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <StrategyAttachmentGallery attachments={strategyAssets} emptyText="No strategy images attached." />
+          </CardContent>
+        </Card>
+      ) : null}
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">

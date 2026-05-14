@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from . import auth, users, strategies, backtests, signals, metrics, instruments, jobs, market_data, credits, billing, payments, subscriptions, ai_screener, notifications, strategy_requests, admin_strategy_requests, ai_screener_jobs, admin, admin_market_data, support_tickets, public, dashboard
+from . import auth, users, strategies, backtests, reports, signals, metrics, instruments, jobs, market_data, credits, billing, payments, subscriptions, ai_screener, notifications, strategy_requests, admin_strategy_requests, ai_screener_jobs, admin, admin_market_data, support_tickets, public, dashboard
 from . import admin_pricing
 from . import admin_coupons
 from . import admin_credit_rules
@@ -25,6 +25,7 @@ api_router.include_router(strategies.router, prefix="/strategies", tags=["strate
 api_router.include_router(instruments.router, prefix="/instruments", tags=["instruments"])
 api_router.include_router(market_data.router, prefix="/market-data", tags=["market-data"])
 api_router.include_router(backtests.router, prefix="/backtests", tags=["backtests"])
+api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(signals.router, prefix="/signals", tags=["signals"])
 api_router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
 api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])

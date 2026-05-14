@@ -2,7 +2,7 @@ from .users import User
 from .password_reset_tokens import PasswordResetToken
 from .admin_login_otp import AdminLoginOtp
 from .instruments import AssetClass, Timeframe, Instrument
-from .strategies import Strategy, StrategyRuntimePreset
+from .strategies import Strategy, StrategyRuntimePreset, StrategyAsset
 from .market_data import MarketData
 from .backtests import PerformanceMetric
 from .trades import Trade
@@ -16,7 +16,7 @@ from .user_credits import UserCredit
 from .user_settings import UserSettings
 from .payments import Payment
 from .notifications import Notification
-from .strategy_requests import StrategyRequest
+from .strategy_requests import StrategyRequest, StrategyRequestAttachment
 from .screener_news import ScreenerNews
 from .screener_announcements import ScreenerAnnouncements
 from .screener_runs import ScreenerRuns
@@ -56,6 +56,7 @@ __all__ = [
     "Instrument",
     "Strategy",
     "StrategyRuntimePreset",
+    "StrategyAsset",
     "MarketData",
     "PerformanceMetric",
     "Trade",
@@ -71,6 +72,7 @@ __all__ = [
     "Payment",
     "Notification",
     "StrategyRequest",
+    "StrategyRequestAttachment",
     "ScreenerNews",
     "ScreenerAnnouncements",
     "ScreenerRuns",

@@ -1,19 +1,21 @@
 from __future__ import annotations
 
 from typing import Any, Optional
+from pathlib import Path
+
 from datetime import date, timedelta, datetime, timezone
 from uuid import uuid4
 import hashlib
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_admin_user, get_db
 from ...db.compat import as_uuid_or_str, column_text
-from ...db.models.strategy_requests import StrategyRequest
-from ...db.models.strategies import Strategy, StrategyRuntimePreset
+from ...db.models.strategy_requests import StrategyRequest, StrategyRequestAttachment
+from ...db.models.strategies import Strategy, StrategyRuntimePreset, StrategyAsset
 from ...db.models.users import User
 from ...db.models import Instrument, MarketData
 from ...services.backtest_service import BacktestService
@@ -27,10 +29,107 @@ from .strategies import (
     _safe_float,
     _safe_int,
     _upsert_strategy_from_request,
+    _load_request_attachments,
 )
 
 router = APIRouter()
 VALID_VISIBILITY = {PRIVATE_VISIBILITY, PUBLIC_VISIBILITY}
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+STRATEGY_ASSET_ROOT = PROJECT_ROOT / "uploads" / "strategy_assets"
+ALLOWED_STRATEGY_ASSET_TYPES = {"image/png", "image/jpeg", "image/webp"}
+MAX_STRATEGY_ASSET_SIZE = 5 * 1024 * 1024
+MAX_STRATEGY_ASSETS = 6
+
+
+def _asset_url(strategy_id: Any, asset_id: Any) -> str:
+    return f"/api/v1/strategies/{strategy_id}/assets/{asset_id}"
+
+
+def _serialize_strategy_asset(asset: StrategyAsset) -> dict[str, Any]:
+    return {
+        "id": str(asset.id),
+        "strategy_id": str(asset.strategy_id),
+        "strategyId": str(asset.strategy_id),
+        "file_name": asset.file_name,
+        "fileName": asset.file_name,
+        "original_name": asset.original_name,
+        "originalName": asset.original_name,
+        "public_url": asset.public_url or _asset_url(asset.strategy_id, asset.id),
+        "publicUrl": asset.public_url or _asset_url(asset.strategy_id, asset.id),
+        "mime_type": asset.mime_type,
+        "mimeType": asset.mime_type,
+        "size_bytes": asset.size_bytes,
+        "sizeBytes": asset.size_bytes,
+        "sort_order": asset.sort_order,
+        "sortOrder": asset.sort_order,
+        "is_public": bool(asset.is_public),
+        "isPublic": bool(asset.is_public),
+        "created_at": asset.created_at.isoformat() if asset.created_at else None,
+        "createdAt": asset.created_at.isoformat() if asset.created_at else None,
+    }
+
+
+async def _load_strategy_assets(db: AsyncSession, strategy_ids: list[Any]) -> dict[str, list[dict[str, Any]]]:
+    ids = [str(item) for item in strategy_ids if item]
+    if not ids:
+        return {}
+    try:
+        rows = (await db.execute(
+            select(StrategyAsset)
+            .where(StrategyAsset.strategy_id.in_(ids))
+            .order_by(StrategyAsset.sort_order.asc(), StrategyAsset.created_at.asc())
+        )).scalars().all()
+    except Exception:
+        return {}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        out.setdefault(str(row.strategy_id), []).append(_serialize_strategy_asset(row))
+    return out
+
+
+async def _save_strategy_assets(db: AsyncSession, strategy: Strategy, files: list[UploadFile], admin_user: dict) -> list[dict[str, Any]]:
+    if len(files) > MAX_STRATEGY_ASSETS:
+        raise HTTPException(status_code=400, detail="Maximum 6 concept images are allowed")
+    existing_count = (await db.execute(select(func.count()).select_from(StrategyAsset).where(StrategyAsset.strategy_id == str(strategy.id)))).scalar() or 0
+    if int(existing_count) + len(files) > MAX_STRATEGY_ASSETS:
+        raise HTTPException(status_code=400, detail="Maximum 6 concept images are allowed per strategy")
+    target_dir = STRATEGY_ASSET_ROOT / str(strategy.id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    created: list[StrategyAsset] = []
+    for offset, upload in enumerate(files):
+        if upload.content_type not in ALLOWED_STRATEGY_ASSET_TYPES:
+            raise HTTPException(status_code=400, detail="Only PNG, JPEG, or WEBP concept images are allowed")
+        original = Path(upload.filename or f"strategy-image-{offset + 1}").name
+        safe_name = f"{int(existing_count) + offset + 1:02d}_{uuid4().hex}_{original}"[:240]
+        path = target_dir / safe_name
+        size = 0
+        with path.open("wb") as buffer:
+            while True:
+                chunk = await upload.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_STRATEGY_ASSET_SIZE:
+                    path.unlink(missing_ok=True)
+                    raise HTTPException(status_code=400, detail="Each concept image must be 5 MB or smaller")
+                buffer.write(chunk)
+        row = StrategyAsset(
+            strategy_id=str(strategy.id),
+            file_name=safe_name,
+            original_name=original,
+            file_path=str(path.relative_to(PROJECT_ROOT) if path.is_absolute() else path),
+            public_url=None,
+            mime_type=upload.content_type or "application/octet-stream",
+            size_bytes=size,
+            sort_order=int(existing_count) + offset,
+            is_public=True,
+            uploaded_by=as_uuid_or_str(admin_user.get("user_id")) if admin_user.get("user_id") else None,
+        )
+        db.add(row)
+        created.append(row)
+    await db.flush()
+    return [_serialize_strategy_asset(row) for row in created]
 
 
 class StrategyRequestPatchIn(BaseModel):
@@ -220,7 +319,7 @@ def _extract_metrics_from_parameters(parameters: Any) -> dict[str, Any]:
     }
 
 
-def _serialize_request(req: StrategyRequest, email: Optional[str] = None, fullname: Optional[str] = None) -> dict[str, Any]:
+def _serialize_request(req: StrategyRequest, email: Optional[str] = None, fullname: Optional[str] = None, attachments: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
     return {
         "id": str(req.id),
         "title": req.title,
@@ -233,7 +332,29 @@ def _serialize_request(req: StrategyRequest, email: Optional[str] = None, fullna
         "entry_rules": req.entry_rules,
         "exit_rules": req.exit_rules,
         "risk_rules": req.risk_rules,
+        "confirmation_rules": getattr(req, "confirmation_rules", None),
+        "invalidation_rules": getattr(req, "invalidation_rules", None),
+        "trade_management_rules": getattr(req, "trade_management_rules", None),
         "notes": req.notes,
+        "user_update_notes": getattr(req, "user_update_notes", None),
+        "userUpdateNotes": getattr(req, "user_update_notes", None),
+        "clarification_reply": getattr(req, "user_update_notes", None),
+        "clarificationReply": getattr(req, "user_update_notes", None),
+        "clarification_submitted_at": _serialize_dt(getattr(req, "clarification_submitted_at", None)),
+        "clarificationSubmittedAt": _serialize_dt(getattr(req, "clarification_submitted_at", None)),
+        "last_user_update_at": _serialize_dt(getattr(req, "last_user_update_at", None)),
+        "lastUserUpdateAt": _serialize_dt(getattr(req, "last_user_update_at", None)),
+        "parent_strategy_id": str(getattr(req, "parent_strategy_id", None)) if getattr(req, "parent_strategy_id", None) else None,
+        "parentStrategyId": str(getattr(req, "parent_strategy_id", None)) if getattr(req, "parent_strategy_id", None) else None,
+        "parent_request_id": str(getattr(req, "parent_request_id", None)) if getattr(req, "parent_request_id", None) else None,
+        "parentRequestId": str(getattr(req, "parent_request_id", None)) if getattr(req, "parent_request_id", None) else None,
+        "request_kind": getattr(req, "request_kind", None) or "NEW",
+        "requestKind": getattr(req, "request_kind", None) or "NEW",
+        "refinement_notes": getattr(req, "refinement_notes", None),
+        "refinementNotes": getattr(req, "refinement_notes", None),
+        "attachments": attachments or [],
+        "attachment_count": len(attachments or []),
+        "attachmentCount": len(attachments or []),
         "description": req.notes or req.entry_rules,
         "status": req.status,
         "user_id": str(req.user_id),
@@ -243,6 +364,10 @@ def _serialize_request(req: StrategyRequest, email: Optional[str] = None, fullna
         "assigned_to": str(req.assigned_to) if getattr(req, "assigned_to", None) else None,
         "deployed_strategy_id": str(req.deployed_strategy_id) if getattr(req, "deployed_strategy_id", None) else None,
         "deployedStrategyId": str(req.deployed_strategy_id) if getattr(req, "deployed_strategy_id", None) else None,
+        "linked_strategy_id": str(req.deployed_strategy_id) if getattr(req, "deployed_strategy_id", None) else None,
+        "linkedStrategyId": str(req.deployed_strategy_id) if getattr(req, "deployed_strategy_id", None) else None,
+        "workspace_status": "Workspace Created" if getattr(req, "deployed_strategy_id", None) else "Not Started",
+        "workspaceStatus": "Workspace Created" if getattr(req, "deployed_strategy_id", None) else "Not Started",
         "created_at": _serialize_dt(req.created_at),
         "createdAt": _serialize_dt(req.created_at),
         "updated_at": _serialize_dt(req.updated_at),
@@ -360,7 +485,12 @@ def _serialize_strategy(item: Strategy) -> dict[str, Any]:
         "profitFactor": _safe_float(metrics.get("profit_factor")),
         "parameters": params,
         "workflow": _get_workflow_state(params),
+        "workspace_status": _workspace_status_for_strategy(item),
+        "workspaceStatus": _workspace_status_for_strategy(item),
         "version_count": len(params.get("_ide_versions") or []),
+        "assets": [],
+        "strategy_assets": [],
+        "strategyAssets": [],
         "source_request_id": str(item.source_request_id) if getattr(item, "source_request_id", None) else None,
         "sourceRequestId": str(item.source_request_id) if getattr(item, "source_request_id", None) else None,
         "created_by": str(item.created_by) if getattr(item, "created_by", None) else None,
@@ -473,6 +603,23 @@ async def _link_source_request_if_exists(db: AsyncSession, source_request_id: Op
         req.status = "DEPLOYED"
 
 
+def _workspace_status_for_strategy(strategy: Strategy | None, req: StrategyRequest | None = None) -> str:
+    if req is not None and getattr(req, "status", None) == "DEPLOYED":
+        visibility = (getattr(strategy, "visibility", None) if strategy else None) or PRIVATE_VISIBILITY
+        return "Public Published" if visibility == PUBLIC_VISIBILITY else "Private Deployed"
+    if not strategy:
+        return "Not Started"
+    params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
+    workflow = _get_workflow_state(params)
+    if workflow.get("sandbox", {}).get("ok"):
+        return "Sandbox Passed"
+    if workflow.get("validation", {}).get("ok") or getattr(strategy, "verified_at", None):
+        return "Verify Passed"
+    if params.get("source_code"):
+        return "Code Attached"
+    return "Workspace Created"
+
+
 @router.get("")
 @router.get("/")
 async def list_strategy_requests(
@@ -517,7 +664,38 @@ async def list_strategy_requests(
     ).all()
 
     total = (await db.execute(count_stmt)).scalar() or 0
-    items = [_serialize_request(req, email, fullname) for req, email, fullname in rows]
+    request_ids = [req.id for req, _, _ in rows]
+    attachment_map = await _load_request_attachments(db, request_ids)
+    linked_strategy_map: dict[str, Strategy] = {}
+    parent_strategy_map: dict[str, Strategy] = {}
+    if request_ids:
+        linked_rows = (
+            await db.execute(
+                select(Strategy).where(Strategy.source_request_id.in_(request_ids))
+            )
+        ).scalars().all()
+        linked_strategy_map = {str(item.source_request_id): item for item in linked_rows if getattr(item, "source_request_id", None)}
+        parent_ids = [str(req.parent_strategy_id) for req, _, _ in rows if getattr(req, "parent_strategy_id", None)]
+        if parent_ids:
+            parent_rows = (await db.execute(select(Strategy).where(column_text(Strategy.id).in_(parent_ids)))).scalars().all()
+            parent_strategy_map = {str(item.id): item for item in parent_rows}
+
+    items = []
+    for req, email, fullname in rows:
+        row_data = _serialize_request(req, email, fullname, attachment_map.get(str(req.id), []))
+        linked_strategy = linked_strategy_map.get(str(req.id))
+        if linked_strategy:
+            row_data["deployed_strategy_id"] = str(linked_strategy.id)
+            row_data["deployedStrategyId"] = str(linked_strategy.id)
+            row_data["linked_strategy_id"] = str(linked_strategy.id)
+            row_data["linkedStrategyId"] = str(linked_strategy.id)
+        parent_strategy = parent_strategy_map.get(str(getattr(req, "parent_strategy_id", "")))
+        if parent_strategy:
+            row_data["original_strategy_name"] = parent_strategy.name
+            row_data["originalStrategyName"] = parent_strategy.name
+        row_data["workspace_status"] = _workspace_status_for_strategy(linked_strategy, req)
+        row_data["workspaceStatus"] = row_data["workspace_status"]
+        items.append(row_data)
 
     strategy_stmt = select(Strategy)
     strategy_count_stmt = select(func.count()).select_from(Strategy)
@@ -699,7 +877,25 @@ async def get_strategy_by_id(
     db: AsyncSession = Depends(get_db),
 ):
     strategy = await _get_strategy_or_404(db, strategy_id)
-    return success_response(_serialize_strategy(strategy))
+    data = _serialize_strategy(strategy)
+    assets = (await _load_strategy_assets(db, [strategy.id])).get(str(strategy.id), [])
+    data["assets"] = assets
+    data["strategy_assets"] = assets
+    data["strategyAssets"] = assets
+    if getattr(strategy, "source_request_id", None):
+        data["attachments"] = (await _load_request_attachments(db, [strategy.source_request_id])).get(str(strategy.source_request_id), [])
+        row = (
+            await db.execute(
+                select(StrategyRequest, User.email, User.fullname)
+                .join(User, User.id == StrategyRequest.user_id)
+                .where(column_text(StrategyRequest.id) == str(strategy.source_request_id))
+            )
+        ).first()
+        if row:
+            req, email, fullname = row
+            data["source_request"] = _serialize_request(req, email, fullname, data["attachments"])
+            data["sourceRequest"] = data["source_request"]
+    return success_response(data)
 
 
 class StrategySandboxBacktestIn(BaseModel):
@@ -913,10 +1109,11 @@ async def list_strategies(
     ).scalars().all()
 
     total = (await db.execute(count_stmt)).scalar() or 0
+    asset_map = await _load_strategy_assets(db, [item.id for item in rows])
 
     return success_response(
         {
-            "items": [_serialize_strategy(item) for item in rows],
+            "items": [{**_serialize_strategy(item), **({"assets": asset_map.get(str(item.id), []), "strategy_assets": asset_map.get(str(item.id), []), "strategyAssets": asset_map.get(str(item.id), [])})} for item in rows],
             "total": total,
             "skip": skip,
             "limit": limit,
@@ -1038,6 +1235,21 @@ async def delete_strategy(
     )
 
 
+@router.post("/strategies/{strategy_id}/assets")
+async def upload_strategy_assets(
+    strategy_id: str,
+    files: list[UploadFile] = File(default=[]),
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    strategy = await _get_strategy_or_404(db, strategy_id)
+    if not files:
+        return success_response({"items": []}, "No files uploaded")
+    items = await _save_strategy_assets(db, strategy, files, admin_user)
+    await db.commit()
+    return success_response({"items": items}, "Strategy images uploaded successfully")
+
+
 @router.get("/strategies/{strategy_id}/versions")
 async def list_strategy_versions(
     strategy_id: str,
@@ -1109,6 +1321,31 @@ def _ensure_publish_gate(params: dict[str, Any]) -> None:
         raise HTTPException(status_code=400, detail="Publish blocked: run Sandbox Backtest successfully for the latest source/config.")
 
 
+@router.post("/strategies/{strategy_id}/deploy-private")
+async def deploy_private_strategy(
+    strategy_id: str,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    strategy = await _get_strategy_or_404(db, strategy_id)
+    params = dict(strategy.parameters or {})
+    _ensure_publish_gate(params)
+    await _ensure_default_runtime_preset(db, strategy, admin_user)
+    strategy.visibility = PRIVATE_VISIBILITY
+    strategy.published_by = None
+    strategy.lifecycle_status = "PRIVATE_DEPLOYED"
+
+    if getattr(strategy, "source_request_id", None):
+        req = await _get_request_or_404(db, str(strategy.source_request_id))
+        strategy.created_by = as_uuid_or_str(req.user_id)
+        req.status = "DEPLOYED"
+        req.deployed_strategy_id = str(strategy.id)
+
+    await db.commit()
+    await db.refresh(strategy)
+    return success_response(_serialize_strategy(strategy), "Strategy deployed privately to requesting user")
+
+
 @router.post("/strategies/{strategy_id}/publish")
 async def publish_strategy(
     strategy_id: str,
@@ -1121,8 +1358,15 @@ async def publish_strategy(
     await _ensure_default_runtime_preset(db, strategy, admin_user)
     strategy.visibility = PUBLIC_VISIBILITY
     strategy.published_by = as_uuid_or_str(admin_user["user_id"])
-    if not getattr(strategy, "lifecycle_status", None) or strategy.lifecycle_status in {"DRAFT", "VERIFIED", "SANDBOX_PASSED"}:
+    if not getattr(strategy, "lifecycle_status", None) or strategy.lifecycle_status in {"DRAFT", "UNDER_DEVELOPMENT", "VERIFIED", "SANDBOX_PASSED", "PRIVATE", "PRIVATE_DEPLOYED"}:
         strategy.lifecycle_status = "PUBLISHED"
+
+    if getattr(strategy, "source_request_id", None):
+        req = await _get_request_or_404(db, str(strategy.source_request_id))
+        req.status = "DEPLOYED"
+        req.deployed_strategy_id = str(strategy.id)
+        if not getattr(strategy, "created_by", None):
+            strategy.created_by = as_uuid_or_str(req.user_id)
 
     await db.commit()
     await db.refresh(strategy)
@@ -1153,6 +1397,69 @@ async def unpublish_strategy(
     return success_response(_serialize_strategy(strategy), "Strategy moved to private successfully")
 
 
+@router.post("/{request_id}/workspace")
+async def create_strategy_workspace_from_request(
+    request_id: str,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    req = await _get_request_or_404(db, request_id)
+
+    existing = (
+        await db.execute(
+            select(Strategy).where(Strategy.source_request_id == req.id)
+        )
+    ).scalar_one_or_none()
+
+    if existing is None and getattr(req, "deployed_strategy_id", None):
+        existing = (
+            await db.execute(
+                select(Strategy).where(column_text(Strategy.id) == str(req.deployed_strategy_id))
+            )
+        ).scalar_one_or_none()
+
+    if existing is None:
+        strategy = await _upsert_strategy_from_request(db, req, visibility=PRIVATE_VISIBILITY)
+        strategy.lifecycle_status = "UNDER_DEVELOPMENT"
+        if (getattr(req, "request_kind", None) or "").upper() == "REFINEMENT" and getattr(req, "parent_strategy_id", None):
+            parent_strategy = (await db.execute(select(Strategy).where(column_text(Strategy.id) == str(req.parent_strategy_id)))).scalar_one_or_none()
+            if parent_strategy and not str(strategy.name).endswith(" V2"):
+                strategy.name = f"{parent_strategy.name} V2"
+        strategy.created_by = as_uuid_or_str(req.user_id)
+        strategy.published_by = None
+        req.deployed_strategy_id = str(strategy.id)
+        req.status = "UNDER_DEVELOPMENT"
+        await _ensure_default_runtime_preset(db, strategy, admin_user)
+    else:
+        strategy = existing
+        if not getattr(strategy, "source_request_id", None):
+            strategy.source_request_id = as_uuid_or_str(req.id)
+        if not getattr(strategy, "created_by", None):
+            strategy.created_by = as_uuid_or_str(req.user_id)
+        if not getattr(strategy, "visibility", None):
+            strategy.visibility = PRIVATE_VISIBILITY
+        if not getattr(strategy, "lifecycle_status", None) or strategy.lifecycle_status == "PRIVATE":
+            strategy.lifecycle_status = "UNDER_DEVELOPMENT"
+        req.deployed_strategy_id = str(strategy.id)
+        if req.status != "DEPLOYED":
+            req.status = "UNDER_DEVELOPMENT"
+        await _ensure_default_runtime_preset(db, strategy, admin_user)
+
+    await db.commit()
+    await db.refresh(req)
+    await db.refresh(strategy)
+
+    attachments = (await _load_request_attachments(db, [req.id])).get(str(req.id), [])
+    user_row = (await db.execute(select(User.email, User.fullname).where(User.id == req.user_id))).first()
+    email = user_row[0] if user_row else None
+    fullname = user_row[1] if user_row else None
+    data = _serialize_strategy(strategy)
+    data["attachments"] = attachments
+    data["source_request"] = _serialize_request(req, email, fullname, attachments)
+    data["sourceRequest"] = data["source_request"]
+    return success_response({"request": data["source_request"], "strategy": data}, "Strategy workspace is ready")
+
+
 @router.get("/{request_id}")
 async def get_strategy_request_detail(
     request_id: str,
@@ -1171,7 +1478,33 @@ async def get_strategy_request_detail(
         raise HTTPException(status_code=404, detail="Strategy request not found")
 
     req, email, fullname = row
-    return success_response(_serialize_request(req, email, fullname))
+    attachment_map = await _load_request_attachments(db, [req.id])
+    data = _serialize_request(req, email, fullname, attachment_map.get(str(req.id), []))
+    linked_strategy = (
+        await db.execute(
+            select(Strategy).where(Strategy.source_request_id == req.id)
+        )
+    ).scalar_one_or_none()
+    if linked_strategy:
+        data["deployed_strategy_id"] = str(linked_strategy.id)
+        data["deployedStrategyId"] = str(linked_strategy.id)
+        data["linked_strategy_id"] = str(linked_strategy.id)
+        data["linkedStrategyId"] = str(linked_strategy.id)
+    if getattr(req, "parent_strategy_id", None):
+        parent_strategy = (await db.execute(select(Strategy).where(column_text(Strategy.id) == str(req.parent_strategy_id)))).scalar_one_or_none()
+        if parent_strategy:
+            data["original_strategy"] = {"id": str(parent_strategy.id), "name": parent_strategy.name, "visibility": parent_strategy.visibility}
+            data["originalStrategy"] = data["original_strategy"]
+            data["original_strategy_name"] = parent_strategy.name
+            data["originalStrategyName"] = parent_strategy.name
+    if getattr(req, "parent_request_id", None):
+        parent_request = (await db.execute(select(StrategyRequest).where(column_text(StrategyRequest.id) == str(req.parent_request_id)))).scalar_one_or_none()
+        if parent_request:
+            data["original_request"] = {"id": str(parent_request.id), "title": parent_request.title, "status": parent_request.status}
+            data["originalRequest"] = data["original_request"]
+    data["workspace_status"] = _workspace_status_for_strategy(linked_strategy, req)
+    data["workspaceStatus"] = data["workspace_status"]
+    return success_response(data)
 
 
 @router.patch("/{request_id}")
@@ -1212,7 +1545,8 @@ async def update_strategy_request(
 
     if row:
         req2, email, fullname = row
-        return success_response(_serialize_request(req2, email, fullname), "Strategy request updated successfully")
+        attachment_map = await _load_request_attachments(db, [req2.id])
+        return success_response(_serialize_request(req2, email, fullname, attachment_map.get(str(req2.id), [])), "Strategy request updated successfully")
 
     return success_response(_serialize_request(req), "Strategy request updated successfully")
 
@@ -1272,6 +1606,10 @@ async def deploy_strategy_request(
 
         if _clean(payload.strategy_name):
             strategy.name = _clean(payload.strategy_name)
+        elif (getattr(req, "request_kind", None) or "").upper() == "REFINEMENT" and getattr(req, "parent_strategy_id", None):
+            parent_strategy = (await db.execute(select(Strategy).where(column_text(Strategy.id) == str(req.parent_strategy_id)))).scalar_one_or_none()
+            if parent_strategy and str(strategy.name).startswith("Refinement:"):
+                strategy.name = f"{parent_strategy.name} V2"
         if payload.strategy_description is not None:
             strategy.description = _clean(payload.strategy_description)
 
@@ -1285,7 +1623,7 @@ async def deploy_strategy_request(
     await db.refresh(strategy)
 
     return success_response(
-        {"request": _serialize_request(req), "strategy": _serialize_strategy(strategy)},
+        {"request": _serialize_request(req, attachments=(await _load_request_attachments(db, [req.id])).get(str(req.id), [])), "strategy": _serialize_strategy(strategy)},
         "Strategy deployed successfully",
     )
 
