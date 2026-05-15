@@ -63,6 +63,7 @@ class Strategy(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     creator = relationship("User", foreign_keys=[created_by], lazy="joined")
+    assets = relationship("StrategyAsset", cascade="all, delete-orphan", order_by="StrategyAsset.sort_order", back_populates="strategy")
 
 
 class StrategyAsset(Base):
@@ -78,10 +79,13 @@ class StrategyAsset(Base):
     size_bytes = Column(Integer, nullable=False)
     sort_order = Column(Integer, nullable=False, server_default="0")
     is_public = Column(Boolean, nullable=False, server_default="true", index=True)
+    is_cover = Column(Boolean, nullable=False, server_default="false", index=True)
+    caption = Column(Text, nullable=True)
     uploaded_by = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    strategy = relationship("Strategy", lazy="joined")
+    strategy = relationship("Strategy", back_populates="assets", lazy="joined")
 
 class StrategyRuntimePreset(Base):
     __tablename__ = "strategy_runtime_presets"

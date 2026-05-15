@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StrategyAttachmentGallery } from "@/components/strategies/StrategyAttachmentGallery";
+import { AuthenticatedStrategyImage } from "@/components/strategies/AuthenticatedStrategyImage";
 
 
 const RUNTIME_FIELD_HELP: Record<string, string> = {"Initial Capital": "Starting capital used in this runtime preset. It affects backtest sizing, equity curve and drawdown calculations.", "Risk Percent": "Percentage of capital risked per trade for risk-based sizing. Example: 1% means 0.01 in config. High risk can create large drawdowns.", "Position Size Mode": "Risk Based calculates size from stop loss and risk percent. Fixed Lot/Quantity uses a manual size.", "Max Lot Cap": "Maximum allowed lot size to prevent oversized trades.", "Fixed Lot": "Manual lot size used for every trade in this preset. High fixed lots can create unrealistic risk.", "Fixed Quantity": "Manual quantity used for non-lot instruments.", "Max Quantity Cap": "Maximum quantity cap for non-lot instruments.", "SL Mode": "Defines how stop loss is calculated: Fixed Percent, ATR volatility, recent swing, or strategy suggested.", "RR Ratio": "Reward-to-risk ratio. Example: 2 means target is twice the stop loss distance.", "ATR Period": "Number of candles used to calculate Average True Range. Higher values smooth the volatility estimate.", "ATR Multiplier": "Multiplier applied to ATR for stop distance. Higher multiplier means wider stop.", "Swing Lookback": "Number of candles used to find recent swing high/low for stop placement.", "Fixed Price Risk %": "Stop loss distance as a fixed percent of entry price.", "Entry Mode": "Controls when trade enters after signal. Next Candle Open is safer for realistic backtests.", "Max Open Positions": "Limits simultaneous open positions.", "Max Trades Per Day": "Limits daily trade count to reduce overtrading.", "Square Off Time": "Time used to close intraday Indian-market positions.", "Break Even Trigger R": "Profit multiple required before stop loss moves to entry.", "Trailing Mode": "Method used to trail stop. ATR trail uses volatility.", "Trail Start R": "Profit multiple after which trailing starts.", "Trail ATR Multiplier": "ATR multiplier used for trailing stop distance.", "Partial Exit At R": "R multiple where partial exit happens.", "Partial Exit Percent": "Percent of position closed during partial exit."};
@@ -249,6 +250,13 @@ const validatePresetFormConfig = (config: any, meta: { name: string; advancedJso
   return { errors, warnings };
 };
 
+
+const assetUrl = (asset: any) => asset?.publicUrl || asset?.public_url || "";
+const assetName = (asset: any) => asset?.originalName || asset?.original_name || asset?.fileName || asset?.file_name || "strategy-image.png";
+const assetSortOrder = (asset: any, fallback: number) => Number(asset?.sortOrder ?? asset?.sort_order ?? fallback);
+const assetIsPublic = (asset: any) => Boolean(asset?.isPublic ?? asset?.is_public ?? true);
+const assetIsCover = (asset: any) => Boolean(asset?.isCover ?? asset?.is_cover ?? false);
+
 export default function AdminStrategyWorkspacePage() {
   const params = useParams<{ strategyId: string }>();
   const strategyId = params?.strategyId as string;
@@ -282,6 +290,8 @@ export default function AdminStrategyWorkspacePage() {
   const [selectedPreset, setSelectedPreset] = useState<string>("");
   const [selectedVersionId, setSelectedVersionId] = useState<string>("");
   const [sandboxInput, setSandboxInput] = useState({ instrument_id: 1, timeframe: "5m", start_date: "2025-12-24", end_date: "2025-12-26", capital: 100000 });
+  const [assetUploading, setAssetUploading] = useState(false);
+  const [assetSavingId, setAssetSavingId] = useState<string>("");
 
   const load = async () => {
     setLoading(true);
@@ -355,6 +365,87 @@ export default function AdminStrategyWorkspacePage() {
       if (versionsResponse.items?.[0]?.version_id) setSelectedVersionId((prev) => prev || versionsResponse.items[0].version_id);
     } catch {
       // noop
+    }
+  };
+
+
+  const applyAssetsToStrategy = (assets: any[]) => {
+    setStrategy((prev: any) => prev ? ({ ...prev, assets, strategyAssets: assets, strategy_assets: assets }) : prev);
+  };
+
+  const refreshAssets = async () => {
+    try {
+      const response = await adminApi.listAdminStrategyAssets(strategyId);
+      applyAssetsToStrategy(response.items || []);
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to refresh strategy images");
+    }
+  };
+
+  const uploadAssets = async (files: FileList | null) => {
+    const selected = Array.from(files || []);
+    if (!selected.length) return;
+    if (strategyAssets.length + selected.length > 6) {
+      toast.error("Maximum 6 strategy documentation images are allowed.");
+      return;
+    }
+    setAssetUploading(true);
+    try {
+      const response = await adminApi.uploadAdminStrategyAssets(strategyId, selected, { is_public: true });
+      applyAssetsToStrategy([...(strategyAssets || []), ...(response.items || [])]);
+      toast.success("Strategy documentation images uploaded");
+      await refreshAssets();
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to upload strategy images");
+    } finally {
+      setAssetUploading(false);
+    }
+  };
+
+  const updateAsset = async (assetId: string, payload: any) => {
+    setAssetSavingId(assetId);
+    try {
+      await adminApi.updateAdminStrategyAsset(strategyId, assetId, payload);
+      await refreshAssets();
+      toast.success("Strategy image updated");
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to update strategy image");
+    } finally {
+      setAssetSavingId("");
+    }
+  };
+
+  const removeAsset = async (assetId: string) => {
+    if (!window.confirm("Remove this strategy documentation image?")) return;
+    setAssetSavingId(assetId);
+    try {
+      await adminApi.deleteAdminStrategyAsset(strategyId, assetId);
+      applyAssetsToStrategy(strategyAssets.filter((asset: any) => String(asset.id) !== String(assetId)));
+      toast.success("Strategy image removed");
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to remove strategy image");
+    } finally {
+      setAssetSavingId("");
+    }
+  };
+
+  const moveAsset = async (assetId: string, direction: -1 | 1) => {
+    const sorted = [...strategyAssets].sort((a, b) => assetSortOrder(a, 0) - assetSortOrder(b, 0));
+    const index = sorted.findIndex((asset: any) => String(asset.id) === String(assetId));
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= sorted.length) return;
+    const [item] = sorted.splice(index, 1);
+    sorted.splice(nextIndex, 0, item);
+    const items = sorted.map((asset: any, idx) => ({ id: String(asset.id), sort_order: idx }));
+    setAssetSavingId(assetId);
+    try {
+      const response = await adminApi.reorderAdminStrategyAssets(strategyId, items);
+      applyAssetsToStrategy(response.items || sorted);
+      toast.success("Image order updated");
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to reorder images");
+    } finally {
+      setAssetSavingId("");
     }
   };
 
@@ -705,17 +796,74 @@ export default function AdminStrategyWorkspacePage() {
         </section>
       ) : null}
 
-      {!sourceRequest && strategyAssets.length ? (
-        <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
-          <CardHeader>
-            <CardTitle className="text-base">Strategy Concept Images</CardTitle>
-            <CardDescription>Documentation screenshots attached to this manual strategy.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <StrategyAttachmentGallery attachments={strategyAssets} emptyText="No strategy images attached." />
-          </CardContent>
-        </Card>
-      ) : null}
+      <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
+        <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <CardTitle className="text-base">Strategy Documentation Images</CardTitle>
+            <CardDescription>Editable admin assets shown to users when marked Public. Request screenshots above remain read-only evidence.</CardDescription>
+          </div>
+          <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-primary/40 bg-primary/20 px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/30">
+            <UploadCloud className="h-4 w-4" />
+            {assetUploading ? "Uploading..." : "Upload Images"}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              multiple
+              className="hidden"
+              disabled={assetUploading || strategyAssets.length >= 6}
+              onChange={(event) => { void uploadAssets(event.target.files); event.currentTarget.value = ""; }}
+            />
+          </label>
+        </CardHeader>
+        <CardContent>
+          <p className="mb-4 text-xs text-muted-foreground">PNG/JPG/WEBP only, max 5 MB each, max 6 images. Use Public for user documentation and Admin Only for internal notes.</p>
+          {!strategyAssets.length ? (
+            <div className="rounded-xl border border-dashed border-border/60 bg-card/20 p-6 text-sm text-muted-foreground">No strategy documentation images yet.</div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {[...strategyAssets].sort((a, b) => assetSortOrder(a, 0) - assetSortOrder(b, 0)).map((asset: any, index: number) => {
+                const id = String(asset.id);
+                const savingThis = assetSavingId === id;
+                return (
+                  <div key={id} className="rounded-xl border border-border/50 bg-card/25 p-3 shadow-lg">
+                    <AuthenticatedStrategyImage
+                      src={assetUrl(asset)}
+                      alt={assetName(asset)}
+                      fileName={assetName(asset)}
+                      imageNumber={index + 1}
+                      showOpen
+                      showDownload
+                    />
+                    <div className="mt-3 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="truncate text-muted-foreground">{assetName(asset)}</span>
+                        <span className={`rounded-full px-2 py-1 ${assetIsCover(asset) ? "bg-amber-500/20 text-amber-200" : "bg-card/40 text-muted-foreground"}`}>{assetIsCover(asset) ? "Cover" : `Image ${index + 1}`}</span>
+                      </div>
+                      <input
+                        className={fieldClass}
+                        defaultValue={asset.caption || ""}
+                        placeholder="Caption for user documentation"
+                        onBlur={(event) => {
+                          if (event.currentTarget.value !== (asset.caption || "")) void updateAsset(id, { caption: event.currentTarget.value });
+                        }}
+                      />
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <Button type="button" variant="outline" className="rounded-xl" disabled={savingThis} onClick={() => void updateAsset(id, { is_public: !assetIsPublic(asset) })}>
+                          {assetIsPublic(asset) ? "Make Admin Only" : "Make Public"}
+                        </Button>
+                        <Button type="button" variant="outline" className="rounded-xl" disabled={savingThis || assetIsCover(asset)} onClick={() => void updateAsset(id, { is_cover: true, is_public: true })}>Set Cover</Button>
+                        <Button type="button" variant="outline" className="rounded-xl" disabled={savingThis || index === 0} onClick={() => void moveAsset(id, -1)}>Move Left</Button>
+                        <Button type="button" variant="outline" className="rounded-xl" disabled={savingThis || index === strategyAssets.length - 1} onClick={() => void moveAsset(id, 1)}>Move Right</Button>
+                      </div>
+                      <Button type="button" variant="outline" className="w-full rounded-xl border-red-400/40 text-red-200 hover:bg-red-500/10" disabled={savingThis} onClick={() => void removeAsset(id)}>Remove</Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">

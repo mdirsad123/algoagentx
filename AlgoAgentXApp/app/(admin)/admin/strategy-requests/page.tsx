@@ -37,6 +37,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { StrategyAttachmentGallery } from "@/components/strategies/StrategyAttachmentGallery";
+import { AuthenticatedStrategyImage } from "@/components/strategies/AuthenticatedStrategyImage";
+
+
+const strategyAssets = (strategy: any) => (strategy?.assets || strategy?.strategyAssets || strategy?.strategy_assets || []) as any[];
+const coverAsset = (strategy: any) => {
+  const assets = strategyAssets(strategy);
+  return assets.find((asset) => Boolean(asset.isCover ?? asset.is_cover)) || assets[0] || null;
+};
+const assetUrl = (asset: any) => asset?.publicUrl || asset?.public_url || "";
+const assetName = (asset: any) => asset?.originalName || asset?.original_name || asset?.fileName || asset?.file_name || "Strategy cover";
 
 type TabKey = "requests" | "strategies";
 type EditorMode = "create" | "edit";
@@ -774,6 +784,18 @@ export default function AdminStrategyRequestsPage() {
                 return (
                   <GlassCard key={strategy.id} className="border border-border/60 bg-card/30 shadow-xl">
                     <div className="space-y-4 p-5">
+                      {coverAsset(strategy) ? (
+                        <div className="overflow-hidden rounded-xl border border-border/50 bg-card/20">
+                          <AuthenticatedStrategyImage
+                            src={assetUrl(coverAsset(strategy))}
+                            alt={assetName(coverAsset(strategy))}
+                            fileName={assetName(coverAsset(strategy))}
+                            compact
+                            showOpen={false}
+                            showDownload={false}
+                          />
+                        </div>
+                      ) : null}
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <h3 className="text-lg font-semibold tracking-tight text-foreground">{strategy.name}</h3>

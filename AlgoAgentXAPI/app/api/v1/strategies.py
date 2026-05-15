@@ -84,8 +84,13 @@ def _serialize_strategy_asset(asset: StrategyAsset) -> dict[str, Any]:
         "sortOrder": asset.sort_order,
         "is_public": bool(asset.is_public),
         "isPublic": bool(asset.is_public),
+        "is_cover": bool(getattr(asset, "is_cover", False)),
+        "isCover": bool(getattr(asset, "is_cover", False)),
+        "caption": getattr(asset, "caption", None),
         "created_at": asset.created_at.isoformat() if asset.created_at else None,
         "createdAt": asset.created_at.isoformat() if asset.created_at else None,
+        "updated_at": asset.updated_at.isoformat() if getattr(asset, "updated_at", None) else None,
+        "updatedAt": asset.updated_at.isoformat() if getattr(asset, "updated_at", None) else None,
     }
 
 
@@ -1327,8 +1332,15 @@ async def get_strategy_asset(
     asset, strategy = row
     is_admin = str(current_user.get("role", "")).upper() == "ADMIN"
     visibility = (getattr(strategy, "visibility", None) or PRIVATE_VISIBILITY).upper()
-    is_owner = str(strategy.created_by) == str(current_user.get("user_id"))
-    if not is_admin and not (visibility == PUBLIC_VISIBILITY and asset.is_public) and not is_owner:
+    user_id = str(current_user.get("user_id"))
+    is_owner = str(strategy.created_by) == user_id
+    belongs_to_requesting_user = False
+    if getattr(strategy, "source_request_id", None):
+        req = (await db.execute(select(StrategyRequest).where(StrategyRequest.id == strategy.source_request_id))).scalar_one_or_none()
+        belongs_to_requesting_user = bool(req and str(req.user_id) == user_id)
+    can_view_public_asset = visibility == PUBLIC_VISIBILITY and bool(asset.is_public)
+    can_view_private_strategy_asset = is_owner or belongs_to_requesting_user
+    if not is_admin and not can_view_public_asset and not can_view_private_strategy_asset:
         raise HTTPException(status_code=404, detail="Strategy image not found")
     path = _resolve_asset_file_path(asset.file_path)
     if not path:

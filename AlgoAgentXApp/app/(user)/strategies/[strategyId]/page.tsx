@@ -17,6 +17,9 @@ type Attachment = {
   public_url?: string | null;
   originalName?: string | null;
   original_name?: string | null;
+  caption?: string | null;
+  isCover?: boolean | null;
+  is_cover?: boolean | null;
 };
 
 type StrategyDetail = {
@@ -347,14 +350,19 @@ export default function StrategyDetailPage() {
       <TextBlock title="Notes" value={item.notes || item.parameters?.notes} />
       <RuntimeSettingsSummary runtime={runtime} />
 
-      <GlassCard className="border border-border/60 bg-card/30 p-6 shadow-xl backdrop-blur-xl">
-        <div className="mb-4 flex items-center gap-2">
-          <ImageIcon className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Screenshots</h2>
-          <Badge className="border-border/60 bg-card/40 text-muted-foreground">{item.attachments?.length || 0}</Badge>
-        </div>
-        <StrategyAttachmentGallery attachments={item.attachments} emptyText="No screenshots available for this strategy." />
-      </GlassCard>
+      {(() => {
+        const docs = (item.assets || item.strategyAssets || item.strategy_assets || []).slice().sort((a: any, b: any) => Number(Boolean(b.isCover ?? b.is_cover)) - Number(Boolean(a.isCover ?? a.is_cover)));
+        return docs.length ? (
+          <GlassCard className="border border-border/60 bg-card/30 p-6 shadow-xl backdrop-blur-xl">
+            <div className="mb-4 flex items-center gap-2">
+              <ImageIcon className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold text-foreground">Strategy Documentation Images</h2>
+              <Badge className="border-border/60 bg-card/40 text-muted-foreground">{docs.length}</Badge>
+            </div>
+            <StrategyAttachmentGallery attachments={docs} emptyText="No documentation images available." />
+          </GlassCard>
+        ) : null;
+      })()}
 
       <div className="flex flex-wrap gap-3">
         <Button onClick={() => router.push(`/backtest?strategyId=${item.id}`)} className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90">

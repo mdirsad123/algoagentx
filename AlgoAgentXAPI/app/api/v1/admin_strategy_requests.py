@@ -7,9 +7,9 @@ from datetime import date, timedelta, datetime, timezone
 from uuid import uuid4
 import hashlib
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update, String
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_admin_user, get_db
@@ -46,29 +46,65 @@ def _asset_url(strategy_id: Any, asset_id: Any) -> str:
     return f"/api/v1/strategies/{strategy_id}/assets/{asset_id}"
 
 
-def _serialize_strategy_asset(asset: StrategyAsset) -> dict[str, Any]:
-    return {
-        "id": str(asset.id),
-        "strategy_id": str(asset.strategy_id),
-        "strategyId": str(asset.strategy_id),
-        "file_name": asset.file_name,
-        "fileName": asset.file_name,
-        "original_name": asset.original_name,
-        "originalName": asset.original_name,
-        "public_url": asset.public_url or _asset_url(asset.strategy_id, asset.id),
-        "publicUrl": asset.public_url or _asset_url(asset.strategy_id, asset.id),
-        "mime_type": asset.mime_type,
-        "mimeType": asset.mime_type,
-        "size_bytes": asset.size_bytes,
-        "sizeBytes": asset.size_bytes,
-        "sort_order": asset.sort_order,
-        "sortOrder": asset.sort_order,
-        "is_public": bool(asset.is_public),
-        "isPublic": bool(asset.is_public),
-        "created_at": asset.created_at.isoformat() if asset.created_at else None,
-        "createdAt": asset.created_at.isoformat() if asset.created_at else None,
-    }
+def _asset_value(asset: StrategyAsset, key: str, default: Any = None) -> Any:
+    """Read an already-loaded ORM value without triggering async lazy IO.
 
+    Async SQLAlchemy can raise MissingGreenlet if a committed/expired ORM
+    attribute is accessed during response serialization. Prefer __dict__ values
+    and only fall back to getattr for attributes that are normally loaded.
+    """
+    try:
+        if hasattr(asset, "__dict__") and key in asset.__dict__:
+            return asset.__dict__.get(key, default)
+        return getattr(asset, key, default)
+    except Exception:
+        return default
+
+
+def _dt_iso(value: Any) -> Optional[str]:
+    return value.isoformat() if value else None
+
+
+def _serialize_strategy_asset(asset: StrategyAsset) -> dict[str, Any]:
+    asset_id = _asset_value(asset, "id")
+    strategy_id = _asset_value(asset, "strategy_id")
+    file_name = _asset_value(asset, "file_name")
+    original_name = _asset_value(asset, "original_name")
+    public_url = _asset_value(asset, "public_url") or _asset_url(strategy_id, asset_id)
+    mime_type = _asset_value(asset, "mime_type")
+    size_bytes = _asset_value(asset, "size_bytes")
+    sort_order = _asset_value(asset, "sort_order", 0)
+    is_public = bool(_asset_value(asset, "is_public", False))
+    is_cover = bool(_asset_value(asset, "is_cover", False))
+    caption = _asset_value(asset, "caption")
+    created_at = _asset_value(asset, "created_at")
+    updated_at = _asset_value(asset, "updated_at")
+    return {
+        "id": str(asset_id),
+        "strategy_id": str(strategy_id),
+        "strategyId": str(strategy_id),
+        "file_name": file_name,
+        "fileName": file_name,
+        "original_name": original_name,
+        "originalName": original_name,
+        "public_url": public_url,
+        "publicUrl": public_url,
+        "mime_type": mime_type,
+        "mimeType": mime_type,
+        "size_bytes": size_bytes,
+        "sizeBytes": size_bytes,
+        "sort_order": sort_order,
+        "sortOrder": sort_order,
+        "is_public": is_public,
+        "isPublic": is_public,
+        "is_cover": is_cover,
+        "isCover": is_cover,
+        "caption": caption,
+        "created_at": _dt_iso(created_at),
+        "createdAt": _dt_iso(created_at),
+        "updated_at": _dt_iso(updated_at),
+        "updatedAt": _dt_iso(updated_at),
+    }
 
 async def _load_strategy_assets(db: AsyncSession, strategy_ids: list[Any]) -> dict[str, list[dict[str, Any]]]:
     ids = [str(item) for item in strategy_ids if item]
@@ -88,7 +124,7 @@ async def _load_strategy_assets(db: AsyncSession, strategy_ids: list[Any]) -> di
     return out
 
 
-async def _save_strategy_assets(db: AsyncSession, strategy: Strategy, files: list[UploadFile], admin_user: dict) -> list[dict[str, Any]]:
+async def _save_strategy_assets(db: AsyncSession, strategy: Strategy, files: list[UploadFile], admin_user: dict, captions: list[str] | None = None, is_public: bool = True) -> list[dict[str, Any]]:
     if len(files) > MAX_STRATEGY_ASSETS:
         raise HTTPException(status_code=400, detail="Maximum 6 concept images are allowed")
     existing_count = (await db.execute(select(func.count()).select_from(StrategyAsset).where(StrategyAsset.strategy_id == str(strategy.id)))).scalar() or 0
@@ -123,12 +159,34 @@ async def _save_strategy_assets(db: AsyncSession, strategy: Strategy, files: lis
             mime_type=upload.content_type or "application/octet-stream",
             size_bytes=size,
             sort_order=int(existing_count) + offset,
-            is_public=True,
+            is_public=bool(is_public),
+            is_cover=(int(existing_count) == 0 and offset == 0),
+            caption=(captions[offset].strip() if captions and offset < len(captions) and captions[offset] else None),
             uploaded_by=as_uuid_or_str(admin_user.get("user_id")) if admin_user.get("user_id") else None,
         )
         db.add(row)
         created.append(row)
+    # Flush first so PostgreSQL server defaults (id, created_at, updated_at) are populated
+    # inside the active async SQLAlchemy greenlet. Serializing unrefreshed/expired rows can
+    # trigger MissingGreenlet when asyncpg tries to lazy-load server-default columns.
     await db.flush()
+
+    if created and any(bool(row.__dict__.get("is_cover")) for row in created):
+        first_cover = next(row for row in created if bool(row.__dict__.get("is_cover")))
+        # Important: clear existing cover rows first, then keep the new first image as cover.
+        # This avoids partial unique index conflicts and stale cover state.
+        await db.execute(
+            update(StrategyAsset)
+            .where(StrategyAsset.strategy_id == str(strategy.id), StrategyAsset.id != first_cover.id)
+            .values(is_cover=False, updated_at=datetime.now(timezone.utc))
+        )
+
+    strategy.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    for row in created:
+        await db.refresh(row)
+
     return [_serialize_strategy_asset(row) for row in created]
 
 
@@ -146,6 +204,23 @@ class DeployRequestIn(BaseModel):
     visibility: Optional[str] = None
     admin_notes: Optional[str] = None
 
+
+
+
+class StrategyAssetPatchIn(BaseModel):
+    caption: Optional[str] = None
+    is_public: Optional[bool] = None
+    sort_order: Optional[int] = None
+    is_cover: Optional[bool] = None
+
+
+class StrategyAssetReorderItem(BaseModel):
+    id: str
+    sort_order: int
+
+
+class StrategyAssetReorderIn(BaseModel):
+    items: list[StrategyAssetReorderItem]
 
 class StrategyCreateIn(BaseModel):
     name: str = Field(..., min_length=2, max_length=255)
@@ -1235,19 +1310,129 @@ async def delete_strategy(
     )
 
 
+async def _get_strategy_asset_or_404(db: AsyncSession, strategy_id: str, asset_id: str) -> StrategyAsset:
+    row = (await db.execute(
+        select(StrategyAsset).where(
+            StrategyAsset.strategy_id == str(strategy_id),
+            func.cast(StrategyAsset.id, String) == str(asset_id),
+        )
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Strategy image not found")
+    return row
+
+
+@router.get("/strategies/{strategy_id}/assets")
+async def list_strategy_assets(
+    strategy_id: str,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_strategy_or_404(db, strategy_id)
+    assets = (await _load_strategy_assets(db, [strategy_id])).get(str(strategy_id), [])
+    return success_response({"items": assets}, "Strategy images loaded")
+
+
 @router.post("/strategies/{strategy_id}/assets")
 async def upload_strategy_assets(
     strategy_id: str,
     files: list[UploadFile] = File(default=[]),
+    captions: list[str] = Form(default=[]),
+    is_public: bool = Form(default=True),
     admin_user: dict = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     strategy = await _get_strategy_or_404(db, strategy_id)
     if not files:
         return success_response({"items": []}, "No files uploaded")
-    items = await _save_strategy_assets(db, strategy, files, admin_user)
+    items = await _save_strategy_assets(db, strategy, files, admin_user, captions=captions, is_public=is_public)
     await db.commit()
     return success_response({"items": items}, "Strategy images uploaded successfully")
+
+
+@router.patch("/strategies/{strategy_id}/assets/{asset_id}")
+async def update_strategy_asset(
+    strategy_id: str,
+    asset_id: str,
+    payload: StrategyAssetPatchIn,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    strategy = await _get_strategy_or_404(db, strategy_id)
+    asset = await _get_strategy_asset_or_404(db, strategy_id, asset_id)
+    now = datetime.now(timezone.utc)
+    if payload.caption is not None:
+        asset.caption = payload.caption.strip() or None
+    if payload.is_public is not None:
+        asset.is_public = bool(payload.is_public)
+    if payload.sort_order is not None:
+        asset.sort_order = int(payload.sort_order)
+    if payload.is_cover is not None:
+        requested_cover = bool(payload.is_cover)
+        if requested_cover:
+            # Clear existing cover rows first to avoid ux_strategy_assets_one_cover conflicts.
+            await db.execute(
+                update(StrategyAsset)
+                .where(StrategyAsset.strategy_id == str(strategy_id), StrategyAsset.id != asset.id)
+                .values(is_cover=False, updated_at=now)
+            )
+            await db.flush()
+            asset.is_cover = True
+            # Cover image is used on user-facing strategy detail/cards, so make it public automatically.
+            asset.is_public = True
+        else:
+            asset.is_cover = False
+    asset.updated_at = now
+    strategy.updated_at = now
+    await db.flush()
+    await db.refresh(asset)
+    item = _serialize_strategy_asset(asset)
+    await db.commit()
+    return success_response(item, "Strategy image updated")
+
+
+@router.delete("/strategies/{strategy_id}/assets/{asset_id}")
+async def delete_strategy_asset(
+    strategy_id: str,
+    asset_id: str,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    strategy = await _get_strategy_or_404(db, strategy_id)
+    asset = await _get_strategy_asset_or_404(db, strategy_id, asset_id)
+    file_path = Path(asset.file_path or "")
+    candidates = [file_path] if file_path.is_absolute() else [PROJECT_ROOT / file_path, STRATEGY_ASSET_ROOT / str(strategy_id) / file_path.name]
+    for candidate in candidates:
+        try:
+            if candidate.exists() and candidate.is_file():
+                candidate.unlink()
+                break
+        except Exception:
+            pass
+    await db.delete(asset)
+    strategy.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return success_response({"id": str(asset_id)}, "Strategy image removed")
+
+
+@router.post("/strategies/{strategy_id}/assets/reorder")
+async def reorder_strategy_assets(
+    strategy_id: str,
+    payload: StrategyAssetReorderIn,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    strategy = await _get_strategy_or_404(db, strategy_id)
+    for item in payload.items:
+        await db.execute(
+            update(StrategyAsset)
+            .where(StrategyAsset.strategy_id == str(strategy_id), func.cast(StrategyAsset.id, String) == str(item.id))
+            .values(sort_order=int(item.sort_order), updated_at=datetime.now(timezone.utc))
+        )
+    strategy.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    assets = (await _load_strategy_assets(db, [strategy_id])).get(str(strategy_id), [])
+    return success_response({"items": assets}, "Strategy image order updated")
 
 
 @router.get("/strategies/{strategy_id}/versions")

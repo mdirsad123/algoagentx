@@ -3,13 +3,13 @@
 # Run with: docker compose --env-file .env.prod up -d --build
 
 services:
-  postgres:
+  postgres_prod:
     image: postgres:16-alpine
-    container_name: algoagentx_postgres
+    container_name: algoagentx_postgres_prod
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-algo_db}
-      POSTGRES_USER: ${POSTGRES_USER:-algo_user}
+      POSTGRES_DB: ${POSTGRES_DB:-algoagentx_db}
+      POSTGRES_USER: ${POSTGRES_USER:-algoagentx_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -18,7 +18,7 @@ services:
       # Remove this port mapping on production if DB should not be reachable publicly.
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-algo_user} -d ${POSTGRES_DB:-algo_db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-algoagentx_user} -d ${POSTGRES_DB:-algoagentx_db}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -53,7 +53,7 @@ services:
       REDIS_PORT: 6379
       REDIS_DB: 0
     depends_on:
-      postgres:
+      postgres_prod:
         condition: service_healthy
       redis:
         condition: service_healthy
