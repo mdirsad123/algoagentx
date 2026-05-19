@@ -59,6 +59,9 @@ class Settings(BaseSettings):
 
     # Base URL
     base_url: str = "http://localhost:4000"
+    api_base_url: str = "http://localhost:8000"
+    public_api_base_url: str = "http://localhost:8000"
+    broker_redirect_base_url: str = "http://localhost:8000"
 
     # Auth
     auth_service_url: Optional[str] = None  # For centralized auth if needed
@@ -67,6 +70,24 @@ class Settings(BaseSettings):
     upstox_client_id: Optional[str] = None
     upstox_client_secret: Optional[str] = None
     upstox_redirect_uri: Optional[str] = None
+
+    # cTrader Open API OAuth Configuration
+    ctrader_client_id: Optional[str] = None
+    ctrader_client_secret: Optional[str] = None
+    ctrader_redirect_uri: Optional[str] = None
+    ctrader_env: str = "demo"
+    ctrader_oauth_authorize_url: str = "https://openapi.ctrader.com/apps/auth"
+    ctrader_oauth_token_url: str = "https://openapi.ctrader.com/apps/token"
+    # Optional REST-compatible endpoints for account/symbol sync. cTrader Open API trading data is primarily protobuf/TCP; set these if using a REST bridge/proxy.
+    ctrader_accounts_url: Optional[str] = None
+    ctrader_account_info_url: Optional[str] = None
+    ctrader_symbols_url: Optional[str] = None
+    # Optional REST-compatible endpoint/bridge for safe cTrader DEMO order execution.
+    # cTrader Open API order routing is protobuf/TCP; keep this unset until a verified bridge/transport is configured.
+    ctrader_demo_order_url: Optional[str] = None
+    ctrader_demo_trading_enabled: bool = True
+    ctrader_live_trading_enabled: bool = False
+    live_approval_strict_market_scope: bool = Field(default=False, description="When true, live approval approved_markets restrict deployment instruments/markets")
 
     # MT5 execution architecture
     # AGENT is the production-safe default. LOCAL is only for Windows development where MetaTrader5 is installed beside the API.

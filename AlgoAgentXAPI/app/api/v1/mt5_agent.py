@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_current_user, get_db
 from ...db.models import BrokerAccount, MT5Agent, MT5AgentCommand
-from ...schemas.mt5_agent import MT5AgentCommandOut, MT5AgentHeartbeatIn, MT5AgentOrderResultIn, MT5AgentOut, MT5AgentRegisterIn, MT5AgentRegisterOut
+from ...schemas.mt5_agent import MT5AgentCommandOut, MT5AgentCommandResultIn, MT5AgentHeartbeatIn, MT5AgentOrderResultIn, MT5AgentOut, MT5AgentRegisterIn, MT5AgentRegisterOut
 from ...utils.api_response import success_response
 from .live_common import get_broker_account_or_404, user_id_from
 
@@ -138,15 +138,34 @@ async def poll_commands(authorization: str | None = Header(default=None), db: As
     return success_response([MT5AgentCommandOut.model_validate(row).model_dump(mode="json") for row in rows])
 
 
-@router.post("/order-result")
-async def order_result(payload: MT5AgentOrderResultIn, authorization: str | None = Header(default=None), db: AsyncSession = Depends(get_db)):
+async def _store_command_result(payload: MT5AgentCommandResultIn, authorization: str | None, db: AsyncSession) -> dict[str, str]:
     agent = await _agent_from_token(db, _extract_token(payload.agent_token, authorization))
-    cmd = (await db.execute(select(MT5AgentCommand).where(MT5AgentCommand.id == payload.command_id, MT5AgentCommand.agent_id == agent.id))).scalar_one_or_none()
+    cmd = (await db.execute(
+        select(MT5AgentCommand).where(MT5AgentCommand.id == payload.command_id, MT5AgentCommand.agent_id == agent.id)
+    )).scalar_one_or_none()
     if not cmd:
         raise HTTPException(status_code=404, detail="MT5 agent command not found")
-    cmd.status = "COMPLETED" if payload.success else "ERROR"
+
+    requested_status = str(payload.status or "").upper().strip()
+    if payload.success:
+        cmd.status = "COMPLETED" if requested_status not in {"ERROR", "TIMEOUT"} else requested_status
+        cmd.error_message = None
+    else:
+        cmd.status = requested_status if requested_status in {"ERROR", "TIMEOUT"} else "ERROR"
+        cmd.error_message = payload.message or f"MT5 {cmd.command_type} command failed"
     cmd.result_payload = payload.model_dump(mode="json")
-    cmd.error_message = None if payload.success else (payload.message or "MT5 order failed")
     cmd.completed_at = datetime.now(timezone.utc)
     await db.commit()
-    return success_response({"command_id": str(cmd.id), "status": cmd.status}, "Order result accepted")
+    return {"command_id": str(cmd.id), "status": cmd.status}
+
+
+@router.post("/command-result")
+async def command_result(payload: MT5AgentCommandResultIn, authorization: str | None = Header(default=None), db: AsyncSession = Depends(get_db)):
+    data = await _store_command_result(payload, authorization, db)
+    return success_response(data, "Command result accepted")
+
+
+@router.post("/order-result")
+async def order_result(payload: MT5AgentOrderResultIn, authorization: str | None = Header(default=None), db: AsyncSession = Depends(get_db)):
+    data = await _store_command_result(payload, authorization, db)
+    return success_response(data, "Order result accepted")

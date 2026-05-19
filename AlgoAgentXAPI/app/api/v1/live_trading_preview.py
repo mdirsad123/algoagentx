@@ -29,6 +29,9 @@ class LiveOrderPreviewIn(BaseModel):
     entry_price: Optional[float] = None
     market_price: Optional[float] = None
     stop_loss: Optional[float] = None
+    strategy_target: Optional[float] = None
+    target: Optional[float] = None
+    take_profit: Optional[float] = None
     runtime_config: Optional[dict[str, Any]] = None
 
 
@@ -53,6 +56,7 @@ async def preview_live_order(payload: LiveOrderPreviewIn, db: AsyncSession = Dep
         side=payload.side,
         entry_price=payload.entry_price or payload.market_price,
         stop_loss=payload.stop_loss,
+        strategy_target=payload.strategy_target if payload.strategy_target is not None else (payload.target if payload.target is not None else payload.take_profit),
         preview_mode=payload.mode,
         runtime_config=payload.runtime_config,
         strategy_id=payload.strategy_id,

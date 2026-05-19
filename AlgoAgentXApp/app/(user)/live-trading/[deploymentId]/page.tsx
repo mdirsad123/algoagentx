@@ -3,15 +3,16 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Activity, Clipboard, Link2, Pause, Play, RefreshCw, Send, Settings, ShieldCheck, Square, GitBranch } from "lucide-react";
+import { ArrowLeft, Activity, Link2, Pause, Play, RefreshCw, Settings, ShieldCheck, Square } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { PageShell } from "@/components/ui/PageShell";
+import { OrderCalculationAuditPanel } from "@/components/live/OrderCalculationAuditPanel";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
-import type { BrokerAccount, LiveCandleSnapshot, FullDryTestResponse, FinalQaResult, QaOrderTestResult, LiveDeploymentSummary, LiveReadiness, LiveReadinessCheck, SignalType, StrategyDeployment } from "@/types/live-trading";
+import type { BrokerAccount, LiveCandleSnapshot, FullDryTestResponse, LiveDeploymentSummary, LiveReadiness, LiveReadinessCheck, StrategyDeployment } from "@/types/live-trading";
 
 const date = (value?: string | null) => (value ? new Date(value).toLocaleString() : "—");
 const num = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -57,7 +58,7 @@ function LiveFlowPanel() {
     "Refresh candles",
     "Strategy checks latest closed candle",
     "If signal is BUY/SELL, risk engine calculates lot/qty",
-    "Order is sent to broker or paper engine",
+    "Order is sent to the approved broker account",
     "Position is monitored and synced",
   ];
   return (
@@ -65,7 +66,7 @@ function LiveFlowPanel() {
       <div className="mb-4 flex items-center gap-2">
         <Activity className="h-5 w-5 text-lime-300" />
         <div>
-          <h2 className="text-xl font-bold text-white">Live Flow Explanation</h2>
+          <h2 className="text-xl font-bold text-white">How Live Trading Works</h2>
           <p className="text-sm text-purple-200">Simple beginner view of what AlgoAgentX does when live automation is enabled.</p>
         </div>
       </div>
@@ -82,14 +83,14 @@ function LiveFlowPanel() {
         <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">Auto Trade</span> places an order only when strategy gives BUY/SELL and risk preview passes.</div>
         <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">Broker Sync</span> reads positions/orders from broker. It does not place new orders.</div>
         <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">Dry Run</span> tests strategy signal without placing order.</div>
-        <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">PAPER mode</span> simulates orders inside AlgoAgentX.</div>
         <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">DEMO mode</span> sends orders to your connected demo broker.</div>
+        <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">LIVE mode</span> sends orders only after broker approval, readiness, and safety checks pass.</div>
       </div>
     </GlassCard>
   );
 }
 
-function ReadinessChecklist({ readiness }: { readiness: LiveReadiness | null }) {
+function ReadinessChecklist({ readiness, onRunFullDryTest, dryTestDisabled }: { readiness: LiveReadiness | null; onRunFullDryTest: () => void; dryTestDisabled?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const theme = readinessTheme(readiness?.overall_status);
   const checks = readiness?.checks || [];
@@ -108,6 +109,7 @@ function ReadinessChecklist({ readiness }: { readiness: LiveReadiness | null }) 
         <div className="flex flex-wrap items-center gap-2">
           <Badge className={`${theme.badge} text-sm`}>{theme.title}</Badge>
           <Badge className="border-white/10 bg-white/10 text-purple-100">{failingCount} needs attention</Badge>
+          <Button disabled={dryTestDisabled} onClick={onRunFullDryTest} className="gap-2 bg-cyan-500 text-slate-950 hover:bg-cyan-400"><RefreshCw className="h-4 w-4" />Run Full Dry Test</Button>
           <Button onClick={() => setExpanded((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{expanded ? "Hide Checklist" : "Show Checklist"}</Button>
         </div>
       </div>
@@ -151,19 +153,10 @@ export default function LiveDeploymentDetailPage() {
   const [runnerBusy, setRunnerBusy] = useState(false);
   const [runnerResult, setRunnerResult] = useState<string>("");
   const [fullDryTest, setFullDryTest] = useState<FullDryTestResponse | null>(null);
-  const [finalQa, setFinalQa] = useState<FinalQaResult | null>(null);
-  const [qaTestResult, setQaTestResult] = useState<QaOrderTestResult | null>(null);
-  const [demoConfirmText, setDemoConfirmText] = useState("");
-  const [showFinalQaDetails, setShowFinalQaDetails] = useState(false);
-  const [showDemoMicroConfirm, setShowDemoMicroConfirm] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [showSignals, setShowSignals] = useState(false);
   const [showOrders, setShowOrders] = useState(false);
   const [showAdvancedDiagnostics, setShowAdvancedDiagnostics] = useState(false);
-  const [manualPrice, setManualPrice] = useState("2350.25");
-  const [manualReason, setManualReason] = useState("Manual signal test");
-  const [lastResult, setLastResult] = useState<string>("");
-  const [liveSyncInterval, setLiveSyncInterval] = useState("10");
 
   const metrics = summary?.metrics;
   const broker = summary?.broker;
@@ -172,18 +165,19 @@ export default function LiveDeploymentDetailPage() {
   const openPositions = summary?.open_positions || [];
   const recentLogs = summary?.recent_logs || [];
   const latestCandles = candleSnapshot?.candles?.slice(0, 5) || [];
-  const runner = summary?.runner;
-  const brokerSync = summary?.broker_sync;
-  const currency = broker?.currency || metrics?.currency || null;
+  const currency = broker?.currency || metrics?.account_currency || metrics?.currency || null;
   const isRunning = (summary?.deployment?.status || deployment?.status) === "RUNNING";
   const mode = summary?.deployment?.mode || deployment?.mode;
-  const isDemoBrokerBlocked = mode === "DEMO" && broker?.status !== "CONNECTED";
+  const isBrokerBlocked = (mode === "DEMO" || mode === "LIVE") && broker?.status !== "CONNECTED";
+  const isPaperDeprecated = mode === "PAPER";
   const brokerProviderLabel = ((broker?.broker_name || broker?.broker_code || candleSnapshot?.source || "MT5") as string).toUpperCase();
   const candleSource = (candleSnapshot?.source || brokerProviderLabel || "MT5").toUpperCase();
+  const pnlSourceLabel = metrics?.broker_pnl_source === "MT5_AGENT_POSITIONS_AND_DEALS"
+    ? "PnL source: MT5 broker positions + today deal history"
+    : "PnL source: local deployment records";
   const isUpstoxBroker = brokerProviderLabel === "UPSTOX";
-
   const connectedMt5Broker = useMemo(
-    () => brokerAccounts.find((item) => item.status === "CONNECTED" && item.mode === "DEMO"),
+    () => brokerAccounts.find((item) => item.status === "CONNECTED" && (item.mode === "DEMO" || item.mode === "LIVE")),
     [brokerAccounts]
   );
 
@@ -200,7 +194,6 @@ export default function LiveDeploymentDetailPage() {
       ]);
       setDeployment(d);
       setSummary(sm);
-      setLiveSyncInterval(String(sm?.deployment?.live_sync_interval_seconds || d?.live_sync_interval_seconds || 10));
       setBrokerAccounts(accounts);
       if (ready) setReadiness(ready);
       if (candles) setCandleSnapshot(candles);
@@ -240,32 +233,15 @@ export default function LiveDeploymentDetailPage() {
   };
 
 
-  const liveSyncAction = async (type: "enable" | "disable" | "save") => {
-    if (!deploymentId) return;
-    const interval = Number(liveSyncInterval || 10);
-    try {
-      setBrokerBusy(true);
-      if (type === "enable") await liveTradingApi.enableLiveSync(deploymentId, interval);
-      if (type === "disable") await liveTradingApi.disableLiveSync(deploymentId);
-      if (type === "save") await liveTradingApi.updateLiveSyncSettings(deploymentId, interval);
-      showToast(type === "enable" ? "Live broker auto-sync enabled" : type === "disable" ? "Live broker auto-sync disabled" : "Live sync interval saved", "success");
-      await loadSummary(true);
-    } catch (error: any) {
-      showToast(error.message || "Live sync action failed", "error");
-    } finally {
-      setBrokerBusy(false);
-    }
-  };
-
   const attachConnectedBroker = async () => {
     if (!deploymentId || !connectedMt5Broker) {
-      showToast("No connected demo broker found. Go to Brokers and click Test Connection first.", "error");
+      showToast("No connected broker found. Go to Brokers and click Test Connection first.", "error");
       return;
     }
     try {
       setBrokerBusy(true);
       await liveTradingApi.updateDeployment(deploymentId, { mode: "DEMO", broker_account_id: connectedMt5Broker.id });
-      showToast("Demo broker linked to this deployment", "success");
+      showToast("Broker linked to this deployment", "success");
       await loadSummary(true);
       await refreshBroker(true);
     } catch (error: any) {
@@ -277,8 +253,8 @@ export default function LiveDeploymentDetailPage() {
 
   const refreshCandles = async () => {
     if (!deploymentId) return;
-    if (mode !== "DEMO") {
-      showToast("Broker candle snapshot is available for DEMO deployments only", "error");
+    if (mode !== "DEMO" && mode !== "LIVE") {
+      showToast("Broker candle snapshot is available for DEMO/LIVE broker deployments only", "error");
       return;
     }
     if (!broker || broker.status !== "CONNECTED") {
@@ -332,6 +308,13 @@ export default function LiveDeploymentDetailPage() {
     if (!deploymentId) return;
     try {
       setBusy(true);
+      if (enabled) {
+        const compat = await liveTradingApi.runCompatibilityCheck(deploymentId);
+        if (compat.status === "FAIL") {
+          showToast(compat.summary || "Live compatibility failed. Fix failed checks before enabling Auto Trade.", "error");
+          return;
+        }
+      }
       await liveTradingApi.updateDeployment(deploymentId, { auto_trade_enabled: enabled });
       showToast(enabled ? "Auto Trade enabled" : "Auto Trade disabled", "success");
       await loadSummary(true);
@@ -342,55 +325,14 @@ export default function LiveDeploymentDetailPage() {
     }
   };
 
-  const runStrategy = async (execute: boolean) => {
-    if (!deploymentId) return;
-    if (!isRunning) {
-      showToast("Start deployment before running strategy", "error");
-      return;
-    }
-    if (mode === "DEMO" && isDemoBrokerBlocked) {
-      showToast("DEMO strategy runner requires connected broker", "error");
-      return;
-    }
-    try {
-      setRunnerBusy(true);
-      const result = await liveTradingApi.runStrategyOnce(deploymentId, execute);
-      const msg = result.message || (execute ? "Strategy run completed" : "Dry run completed");
-      const orderTail = result.broker_order_id ? ` • Broker Order: ${result.broker_order_id}` : result.order_status ? ` • Order: ${result.order_status}` : "";
-      setRunnerResult(`${result.signal || "HOLD"} • ${msg}${orderTail}`);
-      showToast(msg, result.success && result.order_status !== "ERROR" ? "success" : "error");
-      await loadSummary(true);
-      const candles = await liveTradingApi.getDeploymentCandles(deploymentId, 5).catch(() => null);
-      if (candles) setCandleSnapshot(candles);
-    } catch (error: any) {
-      showToast(error.message || "Strategy runner failed", "error");
-    } finally {
-      setRunnerBusy(false);
-    }
-  };
-
-  const processPaperPositions = async () => {
-    if (!deploymentId) return;
-    try {
-      setRunnerBusy(true);
-      const result = await liveTradingApi.processPaperPositions(deploymentId);
-      showToast(String(result.message || "Paper positions processed"), "success");
-      await loadSummary(true);
-    } catch (error: any) {
-      showToast(error.message || "Failed to process paper positions", "error");
-    } finally {
-      setRunnerBusy(false);
-    }
-  };
-
   const runFullDryTest = async () => {
     if (!deploymentId) return;
     if (!isRunning) {
       showToast("Start deployment before running full dry test", "error");
       return;
     }
-    if (mode === "DEMO" && isDemoBrokerBlocked) {
-      showToast("DEMO full dry test requires connected broker", "error");
+    if ((mode === "DEMO" || mode === "LIVE") && isBrokerBlocked) {
+      showToast("Broker full dry test requires a connected broker", "error");
       return;
     }
     try {
@@ -407,82 +349,6 @@ export default function LiveDeploymentDetailPage() {
     }
   };
 
-
-  const loadFinalQa = async () => {
-    if (!deploymentId) return;
-    try {
-      setRunnerBusy(true);
-      const result = await liveTradingApi.getFinalQa(deploymentId);
-      setFinalQa(result);
-      showToast(result.summary || "Final QA loaded", result.overall_status === "FAIL" ? "error" : "success");
-    } catch (error: any) {
-      showToast(error.message || "Final QA failed", "error");
-    } finally {
-      setRunnerBusy(false);
-    }
-  };
-
-  const runPaperOrderTest = async () => {
-    if (!deploymentId) return;
-    if (!confirm("This creates a test paper position only. No broker order will be placed.")) return;
-    try {
-      setRunnerBusy(true);
-      const result = await liveTradingApi.runPaperOrderTest(deploymentId, "BUY");
-      setQaTestResult(result);
-      showToast(result.message || "Paper order test completed", result.status === "OK" ? "success" : "error");
-      await loadSummary(true);
-    } catch (error: any) {
-      showToast(error.message || "Paper order test failed", "error");
-    } finally {
-      setRunnerBusy(false);
-    }
-  };
-
-  const runDemoMicroOrderTest = async () => {
-    if (!deploymentId) return;
-    if (mode === "LIVE") {
-      showToast("Real live trading is locked for safety. Use PAPER or DEMO until final QA passes.", "error");
-      return;
-    }
-    if (demoConfirmText.trim().toUpperCase() !== "DEMO") {
-      showToast("Type DEMO before placing a demo micro order", "error");
-      return;
-    }
-    try {
-      setRunnerBusy(true);
-      const result = await liveTradingApi.runDemoMicroOrderTest(deploymentId, { side: "BUY", confirm_demo_micro_order: true });
-      setQaTestResult(result);
-      setDemoConfirmText("");
-      setShowDemoMicroConfirm(false);
-      showToast(result.message || "Demo micro order test completed", result.status === "OK" ? "success" : "error");
-      await loadSummary(true);
-    } catch (error: any) {
-      showToast(error.message || "Demo micro order test failed", "error");
-    } finally {
-      setRunnerBusy(false);
-    }
-  };
-
-  const copyQaSummary = async () => {
-    const qa = finalQa;
-    const text = JSON.stringify({
-      deployment_id: deploymentId,
-      strategy: summary?.deployment?.strategy_name || deployment?.strategy_id,
-      instrument: summary?.deployment?.instrument || deployment?.instrument,
-      mode,
-      readiness_status: readiness?.overall_status,
-      final_qa_status: qa?.overall_status,
-      last_error: qa?.last_results?.last_blocking_error || deployment?.runner_last_error,
-      risk_preview: qa?.checks?.find((check) => check.key === "risk_preview_ok"),
-      broker_status: broker?.status,
-    }, null, 2);
-    try {
-      await navigator.clipboard.writeText(text);
-      showToast("QA summary copied", "success");
-    } catch {
-      showToast("Copy failed. Select and copy the QA summary manually.", "error");
-    }
-  };
 
   const autoRunnerAction = async (action: "enable" | "disable" | "run-now") => {
     if (!deploymentId) return;
@@ -503,41 +369,7 @@ export default function LiveDeploymentDetailPage() {
     }
   };
 
-  const sendManualSignal = async (signalType: SignalType) => {
-    if (!deploymentId) return;
-    const price = Number(manualPrice);
-    if (!price || price <= 0) {
-      showToast("Invalid price", "error");
-      return;
-    }
-    try {
-      setBusy(true);
-      const result = await liveTradingApi.createDeploymentManualSignal(deploymentId, { signal_type: signalType, price, reason: manualReason || "Manual signal test" });
-      const msg = result.message || `${signalType} signal ${result.status || "processed"}`;
-      setLastResult(msg);
-      showToast(msg, result.status === "REJECTED" || result.status === "ERROR" ? "error" : "success");
-      await loadSummary(true);
-    } catch (error: any) {
-      showToast(error.message || "Manual signal failed", "error");
-    } finally {
-      setBusy(false);
-    }
-  };
 
-
-  const finalQaChecks = finalQa?.checks || [];
-  const finalQaPassed = finalQaChecks.filter((check) => check.status === "PASS").length;
-  const finalQaTotal = finalQaChecks.length;
-  const finalQaNeedsAttention = finalQaChecks.filter((check) => check.status !== "PASS").length;
-  const finalQaStatus = finalQa?.overall_status || "—";
-  const finalQaBadgeClass = finalQa?.overall_status === "PASS"
-    ? "border-lime-400/30 bg-lime-400/20 text-lime-100"
-    : finalQa?.overall_status === "WARNING"
-      ? "border-yellow-400/30 bg-yellow-400/20 text-yellow-100"
-      : "border-red-400/30 bg-red-400/20 text-red-100";
-  const finalQaSummary = finalQaTotal
-    ? `${finalQaPassed}/${finalQaTotal} checks passed${finalQaNeedsAttention ? ` • ${finalQaNeedsAttention} needs attention` : ""}`
-    : "Run or view QA to load the checklist.";
 
   const title = summary?.deployment?.name || deployment?.name || "Live Deployment";
   const subtitle = `${summary?.deployment?.strategy_name || deployment?.strategy_id || "Strategy"} • ${summary?.deployment?.instrument || deployment?.instrument || "—"} • ${summary?.deployment?.timeframe || deployment?.timeframe || "—"}`;
@@ -559,179 +391,42 @@ export default function LiveDeploymentDetailPage() {
         }
       />
 
-      <ReadinessChecklist readiness={readiness} />
-
-
-      <GlassCard className="mb-6 overflow-hidden p-0" hoverEffect={false}>
-        <div className="border-b border-white/10 bg-gradient-to-r from-lime-400/10 via-purple-500/10 to-fuchsia-500/10 p-6">
-          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-2xl font-bold text-lime-300">Final Demo QA</h2>
-                <Badge className={finalQaBadgeClass}>Final QA {finalQaStatus}</Badge>
-              </div>
-              <p className="mt-2 text-sm text-purple-100">Controlled final checks for PAPER and MT5 DEMO before any real live trading. LIVE mode remains locked for safety.</p>
-              <p className="mt-1 text-xs text-purple-300">{finalQaSummary}</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button disabled={runnerBusy} onClick={loadFinalQa} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">View Last QA Result</Button>
-              <Button onClick={() => setShowFinalQaDetails((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{showFinalQaDetails ? "Hide QA Details" : "Show QA Details"}</Button>
-              <Button size="sm" onClick={copyQaSummary} variant="outline" className="gap-2 border-white/10 bg-white/5 text-white hover:bg-white/10"><Clipboard className="h-4 w-4" />Copy QA Summary</Button>
-            </div>
-          </div>
-          {mode === "LIVE" && (
-            <div className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 p-4 text-sm text-red-100">Real live trading is locked for safety. Use PAPER or DEMO until final QA passes.</div>
-          )}
-        </div>
-
-        <div className="p-6">
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-5 shadow-xl">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">Step 1</p>
-                  <h3 className="text-lg font-bold text-white">Dry Test</h3>
-                </div>
-                <RefreshCw className="h-5 w-5 text-cyan-200" />
-              </div>
-              <p className="min-h-[42px] text-sm text-purple-100">Simulates one full runner cycle without placing any order.</p>
-              <Button disabled={runnerBusy} onClick={runFullDryTest} className="mt-4 w-full bg-cyan-500 text-slate-950 hover:bg-cyan-400">Run Full Dry Test</Button>
-            </div>
-
-            <div className="rounded-2xl border border-lime-400/20 bg-lime-500/10 p-5 shadow-xl">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-lime-200">Step 2</p>
-                  <h3 className="text-lg font-bold text-white">Paper Order Test</h3>
-                </div>
-                <ShieldCheck className="h-5 w-5 text-lime-200" />
-              </div>
-              <p className="min-h-[42px] text-sm text-purple-100">Creates a test paper position only. No broker order is placed.</p>
-              <Button disabled={runnerBusy || mode !== "PAPER"} onClick={runPaperOrderTest} className="mt-4 w-full bg-lime-500 text-slate-950 hover:bg-lime-400">Run Paper Order Test</Button>
-              {mode !== "PAPER" && <p className="mt-2 text-xs text-purple-300">Available only for PAPER deployments.</p>}
-            </div>
-
-            <div className="rounded-2xl border border-fuchsia-400/20 bg-fuchsia-500/10 p-5 shadow-xl">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-fuchsia-200">Step 3</p>
-                  <h3 className="text-lg font-bold text-white">Demo Micro Order</h3>
-                </div>
-                <Send className="h-5 w-5 text-fuchsia-200" />
-              </div>
-              <p className="min-h-[42px] text-sm text-purple-100">Places a tiny order on your DEMO broker only after confirmation.</p>
-              <Button disabled={mode !== "DEMO" || runnerBusy} onClick={() => setShowDemoMicroConfirm(true)} className="mt-4 w-full bg-fuchsia-500 text-white hover:bg-fuchsia-400">Open Demo Micro Test</Button>
-              {mode !== "DEMO" && <p className="mt-2 text-xs text-purple-300">Available only for DEMO deployments.</p>}
-            </div>
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button disabled={brokerBusy || !deployment.broker_account_id} onClick={syncBroker} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">Sync Broker Now</Button>
-            <Button disabled={runnerBusy} onClick={loadFinalQa} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">Refresh QA Status</Button>
-          </div>
-
-          {showDemoMicroConfirm && (
-            <div className="mt-5 rounded-2xl border border-yellow-400/30 bg-yellow-500/10 p-5 shadow-xl">
-              <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
-                <div>
-                  <p className="text-sm font-semibold text-yellow-100">Confirm Demo Micro Order</p>
-                  <p className="mt-1 text-sm text-purple-100">This will place a real order on your DEMO broker account only. It will not use real money. Type <span className="font-bold text-white">DEMO</span> to confirm.</p>
-                </div>
-                <Button onClick={() => { setShowDemoMicroConfirm(false); setDemoConfirmText(""); }} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">Cancel</Button>
-              </div>
-              <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                <input value={demoConfirmText} onChange={(event) => setDemoConfirmText(event.target.value)} placeholder="Type DEMO" className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-white outline-none focus:border-lime-300" />
-                <Button disabled={runnerBusy || mode !== "DEMO" || demoConfirmText.trim().toUpperCase() !== "DEMO"} onClick={runDemoMicroOrderTest} className="bg-fuchsia-500 text-white hover:bg-fuchsia-400">Confirm Demo Micro Order</Button>
-              </div>
-            </div>
-          )}
-
-          {showFinalQaDetails && finalQa && (
-            <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
-              {finalQa.checks?.map((check) => (
-                <div key={check.key} className="rounded-xl border border-white/10 bg-white/5 p-4">
-                  <div className="flex items-center gap-2">
-                    <ReadinessIcon status={check.status === "PASS" ? "PASS" : check.status === "WARNING" ? "WARNING" : "FAIL"} />
-                    <p className="font-semibold text-white">{check.label}</p>
-                    <Badge className={check.status === "PASS" ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : check.status === "WARNING" ? "border-yellow-400/30 bg-yellow-400/20 text-yellow-100" : "border-red-400/30 bg-red-400/20 text-red-100"}>{check.status}</Badge>
-                  </div>
-                  <p className="mt-2 text-sm text-purple-200">{check.message}</p>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {showFinalQaDetails && (finalQa?.last_results || qaTestResult) && (
-            <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
-              <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-purple-100">
-                <h3 className="mb-2 font-semibold text-white">QA Result Card</h3>
-                <p>Last dry test: {finalQa?.last_results?.last_dry_test ? "Available" : "—"}</p>
-                <p>Last paper test: {finalQa?.last_results?.last_paper_test ? "Available" : "—"}</p>
-                <p>Last demo micro test: {finalQa?.last_results?.last_demo_micro_test ? "Available" : "—"}</p>
-                <p>Last broker sync: {date(String(finalQa?.last_results?.last_broker_sync || ""))}</p>
-                <p>Last auto runner cycle: {date(String(finalQa?.last_results?.last_auto_runner_cycle || ""))}</p>
-                <p>Last blocking error: {JSON.stringify(finalQa?.last_results?.last_blocking_error || null)}</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-purple-100">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <h3 className="font-semibold text-white">Support / Debug Summary</h3>
-                  <Button size="sm" onClick={copyQaSummary} variant="outline" className="gap-2 border-white/10 bg-white/5 text-white hover:bg-white/10"><Clipboard className="h-4 w-4" />Copy QA Summary</Button>
-                </div>
-                <pre className="max-h-56 overflow-auto whitespace-pre-wrap text-xs text-purple-100">{JSON.stringify(qaTestResult || finalQa?.debug_summary || {}, null, 2)}</pre>
-              </div>
-            </div>
-          )}
-        </div>
-      </GlassCard>
+      <ReadinessChecklist readiness={readiness} onRunFullDryTest={runFullDryTest} dryTestDisabled={runnerBusy || !isRunning || isPaperDeprecated || isBrokerBlocked} />
 
       <GlassCard className="mb-6 p-6" hoverEffect={false}>
-        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
-          <div className="flex flex-wrap items-center gap-3">
-            <StatusBadge value={summary.deployment?.status || deployment.status} />
-            <Badge className="border-cyan-400/30 bg-cyan-400/20 text-cyan-100">{mode}</Badge>
-            <Badge className={summary.deployment?.auto_trade_enabled ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : "border-yellow-400/30 bg-yellow-400/20 text-yellow-100"}>Auto Trade {summary.deployment?.auto_trade_enabled ? "ON" : "OFF"}</Badge>
-            <Badge className={summary.deployment?.auto_runner_enabled ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : "border-yellow-400/30 bg-yellow-400/20 text-yellow-100"}>Auto Runner {summary.deployment?.auto_runner_enabled ? "ON" : "OFF"}</Badge>
-            <span className="text-sm text-purple-200">Last signal: {date(summary.deployment?.last_signal_at || deployment.last_signal_at)}</span>
+        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
+          <div>
+            <h2 className="text-xl font-bold text-lime-300">Strategy Runner</h2>
+            <p className="mt-1 max-w-2xl text-sm text-purple-200">Runs the selected strategy on the latest closed broker candles. Auto Trade only places orders after the live engine status and risk checks pass.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button disabled={busy} onClick={() => action("start")} className="gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400"><Play className="h-4 w-4" />Start</Button>
+            <Button disabled={busy || isPaperDeprecated} onClick={() => action("start")} className="gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400"><Play className="h-4 w-4" />Start</Button>
             <Button disabled={busy} onClick={() => action("pause")} className="gap-2 bg-yellow-500 text-slate-950 hover:bg-yellow-400"><Pause className="h-4 w-4" />Pause</Button>
             <Button disabled={busy} onClick={() => action("stop")} variant="outline" className="gap-2 border-red-400/30 bg-red-500/10 text-red-100 hover:bg-red-500/20"><Square className="h-4 w-4" />Stop</Button>
-            <Button disabled={runnerBusy || !isRunning || (mode === "DEMO" && isDemoBrokerBlocked)} onClick={runFullDryTest} variant="outline" className="gap-2 border-cyan-400/30 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/20"><RefreshCw className="h-4 w-4" />Run Full Dry Test</Button>
+            <Button disabled={runnerBusy || !isRunning || !summary.deployment?.auto_trade_enabled} onClick={() => autoRunnerAction("run-now")} variant="outline" className="gap-2 border-cyan-400/30 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/20"><RefreshCw className="h-4 w-4" />Run Strategy Once</Button>
             <Button disabled={busy} onClick={() => toggleAutoTrade(!summary.deployment?.auto_trade_enabled)} className="gap-2 bg-fuchsia-500 text-white hover:bg-fuchsia-400">{summary.deployment?.auto_trade_enabled ? "Disable Auto Trade" : "Enable Auto Trade"}</Button>
             <Button disabled={runnerBusy || !isRunning || !summary.deployment?.auto_trade_enabled} onClick={() => autoRunnerAction(summary.deployment?.auto_runner_enabled ? "disable" : "enable")} className="gap-2 bg-emerald-500 text-slate-950 hover:bg-emerald-400">{summary.deployment?.auto_runner_enabled ? "Disable Auto Runner" : "Enable Auto Runner"}</Button>
           </div>
         </div>
-        {runnerResult && <p className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-purple-100">Last dry/runner result: {runnerResult}</p>}
-        {fullDryTest && (
-          <div className="mt-4 rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-4">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h3 className="font-bold text-white">Full Dry Test Timeline</h3>
-                <p className="text-sm text-purple-200">Final simulated action: <span className="font-semibold text-cyan-100">{fullDryTest.final_action}</span></p>
-              </div>
-              <Badge className={fullDryTest.success ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : "border-red-400/30 bg-red-400/20 text-red-100"}>{fullDryTest.success ? "PASSED" : "REJECTED"}</Badge>
-            </div>
-            <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-              {(fullDryTest.steps || []).map((step, index) => (
-                <div key={`${step.name}-${index}`} className="rounded-xl border border-white/10 bg-purple-950/30 p-3 text-sm">
-                  <div className="flex items-center gap-2">
-                    <ReadinessIcon status={step.status === "PASS" ? "PASS" : step.status === "WARNING" ? "WARNING" : "FAIL"} />
-                    <span className="font-semibold text-white">{index + 1}. {step.name}</span>
-                    <Badge className={step.status === "PASS" ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : step.status === "WARNING" ? "border-yellow-400/30 bg-yellow-400/20 text-yellow-100" : "border-red-400/30 bg-red-400/20 text-red-100"}>{step.status}</Badge>
-                  </div>
-                  <p className="mt-1 text-purple-200">{step.message}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <MetricCard label="Strategy" value={summary.deployment?.strategy_name || deployment.strategy_id || "—"} />
+          <MetricCard label="Last Run" value={date(summary.deployment?.last_runner_at || deployment.last_runner_at)} />
+          <MetricCard label="Last Processed Candle" value={date(summary.deployment?.last_processed_candle_time || deployment.last_processed_candle_time)} />
+          <MetricCard label="Last Signal" value={recentSignals[0]?.signal_type || "—"} />
+          <MetricCard label="Auto Trade" value={summary.deployment?.auto_trade_enabled ? "ON" : "OFF"} />
+          <MetricCard label="Latest Order" value={recentOrders[0]?.status || "—"} />
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <StatusBadge value={summary.deployment?.status || deployment.status} />
+          <Badge className="border-cyan-400/30 bg-cyan-400/20 text-cyan-100">{mode}</Badge>
+          <Badge className={summary.deployment?.auto_runner_enabled ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : "border-yellow-400/30 bg-yellow-400/20 text-yellow-100"}>Auto Runner {summary.deployment?.auto_runner_enabled ? "ON" : "OFF"}</Badge>
+          <span className="text-sm text-purple-200">Last signal: {date(summary.deployment?.last_signal_at || deployment.last_signal_at)}</span>
+        </div>
+        {runnerResult && <p className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-purple-100">Latest runner log: {runnerResult}</p>}
       </GlassCard>
 
-      <LiveFlowPanel />
-
       <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-7">
-        <MetricCard label="Equity" value={formatMoney(metrics?.equity ?? deployment.capital, currency)} />
+        <MetricCard label="Equity" value={formatMoney(metrics?.equity ?? metrics?.effective_capital ?? deployment.capital, currency)} />
         <MetricCard label="Realized PnL" value={formatMoney(metrics?.realized_pnl, currency)} />
         <MetricCard label="Unrealized PnL" value={formatMoney(metrics?.unrealized_pnl, currency)} />
         <MetricCard label="Today PnL" value={formatMoney(metrics?.today_pnl, currency)} />
@@ -739,20 +434,23 @@ export default function LiveDeploymentDetailPage() {
         <MetricCard label="Orders Today" value={String(metrics?.orders_today ?? 0)} />
         <MetricCard label="Signals Today" value={String(metrics?.signals_today ?? 0)} />
       </div>
+      <div className="mb-6 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-purple-100">
+        {pnlSourceLabel}{metrics?.broker_deal_count !== undefined && metrics?.broker_deal_count !== null ? ` • Deals today: ${metrics.broker_deal_count}` : ""}
+      </div>
 
       <GlassCard className="mb-6 p-6" hoverEffect={false}>
         <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
-          <div><h2 className="text-xl font-bold text-lime-300">Broker Summary</h2><p className="mt-1 text-sm text-purple-200">PAPER works without a broker. DEMO sends orders to your connected demo broker. Broker Sync only reads positions/orders; it does not place new orders.</p></div>
+          <div><h2 className="text-xl font-bold text-lime-300">Broker Summary</h2><p className="mt-1 text-sm text-purple-200">DEMO and approved LIVE deployments use a connected broker account. Broker Sync reads positions/orders; it does not place new orders.</p><p className="mt-1 text-xs text-purple-300">{pnlSourceLabel}</p></div>
           <div className="flex flex-wrap gap-2">
-            {!broker && connectedMt5Broker && <Button disabled={brokerBusy} onClick={attachConnectedBroker} className="gap-2 bg-emerald-500 text-slate-950 hover:bg-emerald-400"><Link2 className="h-4 w-4" />Attach Demo Broker</Button>}
+            {!broker && connectedMt5Broker && <Button disabled={brokerBusy} onClick={attachConnectedBroker} className="gap-2 bg-emerald-500 text-slate-950 hover:bg-emerald-400"><Link2 className="h-4 w-4" />Attach Broker</Button>}
             <Button disabled={brokerBusy || !deployment.broker_account_id} onClick={() => refreshBroker()} className="gap-2 bg-blue-500 text-white hover:bg-blue-400"><RefreshCw className="h-4 w-4" />Refresh Broker</Button>
             <Button disabled={brokerBusy || !deployment.broker_account_id} onClick={syncBroker} className="gap-2 bg-emerald-500 text-slate-950 hover:bg-emerald-400"><RefreshCw className="h-4 w-4" />Sync Broker</Button>
           </div>
         </div>
         {!broker ? (
           <div className="mt-4 space-y-3">
-            <NoRows label="No broker account connected to this deployment. PAPER works without broker; DEMO execution requires a connected broker." />
-            {connectedMt5Broker ? <p className="text-sm text-lime-200">Connected broker found: {connectedMt5Broker.account_label}. Click Attach Demo Broker to link it and switch this deployment to DEMO mode.</p> : <p className="text-sm text-yellow-100">No connected demo broker found. Go to Brokers and click Test Connection first.</p>}
+            <NoRows label="No broker account connected to this deployment. DEMO/LIVE execution requires an approved connected broker." />
+            {connectedMt5Broker ? <p className="text-sm text-lime-200">Connected broker found: {connectedMt5Broker.account_label}. Click Attach Broker to link it to this deployment.</p> : <p className="text-sm text-yellow-100">No connected broker found. Go to Brokers and click Test Connection first.</p>}
           </div>
         ) : (
           <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
@@ -768,35 +466,24 @@ export default function LiveDeploymentDetailPage() {
         )}
       </GlassCard>
 
-      <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <GlassCard className="p-6 xl:col-span-2" hoverEffect={false}>
-          <div className="mb-4 flex items-center justify-between gap-2">
-            <div>
-              <h2 className="text-xl font-bold text-white">Open Position</h2>
-              <p className="mt-1 text-sm text-purple-200">PAPER positions are closed by AlgoAgentX using candles. DEMO positions are usually closed by broker SL/TP and AlgoAgentX syncs them.</p>
-            </div>
-            <Badge className="border-lime-400/30 bg-lime-400/20 text-lime-100">{metrics?.broker_synced ? `${brokerProviderLabel} synced` : "DB view"}</Badge>
+      <GlassCard className="mb-6 p-6" hoverEffect={false}>
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <div>
+            <h2 className="text-xl font-bold text-white">Open Positions</h2>
+            <p className="mt-1 text-sm text-purple-200">Broker positions are monitored through broker SL/TP and AlgoAgentX syncs updates for visibility.</p>
           </div>
-          {openPositions.length === 0 ? <NoRows label="No open positions" /> : <div className="responsive-table-wrapper overflow-x-auto"><table className="w-full min-w-[860px] text-left text-sm"><thead className="text-purple-200"><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg Entry</th><th>Current</th><th>SL</th><th>Target</th><th>Unrealized PnL</th><th>Status</th><th>Managed By</th><th>Opened At</th></tr></thead><tbody className="divide-y divide-white/10">{openPositions.map((p) => <tr key={p.id} className="text-purple-50"><td className="py-3">{p.symbol}</td><td>{p.side}</td><td>{num(p.qty)}</td><td>{num(p.avg_entry_price)}</td><td>{num(p.current_price)}</td><td>{num(p.stop_loss)}</td><td>{num(p.target)}</td><td>{formatMoney(p.unrealized_pnl, currency)}</td><td>{p.status}</td><td>{mode === "PAPER" ? "AlgoAgentX Paper Engine" : "Broker SL/TP Sync"}</td><td>{date(p.opened_at)}</td></tr>)}</tbody></table></div>}
-        </GlassCard>
-        <GlassCard className="p-6" hoverEffect={false}>
-          <h2 className="text-xl font-bold text-white">Latest Activity</h2>
-          <div className="mt-4 space-y-3 text-sm text-purple-100">
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4"><p className="text-purple-300">Latest Signal</p><p className="mt-1 font-semibold text-white">{summary.latest_signal ? `${summary.latest_signal.signal_type} • ${date(summary.latest_signal.created_at)}` : "—"}</p></div>
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4"><p className="text-purple-300">Latest Order</p><p className="mt-1 font-semibold text-white">{summary.latest_order ? `${summary.latest_order.status} • ${summary.latest_order.side} ${summary.latest_order.symbol}` : "—"}</p></div>
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4"><p className="text-purple-300">Today PnL</p><p className="mt-1 font-semibold text-white">{formatMoney(metrics?.today_pnl, currency)}</p></div>
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4"><p className="text-purple-300">Last Runner Cycle</p><p className="mt-1 font-semibold text-white">{runner?.last_execution_decision || runner?.latest_runner_log || "—"}</p></div>
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4"><p className="text-purple-300">Last Entry Plan</p><p className="mt-1 font-semibold text-white">{runner?.last_entry_plan ? `SL ${num((runner.last_entry_plan as any).stop_loss)} • TP ${num((runner.last_entry_plan as any).target)}` : "—"}</p></div>
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4"><p className="text-purple-300">Last Risk Preview</p><p className="mt-1 font-semibold text-white">{runner?.last_risk_preview ? `${(runner.last_risk_preview as any).quantity_mode || ""} ${num((runner.last_risk_preview as any).final_lot || (runner.last_risk_preview as any).final_quantity)}` : "—"}</p></div>
-          </div>
-        </GlassCard>
-      </div>
+          <Badge className="border-lime-400/30 bg-lime-400/20 text-lime-100">{metrics?.broker_synced ? `${brokerProviderLabel} synced` : "DB view"}</Badge>
+        </div>
+        {openPositions.length === 0 ? <NoRows label="No open positions" /> : <div className="responsive-table-wrapper overflow-x-auto"><table className="w-full min-w-[860px] text-left text-sm"><thead className="text-purple-200"><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg Entry</th><th>Current</th><th>SL</th><th>Target</th><th>Unrealized PnL</th><th>Status</th><th>Managed By</th><th>Opened At</th></tr></thead><tbody className="divide-y divide-white/10">{openPositions.map((p) => <tr key={p.id} className="text-purple-50"><td className="py-3">{p.symbol}</td><td>{p.side}</td><td>{num(p.qty)}</td><td>{num(p.avg_entry_price)}</td><td>{num(p.current_price)}</td><td>{num(p.stop_loss)}</td><td>{num(p.target)}</td><td>{formatMoney(p.unrealized_pnl, currency)}</td><td>{p.status}</td><td>Broker SL/TP Sync</td><td>{date(p.opened_at)}</td></tr>)}</tbody></table></div>}
+      </GlassCard>
+
+      <LiveFlowPanel />
 
       <GlassCard className="mb-6 p-6" hoverEffect={false}>
         <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
           <div>
             <h2 className="text-xl font-bold text-white">Advanced Diagnostics</h2>
-            <p className="mt-1 text-sm text-purple-200">Market data snapshot, runner status, signal/order history, and execution logs are hidden by default.</p>
+            <p className="mt-1 text-sm text-purple-200">Market data snapshot, signal/order history, dry test details, and technical logs are hidden by default.</p>
           </div>
           <Button onClick={() => setShowAdvancedDiagnostics((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">
             {showAdvancedDiagnostics ? "Hide Advanced Diagnostics" : "Show Advanced Diagnostics"}
@@ -806,31 +493,38 @@ export default function LiveDeploymentDetailPage() {
 
       {showAdvancedDiagnostics && (
         <>
-          <GlassCard className="mb-6 p-6" hoverEffect={false}>
-            <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
-              <div>
-                <h2 className="text-xl font-bold text-lime-300">Live Broker Sync</h2>
-                <p className="mt-1 text-sm text-purple-200">Controlled broker order/position auto-sync. Default is OFF. Manual Sync Broker still works.</p>
+          <OrderCalculationAuditPanel
+            preview={((recentOrders || [])[0]?.raw_response as any)?.audit_preview || ((recentOrders || [])[0]?.raw_response as any)?.sizing}
+            latestOrder={(recentOrders || [])[0]}
+            latestSignal={(recentSignals || [])[0]}
+            currency={currency}
+            showPayload={false}
+            defaultExpanded={false}
+            subtitle="Advanced view of the latest signal, SL/TP, risk, lot/qty, and validation result."
+          />
+          {fullDryTest && (
+            <GlassCard className="mb-6 p-6" hoverEffect={false}>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-xl font-bold text-white">Dry Test Details</h2>
+                  <p className="text-sm text-purple-200">Final simulated action: <span className="font-semibold text-cyan-100">{fullDryTest.final_action}</span></p>
+                </div>
+                <Badge className={fullDryTest.success ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : "border-red-400/30 bg-red-400/20 text-red-100"}>{fullDryTest.success ? "PASSED" : "REJECTED"}</Badge>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <select value={liveSyncInterval} onChange={(e) => setLiveSyncInterval(e.target.value)} className="rounded-lg border border-white/10 bg-purple-950 px-3 py-2 text-sm text-white">
-                  {[5,10,15,30,60].map((v) => <option key={v} value={v}>{v} sec</option>)}
-                </select>
-                <Button disabled={brokerBusy || !deployment.broker_account_id} onClick={() => liveSyncAction("enable")} className="gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400"><Play className="h-4 w-4" />Enable Live Sync</Button>
-                <Button disabled={brokerBusy || !deployment.broker_account_id} onClick={() => liveSyncAction("disable")} variant="outline" className="gap-2 border-yellow-400/30 bg-yellow-500/10 text-yellow-100 hover:bg-yellow-500/20"><Pause className="h-4 w-4" />Disable Live Sync</Button>
-                <Button disabled={brokerBusy || !deployment.broker_account_id} onClick={() => liveSyncAction("save")} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">Save Interval</Button>
-                <Button disabled={brokerBusy || !deployment.broker_account_id} onClick={syncBroker} className="gap-2 bg-emerald-500 text-slate-950 hover:bg-emerald-400"><RefreshCw className="h-4 w-4" />Manual Sync Broker</Button>
+              <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+                {(fullDryTest.steps || []).map((step, index) => (
+                  <div key={`${step.name}-${index}`} className="rounded-xl border border-white/10 bg-purple-950/30 p-3 text-sm">
+                    <div className="flex items-center gap-2">
+                      <ReadinessIcon status={step.status === "PASS" ? "PASS" : step.status === "WARNING" ? "WARNING" : "FAIL"} />
+                      <span className="font-semibold text-white">{index + 1}. {step.name}</span>
+                      <Badge className={step.status === "PASS" ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : step.status === "WARNING" ? "border-yellow-400/30 bg-yellow-400/20 text-yellow-100" : "border-red-400/30 bg-red-400/20 text-red-100"}>{step.status}</Badge>
+                    </div>
+                    <p className="mt-1 text-purple-200">{step.message}</p>
+                  </div>
+                ))}
               </div>
-            </div>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-5">
-              <MetricCard label="Live Sync" value={summary.deployment?.live_sync_enabled ? "ON" : "OFF"} />
-              <MetricCard label="Interval" value={`${summary.deployment?.live_sync_interval_seconds || liveSyncInterval || 10} sec`} />
-              <MetricCard label="Last Sync" value={date(summary.deployment?.last_live_sync_at || summary.deployment?.last_broker_sync_at || deployment.last_broker_sync_at)} />
-              <MetricCard label="Sync Errors" value={String(summary.deployment?.live_sync_error_count || 0)} />
-              <MetricCard label="Status" value={(summary.deployment?.status || deployment.status)} />
-            </div>
-            {summary.deployment?.live_sync_last_error && <p className="mt-2 rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-sm text-red-100">Last error: {summary.deployment.live_sync_last_error}</p>}
-          </GlassCard>
+            </GlassCard>
+          )}
 
           <GlassCard className="mb-6 p-6" hoverEffect={false}>
             <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
@@ -856,38 +550,6 @@ export default function LiveDeploymentDetailPage() {
 
           <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
             <GlassCard className="p-6" hoverEffect={false}>
-              <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
-                <div><h2 className="text-xl font-bold text-lime-300">Strategy Runner</h2><p className="mt-1 text-sm text-purple-200">Runs selected strategy on latest closed live_market_candles. DEMO refreshes broker candles first. No tick execution.</p></div>
-                <div className="flex flex-wrap gap-2">
-                  <Button disabled={runnerBusy || !isRunning || (mode === "DEMO" && isDemoBrokerBlocked)} onClick={() => runStrategy(true)} className="gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400"><Play className="h-4 w-4" />Run Strategy Once</Button>
-                  <Button disabled={runnerBusy || !isRunning || (mode === "DEMO" && isDemoBrokerBlocked)} onClick={() => runStrategy(false)} variant="outline" className="gap-2 border-cyan-400/30 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/20"><RefreshCw className="h-4 w-4" />Dry Run Strategy</Button>
-                </div>
-              </div>
-              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-                <MetricCard label="Strategy" value={summary.deployment?.strategy_name || deployment.strategy_id} />
-                <MetricCard label="Last Run" value={date(runner?.last_run_at)} />
-                <MetricCard label="Last Processed Candle" value={date(runner?.last_processed_candle_time || runner?.last_candle_time || candleSnapshot?.latest_candle_time)} />
-                <MetricCard label="Last Signal" value={runner?.last_signal || summary.latest_signal?.signal_type || "—"} />
-                <MetricCard label="Auto Trade" value={summary.deployment?.auto_trade_enabled ? "ON" : "OFF"} />
-                <MetricCard label="Latest Order" value={runner?.latest_order_status || summary.latest_order?.status || "—"} />
-              </div>
-              <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-purple-100">Latest runner log: <span className="font-semibold text-white">{runnerResult || runner?.latest_runner_log || "—"}</span></div>
-            </GlassCard>
-
-            <GlassCard className="p-6" hoverEffect={false}>
-              <h2 className="text-xl font-bold text-lime-300">Manual Signal Test</h2>
-              <p className="mt-1 text-sm text-purple-200">Use only for controlled demo/paper validation. Dry Run is safer for beginner testing.</p>
-              {lastResult && <p className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-purple-100">Last result: {lastResult}</p>}
-              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-                <label className="text-sm text-purple-100">Price<input value={manualPrice} onChange={(e) => setManualPrice(e.target.value)} className="mt-2 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-white outline-none focus:border-lime-300" /></label>
-                <label className="text-sm text-purple-100 md:col-span-2">Reason<input value={manualReason} onChange={(e) => setManualReason(e.target.value)} className="mt-2 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-white outline-none focus:border-lime-300" /></label>
-              </div>
-              <div className="mt-4 flex flex-wrap gap-2">{(["BUY", "SELL", "EXIT", "HOLD"] as SignalType[]).map((signal) => <Button key={signal} disabled={busy || !isRunning || isDemoBrokerBlocked} onClick={() => sendManualSignal(signal)} className="gap-2 bg-fuchsia-500 text-white hover:bg-fuchsia-400"><Send className="h-4 w-4" />{signal}</Button>)}</div>
-            </GlassCard>
-          </div>
-
-          <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <GlassCard className="p-6" hoverEffect={false}>
               <div className="mb-4 flex items-center justify-between gap-2"><div><h2 className="text-xl font-bold text-white">Recent Signals</h2><p className="mt-1 text-sm text-purple-200">Detailed signal history.</p></div><Button size="sm" onClick={() => setShowSignals((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{showSignals ? "Hide" : "Open Signals"}</Button></div>
               {!showSignals ? <NoRows label={`Signals are hidden. Total today: ${metrics?.signals_today ?? 0}.`} /> : recentSignals.length === 0 ? <NoRows label="No signals yet" /> : <div className="responsive-table-wrapper max-h-[360px] overflow-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="sticky top-0 bg-purple-950 text-purple-200"><tr><th className="p-3">Time</th><th>Source</th><th>Signal</th><th>Symbol</th><th>Price</th><th>Status</th><th>Reason</th></tr></thead><tbody className="divide-y divide-white/10">{recentSignals.map((sig) => <tr key={sig.id} className="text-purple-50"><td className="p-3">{date(sig.created_at)}</td><td>{sig.source}</td><td>{sig.signal_type}</td><td>{sig.symbol}</td><td>{num(sig.price)}</td><td>{sig.status}</td><td className="max-w-[260px] truncate" title={sig.rejection_reason || sig.reason || "-"}>{sig.rejection_reason || sig.reason || "-"}</td></tr>)}</tbody></table></div>}
             </GlassCard>
@@ -898,8 +560,8 @@ export default function LiveDeploymentDetailPage() {
           </div>
 
           <GlassCard className="p-6" hoverEffect={false}>
-            <div className="mb-4 flex items-center justify-between gap-2"><h2 className="text-xl font-bold text-white">Execution Logs</h2><Button size="sm" onClick={() => setShowLogs((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{showLogs ? "Hide" : "Open Logs"}</Button></div>
-            {!showLogs ? <NoRows label="Logs are hidden by default. Click Open Logs when you need execution details." /> : recentLogs.length === 0 ? <NoRows label="No logs yet" /> : <div className="responsive-table-wrapper max-h-[360px] overflow-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="sticky top-0 bg-purple-950 text-purple-200"><tr><th className="p-3">Time</th><th>Level</th><th>Event Type</th><th>Message</th></tr></thead><tbody className="divide-y divide-white/10">{recentLogs.map((l) => <tr key={l.id} className="text-purple-50"><td className="p-3">{date(l.created_at)}</td><td>{l.level}</td><td>{l.event_type}</td><td>{l.message}</td></tr>)}</tbody></table></div>}
+            <div className="mb-4 flex items-center justify-between gap-2"><h2 className="text-xl font-bold text-white">Technical Logs</h2><Button size="sm" onClick={() => setShowLogs((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{showLogs ? "Hide Technical Logs" : "Open Technical Logs"}</Button></div>
+            {!showLogs ? <NoRows label="Technical logs are hidden by default. Open them only when troubleshooting." /> : recentLogs.length === 0 ? <NoRows label="No logs yet" /> : <div className="responsive-table-wrapper max-h-[360px] overflow-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="sticky top-0 bg-purple-950 text-purple-200"><tr><th className="p-3">Time</th><th>Level</th><th>Event Type</th><th>Message</th></tr></thead><tbody className="divide-y divide-white/10">{recentLogs.map((l) => <tr key={l.id} className="text-purple-50"><td className="p-3">{date(l.created_at)}</td><td>{l.level}</td><td>{l.event_type}</td><td>{l.message}</td></tr>)}</tbody></table></div>}
           </GlassCard>
         </>
       )}

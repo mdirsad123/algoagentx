@@ -75,6 +75,31 @@ READY_REQUEST_STATUSES = {"DEPLOYED", "PUBLISHED"}
 BLOCKED_REQUEST_STATUSES = {"UNDER_DEVELOPMENT", "DRAFT", "WORKSPACE_CREATED", "NEEDS_CLARIFICATION", "SUBMITTED", "UNDER_REVIEW", "REJECTED", "ARCHIVED", "CANCELLED", "PENDING"}
 
 
+_BACKTEST_TIMEFRAME_MINUTES = {
+    "1m": 1, "3m": 3, "5m": 5, "10m": 10, "15m": 15, "30m": 30, "45m": 45,
+    "60m": 60, "1h": 60, "2h": 120, "4h": 240, "1d": 1440, "1w": 10080,
+}
+
+
+def _timeframe_minutes_for_coverage(timeframe: str) -> int | None:
+    tf = str(timeframe or "").strip().lower()
+    if tf in _BACKTEST_TIMEFRAME_MINUTES:
+        return _BACKTEST_TIMEFRAME_MINUTES[tf]
+    return None
+
+
+def _expected_candles_for_range(start_dt: datetime, end_dt: datetime, timeframe: str, *, crypto_24_7: bool = False) -> int | None:
+    minutes = _timeframe_minutes_for_coverage(timeframe)
+    if not minutes or end_dt <= start_dt:
+        return None
+    # Daily/weekly estimates are intentionally not used for blocking intraday coverage.
+    if minutes >= 1440:
+        return None
+    if crypto_24_7:
+        return max(1, int((end_dt - start_dt).total_seconds() // (minutes * 60)) + 1)
+    return None
+
+
 def _strategy_has_backtest_code(strategy: Strategy) -> bool:
     params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
     return bool(str(params.get("source_code") or "").strip() or params.get("code_attached") or params.get("codeAttached") or params.get("engine_mode") != "DYNAMIC_DB")
@@ -790,9 +815,11 @@ async def _get_market_data_availability_guard(
 
     instrument = await db.get(Instrument, instrument_id)
     symbol = str(getattr(instrument, "symbol", "") or "").upper()
+    exchange = str(getattr(instrument, "exchange", "") or "").upper()
     market = str(getattr(instrument, "market", "") or "").upper()
+    is_crypto = market == "CRYPTO" or exchange == "BINANCE" or any(token in symbol for token in ["BTC", "ETH", "USDT"])
     is_forex_like = market == "FOREX" or any(token in symbol for token in ["XAU", "XAG", "EUR", "GBP", "JPY", "USD"])
-    boundary_tolerance_days = 3 if is_forex_like else 1
+    boundary_tolerance_days = 3 if (is_forex_like or is_crypto) else 1
 
     overall = (
         await db.execute(
@@ -846,17 +873,44 @@ async def _get_market_data_availability_guard(
     elif dataset_end_date:
         missing_after = (end_date - dataset_end_date).days > boundary_tolerance_days
 
+    expected_count = _expected_candles_for_range(requested_start, requested_end, timeframe, crypto_24_7=is_crypto)
+    missing_candles_estimate = max((expected_count or 0) - record_count, 0) if expected_count else 0
+    coverage_pct = round((record_count / expected_count) * 100, 2) if expected_count else None
+    has_large_intraday_gap = bool(expected_count and expected_count >= 100 and record_count > 0 and coverage_pct is not None and coverage_pct < 95)
+
     dataset_missing = total_count <= 0 or available_start is None or available_end is None
-    blocked = dataset_missing or record_count <= 0 or missing_before or missing_after
+    blocked = dataset_missing or record_count <= 0 or missing_before or missing_after or has_large_intraday_gap
 
     if dataset_missing:
-        message = "Market data is missing for this instrument/timeframe/date range. Ask admin to import missing candles."
+        message = "Market data is missing for this instrument/timeframe. Ask admin to import candles first."
         status_value = "error"
     elif record_count <= 0:
-        message = "Market data is missing for this instrument/timeframe/date range. Ask admin to import missing candles."
+        message = (
+            f"No candles found inside the selected range. DB dataset is available from "
+            f"{available_start.date() if available_start else '—'} to {available_end.date() if available_end else '—'}. "
+            "Import the missing date range or choose a date range inside available coverage."
+        )
         status_value = "error"
-    elif blocked:
-        message = "Market data is missing for this instrument/timeframe/date range. Ask admin to import missing candles."
+    elif missing_before:
+        message = (
+            f"Selected start date is before available DB coverage. Requested {start_date.isoformat()}, "
+            f"but first matched candle is {range_start.date() if range_start else available_start.date()}. "
+            "Import older candles or move the start date forward."
+        )
+        status_value = "error"
+    elif missing_after:
+        message = (
+            f"Selected end date is after available DB coverage. Requested {end_date.isoformat()}, "
+            f"but last matched candle is {range_end.date() if range_end else available_end.date()}. "
+            "Refresh missing candles or move the end date back."
+        )
+        status_value = "error"
+    elif has_large_intraday_gap:
+        message = (
+            f"Market data has large gaps for {symbol or instrument_id} {timeframe}. "
+            f"Found {record_count:,} candles, expected about {expected_count:,} for this 24/7 crypto range "
+            f"({coverage_pct}% coverage). Refresh/import missing candles before running this backtest."
+        )
         status_value = "error"
     else:
         message = "Market data available for selected range."
@@ -885,6 +939,11 @@ async def _get_market_data_availability_guard(
         "total_count": total_count,
         "boundary_tolerance_days": boundary_tolerance_days,
         "is_forex_like": is_forex_like,
+        "is_crypto": is_crypto,
+        "expected_candle_count": expected_count,
+        "missing_candles_estimate": missing_candles_estimate,
+        "coverage_pct": coverage_pct,
+        "has_large_intraday_gap": has_large_intraday_gap,
     }
 
 
@@ -906,7 +965,11 @@ def _raise_market_data_unavailable(availability: dict) -> None:
             "missing_before": bool(availability.get("missing_before")),
             "missing_after": bool(availability.get("missing_after")),
             "record_count": int(availability.get("record_count") or 0),
-            "action": "Ask admin to import missing candles for this instrument/timeframe/date range.",
+            "expected_candle_count": availability.get("expected_candle_count"),
+            "missing_candles_estimate": availability.get("missing_candles_estimate"),
+            "coverage_pct": availability.get("coverage_pct"),
+            "has_large_intraday_gap": bool(availability.get("has_large_intraday_gap")),
+            "action": "Ask admin to import/refresh missing candles for this instrument/timeframe/date range.",
         },
     )
 
@@ -2034,6 +2097,12 @@ async def get_data_availability(
             "missing_before": missing_before,
             "missing_after": missing_after,
             "requested_candle_count": _to_int(requested_count, 0),
+            "expected_candle_count": guard.get("expected_candle_count") if parsed_start_date and parsed_end_date else None,
+            "missing_candles_estimate": guard.get("missing_candles_estimate") if parsed_start_date and parsed_end_date else None,
+            "coverage_pct": guard.get("coverage_pct") if parsed_start_date and parsed_end_date else None,
+            "has_large_intraday_gap": bool(guard.get("has_large_intraday_gap")) if parsed_start_date and parsed_end_date else False,
+            "dataset_start": summary.min_ts.isoformat() if summary.min_ts else None,
+            "dataset_end": summary.max_ts.isoformat() if summary.max_ts else None,
         }
     )
 

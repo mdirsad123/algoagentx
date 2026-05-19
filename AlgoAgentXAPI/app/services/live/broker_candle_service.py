@@ -146,6 +146,15 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
         await db.commit()
         raise HTTPException(status_code=400, detail=message)
 
+    if not rates:
+        if source == "MT5":
+            message = f"No candles returned from MT5 Agent for {resolved_symbol} {deployment.timeframe}. In MT5, open Market Watch → Show All, open the symbol chart once, then refresh candles again."
+        else:
+            message = f"No candles returned from {source} for {resolved_symbol} {deployment.timeframe}."
+        await _write_log(db, deployment, "CANDLE_REFRESH_FAILED", message, "WARNING", {"source": source, "symbol": resolved_symbol, "timeframe": deployment.timeframe})
+        await db.commit()
+        raise HTTPException(status_code=400, detail=message)
+
     upserted = 0
     skipped_forming = 0
     now_utc = datetime.now(timezone.utc)

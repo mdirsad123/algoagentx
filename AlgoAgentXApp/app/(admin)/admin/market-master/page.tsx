@@ -15,12 +15,33 @@ const fieldClass =
   "w-full rounded-xl border border-border/60 bg-card/25 px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/35";
 
 const quantityModes = ["SHARES", "LOTS", "UNITS", "CONTRACTS"];
+const exchangeOptions = ["GLOBAL", "MT5", "BINANCE", "NSE", "BSE", "UPSTOX", "ZERODHA", "ANGEL", "DHAN", "GROWW", "BYBIT", "OKX"];
+const assetClassOptions = ["FOREX", "METAL", "CRYPTO", "INDIAN_EQUITY", "INDIAN_INDEX", "FUTURES", "COMMODITY"];
+const currencyOptions = ["USD", "INR", "EUR", "GBP", "JPY", "USDT"];
+const currencySymbols: Record<string, string> = { USD: "$", INR: "₹", EUR: "€", GBP: "£", JPY: "¥", USDT: "$" };
+
+const instrumentPresets: Array<{ label: string; payload: MarketMasterInstrumentPayload }> = [
+  { label: "XAUUSD · Gold vs US Dollar · MT5 suffix m", payload: { symbol: "XAUUSD", name: "Gold vs US Dollar", exchange: "MT5", market: "METAL", instrument_type: "METAL", asset_class: "METAL", base_currency: "XAU", quote_currency: "USD", account_currency: "USD", currency_symbol: "$", price_unit_name: "points", quantity_mode: "LOTS", contract_size: 100, tick_size: 0.01, tick_value_per_lot: 1, pip_size: 0.01, min_lot: 0.01, lot_step: 0.01, price_precision: 2, quantity_precision: 2, broker_symbol: "XAUUSDm", is_active: true, is_tradeable_backtest: true, is_tradeable_live: true } },
+  { label: "XAGUSD · Silver vs US Dollar · MT5 suffix m", payload: { symbol: "XAGUSD", name: "Silver vs US Dollar", exchange: "MT5", market: "METAL", instrument_type: "METAL", asset_class: "METAL", base_currency: "XAG", quote_currency: "USD", account_currency: "USD", currency_symbol: "$", price_unit_name: "points", quantity_mode: "LOTS", contract_size: 5000, tick_size: 0.001, tick_value_per_lot: 5, pip_size: 0.001, min_lot: 0.01, lot_step: 0.01, price_precision: 3, quantity_precision: 2, broker_symbol: "XAGUSDm", is_active: true, is_tradeable_backtest: true, is_tradeable_live: true } },
+  { label: "BTCUSD · Bitcoin vs US Dollar · MT5 suffix m", payload: { symbol: "BTCUSD", name: "Bitcoin vs US Dollar", exchange: "MT5", market: "CRYPTO", instrument_type: "CRYPTO", asset_class: "CRYPTO", base_currency: "BTC", quote_currency: "USD", account_currency: "USD", currency_symbol: "$", price_unit_name: "points", quantity_mode: "LOTS", contract_size: 1, tick_size: 0.01, tick_value_per_lot: 0.01, pip_size: 0.01, min_lot: 0.01, lot_step: 0.01, price_precision: 2, quantity_precision: 2, broker_symbol: "BTCUSDm", is_active: true, is_tradeable_backtest: true, is_tradeable_live: true } },
+  { label: "GBPUSD · Pound vs US Dollar · MT5 suffix m", payload: { symbol: "GBPUSD", name: "Great Britain Pound vs US Dollar", exchange: "MT5", market: "FOREX", instrument_type: "FOREX", asset_class: "FOREX", base_currency: "GBP", quote_currency: "USD", account_currency: "USD", currency_symbol: "$", price_unit_name: "pips", quantity_mode: "LOTS", contract_size: 100000, tick_size: 0.00001, tick_value_per_lot: 1, pip_size: 0.0001, min_lot: 0.01, lot_step: 0.01, price_precision: 5, quantity_precision: 2, broker_symbol: "GBPUSDm", is_active: true, is_tradeable_backtest: true, is_tradeable_live: true } },
+  { label: "GBPJPY · Pound vs Japanese Yen · MT5 suffix m", payload: { symbol: "GBPJPY", name: "Great Britain Pound vs Japanese Yen", exchange: "MT5", market: "FOREX", instrument_type: "FOREX", asset_class: "FOREX", base_currency: "GBP", quote_currency: "JPY", account_currency: "USD", currency_symbol: "$", price_unit_name: "pips", quantity_mode: "LOTS", contract_size: 100000, tick_size: 0.001, tick_value_per_lot: 1, pip_size: 0.01, min_lot: 0.01, lot_step: 0.01, price_precision: 3, quantity_precision: 2, broker_symbol: "GBPJPYm", is_active: true, is_tradeable_backtest: true, is_tradeable_live: true } },
+  { label: "USDJPY · US Dollar vs Japanese Yen · MT5 suffix m", payload: { symbol: "USDJPY", name: "US Dollar vs Japanese Yen", exchange: "MT5", market: "FOREX", instrument_type: "FOREX", asset_class: "FOREX", base_currency: "USD", quote_currency: "JPY", account_currency: "USD", currency_symbol: "$", price_unit_name: "pips", quantity_mode: "LOTS", contract_size: 100000, tick_size: 0.001, tick_value_per_lot: 1, pip_size: 0.01, min_lot: 0.01, lot_step: 0.01, price_precision: 3, quantity_precision: 2, broker_symbol: "USDJPYm", is_active: true, is_tradeable_backtest: true, is_tradeable_live: true } },
+  { label: "EURUSD · Euro vs US Dollar · MT5 suffix m", payload: { symbol: "EURUSD", name: "Euro vs US Dollar", exchange: "MT5", market: "FOREX", instrument_type: "FOREX", asset_class: "FOREX", base_currency: "EUR", quote_currency: "USD", account_currency: "USD", currency_symbol: "$", price_unit_name: "pips", quantity_mode: "LOTS", contract_size: 100000, tick_size: 0.00001, tick_value_per_lot: 1, pip_size: 0.0001, min_lot: 0.01, lot_step: 0.01, price_precision: 5, quantity_precision: 2, broker_symbol: "EURUSDm", is_active: true, is_tradeable_backtest: true, is_tradeable_live: true } },
+  { label: "EURCAD · Euro vs Canadian Dollar · MT5 suffix m", payload: { symbol: "EURCAD", name: "Euro vs Canadian Dollar", exchange: "MT5", market: "FOREX", instrument_type: "FOREX", asset_class: "FOREX", base_currency: "EUR", quote_currency: "CAD", account_currency: "USD", currency_symbol: "$", price_unit_name: "pips", quantity_mode: "LOTS", contract_size: 100000, tick_size: 0.00001, tick_value_per_lot: 1, pip_size: 0.0001, min_lot: 0.01, lot_step: 0.01, price_precision: 5, quantity_precision: 2, broker_symbol: "EURCADm", is_active: true, is_tradeable_backtest: true, is_tradeable_live: true } },
+];
 
 const editableFields: Array<{ key: keyof MarketMasterInstrumentPayload; label: string; type?: "text" | "number" | "checkbox" | "select"; options?: string[] }> = [
-  { key: "asset_class", label: "Asset Class", type: "select" },
+  { key: "exchange", label: "Exchange / Data Source", type: "select", options: exchangeOptions },
+  { key: "asset_class", label: "Asset Class", type: "select", options: assetClassOptions },
+  { key: "market", label: "Market", type: "select", options: assetClassOptions },
+  { key: "instrument_type", label: "Instrument Type", type: "select", options: assetClassOptions },
+  { key: "base_currency", label: "Base Currency" },
+  { key: "quote_currency", label: "Quote Currency" },
   { key: "broker_symbol", label: "Broker Symbol" },
-  { key: "account_currency", label: "Account Currency" },
-  { key: "currency_symbol", label: "Currency Symbol" },
+  { key: "account_currency", label: "Account Currency", type: "select", options: currencyOptions },
+  { key: "currency_symbol", label: "Currency Symbol", type: "select", options: ["$", "₹", "€", "£", "¥"] },
+  { key: "price_unit_name", label: "Price Unit", type: "select", options: ["points", "pips", "rupees", "ticks"] },
   { key: "quantity_mode", label: "Quantity Mode", type: "select", options: quantityModes },
   { key: "contract_size", label: "Contract Size", type: "number" },
   { key: "tick_size", label: "Tick Size", type: "number" },
@@ -92,10 +113,16 @@ export default function AdminMarketMasterPage() {
   const openEditor = (item: MarketMasterInstrument) => {
     setEditing(item);
     setForm({
+      exchange: item.exchange || "GLOBAL",
+      market: item.market || item.asset_class || "",
+      instrument_type: item.instrument_type || item.asset_class || "",
       asset_class: item.asset_class || "",
+      base_currency: item.base_currency || "",
+      quote_currency: item.quote_currency || "",
       broker_symbol: item.broker_symbol || "",
       account_currency: item.account_currency || "",
       currency_symbol: item.currency_symbol || "",
+      price_unit_name: item.price_unit_name || "",
       quantity_mode: item.quantity_mode || "",
       contract_size: item.contract_size ?? undefined,
       tick_size: item.tick_size ?? undefined,
@@ -124,22 +151,7 @@ export default function AdminMarketMasterPage() {
       is_tradeable_live: false,
     });
     setForm({
-      symbol: "",
-      name: "",
-      exchange: "GLOBAL",
-      asset_class: "INDIAN_EQUITY",
-      account_currency: "INR",
-      currency_symbol: "₹",
-      price_unit_name: "points",
-      quantity_mode: "SHARES",
-      tick_size: 0.05,
-      min_quantity: 1,
-      quantity_step: 1,
-      price_precision: 2,
-      quantity_precision: 0,
-      is_active: true,
-      is_tradeable_backtest: true,
-      is_tradeable_live: false,
+      ...instrumentPresets[0].payload,
     });
   };
 
@@ -168,7 +180,25 @@ export default function AdminMarketMasterPage() {
   };
 
   const updateField = (key: keyof MarketMasterInstrumentPayload, value: any) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === "account_currency" && typeof value === "string" && currencySymbols[value]) {
+        next.currency_symbol = currencySymbols[value];
+      }
+      if (key === "asset_class" && typeof value === "string") {
+        next.market = next.market || value;
+        next.instrument_type = next.instrument_type || value;
+      }
+      return next;
+    });
+  };
+
+  const applyPreset = (indexValue: string) => {
+    const index = Number(indexValue);
+    const preset = Number.isFinite(index) ? instrumentPresets[index] : null;
+    if (!preset) return;
+    setForm((prev) => ({ ...prev, ...preset.payload }));
+    toast.success(`${preset.payload.symbol} preset applied`);
   };
 
   return (
@@ -295,6 +325,19 @@ export default function AdminMarketMasterPage() {
               </Button>
             </DialogTitle>
           </DialogHeader>
+
+          <div className="rounded-2xl border border-violet-400/20 bg-violet-500/10 p-4">
+            <label className="space-y-2 text-sm text-purple-100">
+              <span>Quick Instrument Preset</span>
+              <select className={fieldClass} onChange={(event) => applyPreset(event.target.value)} defaultValue="">
+                <option value="">Choose preset to auto-fill symbol, broker symbol, lot, tick, pip, currency</option>
+                {instrumentPresets.map((preset, index) => (
+                  <option key={preset.label} value={index}>{preset.label}</option>
+                ))}
+              </select>
+            </label>
+            <p className="mt-2 text-xs text-purple-100/70">For MT5 suffix brokers, keep internal Symbol clean, for example XAUUSD, and set Broker Symbol as XAUUSDm.</p>
+          </div>
 
           {editing?.id === 0 ? (
             <div className="grid gap-4 md:grid-cols-2">

@@ -232,6 +232,8 @@ class AdminMarketDataService:
                     "exchange": instrument.exchange,
                     "market": instrument.market,
                     "instrument_type": instrument.instrument_type,
+                    "broker_symbol": getattr(instrument, "broker_symbol", None),
+                    "upstox_instrument_key": getattr(instrument, "upstox_instrument_key", None) or getattr(instrument, "instrument_key", None),
                 }
                 for instrument in instruments
             ],

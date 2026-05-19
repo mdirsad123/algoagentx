@@ -33,11 +33,34 @@ python main.py
   "ENABLE_ORDER_EXECUTION": false,
   "MT5_PATH": "",
   "DEFAULT_DEVIATION": 20,
-  "AGENT_VERSION": "0.1.0"
+  "AGENT_VERSION": "0.2.0"
 }
 ```
 
 `ENABLE_ORDER_EXECUTION` is intentionally `false` by default. Keep it disabled until you confirm heartbeat and demo testing. No withdrawal permissions are required.
+
+## Candle refresh troubleshooting
+
+If AlgoAgentX shows `Stored 0 broker candles` or no candles are returned from MT5:
+
+1. Keep MetaTrader 5 open and logged in to the correct broker account.
+2. In MT5 **Market Watch**, right click and choose **Show All**.
+3. Open the exact symbol chart once, for example `XAUUSDm` on `M5`.
+4. Wait a few seconds for MT5 to download history.
+5. Click **Refresh Candles** again in AlgoAgentX.
+
+The agent supports `FETCH_RATES` commands for `M1`, `M5`, `M15`, `M30`, `H1`, `H4`, and `D1`. The currently forming candle is skipped by default so strategies run on closed broker candles only.
+
+
+## PnL sync notes
+
+AlgoAgentX reads MT5 PnL from real broker data; it does not fake PnL from balance differences.
+
+- Keep MetaTrader 5 open and logged in to the same account linked in AlgoAgentX.
+- Open positions are sent in the agent heartbeat as `positions` and `positions_count`.
+- Unrealized PnL comes from `mt5.positions_get()` open position profit.
+- Today realized PnL uses `mt5.history_deals_get()` from today UTC day start.
+- If PnL remains zero, check MT5 **Account History** for current-day closed deals and confirm the symbol matches the deployment broker symbol such as `XAUUSDm`.
 
 ## Build Windows EXE
 

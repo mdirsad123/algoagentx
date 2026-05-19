@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 BROKER_MODES = {"PAPER", "DEMO", "LIVE"}
-BROKER_STATUSES = {"CONNECTED", "DISCONNECTED", "ERROR", "PENDING_AUTH", "AGENT_OFFLINE", "COMING_SOON", "EXPIRED"}
+BROKER_STATUSES = {"CONNECTED", "DISCONNECTED", "ERROR", "PENDING_AUTH", "PENDING_ACCOUNT_SYNC", "AGENT_OFFLINE", "COMING_SOON", "EXPIRED"}
 DEPLOYMENT_STATUSES = {"DRAFT", "RUNNING", "PAUSED", "STOPPED", "ERROR"}
 SIGNAL_SOURCES = {"TRADINGVIEW", "ENGINE", "MANUAL"}
 SIGNAL_TYPES = {"BUY", "SELL", "EXIT", "HOLD"}
@@ -216,8 +216,8 @@ class StrategyDeploymentCreate(LiveBaseModel):
     exchange: Optional[str] = None
     segment: Optional[str] = None
     timeframe: str = Field(..., min_length=1, max_length=50)
-    mode: str = Field(default="PAPER")
-    capital: Decimal = Decimal("100000")
+    mode: str = Field(default="DEMO")
+    capital: Optional[Decimal] = None
     risk_per_trade: Decimal = Decimal("0.01")
     rr_ratio: Decimal = Decimal("2")
     price_risk_pct: Decimal = Decimal("0.002")

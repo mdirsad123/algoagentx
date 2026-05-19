@@ -73,12 +73,16 @@ class MT5AgentCommandOut(BaseModel):
         from_attributes = True
 
 
-class MT5AgentOrderResultIn(BaseModel):
+class MT5AgentCommandResultIn(BaseModel):
     agent_token: Optional[str] = None
     command_id: UUID
     success: bool
     status: str = "COMPLETED"
-    broker_order_id: Optional[str] = None
-    executed_price: Optional[Decimal] = None
     message: Optional[str] = None
     raw_response: dict[str, Any] = Field(default_factory=dict)
+    broker_order_id: Optional[str] = None
+    executed_price: Optional[Decimal] = None
+
+
+class MT5AgentOrderResultIn(MT5AgentCommandResultIn):
+    pass

@@ -3,17 +3,21 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Optional
+import logging
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db.models import Instrument, Strategy, StrategyDeployment, StrategyRuntimePreset, LiveMarketCandle
+from ...db.models import BrokerAccount, Instrument, Strategy, StrategyDeployment, StrategyRuntimePreset, LiveMarketCandle
 from ..brokers.factory import get_broker_code
 from ..trading.risk_engine import calculate_position_size
 from ..trading.runtime_config_service import deep_merge_runtime_config, resolve_runtime_config, validate_runtime_config
 from .pnl_service import to_decimal
+from .capital_service import get_effective_trading_capital
 from ..trading.guardrails import validate_instrument_spec, MAX_BACKTEST_RISK_PERCENT, RISK_ENGINE_VERSION
 from ..live_trading.live_sl_tp_service import calculate_live_entry_plan
+
+logger = logging.getLogger(__name__)
 
 LOT_STYLE_MODES = {"LOTS"}
 QTY_STYLE_MODES = {"SHARES", "UNITS", "CONTRACTS"}
@@ -40,6 +44,143 @@ def _plain(value: Any) -> Any:
     if isinstance(value, list):
         return [_plain(v) for v in value]
     return value
+
+
+async def _safe_capital_snapshot(db: AsyncSession, deployment: StrategyDeployment | None):
+    """Resolve broker effective capital without allowing readiness/risk preview to crash.
+
+    Broker account metadata can be incomplete during agent reconnects. In that case
+    order preview must fall back to deployment/runtime capital and return a clean
+    validation response instead of a Python NameError/AttributeError.
+    """
+    if deployment is None:
+        return None
+    try:
+        broker_account = None
+        broker_account_id = getattr(deployment, "broker_account_id", None)
+        if broker_account_id:
+            broker_account = (
+                await db.execute(select(BrokerAccount).where(BrokerAccount.id == broker_account_id))
+            ).scalar_one_or_none()
+        return get_effective_trading_capital(deployment, broker_account)
+    except Exception as exc:  # pragma: no cover - defensive readiness guard
+        logger.warning(
+            "LIVE_ORDER_PREVIEW_CAPITAL_SNAPSHOT_FALLBACK deployment_id=%s error=%s",
+            getattr(deployment, "id", None),
+            exc,
+        )
+        return None
+
+
+def _snapshot_capital_value(capital_snapshot: Any, risk_cfg: dict[str, Any] | None = None, default: float = 0) -> float:
+    if capital_snapshot is not None:
+        resolved = _float(getattr(capital_snapshot, "effective_capital", None), None)
+        if resolved is not None and resolved > 0:
+            return resolved
+    risk_cfg = risk_cfg or {}
+    resolved = _float(risk_cfg.get("initial_capital"), None)
+    if resolved is not None and resolved > 0:
+        return resolved
+    return default
+
+
+def _snapshot_capital_source(capital_snapshot: Any) -> str:
+    if capital_snapshot is not None:
+        return str(getattr(capital_snapshot, "effective_capital_source", None) or "BROKER_OR_DEPLOYMENT_CAPITAL")
+    return "RUNTIME_CONFIG"
+
+
+BROKER_CAPITAL_SOURCES = {"BROKER_EQUITY", "BROKER_BALANCE", "BROKER_FREE_MARGIN"}
+FALLBACK_CAPITAL_SOURCES = {"FALLBACK_DEPLOYMENT_CAPITAL", "RUNTIME_CONFIG", "UNKNOWN"}
+
+
+def _is_broker_auto_execution(deployment: StrategyDeployment | None, preview_mode: str | None) -> bool:
+    if deployment is None:
+        return False
+    if str(getattr(deployment, "mode", "") or "").upper() not in {"DEMO", "LIVE"}:
+        return False
+    # Only the explicit MANUAL preview endpoint may use fallback capital as a warning.
+    # Runner execution, readiness auto preview, dry test, and demo micro order must
+    # not size broker orders from default/deployment capital when broker capital is absent.
+    return str(preview_mode or "").upper() != "MANUAL"
+
+
+def _is_broker_preview(deployment: StrategyDeployment | None) -> bool:
+    if deployment is None:
+        return False
+    return str(getattr(deployment, "mode", "") or "").upper() in {"DEMO", "LIVE"}
+
+
+def _capital_warning_or_error(deployment: StrategyDeployment | None, capital_snapshot: Any, preview_mode: str | None) -> tuple[bool, str | None]:
+    source = _snapshot_capital_source(capital_snapshot)
+    value = _snapshot_capital_value(capital_snapshot, default=0)
+    if not _is_broker_preview(deployment):
+        return False, None
+    if source in BROKER_CAPITAL_SOURCES and value > 0:
+        return False, None
+    message = "Broker capital is unavailable. Sync broker account before live order sizing."
+    if _is_broker_auto_execution(deployment, preview_mode):
+        return True, message
+    return False, message
+
+
+
+
+def _as_mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _normalized_sl_mode(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    mode = str(value).strip().upper().replace(" ", "_")
+    aliases = {
+        "FIXED": "FIXED_PERCENT",
+        "FIXED_PRICE_RISK": "FIXED_PERCENT",
+        "FIXED_PRICE_RISK_PCT": "FIXED_PERCENT",
+        "FIXED_PERCENT_SL": "FIXED_PERCENT",
+        "STRATEGY": "STRATEGY_SUGGESTED",
+        "STRATEGY_SUGGESTED_SL": "STRATEGY_SUGGESTED",
+    }
+    return aliases.get(mode, mode)
+
+
+def _get_nested(mapping: Any, *path: str) -> Any:
+    cur = mapping
+    for key in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(key)
+    return cur
+
+
+def _deployment_sl_tp_override(deployment: StrategyDeployment) -> dict[str, Any]:
+    """Return deployment-level SL/TP overrides without forcing the SL mode.
+
+    The previous live preview implementation always wrote
+    ``sl_tp.sl_mode = FIXED_PERCENT``. That made AUTO live execution ignore a
+    strategy/default runtime config of STRATEGY_SUGGESTED and produced very wide
+    fixed-percent SL/TP. This helper only includes sl_mode when it was explicitly
+    stored on the deployment/settings payload.
+    """
+    override: dict[str, Any] = {
+        "rr_ratio": _float(getattr(deployment, "rr_ratio", None), 2),
+        "fixed_price_risk_pct": _float(getattr(deployment, "price_risk_pct", None), 0.002),
+    }
+
+    candidates: list[Any] = [
+        getattr(deployment, "sl_mode", None),
+        _get_nested(getattr(deployment, "runtime_config", None), "sl_tp", "sl_mode"),
+        _get_nested(getattr(deployment, "runtime_config_snapshot", None), "sl_tp", "sl_mode"),
+        _get_nested(getattr(deployment, "settings_json", None), "sl_tp", "sl_mode"),
+        _get_nested(getattr(deployment, "config_json", None), "sl_tp", "sl_mode"),
+    ]
+    for candidate in candidates:
+        mode = _normalized_sl_mode(candidate)
+        if mode:
+            override["sl_mode"] = mode
+            break
+    return override
 
 
 def _floor_to_step(value: Decimal, step: Decimal) -> Decimal:
@@ -167,21 +308,30 @@ async def resolve_live_runtime_config(
         preset = (await db.execute(select(StrategyRuntimePreset).where(StrategyRuntimePreset.strategy_id == strategy.id, StrategyRuntimePreset.is_default.is_(True), StrategyRuntimePreset.is_active.is_(True)))).scalar_one_or_none()
 
     deployment_override: dict[str, Any] = {}
+    capital_snapshot = await _safe_capital_snapshot(db, deployment) if deployment is not None else None
     if deployment is not None:
+        quantity_mode_value = str(getattr(deployment, "quantity_mode", "") or "RISK_BASED").upper()
+        position_size_mode = "RISK_BASED"
+        fixed_lot_value = None
+        if quantity_mode_value in {"FIXED_QTY", "FIXED_QUANTITY"}:
+            position_size_mode = "FIXED_QUANTITY"
+        elif quantity_mode_value in {"FIXED_LOT", "FIXED_LOTS", "LOT", "LOTS"}:
+            # Use fixed lot only when explicitly selected on the deployment/runtime settings.
+            # mt5_demo_max_lot is a safety cap, not an automatic fixed-lot override.
+            position_size_mode = "FIXED_LOT"
+            fixed_lot_value = _float(getattr(deployment, "fixed_lot", None), None) or _float(getattr(deployment, "lot_size", None), None)
+
         deployment_override = {
             "risk": {
-                "initial_capital": _float(getattr(deployment, "capital", None), 100000),
+                "initial_capital": _snapshot_capital_value(capital_snapshot, default=0),
                 "risk_percent": _float(getattr(deployment, "risk_per_trade", None), 0.01),
-                "position_size_mode": "FIXED_QUANTITY" if str(getattr(deployment, "quantity_mode", "") or "").upper() == "FIXED_QTY" else "RISK_BASED",
+                "position_size_mode": position_size_mode,
+                "fixed_lot": fixed_lot_value,
                 "fixed_quantity": _float(getattr(deployment, "fixed_quantity", None), None),
                 "max_lot_cap": _float(getattr(deployment, "mt5_demo_max_lot", None), None),
                 "max_quantity_cap": _float(getattr(deployment, "max_quantity", None), None),
             },
-            "sl_tp": {
-                "rr_ratio": _float(getattr(deployment, "rr_ratio", None), 2),
-                "fixed_price_risk_pct": _float(getattr(deployment, "price_risk_pct", None), 0.002),
-                "sl_mode": "FIXED_PERCENT",
-            },
+            "sl_tp": _deployment_sl_tp_override(deployment),
             "execution": {
                 "allow_short": bool(getattr(deployment, "allow_short", True)),
                 "max_trades_per_day": getattr(deployment, "max_trades_per_day", None),
@@ -261,9 +411,7 @@ def _atr(candles: list[LiveMarketCandle], period: int) -> Decimal | None:
 def _derive_sl_tp_from_candles(side: str, entry_price: Decimal, stop_loss: Decimal | None, runtime_config: dict[str, Any], candles: list[LiveMarketCandle] | None = None) -> tuple[Decimal | None, Decimal | None, str | None]:
     sl_tp = runtime_config.get("sl_tp") or {}
     rr = _dec(sl_tp.get("rr_ratio"), "2")
-    sl_mode = str(sl_tp.get("sl_mode") or "FIXED_PERCENT").upper().replace(" ", "_")
-    if sl_mode == "STRATEGY_SUGGESTED":
-        sl_mode = "FIXED_PERCENT"
+    sl_mode = _normalized_sl_mode(sl_tp.get("sl_mode")) or "FIXED_PERCENT"
     if stop_loss is None or stop_loss <= 0:
         if sl_mode == "ATR":
             period = int(_float(sl_tp.get("atr_period"), 14) or 14)
@@ -302,7 +450,7 @@ def _broker_order_payload_preview(
     qty_value: Decimal, quantity_mode: str, deployment: StrategyDeployment | None = None,
 ) -> dict[str, Any]:
     code = (broker_code or "PAPER").upper()
-    if code == "MT5" or quantity_mode in LOT_STYLE_MODES:
+    if code in {"MT5", "CTRADER", "CTRADER_API"} or quantity_mode in LOT_STYLE_MODES:
         return {
             "broker": code,
             "symbol": symbol,
@@ -313,7 +461,7 @@ def _broker_order_payload_preview(
             "sl": float(stop_loss) if stop_loss is not None else None,
             "tp": float(target) if target is not None else None,
             "comment": "AlgoAgentX Demo",
-            "note": "MT5 uses volume = final_lot_size. Never send share quantity as volume.",
+            "note": "MT5/cTrader use volume = final_lot_size. Never send share quantity as volume.",
         }
     return {
         "broker": code,
@@ -339,6 +487,7 @@ async def build_live_order_preview(
     side: str = "BUY",
     entry_price: Any = None,
     stop_loss: Any = None,
+    strategy_target: Any = None,
     runtime_config: dict[str, Any] | None = None,
     strategy_id: str | None = None,
     strategy_preset_id: str | None = None,
@@ -380,6 +529,35 @@ async def build_live_order_preview(
         return {"validation_status": "REJECTED", "status": "REJECTED", "rejected_reason": "entry_price or latest market price is required.", "symbol": resolved_symbol, "side": side, "instrument_spec_snapshot": instrument_spec}
 
     config = await resolve_live_runtime_config(db, deployment=deployment, instrument=instrument_row, user_override=runtime_config or {}, strategy_id=strategy_id, strategy_preset_id=strategy_preset_id)
+
+    # Keep an order-preview-local capital snapshot for metadata and sizing.
+    # This is intentionally defined before every later reference so readiness,
+    # demo micro order, and auto-runner previews never fail with NameError when
+    # broker capital metadata is missing or temporarily unavailable.
+    capital_snapshot = await _safe_capital_snapshot(db, deployment)
+    capital_source = _snapshot_capital_source(capital_snapshot)
+    effective_capital = _snapshot_capital_value(capital_snapshot, risk_cfg=None, default=0)
+    capital_reject, capital_warning = _capital_warning_or_error(deployment, capital_snapshot, preview_mode)
+    if capital_reject:
+        return {
+            "validation_status": "REJECTED",
+            "status": "REJECTED",
+            "rejected_reason": capital_warning,
+            "symbol": resolved_symbol,
+            "side": side,
+            "entry_price": float(entry),
+            "effective_capital": effective_capital,
+            "effective_capital_source": capital_source,
+            "risk_metadata": {
+                "effective_capital": effective_capital,
+                "effective_capital_source": capital_source,
+                "capital_warning": capital_warning,
+                "position_size_mode": str((config.get("risk") or {}).get("position_size_mode") or "RISK_BASED"),
+            },
+            "runtime_config_snapshot": config,
+            "instrument_spec_snapshot": instrument_spec,
+        }
+
     config_validation = validate_runtime_config(config)
     if not config_validation.get("valid"):
         return {
@@ -409,13 +587,18 @@ async def build_live_order_preview(
     latest_candle = candles[-1] if candles else None
     price_warnings = _latest_price_sanity_warnings(deployment, latest_candle, instrument_spec, entry)
 
+    strategy_stop_loss_value = _float(stop_loss, None) if stop_loss not in (None, "") else None
+    strategy_target_value = _float(strategy_target, None) if strategy_target not in (None, "") else None
+    strategy_sltp_received = strategy_stop_loss_value is not None or strategy_target_value is not None
+
     entry_plan = calculate_live_entry_plan(
         candles=candles,
         side=side,
         entry_price=entry,
         runtime_config=config,
         instrument_spec=instrument_spec,
-        strategy_stop_loss=stop_loss if stop_loss not in (None, "") else None,
+        strategy_stop_loss=strategy_stop_loss_value,
+        strategy_target=strategy_target_value,
     )
     if entry_plan.get("status") != "OK":
         return {
@@ -427,6 +610,9 @@ async def build_live_order_preview(
             "entry_price": float(entry),
             "stop_loss": entry_plan.get("stop_loss"),
             "target": entry_plan.get("target"),
+            "strategy_stop_loss": strategy_stop_loss_value,
+            "strategy_target": strategy_target_value,
+            "strategy_sltp_received": strategy_sltp_received,
             "latest_price_warnings": price_warnings,
             "entry_plan": entry_plan,
             "runtime_config_snapshot": config,
@@ -438,7 +624,7 @@ async def build_live_order_preview(
     size = calculate_position_size(
         entry_price=float(entry),
         stop_loss=float(sl),
-        capital=float(risk_cfg.get("initial_capital") or 0),
+        capital=effective_capital,
         risk_percent=float(risk_cfg.get("risk_percent") or 0),
         instrument_spec=instrument_spec,
         position_size_mode=str(risk_cfg.get("position_size_mode") or "RISK_BASED"),
@@ -449,11 +635,31 @@ async def build_live_order_preview(
         side=side,
     )
     quantity_mode = str(size.get("quantity_mode") or instrument_spec.get("quantity_mode") or "SHARES").upper()
+    if (broker_code or "").upper() in {"CTRADER", "CTRADER_API"} and quantity_mode not in LOT_STYLE_MODES:
+        quantity_mode = "LOTS"
     final_lot = _dec(size.get("final_lot_size"), "0") if size.get("final_lot_size") is not None else None
     final_qty = _dec(size.get("final_quantity"), "0") if size.get("final_quantity") is not None else None
     qty_value = final_lot if quantity_mode in LOT_STYLE_MODES else final_qty
 
     if size.get("status") != "OK" or qty_value is None or qty_value <= 0:
+        rejected_risk_metadata = {
+            "effective_capital": effective_capital,
+            "effective_capital_source": capital_source,
+            "risk_percent": float(risk_cfg.get("risk_percent") or 0),
+            "risk_amount": size.get("risk_amount"),
+            "position_size_mode": str(risk_cfg.get("position_size_mode") or "RISK_BASED"),
+            "raw_lot": size.get("raw_lot_size"),
+            "final_lot": size.get("final_lot_size"),
+            "raw_quantity": size.get("raw_quantity"),
+            "final_quantity": size.get("final_quantity"),
+            "max_lot_cap": risk_cfg.get("max_lot_cap"),
+            "max_quantity_cap": risk_cfg.get("max_quantity_cap"),
+            "min_lot": instrument_spec.get("min_lot"),
+            "lot_step": instrument_spec.get("lot_step"),
+            "min_quantity": instrument_spec.get("min_quantity"),
+            "quantity_step": instrument_spec.get("quantity_step"),
+            "capital_warning": capital_warning,
+        }
         return {
             "validation_status": "REJECTED",
             "status": "REJECTED",
@@ -463,8 +669,14 @@ async def build_live_order_preview(
             "entry_price": float(entry),
             "stop_loss": float(sl) if sl is not None else None,
             "target": float(target) if target is not None else None,
+            "strategy_stop_loss": strategy_stop_loss_value,
+            "strategy_target": strategy_target_value,
+            "strategy_sltp_received": strategy_sltp_received,
             "quantity_mode": quantity_mode,
             "risk_engine": size,
+            "risk_metadata": rejected_risk_metadata,
+            "effective_capital": effective_capital,
+            "effective_capital_source": capital_source,
             "latest_price_warnings": price_warnings,
             "entry_plan": entry_plan,
             "runtime_config_snapshot": config,
@@ -475,15 +687,47 @@ async def build_live_order_preview(
         step = _dec(instrument_spec.get("lot_step"), "0.01")
         min_v = _dec(instrument_spec.get("min_lot"), "0.01")
         max_v = _dec(instrument_spec.get("max_lot"), "100")
-        capped = min(max(qty_value, min_v), max_v)
+        capped = min(qty_value, max_v)
         qty_value = _floor_to_step(capped, step)
+        if qty_value < min_v:
+            return {
+                "validation_status": "REJECTED",
+                "status": "REJECTED",
+                "rejected_reason": "Risk-based lot is below broker minimum lot.",
+                "symbol": resolved_symbol,
+                "side": side,
+                "entry_price": float(entry),
+                "stop_loss": float(sl) if sl is not None else None,
+                "target": float(target) if target is not None else None,
+                "quantity_mode": quantity_mode,
+                "risk_engine": size,
+                "entry_plan": entry_plan,
+                "runtime_config_snapshot": config,
+                "instrument_spec_snapshot": instrument_spec,
+            }
         final_lot = qty_value
     else:
         step = _dec(instrument_spec.get("quantity_step"), "1")
         min_v = _dec(instrument_spec.get("min_quantity"), "1")
         max_v = _dec(instrument_spec.get("max_quantity"), "999999999")
-        capped = min(max(qty_value, min_v), max_v)
+        capped = min(qty_value, max_v)
         qty_value = _floor_to_step(capped, step).quantize(Decimal("1"), rounding=ROUND_DOWN)
+        if qty_value < min_v:
+            return {
+                "validation_status": "REJECTED",
+                "status": "REJECTED",
+                "rejected_reason": "Risk-based quantity is below broker minimum quantity.",
+                "symbol": resolved_symbol,
+                "side": side,
+                "entry_price": float(entry),
+                "stop_loss": float(sl) if sl is not None else None,
+                "target": float(target) if target is not None else None,
+                "quantity_mode": quantity_mode,
+                "risk_engine": size,
+                "entry_plan": entry_plan,
+                "runtime_config_snapshot": config,
+                "instrument_spec_snapshot": instrument_spec,
+            }
         final_qty = qty_value
 
     order_payload = _broker_order_payload_preview(
@@ -502,15 +746,34 @@ async def build_live_order_preview(
     risk_metadata = {
         "quantity_mode": quantity_mode,
         "requested_lot": size.get("raw_lot_size"),
+        "raw_lot": size.get("raw_lot_size"),
         "final_lot": float(final_lot) if final_lot is not None else None,
         "requested_quantity": size.get("raw_quantity"),
+        "raw_quantity": size.get("raw_quantity"),
         "final_quantity": float(final_qty) if final_qty is not None else None,
+        "risk_percent": float(risk_cfg.get("risk_percent") or 0),
         "risk_amount": size.get("risk_amount"),
         "actual_risk": size.get("actual_risk_amount"),
         "risk_engine": size,
         "risk_engine_version": RISK_ENGINE_VERSION,
         "instrument_spec_snapshot": instrument_spec,
         "runtime_config_snapshot": config,
+        "effective_capital": effective_capital,
+        "initial_capital": _float(risk_cfg.get("initial_capital"), 0),
+        "position_size_mode": str(risk_cfg.get("position_size_mode") or "RISK_BASED"),
+        "effective_capital_source": capital_source,
+        "capital_warning": capital_warning,
+        "max_lot_cap": risk_cfg.get("max_lot_cap"),
+        "max_quantity_cap": risk_cfg.get("max_quantity_cap"),
+        "min_lot": instrument_spec.get("min_lot"),
+        "lot_step": instrument_spec.get("lot_step"),
+        "min_quantity": instrument_spec.get("min_quantity"),
+        "quantity_step": instrument_spec.get("quantity_step"),
+        "strategy_stop_loss": strategy_stop_loss_value,
+        "strategy_target": strategy_target_value,
+        "strategy_sltp_received": strategy_sltp_received,
+        "preview_stop_loss": float(sl) if sl is not None else None,
+        "preview_target": float(target) if target is not None else None,
     }
 
     return {
@@ -530,6 +793,9 @@ async def build_live_order_preview(
         "preview_mode": "AUTO_LATEST_PRICE" if auto_mode else "MANUAL",
         "stop_loss": float(sl) if sl is not None else None,
         "target": float(target) if target is not None else None,
+        "strategy_stop_loss": strategy_stop_loss_value,
+        "strategy_target": strategy_target_value,
+        "strategy_sltp_received": strategy_sltp_received,
         "expected_reward_amount": (float(size.get("actual_risk_amount") or 0) * float((config.get("sl_tp") or {}).get("rr_ratio") or 0)) if size.get("actual_risk_amount") is not None else None,
         "account_currency": instrument_spec.get("account_currency"),
         "currency_symbol": instrument_spec.get("currency_symbol"),
@@ -541,6 +807,9 @@ async def build_live_order_preview(
         "entry_plan": entry_plan,
         "latest_price_warnings": price_warnings,
         "risk_metadata": risk_metadata,
+        "effective_capital": effective_capital,
+        "effective_capital_source": capital_source,
+        "capital_warning": capital_warning,
         "broker_symbol": order_payload.get("symbol"),
         "broker_payload_preview": order_payload,
         "broker_order_payload_preview": order_payload,

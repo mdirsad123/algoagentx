@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import datetime, time, timezone
 from decimal import Decimal
@@ -10,24 +11,28 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...core.config import settings
 from ...core.dependencies import get_current_user, get_db
-from ...db.models import BrokerAccount, BrokerOrderEvent, LiveEquityPoint, LiveOrder, LivePosition, LiveSignal, LiveTradeLog, StrategyDeployment
+from ...db.models import BrokerAccount, BrokerInstrument, BrokerOrderEvent, LiveEquityPoint, LiveOrder, LivePosition, LiveSignal, LiveTradeLog, StrategyDeployment
+from ...db.models.instruments import Instrument
 from ...schemas.live_trading import BrokerOrderEventOut, LiveOrderOut, LivePositionOut, LiveSignalOut, LiveTradeLogOut, ManualDeploymentSignalIn, RunStrategyOnceIn, StrategyDeploymentCreate, StrategyDeploymentOut, StrategyDeploymentUpdate
 from ...services.brokers.factory import get_broker_adapter, get_broker_code
 from ...services.live.execution_engine import execute_signal
 from ...services.live.pnl_service import to_decimal
+from ...services.live.capital_service import get_effective_trading_capital
+from ...services.live.live_approval_service import check_broker_deployment_approval, enforce_approval_limits
 from ...services.live.broker_candle_service import get_candle_snapshot, refresh_deployment_candles
 from ...services.live.strategy_runner import run_strategy_for_deployment, run_full_dry_test_for_deployment
+from ...services.live.compatibility_service import run_live_compatibility_check, compatibility_failed
 from ...services.live.auto_runner_service import run_deployment_if_due
 from ...services.live.broker_sync_service import clamp_live_sync_interval, sync_deployment_broker_state
-from ...services.live.trading_safety import LIVE_DISABLED_MESSAGE, check_platform_mode_allowed, get_platform_trading_settings, mark_heartbeat
+from ...services.live.trading_safety import check_platform_mode_allowed, get_platform_trading_settings, mark_heartbeat
 from ...services.live_trading.readiness_service import build_live_deployment_readiness
 from ...services.live_trading.paper_position_manager import process_paper_positions_for_deployment
 from ...services.live_trading.final_qa_service import build_final_live_qa, run_paper_order_test, run_demo_micro_order_test
 from ...services.billing.live_subscription_gate import build_live_trading_access_status, require_active_subscription_for_live_trading
 from ...utils.api_response import success_response
 from .live_common import (
-    block_live_mode,
     dump_list,
     dump_one,
     get_broker_account_or_404,
@@ -40,6 +45,7 @@ from .live_common import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class LiveSyncSettingsIn(BaseModel):
@@ -86,7 +92,94 @@ def _broker_safe(row: BrokerAccount | None) -> dict | None:
         "equity": _as_money(last_test.get("equity")),
         "currency": last_test.get("currency"),
         "last_connected_at": row.last_connected_at,
+        "broker_code": row.broker_code,
+        "selected_account": _selected_ctrader_account(row),
     }
+
+
+
+
+async def _deployment_currency(db: AsyncSession, row: StrategyDeployment, broker: dict | None) -> str:
+    broker_currency = broker.get("currency") if isinstance(broker, dict) else None
+    if broker_currency:
+        return str(broker_currency).upper()
+
+    instrument_row = (await db.execute(
+        select(Instrument.account_currency)
+        .where(Instrument.symbol == row.instrument)
+        .order_by(Instrument.is_active.desc(), Instrument.updated_at.desc().nullslast())
+        .limit(1)
+    )).scalar_one_or_none()
+    if instrument_row:
+        return str(instrument_row).upper()
+
+    for attr in ("account_currency", "currency"):
+        value = getattr(row, attr, None)
+        if value:
+            return str(value).upper()
+    return "USD"
+
+def _selected_ctrader_account(row: BrokerAccount | None) -> dict | None:
+    meta = getattr(row, "metadata_json", None) or {}
+    selected = meta.get("ctrader_selected_account") if isinstance(meta, dict) else None
+    return selected if isinstance(selected, dict) else None
+
+def _is_ctrader(row: BrokerAccount | None) -> bool:
+    return str((getattr(row, "broker_code", None) or getattr(row, "broker_name", None) or "")).upper() in {"CTRADER", "CTRADER_API"}
+
+
+def _broker_code_value(row: BrokerAccount | None) -> str:
+    return str((getattr(row, "broker_code", None) or getattr(row, "broker_name", None) or "")).upper()
+
+
+def _is_upstox(row: BrokerAccount | None) -> bool:
+    return _broker_code_value(row) == "UPSTOX"
+
+
+def _is_indian_market(instrument_row: Instrument | None, exchange: str | None = None, segment: str | None = None) -> bool:
+    values = [exchange, segment]
+    if instrument_row is not None:
+        values.extend([instrument_row.exchange, instrument_row.market, instrument_row.asset_class, instrument_row.instrument_type])
+    return any("INDIAN" in str(v or "").upper() or str(v or "").upper() in {"NSE", "NSE_EQ", "NSE_FO", "BSE", "BSE_EQ"} for v in values)
+
+
+async def _instrument_row_for_symbol(db: AsyncSession, symbol: str | None) -> Instrument | None:
+    if not symbol:
+        return None
+    return (await db.execute(
+        select(Instrument)
+        .where(Instrument.symbol == str(symbol).strip())
+        .order_by(Instrument.is_active.desc(), Instrument.updated_at.desc().nullslast())
+        .limit(1)
+    )).scalar_one_or_none()
+
+
+async def _resolve_and_validate_broker_mapping(db: AsyncSession, values: dict, broker: BrokerAccount | None) -> None:
+    symbol = str(values.get("instrument") or "").strip()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Instrument is required.")
+    instrument_row = await _instrument_row_for_symbol(db, symbol)
+    if instrument_row is not None:
+        values["instrument"] = instrument_row.symbol
+        values["exchange"] = values.get("exchange") or instrument_row.exchange
+        values["segment"] = values.get("segment") or instrument_row.market or instrument_row.asset_class
+        resolved_symbol = values.get("broker_symbol") or values.get("instrument_key") or instrument_row.broker_symbol or instrument_row.symbol
+        values["broker_symbol"] = values.get("broker_symbol") or resolved_symbol
+        values["instrument_key"] = values.get("instrument_key") or resolved_symbol
+    else:
+        values["broker_symbol"] = values.get("broker_symbol") or symbol
+        values["instrument_key"] = values.get("instrument_key") or values.get("broker_symbol") or symbol
+
+    broker_code = _broker_code_value(broker)
+    is_indian = _is_indian_market(instrument_row, values.get("exchange"), values.get("segment"))
+    if broker_code == "UPSTOX" or is_indian:
+        if not str(values.get("instrument_key") or "").strip():
+            raise HTTPException(status_code=400, detail="Instrument key is required for this broker/instrument.")
+        if not str(values.get("exchange") or "").strip() or not str(values.get("segment") or "").strip():
+            raise HTTPException(status_code=400, detail="Exchange and segment are required for Indian/Upstox instruments.")
+    elif broker_code in {"MT5", "MT5_AGENT", "CTRADER", "CTRADER_API"}:
+        if not str(values.get("broker_symbol") or values.get("instrument_key") or "").strip():
+            raise HTTPException(status_code=400, detail="Broker symbol is required for this broker/instrument.")
 
 
 def _strategy_name(row: StrategyDeployment) -> str:
@@ -94,10 +187,36 @@ def _strategy_name(row: StrategyDeployment) -> str:
     return getattr(strategy, "name", None) or row.strategy_id
 
 
-async def _validate_broker_for_user(db: AsyncSession, broker_account_id: UUID | None, current_user: dict) -> None:
+async def _validate_broker_for_user(db: AsyncSession, broker_account_id: UUID | None, current_user: dict, mode: str | None = None, instrument: str | None = None, broker_symbol: str | None = None, instrument_key: str | None = None) -> None:
     if broker_account_id is None:
         return
-    await get_broker_account_or_404(db, broker_account_id, current_user)
+    broker = await get_broker_account_or_404(db, broker_account_id, current_user)
+    if str(mode or "").upper() == "LIVE" and _is_ctrader(broker) and not bool(getattr(settings, "ctrader_live_trading_enabled", False)):
+        raise HTTPException(status_code=400, detail="cTrader LIVE execution is disabled by platform configuration.")
+    if str(mode or "").upper() in {"DEMO", "LIVE"} and _is_ctrader(broker):
+        if str(mode or "").upper() == "DEMO" and not bool(getattr(settings, "ctrader_demo_trading_enabled", True)):
+            raise HTTPException(status_code=400, detail="cTrader demo trading is disabled by platform configuration.")
+        if str(broker.status or "").upper() != "CONNECTED":
+            raise HTTPException(status_code=400, detail="cTrader broker account must be CONNECTED before creating a demo deployment.")
+        selected = _selected_ctrader_account(broker)
+        if not selected:
+            raise HTTPException(status_code=400, detail="Select a cTrader trading account before creating a demo deployment.")
+        account_mode = str(selected.get("account_type") or broker.mode or "").upper()
+        requested_mode = str(mode or "").upper()
+        if requested_mode == "LIVE" and not bool(getattr(settings, "ctrader_live_trading_enabled", False)):
+            raise HTTPException(status_code=400, detail="cTrader LIVE execution is disabled by platform configuration.")
+        if account_mode and account_mode != requested_mode:
+            raise HTTPException(status_code=400, detail=f"cTrader selected account is not {requested_mode}.")
+        symbol = str(broker_symbol or instrument_key or instrument or "").strip().upper()
+        if not symbol:
+            raise HTTPException(status_code=400, detail="cTrader deployment requires broker symbol or instrument.")
+        meta = broker.metadata_json or {}
+        symbols_preview = meta.get("ctrader_symbols_preview") if isinstance(meta, dict) else []
+        has_preview_match = any(str((item or {}).get("symbol_name") or (item or {}).get("trading_symbol") or (item or {}).get("symbol") or "").upper() == symbol for item in symbols_preview if isinstance(item, dict))
+        has_db_mapping = (await db.execute(select(BrokerInstrument.id).where(BrokerInstrument.broker_provider_code == "CTRADER", BrokerInstrument.is_active == True, ((BrokerInstrument.trading_symbol == symbol) | (BrokerInstrument.instrument_key == symbol))).limit(1))).scalar_one_or_none() is not None
+        if not (has_preview_match or has_db_mapping):
+            # Do not hard-block old symbols when sync bridge is not configured; log/metadata still tells user to sync symbols.
+            return
 
 
 
@@ -110,7 +229,7 @@ def _validate_safe_deployment_values(values: dict, current: StrategyDeployment |
     merged.update(values)
     def dec(key: str, default: str = "0") -> Decimal:
         return _dec(merged.get(key), default)
-    if "capital" in merged and dec("capital") <= 0:
+    if "capital" in merged and merged.get("capital") is not None and dec("capital") <= 0:
         raise HTTPException(status_code=400, detail="Capital must be greater than 0.")
     if "risk_per_trade" in merged:
         risk = dec("risk_per_trade")
@@ -194,7 +313,7 @@ def _mt5_position_time(position: dict) -> datetime:
 
 async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, broker_row: BrokerAccount | None) -> dict | None:
     """Refresh DEMO account/position/PnL from brokers that support position sync."""
-    if row.mode != "DEMO" or broker_row is None or broker_row.status != "CONNECTED":
+    if row.mode not in {"DEMO", "LIVE"} or broker_row is None or broker_row.status != "CONNECTED":
         return None
     broker_code = get_broker_code(broker_row)
     if broker_code != "MT5":
@@ -222,13 +341,16 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
 
     raw_positions = []
     if hasattr(adapter, "get_positions"):
-        raw_positions = await adapter.get_positions(row.instrument)
+        try:
+            raw_positions = await adapter.get_positions(getattr(row, "broker_symbol", None) or row.instrument)
+        except TypeError:
+            raw_positions = await adapter.get_positions()
     raw_positions = [p for p in (raw_positions or []) if isinstance(p, dict) and not (p.get("success") is False)]
 
-    since = row.started_at or row.created_at or datetime.now(timezone.utc)
+    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
     deals_pnl = {"realized_pnl": "0", "deal_count": 0}
     if hasattr(adapter, "get_deals_pnl"):
-        deals_pnl = await adapter.get_deals_pnl(row.instrument, since=since)
+        deals_pnl = await adapter.get_deals_pnl(getattr(row, "broker_symbol", None) or row.instrument, since=today_start)
 
     db_open_positions = (await db.execute(
         select(LivePosition).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN")
@@ -293,11 +415,22 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
             changed = True
 
     if changed:
-        await _write_log(db, row, "BROKER_POSITION_SYNCED", "MT5 DEMO positions synced from broker", "INFO", {"broker_open_positions": len(raw_positions), "symbol": row.instrument})
+        await _write_log(db, row, "BROKER_POSITION_SYNCED", f"MT5 {row.mode} positions synced from broker", "INFO", {"broker_open_positions": len(raw_positions), "symbol": row.instrument})
         await db.flush()
 
     unrealized = sum((_dec(p.get("profit"), "0") for p in raw_positions), Decimal("0"))
     realized = _dec(deals_pnl.get("realized_pnl"), "0") if isinstance(deals_pnl, dict) else Decimal("0")
+    today_pnl = realized + unrealized
+    if get_broker_code(broker_row) == "MT5":
+        await _write_log(db, row, "BROKER_PNL_SYNCED", "MT5 broker PnL synced", "INFO", {
+            "unrealized_pnl": str(unrealized),
+            "today_realized_pnl": str(realized),
+            "today_pnl": str(today_pnl),
+            "deal_count": int(deals_pnl.get("deal_count") or 0) if isinstance(deals_pnl, dict) else 0,
+            "positions_count": len(raw_positions),
+            "source": "MT5_AGENT_POSITIONS_AND_DEALS",
+        })
+        await db.flush()
     # Persist broker account snapshot and position reconciliation before summary metrics are queried.
     await db.commit()
     return {
@@ -305,14 +438,15 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
         "open_positions_count": len(raw_positions),
         "unrealized_pnl": unrealized,
         "realized_pnl": realized,
-        "today_pnl": realized + unrealized,
+        "today_pnl": today_pnl,
         "position_rows": raw_positions,
         "deals_pnl": deals_pnl,
+        "broker_pnl_source": "MT5_AGENT_POSITIONS_AND_DEALS" if get_broker_code(broker_row) == "MT5" else "BROKER_POSITIONS",
     }
 
 
 async def _sync_upstox_broker_state(db: AsyncSession, row: StrategyDeployment, broker_row: BrokerAccount | None) -> dict | None:
-    if row.mode != "DEMO" or broker_row is None or broker_row.status != "CONNECTED" or get_broker_code(broker_row) != "UPSTOX":
+    if row.mode not in {"DEMO", "LIVE"} or broker_row is None or broker_row.status != "CONNECTED" or get_broker_code(broker_row) != "UPSTOX":
         return None
     adapter = get_broker_adapter(broker_row, db)
     raw_orders = await adapter.get_orders() if hasattr(adapter, "get_orders") else []
@@ -386,17 +520,28 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
     day_start = datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
 
     broker = None
+    broker_row = None
     broker_metrics = None
+    broker_sync_warning = None
     if row.broker_account_id:
         broker_row = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == row.broker_account_id))).scalar_one_or_none()
         broker = _broker_safe(broker_row)
-        broker_metrics = await _refresh_demo_broker_state(db, row, broker_row)
-        if broker_metrics is not None and broker_row is not None:
+        try:
+            broker_metrics = await _refresh_demo_broker_state(db, row, broker_row)
+            if broker_metrics is not None and broker_row is not None:
+                broker = _broker_safe(broker_row)
+        except Exception as exc:
+            await db.rollback()
+            logger.warning("Live deployment broker refresh failed for %s: %s", row.id, exc, exc_info=True)
+            broker_sync_warning = str(exc)
+            broker_row = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == row.broker_account_id))).scalar_one_or_none()
             broker = _broker_safe(broker_row)
 
     realized = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == row.id))).scalar())
     unrealized = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.unrealized_pnl), 0)).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN"))).scalar())
-    today_pnl = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == row.id, LivePosition.closed_at >= day_start))).scalar())
+    today_realized_pnl = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == row.id, LivePosition.closed_at >= day_start))).scalar())
+    today_unrealized_pnl = unrealized
+    today_pnl = today_realized_pnl + today_unrealized_pnl
     open_positions_count = int((await db.execute(select(func.count(LivePosition.id)).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN"))).scalar() or 0)
     orders_count_today = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == row.id, LiveOrder.created_at >= day_start))).scalar() or 0)
     tradeable_signal_filter = LiveSignal.signal_type.in_(["BUY", "SELL", "EXIT"])
@@ -426,21 +571,21 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
     latest_runner_log = (await db.execute(select(LiveTradeLog).where(LiveTradeLog.deployment_id == row.id, LiveTradeLog.event_type.ilike("RUNNER_%")).order_by(LiveTradeLog.created_at.desc()).limit(1))).scalar_one_or_none()
 
     if broker_metrics is not None:
-        realized = _dec(broker_metrics.get("realized_pnl"), str(realized))
+        # Broker deal PnL is requested only from the UTC day start, so keep lifetime
+        # realized PnL from local deployment records and use broker values for Today PnL.
         unrealized = _dec(broker_metrics.get("unrealized_pnl"), str(unrealized))
-        today_pnl = _dec(broker_metrics.get("today_pnl"), str(today_pnl))
+        today_realized_pnl = _dec(broker_metrics.get("realized_pnl"), str(today_realized_pnl))
+        today_unrealized_pnl = _dec(broker_metrics.get("unrealized_pnl"), str(today_unrealized_pnl))
+        today_pnl = _dec(broker_metrics.get("today_pnl"), str(today_realized_pnl + today_unrealized_pnl))
         open_positions_count = int(broker_metrics.get("open_positions_count") or 0)
 
-    currency = broker.get("currency") if isinstance(broker, dict) else None
-    # DEMO deployments should display MT5 account balance/equity/currency when a broker is linked.
-    if row.mode == "DEMO" and isinstance(broker, dict):
-        broker_balance = broker.get("balance")
-        broker_equity = broker.get("equity")
-        capital_value = _dec(broker_balance, str(row.capital or "100000")) if broker_balance is not None else _dec(row.capital, "100000")
-        if broker_equity is not None:
-            equity = _dec(broker_equity, str(equity))
-    else:
-        capital_value = _dec(row.capital, "100000")
+    capital_snapshot = get_effective_trading_capital(row, broker_row, broker_metrics)
+    capital_value = capital_snapshot.effective_capital
+    if capital_snapshot.equity is not None:
+        equity = capital_snapshot.equity
+    elif latest_equity is None:
+        equity = capital_snapshot.effective_capital + realized + unrealized
+    currency = (capital_snapshot.account_currency or await _deployment_currency(db, row, broker) or "USD").upper()
 
     return {
         "deployment": {
@@ -486,12 +631,27 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
             "example_payload": row.example_payload,
         },
         "broker": broker,
+        "account": {
+            "account_currency": currency,
+            "balance": capital_snapshot.balance,
+            "equity": capital_snapshot.equity,
+            "free_margin": capital_snapshot.free_margin,
+            "effective_capital": capital_snapshot.effective_capital,
+            "effective_capital_source": capital_snapshot.effective_capital_source,
+        },
         "metrics": {
             "capital": capital_value,
             "currency": currency,
+            "account_currency": currency,
+            "balance": capital_snapshot.balance,
             "equity": equity,
+            "free_margin": capital_snapshot.free_margin,
+            "effective_capital": capital_snapshot.effective_capital,
+            "effective_capital_source": capital_snapshot.effective_capital_source,
             "realized_pnl": realized,
             "unrealized_pnl": unrealized,
+            "today_realized_pnl": today_realized_pnl,
+            "today_unrealized_pnl": today_unrealized_pnl,
             "today_pnl": today_pnl,
             "open_positions": open_positions_count,
             "open_positions_count": open_positions_count,
@@ -501,13 +661,14 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
             "signals_count_today": signals_count_today,
             "total_orders": total_orders,
             "total_signals": total_signals,
-            "source": "MT5" if broker_metrics is not None else "DATABASE",
+            "source": "MT5_BROKER" if broker_metrics is not None and (broker_metrics or {}).get("broker_pnl_source") == "MT5_AGENT_POSITIONS_AND_DEALS" else ("MT5" if broker_metrics is not None else "DATABASE"),
             "broker_synced": bool(broker_metrics is not None),
+            "broker_pnl_source": (broker_metrics or {}).get("broker_pnl_source") if broker_metrics is not None else "LOCAL_DEPLOYMENT_RECORDS",
             "broker_deal_count": (broker_metrics or {}).get("deals_pnl", {}).get("deal_count") if isinstance((broker_metrics or {}).get("deals_pnl"), dict) else None,
         },
         "broker_sync": {
             "mode": row.mode,
-            "managed_by": "AlgoAgentX Paper Engine" if row.mode == "PAPER" else "Broker SL/TP Sync" if row.mode == "DEMO" else "LIVE locked",
+            "managed_by": "Deprecated Paper Engine" if row.mode == "PAPER" else "Broker SL/TP Sync",
             "last_broker_sync_at": getattr(row, "last_broker_sync_at", None),
             "last_live_sync_at": getattr(row, "last_live_sync_at", None),
             "live_sync_enabled": getattr(row, "live_sync_enabled", False),
@@ -518,7 +679,8 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
             "open_broker_positions": (broker_metrics or {}).get("open_positions_count") if broker_metrics is not None else None,
             "local_tracked_positions": open_positions_count,
             "sync_mismatch_warning": (broker_metrics is not None and int((broker_metrics or {}).get("open_positions_count") or 0) != int(open_positions_count or 0)),
-            "latest_sync_error": getattr(row, "live_sync_last_error", None),
+            "latest_sync_error": broker_sync_warning or getattr(row, "live_sync_last_error", None),
+            "warning": broker_sync_warning,
         },
         "runner": {
             "last_run_at": getattr(row, "last_runner_at", None) or (latest_runner_log.created_at if latest_runner_log else None),
@@ -548,7 +710,10 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
                 "side": latest_order.side,
                 "symbol": latest_order.symbol,
             } if latest_order else None),
-            "last_risk_preview": ((latest_order.raw_response or {}).get("sizing") if latest_order and isinstance(latest_order.raw_response, dict) else None),
+            "last_risk_preview": (
+                ((latest_order.raw_response or {}).get("audit_preview") or (latest_order.raw_response or {}).get("sizing"))
+                if latest_order and isinstance(latest_order.raw_response, dict) else None
+            ),
             "last_execution_decision": (
                 f"Last cycle: {latest_engine_signal.signal_type} signal {latest_engine_signal.status.lower()}" if latest_engine_signal else None
             ),
@@ -582,26 +747,82 @@ async def get_live_trading_access_status(db: AsyncSession = Depends(get_db), cur
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_deployment(payload: StrategyDeploymentCreate, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     await require_active_subscription_for_live_trading(db, user_id_from(current_user))
-    _validate_safe_deployment_values(payload.model_dump())
-    block_live_mode(payload.mode)
-    await get_deployable_strategy_or_400(db, payload.strategy_id, payload.mode)
-    if payload.mode == "DEMO" and not payload.broker_account_id:
-        raise HTTPException(status_code=400, detail="DEMO mode requires a connected broker account")
-    await _validate_broker_for_user(db, payload.broker_account_id, current_user)
-    row = StrategyDeployment(user_id=user_id_from(current_user), status="DRAFT", **payload.model_dump())
+    payload_values = payload.model_dump()
+    mode = str(payload_values.get("mode") or "DEMO").upper()
+    payload_values["mode"] = mode
+    if mode == "PAPER":
+        raise HTTPException(status_code=400, detail="PAPER deployments are deprecated. Use DEMO or LIVE broker deployment.")
+    if mode not in {"DEMO", "LIVE"}:
+        raise HTTPException(status_code=400, detail="Deployment mode must be DEMO or LIVE.")
+    if not payload.broker_account_id:
+        raise HTTPException(status_code=400, detail="Broker account is required for DEMO and LIVE deployments.")
+
+    # New broker-only deployments must use broker account capital/equity. Keep the
+    # legacy DB column populated only as a safe fallback for older code paths.
+    payload_values["capital"] = Decimal("100000")
+    _validate_safe_deployment_values(payload_values)
+    await get_deployable_strategy_or_400(db, payload.strategy_id, mode)
+
+    broker = await get_broker_account_or_404(db, payload.broker_account_id, current_user)
+    await _resolve_and_validate_broker_mapping(db, payload_values, broker)
+    await _validate_broker_for_user(db, payload.broker_account_id, current_user, mode, payload_values.get("instrument"), payload_values.get("broker_symbol"), payload_values.get("instrument_key"))
+    approval = await check_broker_deployment_approval(
+        db, user_id_from(current_user), payload.broker_account_id, mode,
+        instrument=payload_values.get("instrument"), exchange=payload_values.get("exchange"), segment=payload_values.get("segment"), broker_symbol=payload_values.get("broker_symbol"), instrument_key=payload_values.get("instrument_key"),
+    )
+    enforce_approval_limits(approval, payload_values)
+    row = StrategyDeployment(user_id=user_id_from(current_user), status="DRAFT", **payload_values)
+    if approval is not None:
+        row.live_approved = True
+        row.live_approved_at = approval.approved_at if hasattr(approval, "approved_at") else datetime.now(timezone.utc)
     _ensure_tradingview_secret(row)
     db.add(row)
     await db.flush()
-    await _write_log(db, row, "DEPLOYMENT_CREATED", "Deployment created")
+    await _write_log(db, row, "DEPLOYMENT_CREATED", f"{mode} broker deployment created", metadata={"effective_capital_source": "BROKER_ACCOUNT_ON_EXECUTION"})
     await db.commit()
     await db.refresh(row)
     return success_response(dump_one(StrategyDeploymentOut, row), "Deployment created")
+
+
+
+@router.delete("/{deployment_id}")
+async def delete_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    status_value = str(row.status or "").upper()
+    if status_value not in {"DRAFT", "STOPPED", "ERROR"}:
+        raise HTTPException(status_code=400, detail="Only DRAFT, STOPPED, or ERROR deployments can be deleted. Stop the deployment before deleting it.")
+
+    open_positions_count = int((await db.execute(
+        select(func.count(LivePosition.id)).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN")
+    )).scalar() or 0)
+    if open_positions_count > 0:
+        raise HTTPException(status_code=400, detail="Cannot delete deployment while open live positions exist.")
+
+    active_orders_count = int((await db.execute(
+        select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == row.id, LiveOrder.status.in_(["PENDING", "PLACED"]))
+    )).scalar() or 0)
+    if active_orders_count > 0:
+        raise HTTPException(status_code=400, detail="Cannot delete deployment while pending or placed live orders exist.")
+
+    deleted_id = str(row.id)
+    await _write_log(db, row, "DEPLOYMENT_DELETED", "Deployment deleted by user/admin", "INFO", {"status": row.status, "mode": row.mode, "deleted_by_role": current_user.get("role")})
+    await db.flush()
+    await db.delete(row)
+    await db.commit()
+    return success_response({"deleted": True, "deployment_id": deleted_id}, "Deployment deleted")
 
 
 @router.get("/{deployment_id}/readiness")
 async def get_deployment_readiness(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     result = await build_live_deployment_readiness(db, deployment_id, current_user)
     return success_response(result, result.get("summary") or "Live readiness checked")
+
+
+@router.post("/{deployment_id}/compatibility-check")
+async def check_deployment_live_compatibility(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    result = await run_live_compatibility_check(db, deployment_id)
+    return success_response(result, result.get("summary") or "Live compatibility checked")
 
 
 @router.get("/{deployment_id}/positions")
@@ -823,6 +1044,7 @@ async def get_deployment_final_qa(deployment_id: UUID, db: AsyncSession = Depend
 @router.post("/{deployment_id}/test-paper-order")
 async def test_deployment_paper_order(deployment_id: UUID, payload: QaOrderTestIn | None = None, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     row = await get_deployment_or_404(db, deployment_id, current_user)
+    raise HTTPException(status_code=400, detail="PAPER order tests are deprecated. Use DEMO micro order verification with an approved broker account.")
     try:
         result = await run_paper_order_test(db, row, side=(payload.side if payload else "BUY"))
         return success_response(result, result.get("message") or "Paper order test completed")
@@ -916,16 +1138,65 @@ async def get_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_db)
 async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpdate, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     row = await get_deployment_or_404(db, deployment_id, current_user)
     values = payload.model_dump(exclude_unset=True)
+
+    def _locked_value_changed(field: str, incoming) -> bool:
+        current = getattr(row, field, None)
+        if incoming is None and current is None:
+            return False
+        if field == "broker_account_id":
+            return str(incoming or "") != str(current or "")
+        return str(incoming or "").strip().upper() != str(current or "").strip().upper()
+
+    locked_fields = ["mode", "broker_account_id", "instrument", "broker_symbol", "instrument_key", "exchange", "segment", "timeframe"]
+    if any(field in values and _locked_value_changed(field, values.get(field)) for field in locked_fields):
+        raise HTTPException(
+            status_code=400,
+            detail="Mode, broker account, instrument, and timeframe are locked after deployment creation. Create a new deployment to change them.",
+        )
+
     _validate_safe_deployment_values(values, row)
+    if values.get("auto_trade_enabled") is True and not bool(getattr(row, "auto_trade_enabled", False)):
+        compatibility = await run_live_compatibility_check(db, row.id)
+        if compatibility_failed(compatibility):
+            failing = [c for c in compatibility.get("checks", []) if c.get("status") == "FAIL"]
+            detail = failing[0].get("message") if failing else "Live compatibility check failed. Fix compatibility before enabling Auto Trade."
+            raise HTTPException(status_code=400, detail=detail)
     await _guard_running_deployment_update(db, row, values)
+    target_mode = str(values.get("mode", row.mode) or "DEMO").upper()
+    target_broker_account_id = values.get("broker_account_id", row.broker_account_id)
     if "mode" in values:
-        block_live_mode(values["mode"])
-        await get_deployable_strategy_or_400(db, row.strategy_id, values["mode"])
-        if values["mode"] == "DEMO" and not values.get("broker_account_id", row.broker_account_id):
-            raise HTTPException(status_code=400, detail="DEMO mode requires a connected broker account")
-    if "broker_account_id" in values:
-        await _validate_broker_for_user(db, values["broker_account_id"], current_user)
-    update_from_payload(row, payload, exclude={"status"})
+        if target_mode == "PAPER":
+            raise HTTPException(status_code=400, detail="PAPER deployments are deprecated. Use DEMO or LIVE broker deployment.")
+        await get_deployable_strategy_or_400(db, row.strategy_id, target_mode)
+        if target_mode in {"DEMO", "LIVE"} and not target_broker_account_id:
+            raise HTTPException(status_code=400, detail="Broker account is required for DEMO and LIVE deployments.")
+    if any(k in values for k in ["broker_account_id", "mode", "instrument", "exchange", "segment", "broker_symbol", "instrument_key", "max_daily_loss", "max_trades_per_day", "max_order_value"]):
+        broker = await get_broker_account_or_404(db, target_broker_account_id, current_user) if target_broker_account_id else None
+        merged_mapping = {
+            "instrument": values.get("instrument", row.instrument),
+            "exchange": values.get("exchange", row.exchange),
+            "segment": values.get("segment", row.segment),
+            "broker_symbol": values.get("broker_symbol", row.broker_symbol),
+            "instrument_key": values.get("instrument_key", row.instrument_key),
+        }
+        if target_mode in {"DEMO", "LIVE"}:
+            await _resolve_and_validate_broker_mapping(db, merged_mapping, broker)
+            for key, value in merged_mapping.items():
+                if key in values or not getattr(row, key, None):
+                    values[key] = value
+        await _validate_broker_for_user(db, target_broker_account_id, current_user, target_mode, values.get("instrument", row.instrument), values.get("broker_symbol", row.broker_symbol), values.get("instrument_key", row.instrument_key))
+        approval = await check_broker_deployment_approval(
+            db, row.user_id, target_broker_account_id, target_mode,
+            instrument=values.get("instrument", row.instrument), exchange=values.get("exchange", row.exchange), segment=values.get("segment", row.segment), broker_symbol=values.get("broker_symbol", row.broker_symbol), instrument_key=values.get("instrument_key", row.instrument_key),
+        )
+        merged_values = {"max_daily_loss": values.get("max_daily_loss", row.max_daily_loss), "max_trades_per_day": values.get("max_trades_per_day", row.max_trades_per_day), "max_order_value": values.get("max_order_value", row.max_order_value)}
+        enforce_approval_limits(approval, merged_values)
+        if approval is not None:
+            row.live_approved = True
+            row.live_approved_at = datetime.now(timezone.utc)
+    for key, value in values.items():
+        if key != "status" and hasattr(row, key):
+            setattr(row, key, value)
     await _write_log(db, row, "DEPLOYMENT_UPDATED", "Deployment updated")
     await db.commit()
     await db.refresh(row)
@@ -936,17 +1207,21 @@ async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpda
 async def start_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     row = await get_deployment_or_404(db, deployment_id, current_user)
-    block_live_mode(row.mode)
+    if str(row.mode or "").upper() == "PAPER":
+        raise HTTPException(status_code=400, detail="PAPER deployments are deprecated. Please create a DEMO or LIVE broker deployment.")
     platform_check = await check_platform_mode_allowed(db, row.mode)
     if not platform_check.allowed:
         raise HTTPException(status_code=400, detail=platform_check.reason)
     await get_deployable_strategy_or_400(db, row.strategy_id, row.mode)
-    if row.mode == "DEMO":
-        if row.broker_account_id is None:
-            raise HTTPException(status_code=400, detail="DEMO mode requires a connected broker account")
-        broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == row.broker_account_id))).scalar_one_or_none()
-        if broker is None or broker.status != "CONNECTED":
-            raise HTTPException(status_code=400, detail="DEMO mode requires a CONNECTED broker account. Go to Brokers and click Test Connection first.")
+    if row.mode in {"DEMO", "LIVE"}:
+        approval = await check_broker_deployment_approval(
+            db, row.user_id, row.broker_account_id, row.mode,
+            instrument=row.instrument, exchange=row.exchange, segment=row.segment, broker_symbol=row.broker_symbol, instrument_key=row.instrument_key,
+        )
+        enforce_approval_limits(approval, {"max_daily_loss": row.max_daily_loss, "max_trades_per_day": row.max_trades_per_day, "max_order_value": row.max_order_value})
+        if approval is not None:
+            row.live_approved = True
+            row.live_approved_at = datetime.now(timezone.utc)
     now = datetime.now(timezone.utc)
     row.status = "RUNNING"
     row.started_at = now

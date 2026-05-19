@@ -281,7 +281,9 @@ def _timeframe_overlap(timeframe: str) -> timedelta:
 
 
 def _clean_symbol(symbol: str) -> str:
-    cleaned = (symbol or "").strip().upper()
+    # Preserve case for MT5 broker suffixes such as XAUUSDc/XAGUSDc/BTCUSDc.
+    # Binance provider normalizes to uppercase internally.
+    cleaned = (symbol or "").strip()
     if not cleaned:
         raise HTTPException(status_code=400, detail="symbol is required")
     return cleaned[:100]

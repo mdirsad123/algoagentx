@@ -38,7 +38,15 @@ class AgentApiClient:
         data = self._unwrap(response)
         return data if isinstance(data, list) else []
 
-    def send_order_result(self, command_id: str, success: bool, message: str, raw_response: dict[str, Any] | None = None, broker_order_id: str | None = None, executed_price: float | None = None) -> Any:
+    def send_command_result(
+        self,
+        command_id: str,
+        success: bool,
+        message: str,
+        raw_response: dict[str, Any] | None = None,
+        broker_order_id: str | None = None,
+        executed_price: float | None = None,
+    ) -> Any:
         payload = {
             "agent_token": self.agent_token,
             "command_id": command_id,
@@ -49,5 +57,8 @@ class AgentApiClient:
             "broker_order_id": broker_order_id,
             "executed_price": executed_price,
         }
-        response = self.session.post(self._url("/api/v1/mt5-agent/order-result"), json=payload, timeout=self.timeout)
+        response = self.session.post(self._url("/api/v1/mt5-agent/command-result"), json=payload, timeout=self.timeout)
         return self._unwrap(response)
+
+    def send_order_result(self, command_id: str, success: bool, message: str, raw_response: dict[str, Any] | None = None, broker_order_id: str | None = None, executed_price: float | None = None) -> Any:
+        return self.send_command_result(command_id, success, message, raw_response, broker_order_id, executed_price)

@@ -27,6 +27,7 @@ from ...db.models import (
 from ...schemas.live_trading import BrokerOrderEventOut, LiveEquityPointOut, LiveOrderOut, LivePositionOut, LiveSignalOut, LiveTradeLogOut
 from ...utils.api_response import success_response
 from ...services.live.strategy_runner import run_strategy_for_deployment
+from ...services.live.compatibility_service import run_live_compatibility_check, compatibility_failed
 from ...services.live.broker_sync_service import clamp_live_sync_interval, sync_deployment_broker_state
 from ...services.live.trading_safety import get_platform_trading_settings
 from .live_common import dump_list, dump_one
@@ -446,6 +447,11 @@ async def _control_action(
     elif action == "DISABLE_AUTO_TRADE":
         row.auto_trade_enabled = False
     elif action == "ENABLE_AUTO_TRADE":
+        compatibility = await run_live_compatibility_check(db, row.id)
+        if compatibility_failed(compatibility):
+            failing = [c for c in compatibility.get("checks", []) if c.get("status") == "FAIL"]
+            detail = failing[0].get("message") if failing else "Live compatibility check failed. Fix compatibility before enabling Auto Trade."
+            raise HTTPException(status_code=400, detail=detail)
         row.auto_trade_enabled = True
     else:
         raise HTTPException(status_code=400, detail="Unsupported admin action")

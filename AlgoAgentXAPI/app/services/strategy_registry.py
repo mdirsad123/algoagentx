@@ -10,6 +10,7 @@ from strategies.smc_strategy import SMCStrategy
 from strategies.stock_burner_ema_9_20 import StockBurnerEMA920
 from strategies.trend_continuation_tce_adam import TrendContinuationTCE
 from strategies.simple_trendline import SimpleTrendlineStrategy
+from strategies.every_two_candle_color_demo import EveryTwoCandleColorDemoStrategy
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,11 @@ _REGISTRY: dict[str, StrategyRegistryEntry] = {
     "stock_burner_ema_920": StrategyRegistryEntry(StockBurnerEMA920, {"rr_ratio": 2.0}, "Stock Burner EMA 9/20"),
     "trend_continuation_tce": StrategyRegistryEntry(TrendContinuationTCE, {"rr_ratio": 2.0}, "Trend Continuation TCE"),
     "simple_trendline": StrategyRegistryEntry(SimpleTrendlineStrategy, {"lookback": 3, "breakout_buffer": 0.0}, "Simple Trendline Strategy"),
+    "every_two_candle_color_demo": StrategyRegistryEntry(
+        EveryTwoCandleColorDemoStrategy,
+        {"signal_every_n_candles": 2, "warmup_bars": 2, "signal_latest_candle": True},
+        "Every 2 Candle Color Demo Strategy",
+    ),
 }
 
 
@@ -58,7 +64,16 @@ def resolve_strategy(strategy_id: str | None, strategy_name: str | None, db_para
     haystack = f"{normalized_id} {normalized_name}".strip()
 
     key = None
-    if "trendline" in haystack:
+    if (
+        "every 2 candle" in haystack
+        or "every two candle" in haystack
+        or "candle color demo" in haystack
+        or "colour demo" in haystack
+        or "color demo" in haystack
+        or "demo test" in haystack
+    ):
+        key = "every_two_candle_color_demo"
+    elif "trendline" in haystack:
         key = "simple_trendline"
     elif (
         "stock burner" in haystack

@@ -10,9 +10,11 @@ import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { PageShell } from "@/components/ui/PageShell";
+import { OrderCalculationAuditPanel } from "@/components/live/OrderCalculationAuditPanel";
+import { LiveCompatibilityCard } from "@/components/live/LiveCompatibilityCard";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
-import type { AdminLiveDeploymentDetail, AdminLiveControlAction } from "@/types/live-trading";
+import type { AdminLiveDeploymentDetail, AdminLiveControlAction, LiveCompatibilityResult } from "@/types/live-trading";
 
 const date = (value?: string | null) => (value ? new Date(value).toLocaleString() : "—");
 const num = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -59,12 +61,18 @@ export default function AdminLiveTradingDetailPage() {
   const [runnerResult, setRunnerResult] = useState("");
   const [reason, setReason] = useState("Admin live control center action");
   const [liveSyncInterval, setLiveSyncInterval] = useState("10");
+  const [compatibility, setCompatibility] = useState<LiveCompatibilityResult | null>(null);
+  const [compatBusy, setCompatBusy] = useState(false);
 
   const load = async () => {
     try {
       setLoading(true);
-      const detail = await liveTradingApi.adminGetLiveDeployment(deploymentId);
+      const [detail, compat] = await Promise.all([
+        liveTradingApi.adminGetLiveDeployment(deploymentId),
+        liveTradingApi.runCompatibilityCheck(deploymentId).catch(() => null),
+      ]);
       setData(detail);
+      if (compat) setCompatibility(compat);
       setLiveSyncInterval(String(detail.deployment?.live_sync_interval_seconds || 10));
     } catch (error: any) {
       showToast(error.message || "Failed to load admin deployment detail", "error");
@@ -74,6 +82,19 @@ export default function AdminLiveTradingDetailPage() {
   };
 
   useEffect(() => { if (deploymentId) load(); }, [deploymentId]);
+
+  const runCompatibility = async () => {
+    try {
+      setCompatBusy(true);
+      const result = await liveTradingApi.runCompatibilityCheck(deploymentId);
+      setCompatibility(result);
+      showToast(result.summary || "Live compatibility checked", result.status === "FAIL" ? "error" : result.status === "WARNING" ? "warning" : "success");
+    } catch (error: any) {
+      showToast(error.message || "Compatibility check failed", "error");
+    } finally {
+      setCompatBusy(false);
+    }
+  };
 
   const runAction = async (action: AdminLiveControlAction) => {
     try {
@@ -167,6 +188,8 @@ export default function AdminLiveTradingDetailPage() {
         </div>
       </GlassCard>
 
+      <LiveCompatibilityCard result={compatibility} loading={compatBusy} onRun={runCompatibility} />
+
       <GlassCard className="mb-6 p-6" hoverEffect={false}>
         <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
           <div>
@@ -190,6 +213,14 @@ export default function AdminLiveTradingDetailPage() {
           <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-purple-100">Latest order result: <span className="font-semibold text-white">{(data.recent_orders || [])[0] ? `${(data.recent_orders || [])[0].status}${(data.recent_orders || [])[0].broker_order_id ? ` • ${(data.recent_orders || [])[0].broker_order_id}` : ""}${(data.recent_orders || [])[0].error_message ? ` • ${(data.recent_orders || [])[0].error_message}` : ""}` : "—"}</span></div>
         </div>
       </GlassCard>
+
+      <OrderCalculationAuditPanel
+        preview={((data.recent_orders || [])[0]?.raw_response as any)?.audit_preview || ((data.recent_orders || [])[0]?.raw_response as any)?.sizing}
+        latestOrder={(data.recent_orders || [])[0]}
+        latestSignal={(data.recent_signals || [])[0]}
+        currency={currency}
+        subtitle="Admin view of the latest live order calculation, broker payload preview, and rejection/validation metadata."
+      />
 
       <GlassCard className="mb-6 p-6" hoverEffect={false}>
         <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">

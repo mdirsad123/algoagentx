@@ -92,8 +92,28 @@ def main() -> None:
                         executed_price=result.get("executed_price"),
                     )
                     print(f"Order result sent | command={command_id} | success={result.get('success')} | {result.get('message')}")
+                elif command_type == "FETCH_RATES":
+                    print(f"Received FETCH_RATES command | command={command_id}")
+                    result = mt5.fetch_rates(command)
+                    api.send_command_result(
+                        command_id=command_id,
+                        success=bool(result.get("success")),
+                        message=str(result.get("message") or "MT5 rates fetched"),
+                        raw_response=result.get("raw") or result,
+                    )
+                    print(f"Rates result sent | command={command_id} | success={result.get('success')} | {result.get('message')}")
+                elif command_type == "FETCH_DEALS_PNL":
+                    print(f"Received FETCH_DEALS_PNL command | command={command_id}")
+                    result = mt5.fetch_deals_pnl(command)
+                    api.send_command_result(
+                        command_id=command_id,
+                        success=bool(result.get("success")),
+                        message=str(result.get("message") or "MT5 deals PnL fetched"),
+                        raw_response=result.get("raw") or result,
+                    )
+                    print(f"Deals PnL result sent | command={command_id} | success={result.get('success')} | {result.get('message')}")
                 else:
-                    api.send_order_result(command_id, False, f"Unsupported command type: {command_type}", {"command": command})
+                    api.send_command_result(command_id, False, f"Unsupported command type: {command_type}", {"command": command})
                     print(f"Unsupported command type: {command_type}")
         except KeyboardInterrupt:
             print("Agent stopped by user")

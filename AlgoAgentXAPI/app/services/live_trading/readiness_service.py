@@ -21,6 +21,7 @@ from ..brokers.factory import get_broker_code
 from ..live.order_preview_service import build_live_order_preview, find_live_instrument_spec
 from ..trading.guardrails import validate_instrument_spec
 from ..live.trading_safety import day_start_utc, get_platform_trading_settings
+from ..live.compatibility_service import run_live_compatibility_check
 
 PASS = "PASS"
 FAIL = "FAIL"
@@ -91,7 +92,7 @@ async def check_strategy_ready(db: AsyncSession, deployment: StrategyDeployment)
     mode = _mode(deployment)
     if mode == "LIVE":
         deployable = bool(getattr(strategy, "is_live_approved", False))
-        deploy_msg = "Strategy is LIVE approved." if deployable else "Strategy is not LIVE approved. LIVE remains locked until admin approval."
+        deploy_msg = "Strategy is LIVE approved." if deployable else "Strategy is not LIVE approved. LIVE requires strategy approval plus broker deployment approval."
     elif mode == "DEMO":
         deployable = bool(getattr(strategy, "is_deployable_demo", False))
         deploy_msg = "Strategy is enabled for DEMO deployment." if deployable else "Ask admin to enable Demo Deployment for this strategy."
@@ -180,6 +181,13 @@ async def check_risk_preview_ready(db: AsyncSession, deployment: StrategyDeploym
     ]
 
 
+async def check_live_compatibility_ready(db: AsyncSession, deployment: StrategyDeployment) -> list[dict[str, Any]]:
+    result = await run_live_compatibility_check(db, deployment.id)
+    status = str(result.get("status") or FAIL).upper()
+    message = result.get("summary") or "Live compatibility checked."
+    checks = result.get("checks") or []
+    return [_check("live_compatibility_ok", "Live Compatibility", PASS if status == PASS else WARNING if status == WARNING else FAIL, message, "Open Compatibility", f"/live-trading/{deployment.id}") | {"data": {"checks": checks}}]
+
 async def check_runner_ready(db: AsyncSession, deployment: StrategyDeployment) -> list[dict[str, Any]]:
     auto_trade = bool(getattr(deployment, "auto_trade_enabled", False))
     auto_runner = bool(getattr(deployment, "auto_runner_enabled", False))
@@ -249,12 +257,13 @@ async def build_live_deployment_readiness(db: AsyncSession, deployment_id: UUID,
         ("Instrument ready", lambda: check_instrument_ready(db, deployment), "instrument_spec_valid"),
         ("Market data ready", lambda: check_market_data_ready(db, deployment), "latest_candles_available"),
         ("Risk preview ready", lambda: check_risk_preview_ready(db, deployment), "risk_preview_ok"),
+        ("Live compatibility ready", lambda: check_live_compatibility_ready(db, deployment), "live_compatibility_ok"),
         ("Runner ready", lambda: check_runner_ready(db, deployment), "auto_runner_enabled"),
         ("Platform limits ready", lambda: check_platform_and_limits(db, deployment), "platform_mode_allowed"),
     ]:
         checks.extend(await _safe(label, fn, fallback))
 
-    blocking = {"deployment_exists", "deployment_status_running", "strategy_public", "strategy_deployable_for_mode", "broker_connected", "instrument_spec_exists", "instrument_spec_valid", "latest_entry_plan_ok", "risk_preview_ok", "platform_mode_allowed", "global_kill_switch_off", "max_daily_loss_not_exceeded", "max_trades_not_exceeded", "no_blocking_runner_error", "no_blocking_broker_error", "duplicate_protection_enabled"}
+    blocking = {"deployment_exists", "deployment_status_running", "strategy_public", "strategy_deployable_for_mode", "broker_connected", "instrument_spec_exists", "instrument_spec_valid", "latest_entry_plan_ok", "risk_preview_ok", "live_compatibility_ok", "platform_mode_allowed", "global_kill_switch_off", "max_daily_loss_not_exceeded", "max_trades_not_exceeded", "no_blocking_runner_error", "no_blocking_broker_error", "duplicate_protection_enabled"}
     has_blocking_fail = any(c.get("status") == FAIL and c.get("key") in blocking for c in checks)
     has_warning = any(c.get("status") == WARNING for c in checks)
     ready_to_auto_trade = not has_blocking_fail and bool(getattr(deployment, "auto_trade_enabled", False)) and bool(getattr(deployment, "auto_runner_enabled", False))

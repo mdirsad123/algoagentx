@@ -86,7 +86,6 @@ async def get_published_strategy_or_400(db: AsyncSession, strategy_id: str) -> S
 async def get_deployable_strategy_or_400(db: AsyncSession, strategy_id: str, mode: str | None) -> Strategy:
     strategy = await get_published_strategy_or_400(db, strategy_id)
     normalized_mode = str(mode or "PAPER").upper()
-    block_live_mode(normalized_mode)
 
     if normalized_mode == "PAPER" and not bool(getattr(strategy, "is_deployable_paper", False)):
         raise HTTPException(
@@ -96,14 +95,16 @@ async def get_deployable_strategy_or_400(db: AsyncSession, strategy_id: str, mod
     if normalized_mode == "DEMO" and not bool(getattr(strategy, "is_deployable_demo", False)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Strategy is not enabled for MT5 DEMO deployment. Ask admin to enable Demo Deployment in Deployment Gate.",
+            detail="Strategy is not enabled for DEMO deployment. Ask admin to enable Demo Deployment in Deployment Gate.",
+        )
+    if normalized_mode == "LIVE" and not bool(getattr(strategy, "is_live_approved", False)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Strategy is not enabled for LIVE deployment. Ask admin to enable LIVE approval in Deployment Gate.",
         )
     return strategy
 
 
 def block_live_mode(mode: str | None) -> None:
-    if str(mode or "").upper() == "LIVE":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Live trading is disabled until final production review.",
-        )
+    # Deprecated compatibility shim. LIVE is now controlled by broker approval/safety gates, not globally blocked.
+    return None

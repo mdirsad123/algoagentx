@@ -228,7 +228,7 @@ class CryptoApiAdapter(BrokerAdapter):
     async def get_quote(self, symbol: str) -> dict[str, Any]:
         return {"success": False, "message": "Crypto quote adapter is not enabled in this phase."}
 
-    async def get_positions(self) -> list[dict[str, Any]]:
+    async def get_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
         return []
 
     async def get_orders(self) -> list[dict[str, Any]]:

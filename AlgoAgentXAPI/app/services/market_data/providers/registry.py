@@ -7,6 +7,7 @@ from .errors import ProviderNotFoundError, ProviderNotImplementedError
 from .mock_provider import MockMarketDataProvider
 from .mt5_provider import MT5MarketDataProvider
 from .upstox_provider import UpstoxMarketDataProvider
+from .binance_provider import BinanceMarketDataProvider
 
 
 class _ReservedProvider(MarketDataProvider):
@@ -23,6 +24,7 @@ _PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "MOCK": MockMarketDataProvider,
     "MT5": MT5MarketDataProvider,
     "UPSTOX": UpstoxMarketDataProvider,
+    "BINANCE": BinanceMarketDataProvider,
     "CSV": lambda: _ReservedProvider("CSV"),
 }
 

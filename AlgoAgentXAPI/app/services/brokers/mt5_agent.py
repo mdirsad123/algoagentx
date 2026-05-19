@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -77,17 +78,208 @@ class MT5AgentAdapter(BrokerAdapter):
     async def close_position(self, position_id_or_symbol: str, side: str, qty: Decimal) -> BrokerOrderResult:
         return await self.place_market_order(BrokerOrderRequest(symbol=position_id_or_symbol, side=side, qty=qty, comment="AlgoAgentX MT5 Agent close"))
 
-    async def get_positions(self) -> list[dict[str, Any]]:
+    async def get_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
         agent = await self._latest_agent()
         meta = agent.metadata_json if agent else {}
         positions = meta.get("positions") if isinstance(meta, dict) else None
-        return positions if isinstance(positions, list) else []
+        rows = positions if isinstance(positions, list) else []
+        if not symbol:
+            return [row for row in rows if isinstance(row, dict)]
+
+        def normalize(value: object) -> str:
+            return str(value or "").strip().upper().replace(".", "").replace("_", "").replace("-", "")
+
+        requested = normalize(symbol)
+        if not requested:
+            return [row for row in rows if isinstance(row, dict)]
+
+        filtered: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            candidates = [
+                row.get("symbol"),
+                row.get("broker_symbol"),
+                row.get("instrument"),
+                row.get("instrument_key"),
+                row.get("tradingsymbol"),
+            ]
+            if any((actual := normalize(candidate)) and (actual == requested or actual.startswith(requested) or requested.startswith(actual)) for candidate in candidates):
+                filtered.append(row)
+        return filtered
 
     async def get_orders(self) -> list[dict[str, Any]]:
         return []
 
     async def get_rates(self, symbol: str, timeframe: str, count: int = 300) -> list[dict[str, Any]]:
+        if self.db is None:
+            raise RuntimeError("MT5 Agent database session is not available for candle requests.")
+
+        agent = await self._latest_agent()
+        if not _is_fresh(agent):
+            raise RuntimeError(FRIENDLY_DISCONNECTED)
+
+        safe_count = max(1, min(int(count or 300), 2000))
+        requested_timeframe = str(timeframe or "").strip().upper()
+        payload = {
+            "symbol": str(symbol or "").strip(),
+            "timeframe": requested_timeframe,
+            "count": safe_count,
+            "skip_forming": True,
+        }
+        if not payload["symbol"]:
+            raise RuntimeError("MT5 Agent candle request requires a symbol.")
+        if not payload["timeframe"]:
+            raise RuntimeError("MT5 Agent candle request requires a timeframe.")
+
+        command = MT5AgentCommand(
+            agent_id=agent.id,
+            user_id=self.broker_account.user_id,
+            broker_account_id=self.broker_account.id,
+            command_type="FETCH_RATES",
+            status="PENDING",
+            request_payload=payload,
+        )
+        self.db.add(command)
+        await self.db.flush()
+        # Commit so the Windows MT5 Agent, which polls using a separate request/session,
+        # can see the command immediately. The caller continues with a clean transaction.
+        await self.db.commit()
+
+        timeout_seconds = 30
+        for _ in range(timeout_seconds):
+            await asyncio.sleep(1)
+            await self.db.refresh(command)
+            status = str(command.status or "").upper()
+            if status == "COMPLETED":
+                result = command.result_payload or {}
+                candles = self._extract_candles_from_result(result)
+                return [row for row in candles if isinstance(row, dict)]
+            if status == "ERROR":
+                result = command.result_payload or {}
+                message = command.error_message or result.get("message") or (result.get("raw_response") or {}).get("message")
+                raise RuntimeError(str(message or "MT5 Agent candle fetch failed."))
+
+        command.status = "TIMEOUT"
+        command.error_message = "MT5 Agent candle request timed out. Check agent is running and polling commands."
+        await self.db.commit()
+        raise RuntimeError(command.error_message)
+
+    @staticmethod
+    def _extract_candles_from_result(result_payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if not isinstance(result_payload, dict):
+            return []
+        direct = result_payload.get("candles")
+        if isinstance(direct, list):
+            return direct
+        raw_response = result_payload.get("raw_response")
+        if isinstance(raw_response, dict):
+            raw_candles = raw_response.get("candles")
+            if isinstance(raw_candles, list):
+                return raw_candles
+            nested_raw = raw_response.get("raw")
+            if isinstance(nested_raw, dict) and isinstance(nested_raw.get("candles"), list):
+                return nested_raw["candles"]
+        raw = result_payload.get("raw")
+        if isinstance(raw, dict) and isinstance(raw.get("candles"), list):
+            return raw["candles"]
         return []
+
+
+    @staticmethod
+    def _extract_raw_response(result_payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(result_payload, dict):
+            return {}
+        raw_response = result_payload.get("raw_response")
+        if isinstance(raw_response, dict):
+            return raw_response
+        raw = result_payload.get("raw")
+        if isinstance(raw, dict):
+            return raw
+        return result_payload
+
+    async def get_deals_pnl(
+        self,
+        symbol: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> dict[str, Any]:
+        if self.db is None:
+            raise RuntimeError("MT5 Agent database session is not available for PnL requests.")
+
+        agent = await self._latest_agent()
+        if not _is_fresh(agent):
+            raise RuntimeError(FRIENDLY_DISCONNECTED)
+
+        now = datetime.now(timezone.utc)
+        today_start = datetime.combine(now.date(), datetime.min.time(), tzinfo=timezone.utc)
+        safe_since = since or today_start
+        safe_until = until or now
+        payload = {
+            "symbol": str(symbol or "").strip() or None,
+            "since": safe_since.isoformat(),
+            "until": safe_until.isoformat(),
+            "magic": 260510,
+            "comment_prefix": "AlgoAgentX",
+            "allow_symbol_only_fallback": True,
+        }
+        command = MT5AgentCommand(
+            agent_id=agent.id,
+            user_id=self.broker_account.user_id,
+            broker_account_id=self.broker_account.id,
+            command_type="FETCH_DEALS_PNL",
+            status="PENDING",
+            request_payload=payload,
+        )
+        self.db.add(command)
+        await self.db.flush()
+        await self.db.commit()
+
+        timeout_seconds = 30
+        for _ in range(timeout_seconds):
+            await asyncio.sleep(1)
+            await self.db.refresh(command)
+            status = str(command.status or "").upper()
+            if status == "COMPLETED":
+                result = command.result_payload or {}
+                raw = self._extract_raw_response(result)
+                return self._normalize_deals_pnl(raw)
+            if status == "ERROR":
+                result = command.result_payload or {}
+                raw = self._extract_raw_response(result)
+                message = command.error_message or result.get("message") or raw.get("message")
+                raise RuntimeError(str(message or "MT5 Agent deals PnL fetch failed."))
+
+        command.status = "TIMEOUT"
+        command.error_message = "MT5 Agent PnL request timed out. Check agent is running and polling commands."
+        await self.db.commit()
+        raise RuntimeError(command.error_message)
+
+    @staticmethod
+    def _normalize_deals_pnl(raw: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(raw, dict):
+            raw = {}
+        # The agent may send the values directly or inside raw_response/raw.
+        nested = raw.get("raw") if isinstance(raw.get("raw"), dict) else None
+        source = nested or raw
+        realized = source.get("realized_pnl", source.get("net_profit", "0"))
+        gross_profit = source.get("gross_profit", "0")
+        commission = source.get("commission", "0")
+        swap = source.get("swap", "0")
+        fee = source.get("fee", "0")
+        deals = source.get("deals") if isinstance(source.get("deals"), list) else []
+        return {
+            "success": bool(source.get("success", True)),
+            "realized_pnl": str(realized or "0"),
+            "net_profit": str(source.get("net_profit", realized or "0")),
+            "gross_profit": str(gross_profit or "0"),
+            "commission": str(commission or "0"),
+            "swap": str(swap or "0"),
+            "fee": str(fee or "0"),
+            "deal_count": int(source.get("deal_count") or len(deals) or 0),
+            "currency": source.get("currency") or raw.get("currency"),
+            "deals": deals,
+        }
 
     async def get_symbols(self, query: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
         return []

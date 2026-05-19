@@ -61,7 +61,7 @@ class BrokerAdapter:
     async def close_position(self, position_id_or_symbol: str, side: str, qty: Decimal) -> BrokerOrderResult:
         raise NotImplementedError
 
-    async def get_positions(self) -> list[dict[str, Any]]:
+    async def get_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     async def get_orders(self) -> list[dict[str, Any]]:

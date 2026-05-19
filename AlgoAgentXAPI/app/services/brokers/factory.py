@@ -9,6 +9,7 @@ from .mt5 import MT5Adapter
 from .mt5_agent import MT5AgentAdapter
 from .upstox import UpstoxAdapter
 from .crypto_api import CryptoApiAdapter, CRYPTO_BROKERS
+from .ctrader import CTraderAdapter
 
 
 def get_broker_code(broker_account: BrokerAccount) -> str:
@@ -31,4 +32,6 @@ def get_broker_adapter(broker_account: BrokerAccount, db: AsyncSession | None = 
         return UpstoxAdapter(broker_account)
     if broker_code in CRYPTO_BROKERS:
         return CryptoApiAdapter(broker_account)
+    if broker_code in {"CTRADER", "CTRADER_API"}:
+        return CTraderAdapter(broker_account)
     raise ValueError(f"Unsupported broker adapter: {broker_code}")

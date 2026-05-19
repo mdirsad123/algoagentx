@@ -7,7 +7,8 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db.models import LiveEquityPoint, LivePosition, LiveTradeLog, StrategyDeployment
+from ...db.models import BrokerAccount, LiveEquityPoint, LivePosition, LiveTradeLog, StrategyDeployment
+from .capital_service import get_effective_trading_capital
 
 
 def to_decimal(value: object, default: str = "0") -> Decimal:
@@ -43,7 +44,11 @@ async def totals_for_deployment(db: AsyncSession, deployment_id) -> tuple[Decima
 
 async def create_equity_point(db: AsyncSession, deployment: StrategyDeployment, event: str = "EQUITY_UPDATED") -> LiveEquityPoint:
     realized, unrealized = await totals_for_deployment(db, deployment.id)
-    capital = to_decimal(deployment.capital, "100000")
+    broker_account = None
+    if getattr(deployment, "broker_account_id", None):
+        broker_account = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
+    capital_snapshot = get_effective_trading_capital(deployment, broker_account)
+    capital = capital_snapshot.effective_capital
     equity = (capital + realized + unrealized).quantize(Decimal("0.0001"))
     point = LiveEquityPoint(
         deployment_id=deployment.id,
@@ -61,6 +66,6 @@ async def create_equity_point(db: AsyncSession, deployment: StrategyDeployment, 
         event_type=event,
         level="INFO",
         message=f"Equity updated to {equity}",
-        metadata_json={"equity": str(equity), "realized_pnl": str(realized), "unrealized_pnl": str(unrealized)},
+        metadata_json={"equity": str(equity), "realized_pnl": str(realized), "unrealized_pnl": str(unrealized), "effective_capital": str(capital), "effective_capital_source": capital_snapshot.effective_capital_source},
     ))
     return point

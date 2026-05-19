@@ -332,7 +332,7 @@ class UpstoxAdapter(BrokerAdapter):
         close_side = "SELL" if str(side).upper() == "LONG" else "BUY"
         return await self.place_market_order(BrokerOrderRequest(symbol=position_id_or_symbol, instrument_key=position_id_or_symbol, side=close_side, qty=qty, product_type="MIS", tag="AlgoAgentXExit"))
 
-    async def get_positions(self) -> list[dict[str, Any]]:
+    async def get_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
         try:
             payload = await self._authorized_get(UPSTOX_POSITIONS_URL)
             data = payload.get("data")

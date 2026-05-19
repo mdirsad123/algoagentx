@@ -1,5 +1,5 @@
 export type LiveMode = "PAPER" | "DEMO" | "LIVE";
-export type BrokerStatus = "CONNECTED" | "DISCONNECTED" | "ERROR" | "PENDING_AUTH" | "AGENT_OFFLINE" | "COMING_SOON" | "EXPIRED";
+export type BrokerStatus = "CONNECTED" | "DISCONNECTED" | "ERROR" | "PENDING_AUTH" | "PENDING_ACCOUNT_SYNC" | "AGENT_OFFLINE" | "COMING_SOON" | "EXPIRED";
 export type DeploymentStatus = "DRAFT" | "RUNNING" | "PAUSED" | "STOPPED" | "ERROR";
 export type SignalType = "BUY" | "SELL" | "EXIT" | "HOLD";
 export type PositionSide = "LONG" | "SHORT";
@@ -21,6 +21,7 @@ export interface MT5AgentStatus {
   algo_trading_enabled?: boolean | null;
   agent_version?: string | null;
   metadata_json?: Record<string, unknown>;
+  selected_account?: Record<string, unknown> | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -29,6 +30,30 @@ export interface MT5AgentRegisterResponse {
   agent: MT5AgentStatus;
   agent_token: string;
   message: string;
+}
+
+
+export interface ApprovedBrokerAccount {
+  approval_id: string;
+  broker_account_id: string;
+  broker_name?: string | null;
+  broker_code?: string | null;
+  account_label?: string | null;
+  mode: LiveMode | string;
+  approval_mode?: LiveMode | string | null;
+  broker_mode?: LiveMode | string | null;
+  status: string;
+  broker_status?: string | null;
+  approved_markets?: string[];
+  max_daily_loss?: number | string | null;
+  max_order_value?: number | string | null;
+  max_trades_per_day?: number | null;
+  approved_at?: string | null;
+  currency?: string | null;
+  server_name?: string | null;
+  login_id?: string | null;
+  selected_account?: Record<string, unknown> | null;
+  metadata_json?: Record<string, unknown> | null;
 }
 
 export interface BrokerAccount {
@@ -67,6 +92,7 @@ export interface SafeBrokerStatus {
   equity?: number | string | null;
   currency?: string | null;
   last_connected_at?: string | null;
+  selected_account?: Record<string, unknown> | null;
 }
 
 export interface BrokerConnectionResult {
@@ -155,6 +181,58 @@ export interface BrokerMt5Position {
   success?: boolean;
   message?: string;
   [key: string]: unknown;
+}
+
+
+export interface CTraderTradingAccount {
+  ctrader_account_id?: string | null;
+  account_number?: string | null;
+  broker_name?: string | null;
+  account_type?: string | null;
+  balance?: number | string | null;
+  equity?: number | string | null;
+  margin?: number | string | null;
+  free_margin?: number | string | null;
+  currency?: string | null;
+  leverage?: number | string | null;
+  raw?: Record<string, unknown>;
+}
+
+export interface CTraderAccountsResponse {
+  broker_account: BrokerAccount;
+  accounts: CTraderTradingAccount[];
+  selected_account?: CTraderTradingAccount | null;
+}
+
+export interface BrokerSyncResponse {
+  broker_account: BrokerAccount;
+  connection?: BrokerConnectionResult;
+  accounts?: CTraderTradingAccount[];
+  selected_account?: CTraderTradingAccount | null;
+  requires_account_selection?: boolean;
+  symbols_synced?: number;
+  symbols_preview?: Record<string, unknown>[];
+}
+
+export interface CTraderDemoOrderRequest {
+  symbol: string;
+  side: "BUY" | "SELL";
+  volume: string;
+  stop_loss?: string | null;
+  take_profit?: string | null;
+  client_order_id?: string | null;
+  comment?: string | null;
+}
+
+export interface CTraderDemoOrderResponse {
+  order_id?: string | null;
+  status: string;
+  symbol: string;
+  side: string;
+  volume: string;
+  broker_account?: BrokerAccount;
+  execution_log_id?: string;
+  message?: string;
 }
 
 export interface BrokerAccountPayload {
@@ -279,8 +357,8 @@ export interface DeploymentPayload {
   square_off_time?: string | null;
   upstox_order_confirmed?: boolean;
   timeframe: string;
-  mode: "PAPER" | "DEMO";
-  capital: number;
+  mode: LiveMode;
+  capital?: number;
   risk_per_trade: number;
   rr_ratio: number;
   price_risk_pct: number;
@@ -323,6 +401,7 @@ export interface LiveSignal {
   reason?: string | null;
   status: string;
   rejection_reason?: string | null;
+  raw_payload?: Record<string, unknown> | null;
   created_at?: string;
 }
 
@@ -396,9 +475,16 @@ export interface LiveTradeLog {
 export interface LiveDeploymentSummaryMetrics {
   capital: number | string;
   currency?: string | null;
+  account_currency?: string | null;
+  balance?: number | string | null;
   equity: number | string;
   realized_pnl: number | string;
   unrealized_pnl: number | string;
+  free_margin?: number | string | null;
+  effective_capital?: number | string | null;
+  effective_capital_source?: string | null;
+  today_realized_pnl?: number | string;
+  today_unrealized_pnl?: number | string;
   today_pnl: number | string;
   open_positions: number;
   open_positions_count: number;
@@ -410,6 +496,7 @@ export interface LiveDeploymentSummaryMetrics {
   total_signals: number;
   source?: string;
   broker_synced?: boolean;
+  broker_pnl_source?: string | null;
   broker_deal_count?: number | null;
 }
 
@@ -471,6 +558,7 @@ export interface BrokerSyncSummary {
   local_tracked_positions?: number | null;
   sync_mismatch_warning?: boolean;
   latest_sync_error?: string | null;
+  warning?: string | null;
 }
 
 export interface LiveDeploymentSummary {
@@ -515,6 +603,20 @@ export interface LiveReadiness {
   ready_to_auto_trade: boolean;
   summary: string;
   checks: LiveReadinessCheck[];
+}
+
+
+export interface LiveCompatibilityCheck {
+  name: string;
+  status: LiveReadinessCheckStatus;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
+export interface LiveCompatibilityResult {
+  status: LiveReadinessCheckStatus;
+  summary: string;
+  checks: LiveCompatibilityCheck[];
 }
 
 export interface ManualSignalResponse {
@@ -873,8 +975,15 @@ export interface LiveTradingApproval {
   user_email?: string | null;
   broker_account_id?: string | null;
   broker_name?: string | null;
+  broker_provider?: string | null;
+  broker_code?: string | null;
+  account_label?: string | null;
   broker_mode?: string | null;
+  mode?: string | null;
   broker_status?: string | null;
+  currency?: string | null;
+  server_name?: string | null;
+  login_id?: string | null;
   approved_by?: string | null;
   approved_by_email?: string | null;
   status: "PENDING" | "APPROVED" | "REJECTED" | "REVOKED" | string;
@@ -913,6 +1022,14 @@ export interface LiveOrderPreview {
   account_currency?: string | null;
   currency_symbol?: string | null;
   broker_symbol?: string | null;
+  strategy_stop_loss?: number | string | null;
+  strategy_target?: number | string | null;
+  strategy_sltp_received?: boolean;
+  entry_plan?: Record<string, unknown>;
+  risk_metadata?: Record<string, unknown>;
+  effective_capital?: number | string | null;
+  effective_capital_source?: string | null;
+  capital_warning?: string | null;
   broker_payload_preview?: Record<string, unknown>;
   broker_order_payload_preview?: Record<string, unknown>;
   risk_engine?: Record<string, unknown>;

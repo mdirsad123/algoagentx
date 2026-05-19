@@ -15,6 +15,8 @@ class MarketDataCatalogInstrument(BaseModel):
     exchange: str
     market: str
     instrument_type: str | None = None
+    broker_symbol: str | None = None
+    upstox_instrument_key: str | None = None
 
 
 class MarketDataCatalogResponse(BaseModel):

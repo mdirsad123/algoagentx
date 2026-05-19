@@ -51,6 +51,7 @@ def calculate_live_entry_plan(
     runtime_config: dict[str, Any] | None,
     instrument_spec: dict[str, Any] | None = None,
     strategy_stop_loss: Any = None,
+    strategy_target: Any = None,
 ) -> dict[str, Any]:
     """Calculate a live entry plan before risk sizing/execution.
 
@@ -71,15 +72,29 @@ def calculate_live_entry_plan(
         return {"status": "REJECTED", "rejected_reason": "RR ratio must be greater than zero."}
 
     sl_mode = str(sl_tp.get("sl_mode") or "FIXED_PERCENT").upper().replace(" ", "_")
-    if sl_mode in {"FIXED", "FIXED_PRICE_RISK", "FIXED_PERCENT_SL"}:
+    if sl_mode in {"FIXED", "FIXED_PRICE_RISK", "FIXED_PRICE_RISK_PCT", "FIXED_PERCENT_SL"}:
         sl_mode = "FIXED_PERCENT"
-    if sl_mode == "STRATEGY_SUGGESTED" and strategy_stop_loss in (None, "", 0):
-        # Beginner safe fallback. If an explicit strategy SL engine is added later, pass it in.
-        sl_mode = "ATR" if len(candles or []) >= int(_float(sl_tp.get("atr_period"), 14) or 14) + 1 else "FIXED_PERCENT"
 
     stop_loss: Decimal | None = None
-    if strategy_stop_loss not in (None, "", 0):
+    stop_loss_source = "RUNTIME"
+    if sl_mode == "STRATEGY_SUGGESTED":
+        if strategy_stop_loss in (None, "", 0):
+            return {
+                "status": "REJECTED",
+                "rejected_reason": "Strategy suggested SL is required but strategy did not produce strategy_stop_loss.",
+                "sl_mode": sl_mode,
+                "stop_loss_source": "MISSING_STRATEGY_OUTPUT",
+                "target_source": "NOT_RESOLVED",
+                "strategy_stop_loss_received": False,
+                "strategy_target_received": strategy_target not in (None, "", 0),
+            }
         stop_loss = _dec(strategy_stop_loss, "0")
+        stop_loss_source = "STRATEGY_OUTPUT"
+    elif strategy_stop_loss not in (None, "", 0):
+        # Non-strategy SL modes may still accept a manual/user-provided SL, but
+        # AUTO live strategy-suggested mode is handled strictly above.
+        stop_loss = _dec(strategy_stop_loss, "0")
+        stop_loss_source = "INPUT_STOP_LOSS"
     elif sl_mode == "ATR":
         period = int(_float(sl_tp.get("atr_period"), 14) or 14)
         multiplier = _dec(sl_tp.get("atr_multiplier"), "2")
@@ -111,11 +126,17 @@ def calculate_live_entry_plan(
     risk_points = abs(entry - stop_loss)
     if risk_points <= 0:
         return {"status": "REJECTED", "rejected_reason": "Risk distance must be greater than zero.", "sl_mode": sl_mode}
-    target = entry + (risk_points * rr) if side == "BUY" else entry - (risk_points * rr)
+    target_source = "RUNTIME_RR"
+    if strategy_target not in (None, "", 0):
+        target = _dec(strategy_target, "0")
+        target_source = "STRATEGY_OUTPUT"
+    else:
+        target = entry + (risk_points * rr) if side == "BUY" else entry - (risk_points * rr)
+        target_source = "RR_FROM_STRATEGY_SL" if sl_mode == "STRATEGY_SUGGESTED" else "RUNTIME_RR"
     if side == "BUY" and target <= entry:
-        return {"status": "REJECTED", "rejected_reason": "BUY target must be above entry price.", "sl_mode": sl_mode}
+        return {"status": "REJECTED", "rejected_reason": "BUY target must be above entry price.", "entry_price": float(entry), "target": float(target), "sl_mode": sl_mode, "target_source": target_source}
     if side == "SELL" and target >= entry:
-        return {"status": "REJECTED", "rejected_reason": "SELL target must be below entry price.", "sl_mode": sl_mode}
+        return {"status": "REJECTED", "rejected_reason": "SELL target must be below entry price.", "entry_price": float(entry), "target": float(target), "sl_mode": sl_mode, "target_source": target_source}
 
     return {
         "status": "OK",
@@ -124,9 +145,13 @@ def calculate_live_entry_plan(
         "target": float(target),
         "take_profit": float(target),
         "sl_mode": sl_mode,
+        "stop_loss_source": stop_loss_source,
+        "target_source": target_source,
         "rr_ratio": float(rr),
         "risk_points": float(risk_points),
         "reward_points": float(abs(target - entry)),
+        "strategy_stop_loss_received": strategy_stop_loss not in (None, "", 0),
+        "strategy_target_received": strategy_target not in (None, "", 0),
         "instrument_spec_snapshot": instrument_spec or {},
         "calculated_at": datetime.now(timezone.utc).isoformat(),
     }

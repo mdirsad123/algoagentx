@@ -260,7 +260,20 @@ export default function AdminMarketDataPage() {
 
   useEffect(() => {
     if (!selectedBrokerInstrument) return;
-    setBrokerSymbol(selectedBrokerInstrument.broker_symbol || selectedBrokerInstrument.symbol || "");
+    const exchange = String(selectedBrokerInstrument.exchange || "").toUpperCase();
+    const market = String(selectedBrokerInstrument.market || "").toUpperCase();
+    const rawSymbol = selectedBrokerInstrument.broker_symbol || selectedBrokerInstrument.symbol || "";
+    const rawSymbolUpper = rawSymbol.toUpperCase();
+    const normalizedSymbol = exchange.includes("BINANCE") && rawSymbolUpper.endsWith("USD") && !rawSymbolUpper.endsWith("USDT")
+      ? `${rawSymbol.slice(0, -3)}USDT`
+      : rawSymbol;
+
+    if (exchange.includes("BINANCE")) {
+      setProvider("BINANCE");
+    } else if (exchange.includes("MT5") || market.includes("FOREX") || market.includes("METAL")) {
+      setProvider("MT5");
+    }
+    setBrokerSymbol(normalizedSymbol);
     setInstrumentKey(selectedBrokerInstrument.upstox_instrument_key || "");
   }, [selectedBrokerInstrument]);
 
@@ -288,10 +301,27 @@ export default function AdminMarketDataPage() {
     if (!instrumentId) throw new Error("Please select an instrument");
     if (!brokerSymbol.trim()) throw new Error("Symbol is required");
     if (!brokerStartDate || !brokerEndDate) throw new Error("Start date and end date are required");
+
+    const selected = catalog.instruments.find((instrument) => Number(instrument.id) === instrumentId);
+    const exchange = String(selected?.exchange || "").toUpperCase();
+    const market = String(selected?.market || "").toUpperCase();
+    const symbol = brokerSymbol.trim();
+
+    if (provider === "BINANCE" && !(exchange.includes("BINANCE") || market.includes("CRYPTO"))) {
+      throw new Error("BINANCE provider is only for Binance crypto symbols like BTCUSDT. Use MT5 for Forex/Metals such as XAUUSDm and XAGUSDm on your Exness terminal.");
+    }
+    if (provider === "MT5" && exchange.includes("BINANCE")) {
+      throw new Error("This is a Binance instrument. Use BINANCE provider, not MT5.");
+    }
+    if (provider === "MT5" && (market.includes("FOREX") || market.includes("METAL") || exchange.includes("MT5")) && symbol === String(selected?.symbol || "")) {
+      // Let API still try suffix discovery, but this warning avoids silent one-candle imports when broker_symbol was not seeded.
+      console.warn("MT5 broker symbol equals display symbol. If import returns too few candles, set broker_symbol to the exact Market Watch symbol such as XAUUSDm/XAGUSDm on your Exness terminal.");
+    }
+
     return {
       provider,
       instrument_id: instrumentId,
-      symbol: brokerSymbol.trim(),
+      symbol,
       instrument_key: instrumentKey.trim() || undefined,
       timeframe: brokerTimeframe,
       start_date: brokerStartDate,
@@ -547,6 +577,7 @@ export default function AdminMarketDataPage() {
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
               <select value={provider} onChange={(event) => setProvider(event.target.value)} className={fieldClass}>
                 <option value="MT5">MT5</option>
+                <option value="BINANCE">BINANCE</option>
                 <option value="UPSTOX">UPSTOX</option>
                 {process.env.NODE_ENV !== "production" ? <option value="MOCK">MOCK</option> : null}
               </select>
@@ -596,7 +627,22 @@ export default function AdminMarketDataPage() {
             </div>
 
             {selectedBrokerInstrument ? (
-              <p className="text-xs text-muted-foreground">Selected: {selectedBrokerInstrument.symbol} • {selectedBrokerInstrument.exchange} • {selectedBrokerInstrument.market}</p>
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  Selected: {selectedBrokerInstrument.symbol} • {selectedBrokerInstrument.exchange} • {selectedBrokerInstrument.market}
+                  {selectedBrokerInstrument.broker_symbol ? ` • Broker symbol: ${selectedBrokerInstrument.broker_symbol}` : ""}
+                </p>
+                {provider === "MT5" ? (
+                  <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-100">
+                    MT5 requires the exact Market Watch symbol and downloaded chart history. For your broker use symbols like XAUUSDm, XAGUSDm, BTCUSDm. If MT5 returns only 1 candle for old 5m data, set MT5 Tools → Options → Charts → Max bars in chart to a very high value, restart/open the chart, Market Watch → Show All, then scroll left/press Home to load history and retry.
+                  </div>
+                ) : null}
+                {provider === "BINANCE" ? (
+                  <div className="rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-xs leading-relaxed text-sky-100">
+                    Binance is only for crypto spot symbols such as BTCUSDT. Do not use Binance for XAUUSD/XAGUSD/forex pairs.
+                  </div>
+                ) : null}
+              </div>
             ) : null}
             <SummaryCard title="Broker Fetch Result" summary={brokerSummary} />
           </div>
@@ -666,11 +712,12 @@ export default function AdminMarketDataPage() {
           <div className="p-8 text-center text-muted-foreground">No datasets found for selected filters.</div>
         ) : (
           <div className="admin-table-scroll overflow-x-auto">
-            <table className="admin-data-table w-full min-w-[920px] text-sm">
+            <table className="admin-data-table w-full min-w-[1020px] text-sm">
               <thead>
                 <tr className="border-b border-border/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="px-4 py-3">Instrument</th>
                   <th className="px-4 py-3">Timeframe</th>
+                  <th className="px-4 py-3">First Candle Date</th>
                   <th className="px-4 py-3">Latest Candle Date</th>
                   <th className="px-4 py-3">Last Candle At</th>
                   <th className="px-4 py-3">Records</th>
@@ -687,6 +734,7 @@ export default function AdminMarketDataPage() {
                       <div className="text-xs text-muted-foreground">{dataset.exchange} • {dataset.market}</div>
                     </td>
                     <td className="px-4 py-3">{dataset.timeframe}</td>
+                    <td className="px-4 py-3">{formatDateTime(dataset.first_candle_at)}</td>
                     <td className="px-4 py-3">{dataset.latest_candle_date || "—"}</td>
                     <td className="px-4 py-3">{formatDateTime(dataset.last_candle_at)}</td>
                     <td className="px-4 py-3">{formatInt(dataset.total_records || dataset.record_count)}</td>

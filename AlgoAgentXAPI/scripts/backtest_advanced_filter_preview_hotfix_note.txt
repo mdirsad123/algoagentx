@@ -1,9 +1,0 @@
-PAY-BILL follow-up hotfix: Backtest advanced filter cost-preview
-
-Fix:
-- Restored BacktestService._get_instrument_details compatibility helper.
-- /api/v1/backtests/cost-preview advanced-filter preview can now resolve instrument symbol/market.
-- No SQL migration required.
-
-Verification:
-python -m py_compile app/services/backtest_service.py app/api/v1/backtests.py

@@ -155,6 +155,35 @@ class MT5AgentCommand(Base):
     broker_account = relationship("BrokerAccount", lazy="joined")
 
 
+class BrokerOrderExecutionLog(Base):
+    __tablename__ = "broker_order_execution_logs"
+    __table_args__ = (
+        Index("idx_broker_order_execution_logs_account_created", "broker_account_id", "created_at"),
+        Index("idx_broker_order_execution_logs_user_created", "user_id", "created_at"),
+        Index("idx_broker_order_execution_logs_provider_status", "broker_provider_code", "status"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    broker_account_id = Column(PG_UUID(as_uuid=True), ForeignKey("broker_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    broker_provider_code = Column(String(50), nullable=False, index=True)
+    execution_mode = Column(String(20), nullable=False, server_default="DEMO")
+    symbol = Column(String(100), nullable=False, index=True)
+    side = Column(String(20), nullable=False)
+    volume = Column(Numeric(18, 8), nullable=False)
+    request_payload = Column(JSONB, nullable=True)
+    response_payload = Column(JSONB, nullable=True)
+    status = Column(String(30), nullable=False, server_default="PENDING", index=True)
+    error_message = Column(Text, nullable=True)
+    broker_order_id = Column(String(255), nullable=True)
+    client_order_id = Column(String(255), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    user = relationship("User", lazy="joined")
+    broker_account = relationship("BrokerAccount", lazy="joined")
+
+
 class BrokerInstrument(Base):
     __tablename__ = "broker_instruments"
     __table_args__ = (

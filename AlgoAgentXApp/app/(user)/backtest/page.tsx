@@ -1954,9 +1954,15 @@ const FieldLabel = ({ label, help }: { label: string; help?: string }) => (
                 {availability ? (availability.available ? "Available" : "Missing") : "—"}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Range: {availability?.min_timestamp ? new Date(availability.min_timestamp).toLocaleDateString() : "—"} →{" "}
-                {availability?.max_timestamp ? new Date(availability.max_timestamp).toLocaleDateString() : "—"}
+                DB range: {availability?.dataset_start || availability?.min_timestamp ? new Date(availability.dataset_start || availability.min_timestamp || "").toLocaleDateString() : "—"} →{" "}
+                {availability?.dataset_end || availability?.max_timestamp ? new Date(availability.dataset_end || availability.max_timestamp || "").toLocaleDateString() : "—"}
               </p>
+              {availability?.coverage_pct !== null && availability?.coverage_pct !== undefined ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Coverage: {Number(availability.coverage_pct).toFixed(2)}%
+                  {availability.expected_candle_count ? ` • Expected ~${formatNumber(availability.expected_candle_count, 0)}` : ""}
+                </p>
+              ) : null}
             </div>
 
             <div className="rounded-xl border border-border/50 bg-card/20 p-4">

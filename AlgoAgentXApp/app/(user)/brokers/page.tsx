@@ -9,12 +9,13 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { PageShell } from "@/components/ui/PageShell";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
-import type { BrokerAccount, BrokerConnectionResult, BrokerProvider, LiveMode, MT5AgentStatus } from "@/types/live-trading";
+import type { BrokerAccount, BrokerConnectionResult, BrokerProvider, LiveMode, MT5AgentStatus, CTraderTradingAccount } from "@/types/live-trading";
 import { getBackendCallbackUrl } from "@/lib/api-base";
 
 const CRYPTO_CODES = new Set(["BINANCE", "BYBIT", "OKX"]);
+const CTRADER_CODES = new Set(["CTRADER", "CTRADER_API"]);
 
-type ActiveForm = null | "MT5" | "UPSTOX" | "CRYPTO";
+type ActiveForm = null | "MT5" | "UPSTOX" | "CRYPTO" | "CTRADER";
 
 const emptyMt5Form = {
   account_label: "MT5 Demo",
@@ -40,10 +41,18 @@ const makeEmptyCryptoForm = (code = "BINANCE") => ({
   passphrase: "",
 });
 
+const makeEmptyCtraderForm = () => ({
+  account_label: "cTrader Open API",
+  client_id: "",
+  client_secret: "",
+  redirect_uri: getBackendCallbackUrl("/api/v1/broker-accounts/ctrader/callback"),
+});
+
 function displayBrokerName(code?: string | null) {
   const value = String(code || "").toUpperCase();
   if (value === "UPSTOX") return "Upstox India";
   if (value === "MT5") return "MT5 Agent / MetaTrader 5";
+  if (value === "CTRADER" || value === "CTRADER_API") return "cTrader Open API";
   if (value === "ANGEL_ONE") return "Angel One";
   if (value === "BINANCE") return "Binance";
   if (value === "BYBIT") return "Bybit";
@@ -67,6 +76,7 @@ function statusBadge(status: string) {
   const normalized = String(status || "DISCONNECTED").toUpperCase();
   if (normalized === "CONNECTED") return <Badge className="border-green-500/30 bg-green-500/20 text-green-100">Connected</Badge>;
   if (normalized === "PENDING_AUTH") return <Badge className="border-blue-500/30 bg-blue-500/20 text-blue-100">Pending Auth</Badge>;
+  if (normalized === "PENDING_ACCOUNT_SYNC") return <Badge className="border-blue-500/30 bg-blue-500/20 text-blue-100">Sync Required</Badge>;
   if (normalized === "AGENT_OFFLINE") return <Badge className="border-orange-500/30 bg-orange-500/20 text-orange-100">Agent Offline</Badge>;
   if (normalized === "COMING_SOON") return <Badge className="border-white/20 bg-white/10 text-purple-100">Coming Soon</Badge>;
   if (normalized === "ERROR") return <Badge className="border-yellow-500/30 bg-yellow-500/20 text-yellow-100">Error</Badge>;
@@ -85,7 +95,20 @@ function categoryTitle(provider: BrokerProvider) {
   const code = provider.code?.toUpperCase();
   if (CRYPTO_CODES.has(code)) return "Crypto API Broker";
   if (code === "MT5") return "MT5 Agent Broker";
+  if (CTRADER_CODES.has(code)) return "Cloud Forex Broker";
   return provider.broker_category || "Cloud Broker";
+}
+
+function defaultCtraderOrderSymbol(broker: BrokerAccount) {
+  const meta = (broker.metadata_json || {}) as any;
+  const preview = Array.isArray(meta.ctrader_symbols_preview) ? meta.ctrader_symbols_preview : [];
+  const first = preview.find((item: any) => item?.symbol_name || item?.trading_symbol || item?.symbol);
+  return String(first?.symbol_name || first?.trading_symbol || first?.symbol || "EURUSD").toUpperCase();
+}
+
+function isCtraderDemoSelected(selected: any, broker: BrokerAccount) {
+  const mode = String(selected?.account_type || broker.mode || "DEMO").toUpperCase();
+  return !mode.includes("LIVE") && mode !== "REAL";
 }
 
 export default function BrokersPage() {
@@ -101,6 +124,7 @@ export default function BrokersPage() {
   const [form, setForm] = useState(emptyMt5Form);
   const [upstoxForm, setUpstoxForm] = useState(makeEmptyUpstoxForm);
   const [cryptoForm, setCryptoForm] = useState(makeEmptyCryptoForm("BINANCE"));
+  const [ctraderForm, setCtraderForm] = useState(makeEmptyCtraderForm);
   const [connectionResults, setConnectionResults] = useState<Record<string, BrokerConnectionResult>>({});
   const [connectingUpstox, setConnectingUpstox] = useState(false);
   const [agentStatuses, setAgentStatuses] = useState<Record<string, MT5AgentStatus | null>>({});
@@ -109,6 +133,12 @@ export default function BrokersPage() {
   const [deleteTarget, setDeleteTarget] = useState<BrokerAccount | null>(null);
   const [deleteWarning, setDeleteWarning] = useState<string | null>(null);
   const [deleteForce, setDeleteForce] = useState(false);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [ctraderSelectTarget, setCtraderSelectTarget] = useState<{ broker: BrokerAccount; accounts: CTraderTradingAccount[] } | null>(null);
+  const [ctraderOrderTarget, setCtraderOrderTarget] = useState<BrokerAccount | null>(null);
+  const [ctraderOrderForm, setCtraderOrderForm] = useState({ symbol: "EURUSD", side: "BUY" as "BUY" | "SELL", volume: "1000", stop_loss: "", take_profit: "" });
+  const [placingCtraderOrder, setPlacingCtraderOrder] = useState(false);
+  const [ctraderOrderResult, setCtraderOrderResult] = useState<Record<string, unknown> | null>(null);
 
   const mt5Provider = providers.find((p) => p.code === "MT5");
   const connectedCount = useMemo(() => brokers.filter((b) => statusOf(b, agentStatuses[b.id]) === "CONNECTED").length, [brokers, agentStatuses]);
@@ -117,7 +147,7 @@ export default function BrokersPage() {
     providers.forEach((provider) => {
       const code = provider.code.toUpperCase();
       if (CRYPTO_CODES.has(code)) groups["Crypto API Brokers"].push(provider);
-      else if (code === "MT5" || code === "CTRADER_API") groups["Forex / MT5 Brokers"].push(provider);
+      else if (code === "MT5" || CTRADER_CODES.has(code)) groups["Forex / MT5 Brokers"].push(provider);
       else groups["Cloud Brokers"].push(provider);
     });
     return groups;
@@ -144,9 +174,11 @@ export default function BrokersPage() {
   useEffect(() => {
     load();
     const params = new URLSearchParams(window.location.search);
-    if (params.get("broker") === "upstox") {
-      if (params.get("connected") === "true") showToast("Upstox connected successfully", "success");
-      else if (params.get("connected") === "false") showToast(params.get("error") || "Upstox connection failed", "error");
+    const brokerParam = params.get("broker");
+    if (brokerParam === "upstox" || brokerParam === "ctrader") {
+      const label = brokerParam === "ctrader" ? "cTrader" : "Upstox";
+      if (params.get("connected") === "true") showToast(brokerParam === "ctrader" ? "cTrader account connected successfully." : `${label} connected successfully`, "success");
+      else if (params.get("connected") === "false") showToast(params.get("error") || `${label} connection failed`, "error");
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
@@ -173,15 +205,41 @@ export default function BrokersPage() {
     setConnectOpen(true);
   };
 
-  const openUpstoxForm = (broker?: BrokerAccount | null) => {
+  const openUpstoxForm = async (broker?: BrokerAccount | null) => {
     setEditing(broker || null);
+    let redirectUri = broker?.oauth_redirect_uri || makeEmptyUpstoxForm().redirect_uri;
+    try {
+      const redirect = await liveTradingApi.getBrokerRedirectUri("upstox");
+      redirectUri = redirect.redirect_uri || redirectUri;
+    } catch {
+      // Keep local fallback when API is still restarting.
+    }
     setUpstoxForm(broker ? {
       account_label: broker.account_label || "Upstox India",
       client_id: broker.oauth_client_id || "",
       client_secret: "",
-      redirect_uri: broker.oauth_redirect_uri || makeEmptyUpstoxForm().redirect_uri,
-    } : makeEmptyUpstoxForm());
+      redirect_uri: redirectUri,
+    } : { ...makeEmptyUpstoxForm(), redirect_uri: redirectUri });
     setActiveForm("UPSTOX");
+    setConnectOpen(true);
+  };
+
+  const openCtraderForm = async (broker?: BrokerAccount | null) => {
+    setEditing(broker || null);
+    let redirectUri = broker?.oauth_redirect_uri || makeEmptyCtraderForm().redirect_uri;
+    try {
+      const redirect = await liveTradingApi.getBrokerRedirectUri("ctrader");
+      redirectUri = redirect.redirect_uri || redirectUri;
+    } catch {
+      // Keep local fallback when API is still restarting.
+    }
+    setCtraderForm(broker ? {
+      account_label: broker.account_label || "cTrader Open API",
+      client_id: broker.oauth_client_id || "",
+      client_secret: "",
+      redirect_uri: redirectUri,
+    } : { ...makeEmptyCtraderForm(), redirect_uri: redirectUri });
+    setActiveForm("CTRADER");
     setConnectOpen(true);
   };
 
@@ -196,7 +254,8 @@ export default function BrokersPage() {
   const reconnect = (broker: BrokerAccount) => {
     const code = brokerCodeOf(broker);
     if (code === "MT5") return openMt5Form(broker);
-    if (code === "UPSTOX") return openUpstoxForm(broker);
+    if (code === "UPSTOX") { void openUpstoxForm(broker); return; }
+    if (CTRADER_CODES.has(code)) { void openCtraderForm(broker); return; }
     if (CRYPTO_CODES.has(code)) return openCryptoForm(code, broker);
     showToast("This broker is coming soon. Connection flow is not implemented yet.", "error");
   };
@@ -257,6 +316,30 @@ export default function BrokersPage() {
     } catch (error: any) {
       showToast(error.message || "Failed to start Upstox OAuth", "error");
       setConnectingUpstox(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitCtrader = async (event: FormEvent) => {
+    event.preventDefault();
+    if (editing && !ctraderForm.client_secret) {
+      showToast("For security, enter the cTrader Client Secret again before reconnecting.", "error");
+      return;
+    }
+    try {
+      setSaving(true);
+      const result = await liveTradingApi.connectCtraderOAuth({
+        broker_account_id: editing?.id || null,
+        account_label: ctraderForm.account_label,
+        client_id: ctraderForm.client_id,
+        client_secret: ctraderForm.client_secret,
+        redirect_uri: ctraderForm.redirect_uri,
+        redirect_after: "/brokers",
+      });
+      window.location.href = result.auth_url;
+    } catch (error: any) {
+      showToast(error.message || "Failed to start cTrader OAuth", "error");
     } finally {
       setSaving(false);
     }
@@ -332,6 +415,95 @@ export default function BrokersPage() {
     }
   };
 
+  const syncBroker = async (broker: BrokerAccount) => {
+    try {
+      setSyncingId(broker.id);
+      const result = await liveTradingApi.syncBrokerAccount(broker.id);
+      if (result.requires_account_selection && result.accounts?.length) {
+        setCtraderSelectTarget({ broker: result.broker_account || broker, accounts: result.accounts });
+        showToast("Select your cTrader trading account to finish sync.", "success");
+      } else {
+        const synced = result.symbols_synced !== undefined ? ` Symbols synced: ${result.symbols_synced}.` : "";
+        showToast(`Broker sync completed.${synced}`, "success");
+      }
+      await load();
+    } catch (error: any) {
+      showToast(error.message || "Broker sync failed", "error");
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
+  const openCtraderAccountSelector = async (broker: BrokerAccount) => {
+    try {
+      setSyncingId(broker.id);
+      const result = await liveTradingApi.getCtraderAccounts(broker.id);
+      setCtraderSelectTarget({ broker: result.broker_account || broker, accounts: result.accounts || [] });
+    } catch (error: any) {
+      showToast(error.message || "Failed to load cTrader accounts", "error");
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
+  const selectCtraderAccount = async (account: CTraderTradingAccount) => {
+    if (!ctraderSelectTarget) return;
+    const accountId = String(account.ctrader_account_id || account.account_number || "");
+    if (!accountId) {
+      showToast("Account selection required", "error");
+      return;
+    }
+    try {
+      setSyncingId(ctraderSelectTarget.broker.id);
+      await liveTradingApi.selectCtraderAccount(ctraderSelectTarget.broker.id, accountId);
+      setCtraderSelectTarget(null);
+      showToast("cTrader trading account selected", "success");
+      await syncBroker(ctraderSelectTarget.broker);
+    } catch (error: any) {
+      showToast(error.message || "Failed to select cTrader account", "error");
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
+
+  const openCtraderDemoOrder = (broker: BrokerAccount) => {
+    const selected = (broker.metadata_json as any)?.ctrader_selected_account || null;
+    if (!selected) {
+      showToast("Select and sync a cTrader demo account before placing a test order.", "error");
+      return;
+    }
+    if (!isCtraderDemoSelected(selected, broker)) {
+      showToast("cTrader live order execution is disabled in this phase.", "error");
+      return;
+    }
+    setCtraderOrderTarget(broker);
+    setCtraderOrderResult(null);
+    setCtraderOrderForm({ symbol: defaultCtraderOrderSymbol(broker), side: "BUY", volume: "1000", stop_loss: "", take_profit: "" });
+  };
+
+  const submitCtraderDemoOrder = async () => {
+    if (!ctraderOrderTarget) return;
+    try {
+      setPlacingCtraderOrder(true);
+      const result = await liveTradingApi.placeCtraderTestOrder(ctraderOrderTarget.id, {
+        symbol: ctraderOrderForm.symbol,
+        side: ctraderOrderForm.side,
+        volume: ctraderOrderForm.volume,
+        stop_loss: ctraderOrderForm.stop_loss || null,
+        take_profit: ctraderOrderForm.take_profit || null,
+        comment: "AlgoAgentX cTrader DEMO test order",
+      });
+      setCtraderOrderResult(result as unknown as Record<string, unknown>);
+      showToast(result.message || "cTrader demo order placed", "success");
+      await load();
+    } catch (error: any) {
+      showToast(error.message || "cTrader demo order failed", "error");
+    } finally {
+      setPlacingCtraderOrder(false);
+    }
+  };
+
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     try {
@@ -385,9 +557,9 @@ export default function BrokersPage() {
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                       {rows.map((provider) => {
                         const code = provider.code.toUpperCase();
-                        const isReady = provider.is_enabled && (code === "MT5" || code === "UPSTOX" || CRYPTO_CODES.has(code));
+                        const isReady = provider.is_enabled && (code === "MT5" || code === "UPSTOX" || CRYPTO_CODES.has(code) || CTRADER_CODES.has(code));
                         return (
-                          <button key={provider.id} type="button" disabled={!isReady} onClick={() => code === "MT5" ? openMt5Form() : code === "UPSTOX" ? openUpstoxForm() : CRYPTO_CODES.has(code) ? openCryptoForm(code) : undefined} className={`rounded-2xl border p-4 text-left transition ${isReady ? "border-white/10 bg-white/5 hover:bg-white/10" : "border-white/5 bg-white/[0.03] opacity-60"}`}>
+                          <button key={provider.id} type="button" disabled={!isReady} onClick={() => code === "MT5" ? openMt5Form() : code === "UPSTOX" ? void openUpstoxForm() : CTRADER_CODES.has(code) ? void openCtraderForm() : CRYPTO_CODES.has(code) ? openCryptoForm(code) : undefined} className={`rounded-2xl border p-4 text-left transition ${isReady ? "border-white/10 bg-white/5 hover:bg-white/10" : "border-white/5 bg-white/[0.03] opacity-60"}`}>
                             <div className="flex items-start justify-between gap-3"><div><div className="font-bold text-white">{provider.display_name || provider.name || displayBrokerName(code)}</div><div className="mt-1 text-xs text-purple-200">{categoryTitle(provider)} • {provider.setup_mode || provider.auth_type}</div></div>{isReady ? <Badge className="bg-lime-500/20 text-lime-100">Ready</Badge> : <Badge className="bg-white/10 text-purple-100">Coming Soon</Badge>}</div>
                             <p className="mt-3 text-sm text-purple-200">{provider.description || (code === "MT5" ? "Use the Windows MT5 Agent where your terminal is running." : CRYPTO_CODES.has(code) ? "Connect with exchange API key and secret. Live orders stay disabled in this phase." : "Cloud broker OAuth/API setup.")}</p>
                           </button>
@@ -429,6 +601,19 @@ export default function BrokersPage() {
               </form>
             )}
 
+            {activeForm === "CTRADER" && (
+              <form onSubmit={submitCtrader} className="space-y-4">
+                <div className="rounded-xl border border-blue-400/20 bg-blue-500/10 p-3 text-sm text-blue-100">Use this exact Redirect URI in your cTrader Open API application. Market data setup is enabled; order execution stays disabled in this phase.</div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <label className="text-sm text-purple-100">Account Label<input value={ctraderForm.account_label} onChange={(e) => setCtraderForm({ ...ctraderForm, account_label: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
+                  <label className="text-sm text-purple-100">Client ID / API Key<input value={ctraderForm.client_id} onChange={(e) => setCtraderForm({ ...ctraderForm, client_id: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
+                  <label className="text-sm text-purple-100">Client Secret<input value={ctraderForm.client_secret} onChange={(e) => setCtraderForm({ ...ctraderForm, client_secret: e.target.value })} type="password" className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" required /></label>
+                  <label className="text-sm text-purple-100">Redirect URI<div className="mt-1 flex gap-2"><input value={ctraderForm.redirect_uri} readOnly className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" /><Button type="button" onClick={() => copyText(ctraderForm.redirect_uri, "cTrader Redirect URI copied")} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Copy className="h-4 w-4" /> Copy</Button></div></label>
+                </div>
+                <Button type="submit" disabled={saving} className="gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400"><ExternalLink className="h-4 w-4" />{saving ? "Opening OAuth..." : "Save & Open cTrader OAuth"}</Button>
+              </form>
+            )}
+
             {activeForm === "CRYPTO" && (
               <form onSubmit={submitCrypto} className="space-y-4">
                 <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/10 p-3 text-sm text-yellow-100">Create API key with read/trade permission only. Do not enable withdrawal permission.</div>
@@ -455,7 +640,10 @@ export default function BrokersPage() {
             const isUpstox = code === "UPSTOX";
             const isMt5 = code === "MT5";
             const isCrypto = CRYPTO_CODES.has(code);
+            const isCtrader = CTRADER_CODES.has(code);
             const agent = isMt5 ? agentStatuses[broker.id] : null;
+            const ctraderSelected = isCtrader ? ((broker.metadata_json as any)?.ctrader_selected_account || null) : null;
+            const ctraderSyncStatus = isCtrader ? ((broker.metadata_json as any)?.sync_status || null) : null;
             const normalizedStatus = statusOf(broker, agent);
             return (
               <div key={broker.id} className="rounded-2xl border border-white/10 bg-white/5 p-5">
@@ -463,20 +651,57 @@ export default function BrokersPage() {
                   <div className="flex items-start gap-3">
                     {normalizedStatus === "CONNECTED" ? <CheckCircle className="h-5 w-5 text-green-300" /> : normalizedStatus === "ERROR" ? <AlertCircle className="h-5 w-5 text-yellow-300" /> : normalizedStatus === "AGENT_OFFLINE" ? <WifiOff className="h-5 w-5 text-orange-300" /> : <XCircle className="h-5 w-5 text-red-300" />}
                     <div>
-                      <div className="flex flex-wrap items-center gap-2"><h3 className="text-lg font-bold text-white">{broker.account_label}</h3>{statusBadge(normalizedStatus)}<Badge className="bg-white/10 text-purple-100">{code}</Badge>{isCrypto && <Badge className="bg-white/10 text-purple-100">Crypto API</Badge>}{isUpstox && <Badge className="bg-white/10 text-purple-100">Indian Equity</Badge>}{isMt5 && agentStatusBadge(agent)}</div>
-                      <p className="mt-1 text-sm text-purple-200">{isMt5 ? `${agent?.mt5_account_login || "Agent waiting"} • ${agent?.server_name || broker.server_name || "MT5 Agent"}` : isCrypto ? `${displayBrokerName(code)} API • Live orders disabled` : isUpstox ? (broker.login_id || "OAuth pending") : broker.login_id} {isMt5 || isCrypto ? "" : ` • ${broker.server_name || ""}`}</p>
+                      <div className="flex flex-wrap items-center gap-2"><h3 className="text-lg font-bold text-white">{broker.account_label}</h3>{statusBadge(normalizedStatus)}<Badge className="bg-white/10 text-purple-100">{code}</Badge>{isCrypto && <Badge className="bg-white/10 text-purple-100">Crypto API</Badge>}{isCtrader && <Badge className="bg-white/10 text-purple-100">Cloud Forex</Badge>}{isUpstox && <Badge className="bg-white/10 text-purple-100">Indian Equity</Badge>}{isMt5 && agentStatusBadge(agent)}</div>
+                      <p className="mt-1 text-sm text-purple-200">{isMt5 ? `${agent?.mt5_account_login || "Agent waiting"} • ${agent?.server_name || broker.server_name || "MT5 Agent"}` : isCrypto ? `${displayBrokerName(code)} API • Live orders disabled` : isCtrader ? `${displayBrokerName(code)} • ${ctraderSelected?.account_number || ctraderSelected?.ctrader_account_id || "Account sync pending"} • Orders disabled` : isUpstox ? (broker.login_id || "OAuth pending") : broker.login_id} {isMt5 || isCrypto ? "" : ` • ${broker.server_name || ""}`}</p>
                       <p className="mt-1 flex items-center gap-1 text-xs text-purple-300"><Clock className="h-3 w-3" /> Last connected: {formatDate(broker.last_connected_at)}</p>
                       {isMt5 && <p className="mt-1 text-xs text-purple-300">Terminal: {agent?.terminal_status || "Waiting for Agent"} • Server: {agent?.server_name || "—"} • Last heartbeat: {formatDate(agent?.last_heartbeat_at)} • Balance/Equity: {money(agent?.balance)} / {money(agent?.equity)} {agent?.currency || ""}</p>}
+                      {isCtrader && <p className="mt-1 text-xs text-purple-300">Selected: {ctraderSelected?.account_number || ctraderSelected?.ctrader_account_id || "Not selected"} • Broker: {ctraderSelected?.broker_name || "—"} • Last sync: {formatDate((broker.metadata_json as any)?.last_sync_at || broker.last_connected_at)} • Sync: {ctraderSyncStatus || "PENDING"}</p>}
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2"><Button onClick={() => testConnection(broker)} disabled={testingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Test</Button><Button onClick={() => reconnect(broker)} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Reconnect</Button><Button onClick={() => reconnect(broker)} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Edit3 className="h-4 w-4" /> Edit</Button>{isMt5 && <Button onClick={() => generateAgentToken(broker)} disabled={generatingAgentToken} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Copy className="h-4 w-4" /> Generate Token</Button>}<Button onClick={() => { setDeleteTarget(broker); setDeleteWarning(null); setDeleteForce(false); }} className="gap-2 bg-red-500/15 text-red-100 hover:bg-red-500/25"><Trash2 className="h-4 w-4" /> Delete</Button></div>
+                  <div className="flex flex-wrap gap-2"><Button onClick={() => testConnection(broker)} disabled={testingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Test</Button>{isCtrader && <Button onClick={() => syncBroker(broker)} disabled={syncingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Sync</Button>}{isCtrader && <Button onClick={() => openCtraderAccountSelector(broker)} disabled={syncingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15">Select Account</Button>}{isCtrader && isCtraderDemoSelected(ctraderSelected, broker) && <Button onClick={() => openCtraderDemoOrder(broker)} className="gap-2 bg-lime-500/20 text-lime-100 hover:bg-lime-500/30">Test Demo Order</Button>}{isCtrader && !isCtraderDemoSelected(ctraderSelected, broker) && <Button disabled className="gap-2 bg-white/5 text-purple-200">Live Orders Disabled</Button>}<Button onClick={() => reconnect(broker)} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Reconnect</Button><Button onClick={() => reconnect(broker)} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Edit3 className="h-4 w-4" /> Edit</Button>{isMt5 && <Button onClick={() => generateAgentToken(broker)} disabled={generatingAgentToken} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Copy className="h-4 w-4" /> Generate Token</Button>}<Button onClick={() => { setDeleteTarget(broker); setDeleteWarning(null); setDeleteForce(false); }} className="gap-2 bg-red-500/15 text-red-100 hover:bg-red-500/25"><Trash2 className="h-4 w-4" /> Delete</Button></div>
                 </div>
-                {last && <div className="mt-4 rounded-xl border border-white/10 bg-black/10 p-4 text-sm text-purple-100"><div className="font-semibold text-white">Last connection result</div><p className="mt-1">{last?.message || "No details"}</p><div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3"><span>Balance: {isUpstox ? "—" : money(last?.balance)}</span><span>Equity: {isUpstox ? "—" : money(last?.equity)}</span><span>Currency: {last?.currency || (isUpstox ? "INR" : "—")}</span></div></div>}
+                {last && <div className="mt-4 rounded-xl border border-white/10 bg-black/10 p-4 text-sm text-purple-100"><div className="font-semibold text-white">Last connection result</div><p className="mt-1">{last?.message || "No details"}</p><div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3"><span>Balance: {isUpstox ? "—" : money(isCtrader && ctraderSelected ? ctraderSelected.balance : last?.balance)}</span><span>Equity: {isUpstox ? "—" : money(isCtrader && ctraderSelected ? ctraderSelected.equity : last?.equity)}</span><span>Currency: {(isCtrader && ctraderSelected?.currency) || last?.currency || (isUpstox ? "INR" : "—")}</span></div></div>}
               </div>
             );
           })}
         </div>
       </GlassCard>
+
+      {ctraderSelectTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-3xl rounded-2xl border border-white/10 bg-[#241047] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4"><div><h2 className="text-xl font-bold text-white">Select cTrader Trading Account</h2><p className="mt-2 text-sm text-purple-200">Choose which linked cTrader account AlgoAgentX should use for balance, symbols, and future trading setup.</p></div><Button variant="ghost" onClick={() => setCtraderSelectTarget(null)} className="text-purple-100 hover:bg-white/10"><X className="h-4 w-4" /></Button></div>
+            <div className="mt-5 space-y-3">
+              {ctraderSelectTarget.accounts.length === 0 && <div className="rounded-xl border border-yellow-400/30 bg-yellow-500/10 p-4 text-sm text-yellow-100">No cTrader account found. Reconnect cTrader and make sure account permission is approved.</div>}
+              {ctraderSelectTarget.accounts.map((account, index) => (
+                <button key={`${account.ctrader_account_id || account.account_number || index}`} type="button" onClick={() => selectCtraderAccount(account)} className="w-full rounded-xl border border-white/10 bg-white/5 p-4 text-left hover:bg-white/10">
+                  <div className="flex flex-col justify-between gap-2 md:flex-row md:items-center"><div><div className="font-semibold text-white">{account.account_number || account.ctrader_account_id || `Account ${index + 1}`}</div><div className="text-sm text-purple-200">{account.broker_name || "cTrader"} • {account.account_type || "DEMO/LIVE"}</div></div><Badge className="bg-lime-500/20 text-lime-100">Select</Badge></div>
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-purple-100 md:grid-cols-4"><span>Balance: {money(account.balance)}</span><span>Equity: {money(account.equity)}</span><span>Free margin: {money(account.free_margin)}</span><span>Currency: {account.currency || "—"}</span></div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {ctraderOrderTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-white/10 bg-[#241047] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4"><div><h2 className="text-xl font-bold text-white">cTrader Test Demo Order</h2><p className="mt-2 text-sm text-purple-200">This will place a demo market order on the selected cTrader demo account. Live cTrader orders remain blocked.</p></div><Button variant="ghost" onClick={() => setCtraderOrderTarget(null)} className="text-purple-100 hover:bg-white/10"><X className="h-4 w-4" /></Button></div>
+            <div className="mt-4 rounded-xl border border-yellow-400/30 bg-yellow-500/10 p-3 text-sm text-yellow-100">Confirm the symbol and volume. Use the smallest safe demo volume supported by your cTrader symbol metadata.</div>
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <label className="text-sm text-purple-100">Symbol<input value={ctraderOrderForm.symbol} onChange={(e) => setCtraderOrderForm({ ...ctraderOrderForm, symbol: e.target.value.toUpperCase() })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" /></label>
+              <label className="text-sm text-purple-100">Side<select value={ctraderOrderForm.side} onChange={(e) => setCtraderOrderForm({ ...ctraderOrderForm, side: e.target.value as "BUY" | "SELL" })} className="mt-1 w-full rounded-xl border border-white/10 bg-[#2b1553] px-3 py-2 text-white outline-none"><option value="BUY">BUY</option><option value="SELL">SELL</option></select></label>
+              <label className="text-sm text-purple-100">Volume<input value={ctraderOrderForm.volume} onChange={(e) => setCtraderOrderForm({ ...ctraderOrderForm, volume: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" /></label>
+              <label className="text-sm text-purple-100">Stop Loss Optional<input value={ctraderOrderForm.stop_loss} onChange={(e) => setCtraderOrderForm({ ...ctraderOrderForm, stop_loss: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" /></label>
+              <label className="text-sm text-purple-100">Take Profit Optional<input value={ctraderOrderForm.take_profit} onChange={(e) => setCtraderOrderForm({ ...ctraderOrderForm, take_profit: e.target.value })} className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white outline-none" /></label>
+            </div>
+            {ctraderOrderResult && <div className="mt-4 rounded-xl border border-green-400/30 bg-green-500/10 p-4 text-sm text-green-100"><div className="font-semibold text-white">Order Result</div><div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2"><span>Order ID: {String(ctraderOrderResult.order_id || "—")}</span><span>Status: {String(ctraderOrderResult.status || "—")}</span><span>Symbol: {String(ctraderOrderResult.symbol || "—")}</span><span>Side / Volume: {String(ctraderOrderResult.side || "—")} {String(ctraderOrderResult.volume || "")}</span></div></div>}
+            <div className="mt-6 flex flex-wrap justify-end gap-2"><Button onClick={() => setCtraderOrderTarget(null)} className="bg-white/10 text-white hover:bg-white/15">Cancel</Button><Button onClick={submitCtraderDemoOrder} disabled={placingCtraderOrder} className="bg-lime-500 text-slate-950 hover:bg-lime-400">{placingCtraderOrder ? "Placing..." : "Confirm Demo Market Order"}</Button></div>
+          </div>
+        </div>
+      )}
 
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
