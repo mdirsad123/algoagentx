@@ -441,6 +441,9 @@ class LivePositionOut(LiveBaseModel):
     deployment_id: UUID
     user_id: UUID
     broker_account_id: Optional[UUID] = None
+    broker_position_id: Optional[str] = None
+    broker_opened_at: Optional[datetime] = None
+    broker_opened_at_raw: Optional[str] = None
     symbol: str
     side: str
     qty: Decimal
@@ -513,6 +516,9 @@ class LiveMarketCandleOut(LiveBaseModel):
     id: UUID
     deployment_id: Optional[UUID] = None
     broker_account_id: Optional[UUID] = None
+    broker_position_id: Optional[str] = None
+    broker_opened_at: Optional[datetime] = None
+    broker_opened_at_raw: Optional[str] = None
     symbol: str
     timeframe: str
     candle_time: datetime

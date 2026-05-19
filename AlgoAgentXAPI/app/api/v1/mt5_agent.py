@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_current_user, get_db
-from ...db.models import BrokerAccount, MT5Agent, MT5AgentCommand
+from ...db.models import BrokerAccount, LiveOrder, MT5Agent, MT5AgentCommand
 from ...schemas.mt5_agent import MT5AgentCommandOut, MT5AgentCommandResultIn, MT5AgentHeartbeatIn, MT5AgentOrderResultIn, MT5AgentOut, MT5AgentRegisterIn, MT5AgentRegisterOut
 from ...utils.api_response import success_response
 from .live_common import get_broker_account_or_404, user_id_from
@@ -155,6 +155,32 @@ async def _store_command_result(payload: MT5AgentCommandResultIn, authorization:
         cmd.error_message = payload.message or f"MT5 {cmd.command_type} command failed"
     cmd.result_payload = payload.model_dump(mode="json")
     cmd.completed_at = datetime.now(timezone.utc)
+
+    if cmd.command_type == "PLACE_ORDER":
+        raw_payload = cmd.request_payload if isinstance(cmd.request_payload, dict) else {}
+        client_order_id = raw_payload.get("client_order_id") or raw_payload.get("idempotency_key")
+        live_order = None
+        if client_order_id:
+            live_order = (await db.execute(select(LiveOrder).where(LiveOrder.client_order_id == client_order_id))).scalar_one_or_none()
+        if live_order is None:
+            live_order = (await db.execute(select(LiveOrder).where(LiveOrder.broker_order_id == str(cmd.id)))).scalar_one_or_none()
+        if live_order is not None:
+            raw_result = payload.raw_response or {}
+            old_raw = live_order.raw_response if isinstance(live_order.raw_response, dict) else {}
+            if payload.broker_order_id:
+                live_order.broker_order_id = str(payload.broker_order_id)
+            if payload.executed_price is not None:
+                live_order.executed_price = payload.executed_price
+            live_order.status = "FILLED" if payload.success else "ERROR"
+            live_order.error_message = None if payload.success else (payload.message or cmd.error_message)
+            live_order.raw_response = {
+                **old_raw,
+                "agent_command_id": str(cmd.id),
+                "client_order_id": client_order_id,
+                "mt5_order_result": raw_result,
+                "mt5_order_message": payload.message,
+            }
+
     await db.commit()
     return {"command_id": str(cmd.id), "status": cmd.status}
 

@@ -360,6 +360,9 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
 
     for broker_pos in raw_positions:
         actual_symbol = str(broker_pos.get("symbol") or row.instrument)
+        broker_position_id = str(broker_pos.get("ticket") or broker_pos.get("position_id") or broker_pos.get("identifier") or "") or None
+        broker_opened_at = _mt5_position_time(broker_pos)
+        broker_opened_at_raw = str(broker_pos.get("time") or broker_pos.get("time_msc") or "") or None
         side = _mt5_position_side(broker_pos)
         qty = _dec(broker_pos.get("volume"), "0")
         avg_entry = _dec(broker_pos.get("price_open"), "0")
@@ -368,12 +371,19 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
         sl = _as_money(broker_pos.get("sl"))
         tp = _as_money(broker_pos.get("tp"))
 
-        existing = next((p for p in db_open_positions if str(p.id) not in matched_db_ids and p.side == side and _symbols_match(p.symbol, actual_symbol)), None)
+        existing = None
+        if broker_position_id:
+            existing = next((p for p in db_open_positions if str(p.id) not in matched_db_ids and str(getattr(p, "broker_position_id", "") or "") == broker_position_id), None)
+        if existing is None:
+            existing = next((p for p in db_open_positions if str(p.id) not in matched_db_ids and p.side == side and _symbols_match(p.symbol, actual_symbol) and not getattr(p, "broker_position_id", None)), None)
         if existing is None:
             existing = LivePosition(
                 deployment_id=row.id,
                 user_id=row.user_id,
                 broker_account_id=row.broker_account_id,
+                broker_position_id=broker_position_id,
+                broker_opened_at=broker_opened_at,
+                broker_opened_at_raw=broker_opened_at_raw,
                 symbol=actual_symbol,
                 side=side,
                 qty=qty,
@@ -384,7 +394,7 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
                 unrealized_pnl=profit,
                 realized_pnl=Decimal("0"),
                 status="OPEN",
-                opened_at=_mt5_position_time(broker_pos),
+                opened_at=broker_opened_at,
             )
             db.add(existing)
             await db.flush()
@@ -394,6 +404,9 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
             for field, value in {
                 "symbol": actual_symbol,
                 "broker_account_id": row.broker_account_id,
+                "broker_position_id": broker_position_id or getattr(existing, "broker_position_id", None),
+                "broker_opened_at": broker_opened_at,
+                "broker_opened_at_raw": broker_opened_at_raw,
                 "qty": qty,
                 "avg_entry_price": avg_entry,
                 "current_price": current_price,

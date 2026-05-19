@@ -17,6 +17,21 @@ import type { BrokerAccount, LiveCandleSnapshot, FullDryTestResponse, LiveDeploy
 const date = (value?: string | null) => (value ? new Date(value).toLocaleString() : "—");
 const num = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 
+const openedAtDisplay = (p: { opened_at?: string | null; broker_opened_at?: string | null; broker_opened_at_raw?: string | null }) => {
+  const broker = p.broker_opened_at ? date(p.broker_opened_at) : p.broker_opened_at_raw || null;
+  const local = date(p.opened_at);
+  if (broker) {
+    return (
+      <div className="space-y-0.5 text-xs leading-5" title="MT5/broker time may differ from your browser local time.">
+        <div>MT5: {broker}</div>
+        <div className="text-purple-300">Local: {local}</div>
+      </div>
+    );
+  }
+  return <span title="Shown in your browser local time.">Local: {local}</span>;
+};
+
+
 const formatMoney = (value: unknown, currency?: string | null) => {
   const amount = Number(value || 0);
   const code = currency?.toUpperCase();
@@ -474,7 +489,7 @@ export default function LiveDeploymentDetailPage() {
           </div>
           <Badge className="border-lime-400/30 bg-lime-400/20 text-lime-100">{metrics?.broker_synced ? `${brokerProviderLabel} synced` : "DB view"}</Badge>
         </div>
-        {openPositions.length === 0 ? <NoRows label="No open positions" /> : <div className="responsive-table-wrapper overflow-x-auto"><table className="w-full min-w-[860px] text-left text-sm"><thead className="text-purple-200"><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg Entry</th><th>Current</th><th>SL</th><th>Target</th><th>Unrealized PnL</th><th>Status</th><th>Managed By</th><th>Opened At</th></tr></thead><tbody className="divide-y divide-white/10">{openPositions.map((p) => <tr key={p.id} className="text-purple-50"><td className="py-3">{p.symbol}</td><td>{p.side}</td><td>{num(p.qty)}</td><td>{num(p.avg_entry_price)}</td><td>{num(p.current_price)}</td><td>{num(p.stop_loss)}</td><td>{num(p.target)}</td><td>{formatMoney(p.unrealized_pnl, currency)}</td><td>{p.status}</td><td>Broker SL/TP Sync</td><td>{date(p.opened_at)}</td></tr>)}</tbody></table></div>}
+        {openPositions.length === 0 ? <NoRows label="No open positions" /> : <div className="responsive-table-wrapper overflow-x-auto"><table className="w-full min-w-[860px] text-left text-sm"><thead className="text-purple-200"><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg Entry</th><th>Current</th><th>SL</th><th>Target</th><th>Unrealized PnL</th><th>Status</th><th>Managed By</th><th>Opened At</th></tr></thead><tbody className="divide-y divide-white/10">{openPositions.map((p) => <tr key={p.id} className="text-purple-50"><td className="py-3">{p.symbol}</td><td>{p.side}</td><td>{num(p.qty)}</td><td>{num(p.avg_entry_price)}</td><td>{num(p.current_price)}</td><td>{num(p.stop_loss)}</td><td>{num(p.target)}</td><td>{formatMoney(p.unrealized_pnl, currency)}</td><td>{p.status}</td><td>Broker SL/TP Sync</td><td>{openedAtDisplay(p)}</td></tr>)}</tbody></table></div>}
       </GlassCard>
 
       <LiveFlowPanel />

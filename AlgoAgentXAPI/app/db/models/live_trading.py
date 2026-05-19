@@ -176,7 +176,6 @@ class BrokerOrderExecutionLog(Base):
     status = Column(String(30), nullable=False, server_default="PENDING", index=True)
     error_message = Column(Text, nullable=True)
     broker_order_id = Column(String(255), nullable=True)
-    client_order_id = Column(String(255), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -295,6 +294,9 @@ class LiveSignal(Base):
         Index("idx_live_signals_deployment_created", "deployment_id", "created_at"),
         Index("idx_live_signals_user_created", "user_id", "created_at"),
         Index("idx_live_signals_status", "status"),
+        # DB-level idempotency is also created by migration as a partial unique index.
+        # Keep this model index for fast duplicate checks in all environments.
+        Index("idx_live_engine_signal_idempotency_lookup", "deployment_id", "source", "symbol", "timeframe", "signal_type", "candle_time"),
     )
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
@@ -347,6 +349,7 @@ class LiveOrder(Base):
         Index("idx_live_orders_deployment_created", "deployment_id", "created_at"),
         Index("idx_live_orders_user_status", "user_id", "status"),
         Index("idx_live_orders_signal", "signal_id"),
+        Index("idx_live_orders_signal_status", "signal_id", "status"),
     )
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
@@ -355,6 +358,7 @@ class LiveOrder(Base):
     user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     broker_account_id = Column(PG_UUID(as_uuid=True), ForeignKey("broker_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     broker_order_id = Column(String(255), nullable=True)
+    client_order_id = Column(String(255), nullable=True, index=True)
     symbol = Column(String(100), nullable=False, index=True)
     side = Column(String(20), nullable=False)
     order_type = Column(String(30), nullable=False, server_default="MARKET")
@@ -385,12 +389,16 @@ class LivePosition(Base):
         Index("idx_live_positions_deployment_status", "deployment_id", "status"),
         Index("idx_live_positions_user_status", "user_id", "status"),
         Index("idx_live_positions_symbol", "symbol"),
+        Index("idx_live_positions_broker_position", "deployment_id", "broker_account_id", "broker_position_id"),
     )
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     deployment_id = Column(PG_UUID(as_uuid=True), ForeignKey("strategy_deployments.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     broker_account_id = Column(PG_UUID(as_uuid=True), ForeignKey("broker_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
+    broker_position_id = Column(String(255), nullable=True, index=True)
+    broker_opened_at = Column(DateTime(timezone=True), nullable=True)
+    broker_opened_at_raw = Column(String(100), nullable=True)
     symbol = Column(String(100), nullable=False, index=True)
     side = Column(String(20), nullable=False)
     qty = Column(Numeric(18, 8), nullable=False)

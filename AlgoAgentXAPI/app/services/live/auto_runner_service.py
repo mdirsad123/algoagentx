@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import settings
@@ -195,6 +195,9 @@ async def run_due_deployments(db: AsyncSession | None = None) -> dict[str, Any]:
     owns_session = db is None
     session = db or async_session()
     try:
+        locked = (await session.execute(text("SELECT pg_try_advisory_lock(26051001)"))).scalar()
+        if not locked:
+            return {"success": True, "checked": 0, "results": [], "skipped": "AUTO_RUNNER_LOCK_HELD"}
         rows = (await session.execute(
             select(StrategyDeployment.id).where(
                 StrategyDeployment.status == "RUNNING",
@@ -207,6 +210,14 @@ async def run_due_deployments(db: AsyncSession | None = None) -> dict[str, Any]:
             results.append(await run_deployment_if_due(session, deployment_id))
         return {"success": True, "checked": len(rows), "results": results}
     finally:
+        try:
+            await session.execute(text("SELECT pg_advisory_unlock(26051001)"))
+            await session.commit()
+        except Exception:
+            try:
+                await session.rollback()
+            except Exception:
+                pass
         if owns_session:
             await session.close()
 

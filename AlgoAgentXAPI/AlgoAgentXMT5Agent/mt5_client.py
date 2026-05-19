@@ -377,6 +377,18 @@ class MT5Client:
 
         order_type = self.mt5.ORDER_TYPE_BUY if side == "BUY" else self.mt5.ORDER_TYPE_SELL
         price = float(payload.get("price") or (tick.ask if side == "BUY" else tick.bid))
+        sl = payload.get("stop_loss")
+        tp = payload.get("target")
+        if sl in (None, "", 0, "0") or tp in (None, "", 0, "0"):
+            return {"success": False, "message": "SL/TP missing or zero. Agent blocked order for safety.", "raw": {"payload": payload}}
+        sl_f = float(sl)
+        tp_f = float(tp)
+        if side == "BUY" and not (sl_f < price < tp_f):
+            return {"success": False, "message": "Invalid BUY SL/TP. Agent blocked order for safety.", "raw": {"payload": payload, "price": price}}
+        if side == "SELL" and not (tp_f < price < sl_f):
+            return {"success": False, "message": "Invalid SELL SL/TP. Agent blocked order for safety.", "raw": {"payload": payload, "price": price}}
+        client_order_id = str(payload.get("client_order_id") or payload.get("idempotency_key") or "")
+        comment = str(payload.get("comment") or ("AX-" + client_order_id[-12:] if client_order_id else "AlgoAgentX MT5 Agent"))[:31]
         request = {
             "action": self.mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -385,17 +397,18 @@ class MT5Client:
             "price": price,
             "deviation": int(payload.get("deviation") or self.default_deviation),
             "magic": 260510,
-            "comment": str(payload.get("comment") or "AlgoAgentX MT5 Agent")[:31],
+            "comment": comment,
             "type_time": self.mt5.ORDER_TIME_GTC,
             "type_filling": self.mt5.ORDER_FILLING_IOC,
         }
-        if payload.get("stop_loss") is not None:
-            request["sl"] = float(payload["stop_loss"])
-        if payload.get("target") is not None:
-            request["tp"] = float(payload["target"])
+        request["sl"] = sl_f
+        request["tp"] = tp_f
 
         result = self.mt5.order_send(request)
         raw = result._asdict() if hasattr(result, "_asdict") else {"result": str(result)}
+        if isinstance(raw, dict):
+            raw.setdefault("request", request)
+            raw.setdefault("client_order_id", client_order_id or None)
         retcode = raw.get("retcode")
         ok_codes = {getattr(self.mt5, "TRADE_RETCODE_DONE", 10009), getattr(self.mt5, "TRADE_RETCODE_PLACED", 10008)}
         success = retcode in ok_codes

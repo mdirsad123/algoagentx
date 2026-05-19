@@ -445,6 +445,9 @@ export interface LivePosition {
   deployment_id: string;
   user_id?: string;
   broker_account_id?: string | null;
+  broker_position_id?: string | null;
+  broker_opened_at?: string | null;
+  broker_opened_at_raw?: string | null;
   symbol: string;
   side: PositionSide;
   qty: number | string;
@@ -743,6 +746,9 @@ export interface LiveMarketCandle {
   id?: string;
   deployment_id?: string | null;
   broker_account_id?: string | null;
+  broker_position_id?: string | null;
+  broker_opened_at?: string | null;
+  broker_opened_at_raw?: string | null;
   symbol: string;
   timeframe: string;
   candle_time: string;

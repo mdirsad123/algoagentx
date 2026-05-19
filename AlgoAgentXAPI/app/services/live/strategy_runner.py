@@ -4,12 +4,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 import math
+import hashlib
 from uuid import UUID
 
 import pandas as pd
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from ...db.models import BrokerAccount, LiveOrder, LiveSignal, LiveTradeLog, Strategy, StrategyDeployment
 from ..strategy_registry import resolve_strategy
@@ -76,6 +78,12 @@ def _normalize_dt(value: Any) -> datetime:
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     except Exception:
         return datetime.now(timezone.utc)
+
+
+def _deployment_lock_key(deployment_id: UUID) -> int:
+    """Stable signed 64-bit key for PostgreSQL advisory transaction locks."""
+    digest = hashlib.sha256(str(deployment_id).encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
 
 
 async def _log(
@@ -583,6 +591,28 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
     latest_symbol: str | None = None
 
     try:
+        lock_key = _deployment_lock_key(deployment.id)
+        locked = (await db.execute(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": lock_key})).scalar()
+        if not locked:
+            latest_log_message = "Another runner is already processing this deployment."
+            await _log(db, deployment, "RUNNER_LOCK_SKIPPED", latest_log_message, "WARNING", {"deployment_id": str(deployment.id)})
+            await db.commit()
+            return StrategyRunnerResult(
+                success=True,
+                deployment_id=str(deployment.id),
+                strategy_name=None,
+                latest_candle_time=None,
+                signal=None,
+                executed=False,
+                order_id=None,
+                broker_order_id=None,
+                signal_id=None,
+                duplicate=True,
+                message=latest_log_message,
+                latest_runner_log=latest_log_message,
+                final_action="LOCK_SKIPPED",
+            ).to_dict()
+
         await _log(db, deployment, "RUNNER_STARTED", "Strategy runner started", metadata={"execute": execute})
         await _log(db, deployment, "LIVE_ENGINE_QA_STARTED", "Live engine final QA runner cycle started", metadata={"context": "runner", "execute": execute})
         mode = str(deployment.mode or "PAPER").upper()
@@ -752,8 +782,40 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
             },
             status="RECEIVED",
         )
-        db.add(signal)
-        await db.flush()
+        try:
+            async with db.begin_nested():
+                db.add(signal)
+                await db.flush()
+        except IntegrityError:
+            duplicate = await _find_duplicate_engine_signal(db, deployment.id, latest_candle_time, signal_type, strategy_id=deployment.strategy_id, symbol=latest_symbol, timeframe=deployment.timeframe)
+            deployment.last_heartbeat_at = datetime.now(timezone.utc)
+            latest_log_message = "Duplicate tradeable signal blocked by DB idempotency guard"
+            await _log(
+                db,
+                deployment,
+                "DUPLICATE_SIGNAL_BLOCKED",
+                latest_log_message,
+                "WARNING",
+                {"existing_signal_id": str(duplicate.id) if duplicate else None, "signal_type": signal_type, "latest_candle_time": latest_candle_time.isoformat()},
+            )
+            await db.commit()
+            return StrategyRunnerResult(
+                success=True,
+                deployment_id=str(deployment.id),
+                strategy_name=canonical_name or getattr(strategy, "name", None),
+                latest_candle_time=latest_candle_time.isoformat(),
+                signal=signal_type,
+                executed=False,
+                order_id=None,
+                broker_order_id=None,
+                signal_id=str(duplicate.id) if duplicate else None,
+                duplicate=True,
+                message=latest_log_message,
+                latest_runner_log=latest_log_message,
+                symbol=latest_symbol,
+                final_action="DUPLICATE_SIGNAL_BLOCKED",
+            ).to_dict()
+
         deployment.last_signal_at = datetime.now(timezone.utc)
         deployment.last_heartbeat_at = datetime.now(timezone.utc)
         await _log(db, deployment, "RUNNER_SIGNAL_SAVED", f"ENGINE {signal_type} signal saved", metadata={"signal_id": str(signal.id)})

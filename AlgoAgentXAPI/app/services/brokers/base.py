@@ -33,6 +33,7 @@ class BrokerOrderRequest:
     order_variety: Optional[str] = None
     instrument_key: Optional[str] = None
     tag: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 @dataclass

@@ -42,6 +42,34 @@ def _result_volume(result, fallback: Decimal) -> Decimal:
 def _is_ctrader_broker(broker: BrokerAccount | None) -> bool:
     return get_broker_code(broker) in {"CTRADER", "CTRADER_API"} if broker is not None else False
 
+
+def _client_order_id(deployment: StrategyDeployment, signal: LiveSignal, action: str = "ENTRY") -> str:
+    candle_time = getattr(signal, "candle_time", None)
+    candle_key = candle_time.isoformat() if hasattr(candle_time, "isoformat") else str(candle_time or "manual")
+    return f"AX:{deployment.id}:{signal.id}:{candle_key}:{signal.signal_type}:{action}"
+
+
+def _short_order_comment(client_order_id: str, prefix: str = "AX") -> str:
+    safe = str(client_order_id or "")[-12:].replace(":", "").replace("-", "")
+    return f"{prefix}-{safe}"[:31]
+
+
+def _valid_entry_sltp(side: str, price: Decimal, stop_loss: Decimal | None, target: Decimal | None) -> tuple[bool, str | None]:
+    if stop_loss is None or target is None or stop_loss <= 0 or target <= 0:
+        return False, "SL/TP missing or zero. Broker order blocked for safety."
+    side_u = str(side or "").upper()
+    if side_u == "BUY" and not (stop_loss < price < target):
+        return False, "Invalid BUY SL/TP: expected stop_loss < entry < target."
+    if side_u == "SELL" and not (target < price < stop_loss):
+        return False, "Invalid SELL SL/TP: expected target < entry < stop_loss."
+    return True, None
+
+
+async def _existing_order_for_client_id(db: AsyncSession, client_order_id: str) -> LiveOrder | None:
+    if not client_order_id:
+        return None
+    return (await db.execute(select(LiveOrder).where(LiveOrder.client_order_id == client_order_id))).scalar_one_or_none()
+
 def _selected_ctrader_account(broker: BrokerAccount | None) -> dict | None:
     meta = getattr(broker, "metadata_json", None) or {}
     selected = meta.get("ctrader_selected_account") if isinstance(meta, dict) else None
@@ -226,8 +254,22 @@ async def _execute_demo_entry(
         signal.rejection_reason = msg
         return await _create_error_order(db, deployment, signal, order_side, qty, price, msg, stop_loss=stop_loss, target=target)
 
+    ok, sltp_error = _valid_entry_sltp(order_side, price, stop_loss, target)
+    if not ok:
+        signal.status = "REJECTED"
+        signal.rejection_reason = sltp_error
+        await _log(db, deployment, "LIVE_SLTP_SAFETY_BLOCKED", sltp_error or "SL/TP safety blocked order", "ERROR", {"signal_id": str(signal.id), "side": order_side, "entry_price": str(price), "stop_loss": str(stop_loss), "target": str(target)})
+        return await _create_error_order(db, deployment, signal, order_side, qty, price, sltp_error or "SL/TP safety blocked order", stop_loss=stop_loss, target=target, sizing_metadata=sizing_metadata)
+
+    client_order_id = _client_order_id(deployment, signal, "ENTRY")
+    existing_order = await _existing_order_for_client_id(db, client_order_id)
+    if existing_order is not None:
+        signal.status = "EXECUTED" if existing_order.status in {"FILLED", "PLACED"} else signal.status
+        await _log(db, deployment, "DUPLICATE_ORDER_BLOCKED", "Duplicate broker order blocked by client_order_id", "WARNING", {"signal_id": str(signal.id), "order_id": str(existing_order.id), "client_order_id": client_order_id})
+        return existing_order
+
     adapter = get_broker_adapter(broker, db)
-    await _log(db, deployment, "BROKER_EXECUTION_STARTED", "MT5 demo order send started", metadata={"broker_account_id": str(broker.id), "signal_id": str(signal.id), "sizing": sizing_metadata or {}})
+    await _log(db, deployment, "BROKER_EXECUTION_STARTED", "MT5 demo order send started", metadata={"broker_account_id": str(broker.id), "signal_id": str(signal.id), "client_order_id": client_order_id, "sizing": sizing_metadata or {}})
     broker_symbol = getattr(deployment, "broker_symbol", None) or signal.symbol
     result = await adapter.place_market_order(BrokerOrderRequest(
         symbol=broker_symbol,
@@ -236,8 +278,10 @@ async def _execute_demo_entry(
         price=price,
         stop_loss=stop_loss,
         target=target,
-        comment="AlgoAgentX Demo",
+        comment=_short_order_comment(client_order_id, "AX"),
         max_lot=getattr(deployment, "mt5_demo_max_lot", None),
+        tag=client_order_id,
+        idempotency_key=client_order_id,
     ))
     actual_qty = _result_volume(result, qty)
 
@@ -247,6 +291,7 @@ async def _execute_demo_entry(
         user_id=deployment.user_id,
         broker_account_id=deployment.broker_account_id,
         broker_order_id=result.broker_order_id,
+        client_order_id=client_order_id,
         symbol=broker_symbol,
         side=order_side,
         order_type="MARKET",
@@ -257,7 +302,7 @@ async def _execute_demo_entry(
         target=target,
         status="FILLED" if result.success else "ERROR",
         error_message=None if result.success else result.message,
-        raw_response={**(result.raw_response or {}), **({"sizing": sizing_metadata} if sizing_metadata else {})},
+        raw_response={**(result.raw_response or {}), "client_order_id": client_order_id, **({"sizing": sizing_metadata} if sizing_metadata else {})},
     )
     if sizing_metadata:
         for field, key in {
@@ -766,6 +811,13 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
             await _log(db, deployment, "RISK_REJECTED", "Calculated lot/quantity is zero", "WARNING", {"signal_id": str(signal.id), "sizing": sizing_metadata})
             return latest_order
         order_side = "BUY" if position_side == "LONG" else "SELL"
+        if deployment.mode in {"DEMO", "LIVE"}:
+            ok, sltp_error = _valid_entry_sltp(order_side, price, stop_loss, target)
+            if not ok:
+                signal.status = "REJECTED"
+                signal.rejection_reason = sltp_error
+                await _log(db, deployment, "LIVE_SLTP_SAFETY_BLOCKED", sltp_error or "SL/TP safety blocked order", "ERROR", {"signal_id": str(signal.id), "side": order_side, "entry_price": str(price), "stop_loss": str(stop_loss), "target": str(target), "sizing": sizing_metadata})
+                return await _create_error_order(db, deployment, signal, order_side, qty, price, sltp_error or "SL/TP safety blocked order", stop_loss=stop_loss, target=target, sizing_metadata=sizing_metadata)
         if deployment.mode == "PAPER":
             latest_order = await fill_market_order(db, deployment, signal, order_side, qty, price, stop_loss, target, action="ENTRY")
             if latest_order is not None:

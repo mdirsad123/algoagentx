@@ -69,7 +69,24 @@ class MT5AgentAdapter(BrokerAdapter):
             "deviation": order_request.deviation,
             "comment": order_request.comment,
             "max_lot": str(order_request.max_lot) if order_request.max_lot is not None else None,
+            "client_order_id": order_request.idempotency_key or order_request.tag,
+            "idempotency_key": order_request.idempotency_key or order_request.tag,
         }
+        if order_request.idempotency_key:
+            existing = (await self.db.execute(
+                select(MT5AgentCommand)
+                .where(MT5AgentCommand.command_type == "PLACE_ORDER")
+                .where(MT5AgentCommand.request_payload["idempotency_key"].astext == order_request.idempotency_key)
+                .order_by(MT5AgentCommand.created_at.desc())
+            )).scalars().first()
+            if existing is not None:
+                return BrokerOrderResult(
+                    True,
+                    "PLACED",
+                    "Duplicate MT5 command blocked by idempotency key; returning existing command.",
+                    broker_order_id=str(existing.id),
+                    raw_response={"agent_command_id": str(existing.id), "execution_mode": "AGENT", "idempotency_key": order_request.idempotency_key, "duplicate_command": True},
+                )
         command = MT5AgentCommand(agent_id=agent.id, user_id=self.broker_account.user_id, broker_account_id=self.broker_account.id, command_type="PLACE_ORDER", status="PENDING", request_payload=payload)
         self.db.add(command)
         await self.db.flush()
