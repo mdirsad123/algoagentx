@@ -169,6 +169,18 @@ export default function NewLiveDeploymentPage() {
   );
 
   useEffect(() => {
+    const loadApprovedBrokers = async () => {
+      const apiAny = liveTradingApi as any;
+      if (typeof apiAny.listApprovedBrokers === "function") {
+        return apiAny.listApprovedBrokers();
+      }
+      if (typeof apiAny.listApprovedBrokerAccounts === "function") {
+        return apiAny.listApprovedBrokerAccounts();
+      }
+      console.warn("Approved broker API helper missing");
+      return [];
+    };
+
     const load = async () => {
       try {
         setLoading(true);
@@ -176,7 +188,7 @@ export default function NewLiveDeploymentPage() {
           liveTradingApi.listStrategies(),
           liveTradingApi.listBrokerAccounts(),
           liveTradingApi.getLiveAccessStatus().catch(() => null),
-          liveTradingApi.listApprovedBrokers().catch(() => []),
+          loadApprovedBrokers().catch(() => []),
           liveTradingApi.listMarketInstruments().catch(() => []),
         ]);
         if (access) setAccessStatus(access);
@@ -281,6 +293,11 @@ export default function NewLiveDeploymentPage() {
     }
     if (showInstrumentKeyField && !(form.instrument_key || form.broker_symbol)) {
       showToast("Instrument key is required for this broker/instrument.", "error");
+      return;
+    }
+    const selectedInstrumentKey = form.instrument_key || instrumentKeyValue(selectedInstrument);
+    if (isUpstox && (!selectedInstrumentKey || !selectedInstrumentKey.includes("|"))) {
+      showToast("Selected instrument does not have Upstox instrument_key. Update Market Master first.", "error");
       return;
     }
     if (isCtrader) {

@@ -280,7 +280,7 @@ export default function LiveDeploymentSettingsPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [row, brokerRows, instrumentRows, summaryRow, compatRow] = await Promise.all([liveTradingApi.getDeployment(deploymentId), liveTradingApi.listBrokerAccounts(), liveTradingApi.listMarketInstruments(), liveTradingApi.getDeploymentSummary(deploymentId).catch(() => null), liveTradingApi.runCompatibilityCheck(deploymentId).catch(() => null)]);
+        const [row, brokerRows, instrumentRows, summaryRow, compatRow] = await Promise.all([liveTradingApi.getDeployment(deploymentId), liveTradingApi.listBrokerAccounts(), liveTradingApi.listMarketInstruments(), liveTradingApi.getDeploymentSummary(deploymentId, { refreshBroker: false }).catch(() => null), liveTradingApi.runCompatibilityCheck(deploymentId).catch(() => null)]);
         setBrokers(brokerRows);
         setMarketInstruments(instrumentRows);
         setDeploymentStatus(row.status);

@@ -42,6 +42,11 @@ const formatMoney = (value: unknown, currency?: string | null) => {
   return code ? `${formatted} ${code}` : formatted;
 };
 
+const formatOptionalMoney = (value: unknown, currency?: string | null) => {
+  if (value === null || value === undefined || value === "") return "Unavailable";
+  return formatMoney(value, currency);
+};
+
 function NoRows({ label }: { label: string }) {
   return <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-purple-200">{label}</div>;
 }
@@ -202,7 +207,7 @@ export default function LiveDeploymentDetailPage() {
       if (!silent) setLoading(true);
       const [d, sm, accounts, candles, ready] = await Promise.all([
         liveTradingApi.getDeployment(deploymentId),
-        liveTradingApi.getDeploymentSummary(deploymentId),
+        liveTradingApi.getDeploymentSummary(deploymentId, { refreshBroker: false }),
         liveTradingApi.listBrokerAccounts(),
         liveTradingApi.getDeploymentCandles(deploymentId, 5).catch(() => null),
         liveTradingApi.getDeploymentReadiness(deploymentId).catch(() => null),
@@ -225,6 +230,8 @@ export default function LiveDeploymentDetailPage() {
       setBrokerBusy(true);
       const result = await liveTradingApi.getDeploymentBrokerStatus(deploymentId);
       if (!silent) showToast(result.message || "Broker status refreshed", result.connected ? "success" : "error");
+      const refreshedSummary = await liveTradingApi.getDeploymentSummary(deploymentId, { refreshBroker: true }).catch(() => null);
+      if (refreshedSummary) setSummary(refreshedSummary);
       await loadSummary(true);
     } catch (error: any) {
       if (!silent) showToast(error.message || "Failed to refresh broker status", "error");
@@ -238,6 +245,8 @@ export default function LiveDeploymentDetailPage() {
     try {
       setBrokerBusy(true);
       await liveTradingApi.syncDeploymentBroker(deploymentId);
+      const refreshedSummary = await liveTradingApi.getDeploymentSummary(deploymentId, { refreshBroker: true }).catch(() => null);
+      if (refreshedSummary) setSummary(refreshedSummary);
       showToast("Broker orders/positions synced", "success");
       await loadSummary(true);
     } catch (error: any) {
@@ -427,8 +436,9 @@ export default function LiveDeploymentDetailPage() {
           <MetricCard label="Strategy" value={summary.deployment?.strategy_name || deployment.strategy_id || "—"} />
           <MetricCard label="Last Run" value={date(summary.deployment?.last_runner_at || deployment.last_runner_at)} />
           <MetricCard label="Last Processed Candle" value={date(summary.deployment?.last_processed_candle_time || deployment.last_processed_candle_time)} />
+          <MetricCard label="Next Scheduled Run" value={date(summary.deployment?.next_run_at || deployment.next_run_at)} />
+          <MetricCard label="Auto Runner" value={summary.deployment?.auto_runner_enabled ? "ON" : "OFF"} />
           <MetricCard label="Last Signal" value={recentSignals[0]?.signal_type || "—"} />
-          <MetricCard label="Auto Trade" value={summary.deployment?.auto_trade_enabled ? "ON" : "OFF"} />
           <MetricCard label="Latest Order" value={recentOrders[0]?.status || "—"} />
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -437,6 +447,7 @@ export default function LiveDeploymentDetailPage() {
           <Badge className={summary.deployment?.auto_runner_enabled ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : "border-yellow-400/30 bg-yellow-400/20 text-yellow-100"}>Auto Runner {summary.deployment?.auto_runner_enabled ? "ON" : "OFF"}</Badge>
           <span className="text-sm text-purple-200">Last signal: {date(summary.deployment?.last_signal_at || deployment.last_signal_at)}</span>
         </div>
+        <p className="mt-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3 text-xs text-cyan-100">Runner wakes just after the selected timeframe candle close. If the broker delays candle publication, it retries shortly instead of waiting a full candle.</p>
         {runnerResult && <p className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-purple-100">Latest runner log: {runnerResult}</p>}
       </GlassCard>
 
@@ -468,16 +479,23 @@ export default function LiveDeploymentDetailPage() {
             {connectedMt5Broker ? <p className="text-sm text-lime-200">Connected broker found: {connectedMt5Broker.account_label}. Click Attach Broker to link it to this deployment.</p> : <p className="text-sm text-yellow-100">No connected broker found. Go to Brokers and click Test Connection first.</p>}
           </div>
         ) : (
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
-            <MetricCard label="Account" value={broker.account_label || "Demo Broker"} />
-            <MetricCard label="Status" value={broker.status || "—"} />
-            <MetricCard label="Login" value={broker.login_id || "—"} />
-            <MetricCard label="Server" value={broker.server_name || "—"} />
-            <MetricCard label="Balance" value={formatMoney(broker.balance, broker.currency)} />
-            <MetricCard label="Equity" value={formatMoney(broker.equity, broker.currency)} />
-            <MetricCard label="Currency" value={broker.currency || "—"} />
-            <MetricCard label="Last Connected" value={date(broker.last_connected_at)} />
-          </div>
+          <>
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+              <MetricCard label="Account" value={broker.account_label || "Demo Broker"} />
+              <MetricCard label="Status" value={broker.status || "—"} />
+              <MetricCard label="Login" value={broker.login_id || "—"} />
+              <MetricCard label="Server" value={broker.server_name || "—"} />
+              <MetricCard label="Balance" value={formatOptionalMoney(broker.balance, broker.currency)} />
+              <MetricCard label="Equity" value={formatOptionalMoney(broker.equity, broker.currency)} />
+              <MetricCard label="Currency" value={broker.currency || (isUpstoxBroker ? "INR" : "—")} />
+              <MetricCard label="Last Connected" value={date(broker.last_connected_at)} />
+            </div>
+            {isUpstoxBroker && (broker.balance === null || broker.balance === undefined || broker.equity === null || broker.equity === undefined || metrics?.broker_sync_warning) && (
+              <div className="mt-4 rounded-xl border border-amber-400/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+                {metrics?.broker_sync_warning || "Funds/margin unavailable from Upstox. Broker is connected, but balance could not be parsed."}
+              </div>
+            )}
+          </>
         )}
       </GlassCard>
 

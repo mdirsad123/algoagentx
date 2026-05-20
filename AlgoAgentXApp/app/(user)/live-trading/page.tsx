@@ -99,7 +99,7 @@ export default function LiveTradingPage() {
       const pairs = await Promise.all(
         deploymentRows.map(async (d) => {
           try {
-            return [d.id, await liveTradingApi.getDeploymentSummary(d.id)] as const;
+            return [d.id, await liveTradingApi.getDeploymentSummary(d.id, { refreshBroker: false })] as const;
           } catch {
             return [d.id, null] as const;
           }
@@ -218,7 +218,7 @@ export default function LiveTradingPage() {
                   <td className="px-4 py-4"><StatusBadge status={deployment.status} /></td>
                   <td className="px-4 py-4">{sm?.broker ? `${sm.broker.account_label || "Broker"} (${sm.broker.status || "—"})` : "—"}</td>
                   <td className="px-4 py-4">{formatMoney(sm?.metrics?.today_pnl, rowCurrency)}</td>
-                  <td className="px-4 py-4"><Badge className={deployment.auto_runner_enabled ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : "border-slate-400/30 bg-slate-400/20 text-slate-100"}>{deployment.auto_runner_enabled ? "ON" : "OFF"}</Badge><div className="mt-1 text-xs text-purple-300">{date(deployment.last_processed_candle_time)}</div></td>
+                  <td className="px-4 py-4"><Badge title={`Next scheduled run: ${date(deployment.next_run_at)}`} className={deployment.auto_runner_enabled ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : "border-slate-400/30 bg-slate-400/20 text-slate-100"}>{deployment.auto_runner_enabled ? "ON" : "OFF"}</Badge><div className="mt-1 text-xs text-purple-300">{date(deployment.last_processed_candle_time)}</div></td>
                   <td className="px-4 py-4">{date(deployment.last_signal_at)}</td>
                   <td className="w-[420px] min-w-[420px] px-4 py-4"><div className="flex flex-nowrap items-center justify-end gap-2 whitespace-nowrap"><Button size="sm" disabled={busyId === deployment.id || deployment.mode === "PAPER"} onClick={() => runAction(deployment.id, "start")} className="h-8 gap-1 px-3 bg-lime-500 text-slate-950 hover:bg-lime-400"><Play className="h-3.5 w-3.5" />Start</Button><Button size="sm" disabled={busyId === deployment.id} onClick={() => runAction(deployment.id, "pause")} className="h-8 gap-1 px-3 bg-yellow-500 text-slate-950 hover:bg-yellow-400"><Pause className="h-3.5 w-3.5" />Pause</Button><Button size="sm" disabled={busyId === deployment.id} onClick={() => runAction(deployment.id, "stop")} variant="outline" className="h-8 gap-1 px-3 border-red-400/30 bg-red-500/10 text-red-100 hover:bg-red-500/20"><Square className="h-3.5 w-3.5" />Stop</Button><Link href={`/live-trading/${deployment.id}`}><Button size="sm" variant="outline" className="h-8 gap-1 px-3 border-white/10 bg-white/5 text-white hover:bg-white/10"><Eye className="h-3.5 w-3.5" />View</Button></Link>{deleteAllowed && <Button size="sm" disabled={busyId === deployment.id} onClick={() => setDeleteTarget(deployment)} variant="outline" className="h-8 gap-1 px-3 border-red-400/30 bg-red-500/10 text-red-100 hover:bg-red-500/20"><Trash2 className="h-3.5 w-3.5" />Delete</Button>}</div></td>
                 </tr>;

@@ -16,6 +16,8 @@ from .base import BrokerAdapter, BrokerConnectionResult, BrokerOrderRequest, Bro
 UPSTOX_AUTH_URL = "https://api.upstox.com/v2/login/authorization/dialog"
 UPSTOX_TOKEN_URL = "https://api.upstox.com/v2/login/authorization/token"
 UPSTOX_PROFILE_URL = "https://api.upstox.com/v2/user/profile"
+UPSTOX_FUNDS_MARGIN_V2_URL = "https://api.upstox.com/v2/user/get-funds-and-margin"
+UPSTOX_FUNDS_MARGIN_V3_URL = "https://api.upstox.com/v3/user/get-funds-and-margin"
 UPSTOX_MARKET_STATUS_URL = "https://api.upstox.com/v2/market/status/NSE"
 UPSTOX_QUOTES_URL = "https://api.upstox.com/v2/market-quote/quotes"
 UPSTOX_INTRADAY_CANDLE_V3_URL = "https://api.upstox.com/v3/historical-candle/intraday"
@@ -230,9 +232,164 @@ class UpstoxAdapter(BrokerAdapter):
         allowed = {"email", "exchanges", "products", "broker", "user_id", "user_name", "order_types", "user_type", "poa", "ddpi", "is_active"}
         return {k: v for k, v in (profile or {}).items() if k in allowed}
 
+    @staticmethod
+    def _decimal_or_none(value: Any) -> Decimal | None:
+        try:
+            if value is None or value == "":
+                return None
+            return Decimal(str(value))
+        except Exception:
+            return None
+
+    @classmethod
+    def _first_decimal(cls, *values: Any) -> Decimal | None:
+        for value in values:
+            parsed = cls._decimal_or_none(value)
+            if parsed is not None:
+                return parsed
+        return None
+
+    @staticmethod
+    def _dig(payload: Any, path: str) -> Any:
+        current = payload
+        for part in path.split("."):
+            if not isinstance(current, dict):
+                return None
+            current = current.get(part)
+        return current
+
+    @classmethod
+    def _extract_upstox_funds(cls, funds_payload: dict[str, Any]) -> dict[str, Decimal | None]:
+        data = funds_payload.get("data") if isinstance(funds_payload, dict) else {}
+        if not isinstance(data, dict):
+            data = {}
+
+        # Upstox funds payloads have changed shape across v2/v3 and account
+        # segments. Keep this parser path-based and never default missing fields
+        # to 0; 0 is returned only when the API explicitly sends numeric zero.
+        available = cls._first_decimal(
+            cls._dig(data, "available_to_trade.total"),
+            cls._dig(data, "available_to_trade.cash"),
+            cls._dig(data, "equity.available_to_trade.total"),
+            cls._dig(data, "equity.available_to_trade.cash"),
+            cls._dig(data, "equity.available_margin"),
+            cls._dig(data, "equity.available_cash"),
+            cls._dig(data, "equity.cash"),
+            cls._dig(data, "equity.total_cash"),
+            cls._dig(data, "equity.notional_cash"),
+            cls._dig(data, "commodity.available_margin"),
+            cls._dig(data, "commodity.available_to_trade.total"),
+            cls._dig(data, "commodity.available_to_trade.cash"),
+            data.get("available_margin"),
+            data.get("available_cash"),
+            data.get("cash"),
+            data.get("total_cash"),
+            data.get("notional_cash"),
+        )
+        used = cls._first_decimal(
+            cls._dig(data, "used_margin.total"),
+            cls._dig(data, "equity.used_margin.total"),
+            cls._dig(data, "equity.used_margin"),
+            cls._dig(data, "equity.utilised_margin"),
+            cls._dig(data, "equity.utilized_margin"),
+            cls._dig(data, "equity.margin_used"),
+            cls._dig(data, "commodity.used_margin.total"),
+            cls._dig(data, "commodity.used_margin"),
+            data.get("used_margin"),
+            data.get("utilised_margin"),
+            data.get("utilized_margin"),
+            data.get("margin_used"),
+        )
+        explicit_equity = cls._first_decimal(
+            cls._dig(data, "equity.equity"),
+            cls._dig(data, "equity.net"),
+            cls._dig(data, "equity.total_margin"),
+            data.get("equity"),
+            data.get("net"),
+            data.get("total_margin"),
+        )
+        equity_value = explicit_equity if explicit_equity is not None else ((available + used) if available is not None and used is not None else available)
+        return {
+            "balance": available,
+            "equity": equity_value,
+            "free_margin": available,
+            "used_margin": used,
+        }
+
+    async def get_funds_and_margin(self) -> dict[str, Any]:
+        token = self._access_token()
+        if not token:
+            raise ValueError("Upstox access token is missing. Please reconnect Upstox.")
+        if self._is_expired():
+            raise ValueError("Upstox access token expired. Please reconnect Upstox.")
+
+        def _call(url: str) -> tuple[int, dict[str, Any]]:
+            response = requests.get(url, headers={"Accept": "application/json", "Authorization": f"Bearer {token}"}, timeout=30)
+            return response.status_code, _safe_json(response)
+
+        last_status = None
+        last_payload: dict[str, Any] = {}
+        for url in (UPSTOX_FUNDS_MARGIN_V2_URL, UPSTOX_FUNDS_MARGIN_V3_URL):
+            status_code, payload = await asyncio.to_thread(_call, url)
+            last_status, last_payload = status_code, payload
+            if status_code == 401:
+                raise ValueError("Upstox access token expired or unauthorized. Please reconnect Upstox.")
+            if status_code == 429:
+                raise ValueError("Upstox rate limit reached. Please wait and try again.")
+            if status_code < 400:
+                return payload
+            if status_code not in {400, 404}:
+                break
+        raise ValueError(f"Upstox funds/margin API error: {_without_token(last_payload)} (status {last_status})")
+
     async def get_account_info(self) -> dict[str, Any]:
         result = await self.test_connection()
-        return {"connected": result.connected, "message": result.message, "account_login": result.account_login, "server": result.server, "currency": result.currency, "raw": result.raw}
+        profile = (result.raw or {}).get("profile") if isinstance(result.raw, dict) else {}
+        if not result.connected:
+            return {"connected": result.connected, "message": result.message, "account_login": result.account_login, "server": result.server, "currency": result.currency, "raw": result.raw}
+        try:
+            funds = await self.get_funds_and_margin()
+            parsed = self._extract_upstox_funds(funds)
+            if all(parsed.get(k) is None for k in ("balance", "equity", "free_margin")):
+                return {
+                    "connected": True,
+                    "message": "Upstox account connected",
+                    "account_login": result.account_login or (profile or {}).get("user_id"),
+                    "server": "Upstox API",
+                    "currency": "INR",
+                    "balance": None,
+                    "equity": None,
+                    "free_margin": None,
+                    "used_margin": None,
+                    "warning": "Funds/margin unavailable from Upstox",
+                    "raw": {"profile": profile, "funds": _without_token(funds)},
+                }
+            return {
+                "connected": True,
+                "message": "Upstox account connected",
+                "account_login": result.account_login or (profile or {}).get("user_id"),
+                "server": "Upstox API",
+                "currency": "INR",
+                "balance": parsed.get("balance"),
+                "equity": parsed.get("equity"),
+                "free_margin": parsed.get("free_margin"),
+                "used_margin": parsed.get("used_margin"),
+                "raw": {"profile": profile, "funds": _without_token(funds)},
+            }
+        except Exception as exc:
+            return {
+                "connected": True,
+                "message": "Upstox account connected",
+                "account_login": result.account_login or (profile or {}).get("user_id"),
+                "server": "Upstox API",
+                "currency": "INR",
+                "balance": None,
+                "equity": None,
+                "free_margin": None,
+                "used_margin": None,
+                "warning": "Funds/margin unavailable from Upstox",
+                "raw": {"profile": profile, "funds_error": str(exc)},
+            }
 
     async def get_quote(self, symbol: str) -> dict[str, Any]:
         instrument_key = self._clean(symbol)
@@ -245,6 +402,8 @@ class UpstoxAdapter(BrokerAdapter):
         instrument_key = self._clean(symbol)
         if not instrument_key:
             raise ValueError("Upstox instrument_key is required for candle refresh")
+        if "|" not in instrument_key:
+            raise ValueError("Upstox requires instrument_key like NSE_EQ|INE002A01018. Select instrument from Market Master with instrument_key.")
         safe_count = max(1, min(int(count or 300), 2000))
         unit, interval, intraday = self._map_timeframe(timeframe)
         encoded = quote(instrument_key, safe="")
@@ -277,9 +436,12 @@ class UpstoxAdapter(BrokerAdapter):
         instrument_key = self._clean(order_request.instrument_key) or self._clean(order_request.symbol)
         if not instrument_key:
             return BrokerOrderResult(success=False, status="REJECTED", message="Upstox instrument_key is required for order placement")
-        qty = int(Decimal(str(order_request.qty or 0)))
-        if qty <= 0:
-            return BrokerOrderResult(success=False, status="REJECTED", message="Upstox quantity must be a positive whole number")
+        if "|" not in instrument_key:
+            return BrokerOrderResult(success=False, status="REJECTED", message="Upstox requires instrument_key like NSE_EQ|INE002A01018. Select instrument from Market Master with instrument_key.")
+        qty_decimal = Decimal(str(order_request.qty or 0))
+        qty = int(qty_decimal)
+        if qty <= 0 or qty_decimal != Decimal(qty):
+            return BrokerOrderResult(success=False, status="REJECTED", message="Upstox quantity must be a positive whole integer")
         product = (order_request.product_type or "I").upper()
         product = "I" if product in {"MIS", "INTRADAY", "I"} else "D"
         payload = {
@@ -310,9 +472,10 @@ class UpstoxAdapter(BrokerAdapter):
         price = Decimal(str(order_request.price or 0))
         if price <= 0:
             return BrokerOrderResult(success=False, status="REJECTED", message="Limit order requires a positive price")
-        qty = int(Decimal(str(order_request.qty or 0)))
-        if qty <= 0:
-            return BrokerOrderResult(success=False, status="REJECTED", message="Upstox quantity must be a positive whole number")
+        qty_decimal = Decimal(str(order_request.qty or 0))
+        qty = int(qty_decimal)
+        if qty <= 0 or qty_decimal != Decimal(qty):
+            return BrokerOrderResult(success=False, status="REJECTED", message="Upstox quantity must be a positive whole integer")
         product = (order_request.product_type or "I").upper()
         product = "I" if product in {"MIS", "INTRADAY", "I"} else "D"
         payload = {
@@ -336,7 +499,31 @@ class UpstoxAdapter(BrokerAdapter):
         try:
             payload = await self._authorized_get(UPSTOX_POSITIONS_URL)
             data = payload.get("data")
-            return data if isinstance(data, list) else []
+            rows = data if isinstance(data, list) else []
+            normalized: list[dict[str, Any]] = []
+            wanted = self._clean(symbol)
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                instrument_key = row.get("instrument_token") or row.get("instrument_key") or row.get("instrumentKey")
+                trading_symbol = row.get("tradingsymbol") or row.get("trading_symbol") or row.get("symbol")
+                if wanted and wanted not in {str(instrument_key or ""), str(trading_symbol or "")}:
+                    continue
+                pnl = self._decimal_or_none(row.get("pnl") or row.get("profit_and_loss"))
+                unrealised = self._decimal_or_none(row.get("unrealised") or row.get("unrealized") or row.get("unrealized_pnl"))
+                realised = self._decimal_or_none(row.get("realised") or row.get("realized") or row.get("realized_pnl"))
+                normalized.append({
+                    **row,
+                    "instrument_key": instrument_key,
+                    "trading_symbol": trading_symbol,
+                    "quantity": row.get("quantity") or row.get("net_quantity") or row.get("net_qty"),
+                    "average_price": row.get("average_price") or row.get("avg_price") or row.get("buy_price") or row.get("sell_price"),
+                    "last_price": row.get("last_price") or row.get("ltp"),
+                    "unrealised": unrealised,
+                    "realised": realised,
+                    "pnl": pnl if pnl is not None else ((realised or Decimal("0")) + (unrealised or Decimal("0")) if realised is not None or unrealised is not None else None),
+                })
+            return normalized
         except Exception as exc:
             return [{"success": False, "message": str(exc)}]
 

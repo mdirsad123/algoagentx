@@ -315,7 +315,12 @@ export interface StrategyDeployment {
   auto_trade_enabled: boolean;
   auto_runner_enabled?: boolean;
   last_runner_at?: string | null;
+  next_run_at?: string | null;
+  last_runner_wakeup_at?: string | null;
   last_processed_candle_time?: string | null;
+  runner_interval_mode?: string | null;
+  broker_delay_seconds?: number | null;
+  missed_candle_retry_seconds?: number | null;
   last_broker_sync_at?: string | null;
   live_sync_enabled?: boolean;
   live_sync_interval_seconds?: number;
@@ -369,7 +374,12 @@ export interface DeploymentPayload {
   auto_trade_enabled: boolean;
   auto_runner_enabled?: boolean;
   last_runner_at?: string | null;
+  next_run_at?: string | null;
+  last_runner_wakeup_at?: string | null;
   last_processed_candle_time?: string | null;
+  runner_interval_mode?: string | null;
+  broker_delay_seconds?: number | null;
+  missed_candle_retry_seconds?: number | null;
   last_broker_sync_at?: string | null;
   live_sync_enabled?: boolean;
   live_sync_interval_seconds?: number;
@@ -501,6 +511,7 @@ export interface LiveDeploymentSummaryMetrics {
   broker_synced?: boolean;
   broker_pnl_source?: string | null;
   broker_deal_count?: number | null;
+  broker_sync_warning?: string | null;
 }
 
 export interface LiveDeploymentSummaryDeployment {
@@ -527,7 +538,12 @@ export interface LiveDeploymentSummaryDeployment {
   auto_trade_enabled: boolean;
   auto_runner_enabled?: boolean;
   last_runner_at?: string | null;
+  next_run_at?: string | null;
+  last_runner_wakeup_at?: string | null;
   last_processed_candle_time?: string | null;
+  runner_interval_mode?: string | null;
+  broker_delay_seconds?: number | null;
+  missed_candle_retry_seconds?: number | null;
   last_broker_sync_at?: string | null;
   live_sync_enabled?: boolean;
   live_sync_interval_seconds?: number;
@@ -647,7 +663,12 @@ export interface AdminLiveDeploymentRow {
   auto_trade_enabled: boolean;
   auto_runner_enabled?: boolean;
   last_runner_at?: string | null;
+  next_run_at?: string | null;
+  last_runner_wakeup_at?: string | null;
   last_processed_candle_time?: string | null;
+  runner_interval_mode?: string | null;
+  broker_delay_seconds?: number | null;
+  missed_candle_retry_seconds?: number | null;
   last_broker_sync_at?: string | null;
   live_sync_enabled?: boolean;
   live_sync_interval_seconds?: number;

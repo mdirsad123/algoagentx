@@ -236,6 +236,38 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
     }
 
 
+async def load_live_candles_for_runner(db: AsyncSession, deployment: StrategyDeployment, limit: int = 300) -> list[dict[str, Any]]:
+    """Load closed candles for the live runner by deployment_id only.
+
+    Broker display symbols and execution symbols can differ (for example
+    HDFCBANK vs NSE_EQ|INE040A01034 for Upstox), so the strategy runner must
+    never filter these rows by symbol. The query returns newest-first to keep
+    compatibility with get_latest_closed_candles/_candles_to_dataframe.
+    """
+    safe_limit = max(1, min(int(limit or 300), 1000))
+    rows = (await db.execute(
+        select(LiveMarketCandle)
+        .where(
+            LiveMarketCandle.deployment_id == deployment.id,
+            LiveMarketCandle.is_closed.is_(True),
+        )
+        .order_by(LiveMarketCandle.candle_time.desc())
+        .limit(safe_limit)
+    )).scalars().all()
+
+    # De-duplicate by candle_time defensively in case historical imports created
+    # rows with different symbol values for the same deployment/candle.
+    seen: set[str] = set()
+    payloads: list[dict[str, Any]] = []
+    for row in rows:
+        key = row.candle_time.isoformat() if hasattr(row.candle_time, "isoformat") else str(row.candle_time)
+        if key in seen:
+            continue
+        seen.add(key)
+        payloads.append(_candle_payload(row))
+    return payloads
+
+
 async def get_latest_closed_candles(db: AsyncSession, deployment_id: UUID, limit: int = 300) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit or 300), 1000))
     rows = (await db.execute(

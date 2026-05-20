@@ -316,7 +316,12 @@ class StrategyDeploymentOut(LiveBaseModel):
     auto_trade_enabled: bool
     auto_runner_enabled: bool = False
     last_runner_at: Optional[datetime] = None
+    next_run_at: Optional[datetime] = None
+    last_runner_wakeup_at: Optional[datetime] = None
     last_processed_candle_time: Optional[datetime] = None
+    runner_interval_mode: Optional[str] = "CANDLE_CLOSE"
+    broker_delay_seconds: Optional[int] = 3
+    missed_candle_retry_seconds: Optional[int] = 10
     last_broker_sync_at: Optional[datetime] = None
     live_sync_enabled: bool = False
     live_sync_interval_seconds: int = 10

@@ -18,8 +18,9 @@ from ..strategy_registry import resolve_strategy
 from .execution_engine import execute_signal
 from .order_preview_service import build_live_order_preview
 from ..brokers.factory import get_broker_code
-from .broker_candle_service import get_latest_closed_candles, refresh_deployment_candles
+from .broker_candle_service import get_latest_closed_candles, load_live_candles_for_runner, refresh_deployment_candles
 from .pnl_service import to_decimal
+from .runner_scheduler import calculate_next_runner_after_candle, calculate_next_runner_at, ensure_utc
 from ..live_trading.paper_position_manager import process_paper_positions_for_deployment
 
 
@@ -467,17 +468,19 @@ async def run_full_dry_test_for_deployment(db: AsyncSession, deployment_id: UUID
     _validate_strategy_gate(strategy, mode)
     step("Loaded strategy", "PASS", f"Strategy {strategy.name} is deployable for {mode}.")
 
+    refresh_warning = None
     if mode in {"DEMO", "LIVE"}:
         try:
             await refresh_deployment_candles(db, deployment.id, count=300)
             step("Refreshed broker candles", "PASS", f"Latest broker candles refreshed for {mode} dry test.")
         except Exception as exc:
-            step("Refreshed broker candles", "WARNING", f"Could not refresh broker candles: {str(exc)[:180]}")
+            refresh_warning = str(exc)
+            step("Refreshed broker candles", "WARNING", f"Could not refresh broker candles: {str(exc)[:180]}. Existing stored candles will be used if available.")
 
-    candles = await get_latest_closed_candles(db, deployment.id, limit=300)
+    candles = await load_live_candles_for_runner(db, deployment, limit=300)
     if len(candles) < 20:
-        step("Loaded candles", "FAIL", f"Only {len(candles)} closed candles found. Refresh candles first.")
-        return {"success": False, "deployment_id": str(deployment.id), "steps": steps, "final_action": "REJECTED", "message": "Not enough live candles."}
+        step("Loaded candles", "FAIL", f"Only {len(candles)} closed broker candles found by deployment_id. Required 20.")
+        return {"success": False, "ok": False, "error_code": "NOT_ENOUGH_LIVE_CANDLES", "deployment_id": str(deployment.id), "instrument": deployment.instrument, "instrument_key": getattr(deployment, "instrument_key", None), "timeframe": deployment.timeframe, "loaded_candles": len(candles), "steps": steps, "final_action": "REJECTED", "message": f"HOLD - Not enough live candles. Loaded {len(candles)} candles, required 20.", "refresh_warning": refresh_warning}
     latest_candle = candles[0]
     latest_candle_time = _normalize_dt(latest_candle.get("candle_time"))
     latest_close = to_decimal(latest_candle.get("close"))
@@ -634,25 +637,52 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
             raise HTTPException(status_code=404, detail="Strategy not found")
         _validate_strategy_gate(strategy, mode)
 
+        refresh_warning = None
         if mode in {"DEMO", "LIVE"}:
             await _log(db, deployment, "RUNNER_CANDLE_REFRESH_STARTED", "Refreshing latest broker closed candles before strategy run")
-            await refresh_deployment_candles(db, deployment.id, count=300)
+            try:
+                await refresh_deployment_candles(db, deployment.id, count=300)
+            except Exception as exc:
+                refresh_warning = str(getattr(exc, "detail", None) or exc)
+                await _log(db, deployment, "RUNNER_CANDLE_REFRESH_WARNING", f"Broker candle refresh failed; using stored candles if available: {refresh_warning}", "WARNING", {"deployment_id": str(deployment.id), "instrument": deployment.instrument, "instrument_key": getattr(deployment, "instrument_key", None)})
 
-        candles = await get_latest_closed_candles(db, deployment.id, limit=300)
+        candles = await load_live_candles_for_runner(db, deployment, limit=300)
         if len(candles) < 20:
-            raise HTTPException(status_code=400, detail="Not enough live candle data to run strategy. Refresh candles first.")
+            detail = {
+                "ok": False,
+                "error_code": "NOT_ENOUGH_LIVE_CANDLES",
+                "message": f"HOLD - Not enough live candles. Loaded {len(candles)} candles, required 20.",
+                "loaded_candles": len(candles),
+                "deployment_id": str(deployment.id),
+                "instrument": deployment.instrument,
+                "instrument_key": getattr(deployment, "instrument_key", None),
+                "timeframe": deployment.timeframe,
+                "refresh_warning": refresh_warning,
+            }
+            deployment.last_runner_at = datetime.now(timezone.utc)
+            try:
+                deployment.next_run_at = calculate_next_runner_at(datetime.now(timezone.utc), deployment.timeframe, int(getattr(deployment, "broker_delay_seconds", None) or 3))
+            except Exception:
+                pass
+            await _log(db, deployment, "RUNNER_NOT_ENOUGH_CANDLES", detail["message"], "WARNING", detail)
+            await db.commit()
+            return {"success": False, **detail, "latest_runner_log": detail["message"], "final_action": "HOLD_NOT_ENOUGH_CANDLES"}
 
         latest_candle = candles[0]
         latest_candle_time = _normalize_dt(latest_candle.get("candle_time"))
         latest_close = to_decimal(latest_candle.get("close"))
         latest_symbol = str(latest_candle.get("symbol") or deployment.instrument)
         df = _candles_to_dataframe(candles)
+        delay_seconds = int(getattr(deployment, "broker_delay_seconds", None) or 3)
+        deployment.last_runner_at = datetime.now(timezone.utc)
+        deployment.last_processed_candle_time = latest_candle_time
+        deployment.next_run_at = calculate_next_runner_after_candle(latest_candle_time, deployment.timeframe, delay_seconds, now_utc=datetime.now(timezone.utc))
         await _log(
             db,
             deployment,
             "RUNNER_CANDLES_LOADED",
-            f"Loaded {len(df)} closed candles for strategy run",
-            metadata={"latest_candle_time": latest_candle_time.isoformat(), "symbol": latest_symbol},
+            f"Loaded {len(df)} closed broker candles for strategy run",
+            metadata={"latest_candle_time": latest_candle_time.isoformat(), "symbol": latest_symbol, "next_run_at": deployment.next_run_at.isoformat() if deployment.next_run_at else None},
         )
 
         strategy_params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
@@ -675,6 +705,10 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
             "latest_candle_time": latest_candle_time.isoformat(),
             "price": str(latest_close),
             "symbol": latest_symbol,
+            "display_symbol": deployment.instrument,
+            "execution_symbol": getattr(deployment, "instrument_key", None) or getattr(deployment, "broker_symbol", None) or latest_symbol,
+            "instrument_key": getattr(deployment, "instrument_key", None),
+            "broker": "UPSTOX" if "|" in str(getattr(deployment, "instrument_key", "") or latest_symbol) else None,
         }
         await _log(
             db,
@@ -773,6 +807,10 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
                 "execute_requested": execute,
                 "latest_candle_time": latest_candle_time.isoformat(),
                 "resolved_symbol": latest_symbol,
+                "display_symbol": deployment.instrument,
+                "execution_symbol": getattr(deployment, "instrument_key", None) or getattr(deployment, "broker_symbol", None) or latest_symbol,
+                "instrument_key": getattr(deployment, "instrument_key", None),
+                "broker": "UPSTOX" if "|" in str(getattr(deployment, "instrument_key", "") or latest_symbol) else None,
                 "strategy_stop_loss": signal_payload.get("strategy_stop_loss"),
                 "strategy_target": signal_payload.get("strategy_target"),
                 "strategy_risk_points": signal_payload.get("strategy_risk_points"),

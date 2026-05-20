@@ -7,7 +7,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,7 @@ from ...services.live.broker_candle_service import get_candle_snapshot, refresh_
 from ...services.live.strategy_runner import run_strategy_for_deployment, run_full_dry_test_for_deployment
 from ...services.live.compatibility_service import run_live_compatibility_check, compatibility_failed
 from ...services.live.auto_runner_service import run_deployment_if_due
+from ...services.live.runner_scheduler import calculate_next_runner_at
 from ...services.live.broker_sync_service import clamp_live_sync_interval, sync_deployment_broker_state
 from ...services.live.trading_safety import check_platform_mode_allowed, get_platform_trading_settings, mark_heartbeat
 from ...services.live_trading.readiness_service import build_live_deployment_readiness
@@ -316,7 +317,7 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
     if row.mode not in {"DEMO", "LIVE"} or broker_row is None or broker_row.status != "CONNECTED":
         return None
     broker_code = get_broker_code(broker_row)
-    if broker_code != "MT5":
+    if broker_code not in {"MT5", "UPSTOX"}:
         return None
 
     adapter = get_broker_adapter(broker_row, db)
@@ -331,12 +332,38 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
                 "message": account_info.get("message"),
                 "account_login": account_info.get("account_login"),
                 "server": account_info.get("server"),
-                "balance": account_info.get("balance"),
-                "equity": account_info.get("equity"),
+                "balance": str(account_info.get("balance")) if account_info.get("balance") is not None else None,
+                "equity": str(account_info.get("equity")) if account_info.get("equity") is not None else None,
+                "free_margin": str(account_info.get("free_margin")) if account_info.get("free_margin") is not None else None,
+                "used_margin": str(account_info.get("used_margin")) if account_info.get("used_margin") is not None else None,
                 "currency": account_info.get("currency"),
+                "warning": account_info.get("warning"),
             },
-            "safe_message": account_info.get("message"),
+            "safe_message": account_info.get("warning") or account_info.get("message"),
             "provider": broker_row.broker_name,
+        }
+
+    if broker_code == "UPSTOX":
+        upstox_metrics = await _sync_upstox_broker_state(db, row, broker_row)
+        raw_positions = (upstox_metrics or {}).get("position_rows") or []
+        unrealized = sum((_dec((p or {}).get("pnl") or (p or {}).get("unrealised") or (p or {}).get("unrealized_pnl"), "0") for p in raw_positions if isinstance(p, dict)), Decimal("0"))
+        await _write_log(db, row, "BROKER_PNL_SYNCED", "Upstox broker funds/positions synced", "INFO", {
+            "unrealized_pnl": str(unrealized),
+            "today_pnl": str(unrealized),
+            "positions_count": len(raw_positions),
+            "source": "UPSTOX_POSITIONS_AND_FUNDS",
+            "funds_warning": account_info.get("warning"),
+        })
+        await db.flush()
+        return {
+            "account_info": account_info,
+            "open_positions_count": len(raw_positions),
+            "unrealized_pnl": unrealized,
+            "realized_pnl": Decimal("0"),
+            "today_pnl": unrealized,
+            "position_rows": raw_positions,
+            "deals_pnl": {"realized_pnl": "0", "deal_count": 0},
+            "broker_pnl_source": "UPSTOX_POSITIONS_AND_FUNDS",
         }
 
     raw_positions = []
@@ -444,8 +471,8 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
             "source": "MT5_AGENT_POSITIONS_AND_DEALS",
         })
         await db.flush()
-    # Persist broker account snapshot and position reconciliation before summary metrics are queried.
-    await db.commit()
+    # Flush only; committing here expires async ORM rows and can trigger MissingGreenlet in summary.
+    await db.flush()
     return {
         "account_info": account_info,
         "open_positions_count": len(raw_positions),
@@ -462,6 +489,11 @@ async def _sync_upstox_broker_state(db: AsyncSession, row: StrategyDeployment, b
     if row.mode not in {"DEMO", "LIVE"} or broker_row is None or broker_row.status != "CONNECTED" or get_broker_code(broker_row) != "UPSTOX":
         return None
     adapter = get_broker_adapter(broker_row, db)
+    account_info = await adapter.get_account_info() if hasattr(adapter, "get_account_info") else None
+    meta = broker_row.metadata_json if isinstance(broker_row.metadata_json, dict) else {}
+    if isinstance(account_info, dict):
+        meta = {**meta, "last_test": account_info, "upstox_account_info": account_info}
+        broker_row.metadata_json = meta
     raw_orders = await adapter.get_orders() if hasattr(adapter, "get_orders") else []
     raw_positions = await adapter.get_positions() if hasattr(adapter, "get_positions") else []
     if raw_orders and isinstance(raw_orders[0], dict) and raw_orders[0].get("success") is False:
@@ -523,65 +555,95 @@ async def _sync_upstox_broker_state(db: AsyncSession, row: StrategyDeployment, b
         matched.add(str(existing.id))
         changed = True
 
-    if changed:
-        await _write_log(db, row, "UPSTOX_BROKER_SYNCED", "Upstox broker orders/positions synced", "INFO", {"orders": len(raw_orders), "positions": len(raw_positions)})
+    def dec_value(value: object) -> Decimal:
+        return _dec(value, "0") if value not in (None, "") else Decimal("0")
+
+    unrealized_pnl = sum((dec_value((p or {}).get("unrealised") or (p or {}).get("unrealized") or (p or {}).get("unrealized_pnl")) for p in raw_positions if isinstance(p, dict)), Decimal("0"))
+    realized_pnl = sum((dec_value((p or {}).get("realised") or (p or {}).get("realized") or (p or {}).get("realized_pnl")) for p in raw_positions if isinstance(p, dict)), Decimal("0"))
+    pnl_values = [dec_value((p or {}).get("pnl")) for p in raw_positions if isinstance(p, dict) and (p or {}).get("pnl") not in (None, "")]
+    today_pnl = sum(pnl_values, Decimal("0")) if pnl_values else realized_pnl + unrealized_pnl
+
+    if changed or isinstance(account_info, dict):
+        await _write_log(db, row, "UPSTOX_BROKER_SYNCED", "Upstox broker orders/positions/account synced", "INFO", {"orders": len(raw_orders), "positions": len(raw_positions), "account_warning": (account_info or {}).get("warning") if isinstance(account_info, dict) else None})
         await db.flush()
-    return {"orders_count": len(raw_orders), "positions_count": len(raw_positions), "position_rows": raw_positions}
+    return {
+        "account_info": account_info,
+        "orders_count": len(raw_orders),
+        "positions_count": len(raw_positions),
+        "open_positions_count": len([p for p in raw_positions if isinstance(p, dict) and _dec(p.get("quantity") or p.get("net_quantity") or 0, "0") != 0]),
+        "unrealized_pnl": unrealized_pnl,
+        "realized_pnl": realized_pnl,
+        "today_pnl": today_pnl,
+        "position_rows": raw_positions,
+        "broker_pnl_source": "UPSTOX_POSITIONS",
+    }
 
 
-async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
+async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bool = True) -> dict:
+    deployment_id = row.id
+    deployment_user_id = row.user_id
+    deployment_mode = row.mode
+    deployment_instrument = row.instrument
+    deployment_broker_symbol = getattr(row, "broker_symbol", None)
+    deployment_instrument_key = getattr(row, "instrument_key", None)
+    deployment_broker_account_id = row.broker_account_id
+    deployment_capital = row.capital
     day_start = datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
 
     broker = None
     broker_row = None
     broker_metrics = None
     broker_sync_warning = None
-    if row.broker_account_id:
-        broker_row = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == row.broker_account_id))).scalar_one_or_none()
+    if deployment_broker_account_id:
+        broker_row = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment_broker_account_id))).scalar_one_or_none()
         broker = _broker_safe(broker_row)
-        try:
-            broker_metrics = await _refresh_demo_broker_state(db, row, broker_row)
-            if broker_metrics is not None and broker_row is not None:
+        if refresh_broker:
+            try:
+                broker_metrics = await _refresh_demo_broker_state(db, row, broker_row)
+                if broker_metrics is not None and broker_row is not None:
+                    broker = _broker_safe(broker_row)
+            except Exception as exc:
+                await db.rollback()
+                # Summary must not hard-fail because one broker is offline. Avoid full
+                # traceback noise for disconnected MT5 agents on normal list/detail loads.
+                logger.warning("Live deployment broker refresh failed for %s: %s", deployment_id, exc)
+                broker_sync_warning = str(exc)
+                row = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none() or row
+                broker_row = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment_broker_account_id))).scalar_one_or_none()
                 broker = _broker_safe(broker_row)
-        except Exception as exc:
-            await db.rollback()
-            logger.warning("Live deployment broker refresh failed for %s: %s", row.id, exc, exc_info=True)
-            broker_sync_warning = str(exc)
-            broker_row = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == row.broker_account_id))).scalar_one_or_none()
-            broker = _broker_safe(broker_row)
 
-    realized = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == row.id))).scalar())
-    unrealized = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.unrealized_pnl), 0)).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN"))).scalar())
-    today_realized_pnl = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == row.id, LivePosition.closed_at >= day_start))).scalar())
+    realized = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == deployment_id))).scalar())
+    unrealized = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.unrealized_pnl), 0)).where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN"))).scalar())
+    today_realized_pnl = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == deployment_id, LivePosition.closed_at >= day_start))).scalar())
     today_unrealized_pnl = unrealized
     today_pnl = today_realized_pnl + today_unrealized_pnl
-    open_positions_count = int((await db.execute(select(func.count(LivePosition.id)).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN"))).scalar() or 0)
-    orders_count_today = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == row.id, LiveOrder.created_at >= day_start))).scalar() or 0)
+    open_positions_count = int((await db.execute(select(func.count(LivePosition.id)).where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN"))).scalar() or 0)
+    orders_count_today = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment_id, LiveOrder.created_at >= day_start))).scalar() or 0)
     tradeable_signal_filter = LiveSignal.signal_type.in_(["BUY", "SELL", "EXIT"])
-    signals_count_today = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == row.id, LiveSignal.created_at >= day_start, tradeable_signal_filter))).scalar() or 0)
-    total_orders = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == row.id))).scalar() or 0)
-    total_signals = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == row.id, tradeable_signal_filter))).scalar() or 0)
+    signals_count_today = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == deployment_id, LiveSignal.created_at >= day_start, tradeable_signal_filter))).scalar() or 0)
+    total_orders = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment_id))).scalar() or 0)
+    total_signals = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == deployment_id, tradeable_signal_filter))).scalar() or 0)
 
-    latest_equity = (await db.execute(select(LiveEquityPoint.equity).where(LiveEquityPoint.deployment_id == row.id).order_by(LiveEquityPoint.timestamp.desc()).limit(1))).scalar_one_or_none()
+    latest_equity = (await db.execute(select(LiveEquityPoint.equity).where(LiveEquityPoint.deployment_id == deployment_id).order_by(LiveEquityPoint.timestamp.desc()).limit(1))).scalar_one_or_none()
     equity = _dec(latest_equity, str(_dec(row.capital, "100000") + realized + unrealized))
 
-    latest_signal = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == row.id, tradeable_signal_filter).order_by(LiveSignal.created_at.desc()).limit(1))).scalar_one_or_none()
-    latest_order = (await db.execute(select(LiveOrder).where(LiveOrder.deployment_id == row.id).order_by(LiveOrder.created_at.desc()).limit(1))).scalar_one_or_none()
-    open_positions = (await db.execute(select(LivePosition).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN").order_by(LivePosition.opened_at.desc()).limit(20))).scalars().all()
-    recent_orders = await _recent(db, LiveOrder, row.id)
-    recent_signals = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == row.id, tradeable_signal_filter).order_by(LiveSignal.created_at.desc()).limit(20))).scalars().all()
-    recent_logs = await _recent(db, LiveTradeLog, row.id)
+    latest_signal = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == deployment_id, tradeable_signal_filter).order_by(LiveSignal.created_at.desc()).limit(1))).scalar_one_or_none()
+    latest_order = (await db.execute(select(LiveOrder).where(LiveOrder.deployment_id == deployment_id).order_by(LiveOrder.created_at.desc()).limit(1))).scalar_one_or_none()
+    open_positions = (await db.execute(select(LivePosition).where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN").order_by(LivePosition.opened_at.desc()).limit(20))).scalars().all()
+    recent_orders = await _recent(db, LiveOrder, deployment_id)
+    recent_signals = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == deployment_id, tradeable_signal_filter).order_by(LiveSignal.created_at.desc()).limit(20))).scalars().all()
+    recent_logs = await _recent(db, LiveTradeLog, deployment_id)
     position_events = (await db.execute(
         select(LiveTradeLog)
-        .where(LiveTradeLog.deployment_id == row.id, LiveTradeLog.event_type.in_([
+        .where(LiveTradeLog.deployment_id == deployment_id, LiveTradeLog.event_type.in_([
             "POSITION_OPENED", "STOP_LOSS_HIT", "TAKE_PROFIT_HIT", "POSITION_CLOSED", "BROKER_SYNC_UPDATE",
             "BROKER_POSITION_SYNCED", "MANUAL_CLOSE", "PAPER_POSITION_MANAGER_UPDATED", "MAX_DAILY_LOSS", "ERROR_EXIT", "OPPOSITE_SIGNAL", "SQUARE_OFF"
         ]))
         .order_by(LiveTradeLog.created_at.desc())
         .limit(20)
     )).scalars().all()
-    latest_engine_signal = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == row.id, LiveSignal.source == "ENGINE", tradeable_signal_filter).order_by(LiveSignal.created_at.desc()).limit(1))).scalar_one_or_none()
-    latest_runner_log = (await db.execute(select(LiveTradeLog).where(LiveTradeLog.deployment_id == row.id, LiveTradeLog.event_type.ilike("RUNNER_%")).order_by(LiveTradeLog.created_at.desc()).limit(1))).scalar_one_or_none()
+    latest_engine_signal = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == deployment_id, LiveSignal.source == "ENGINE", tradeable_signal_filter).order_by(LiveSignal.created_at.desc()).limit(1))).scalar_one_or_none()
+    latest_runner_log = (await db.execute(select(LiveTradeLog).where(LiveTradeLog.deployment_id == deployment_id, LiveTradeLog.event_type.ilike("RUNNER_%")).order_by(LiveTradeLog.created_at.desc()).limit(1))).scalar_one_or_none()
 
     if broker_metrics is not None:
         # Broker deal PnL is requested only from the UTC day start, so keep lifetime
@@ -625,7 +687,12 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
             "auto_trade_enabled": row.auto_trade_enabled,
             "auto_runner_enabled": getattr(row, "auto_runner_enabled", False),
             "last_runner_at": getattr(row, "last_runner_at", None),
+            "next_run_at": getattr(row, "next_run_at", None),
+            "last_runner_wakeup_at": getattr(row, "last_runner_wakeup_at", None),
             "last_processed_candle_time": getattr(row, "last_processed_candle_time", None),
+            "runner_interval_mode": getattr(row, "runner_interval_mode", "CANDLE_CLOSE"),
+            "broker_delay_seconds": getattr(row, "broker_delay_seconds", 3),
+            "missed_candle_retry_seconds": getattr(row, "missed_candle_retry_seconds", 10),
             "last_broker_sync_at": getattr(row, "last_broker_sync_at", None),
             "live_sync_enabled": getattr(row, "live_sync_enabled", False),
             "live_sync_interval_seconds": getattr(row, "live_sync_interval_seconds", 10),
@@ -674,10 +741,11 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
             "signals_count_today": signals_count_today,
             "total_orders": total_orders,
             "total_signals": total_signals,
-            "source": "MT5_BROKER" if broker_metrics is not None and (broker_metrics or {}).get("broker_pnl_source") == "MT5_AGENT_POSITIONS_AND_DEALS" else ("MT5" if broker_metrics is not None else "DATABASE"),
+            "source": (broker_metrics or {}).get("broker_pnl_source") if broker_metrics is not None else "DATABASE",
             "broker_synced": bool(broker_metrics is not None),
             "broker_pnl_source": (broker_metrics or {}).get("broker_pnl_source") if broker_metrics is not None else "LOCAL_DEPLOYMENT_RECORDS",
             "broker_deal_count": (broker_metrics or {}).get("deals_pnl", {}).get("deal_count") if isinstance((broker_metrics or {}).get("deals_pnl"), dict) else None,
+            "broker_sync_warning": broker_sync_warning,
         },
         "broker_sync": {
             "mode": row.mode,
@@ -697,7 +765,12 @@ async def _summary(db: AsyncSession, row: StrategyDeployment) -> dict:
         },
         "runner": {
             "last_run_at": getattr(row, "last_runner_at", None) or (latest_runner_log.created_at if latest_runner_log else None),
+            "next_run_at": getattr(row, "next_run_at", None),
+            "last_runner_wakeup_at": getattr(row, "last_runner_wakeup_at", None),
             "last_processed_candle_time": getattr(row, "last_processed_candle_time", None),
+            "runner_interval_mode": getattr(row, "runner_interval_mode", "CANDLE_CLOSE"),
+            "broker_delay_seconds": getattr(row, "broker_delay_seconds", 3),
+            "missed_candle_retry_seconds": getattr(row, "missed_candle_retry_seconds", 10),
             "last_broker_sync_at": getattr(row, "last_broker_sync_at", None),
             "live_sync_enabled": getattr(row, "live_sync_enabled", False),
             "live_sync_interval_seconds": getattr(row, "live_sync_interval_seconds", 10),
@@ -806,13 +879,13 @@ async def delete_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_
         raise HTTPException(status_code=400, detail="Only DRAFT, STOPPED, or ERROR deployments can be deleted. Stop the deployment before deleting it.")
 
     open_positions_count = int((await db.execute(
-        select(func.count(LivePosition.id)).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN")
+        select(func.count(LivePosition.id)).where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN")
     )).scalar() or 0)
     if open_positions_count > 0:
         raise HTTPException(status_code=400, detail="Cannot delete deployment while open live positions exist.")
 
     active_orders_count = int((await db.execute(
-        select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == row.id, LiveOrder.status.in_(["PENDING", "PLACED"]))
+        select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment_id, LiveOrder.status.in_(["PENDING", "PLACED"]))
     )).scalar() or 0)
     if active_orders_count > 0:
         raise HTTPException(status_code=400, detail="Cannot delete deployment while pending or placed live orders exist.")
@@ -877,9 +950,14 @@ async def process_deployment_paper_positions(deployment_id: UUID, db: AsyncSessi
 
 
 @router.get("/{deployment_id}/summary")
-async def get_deployment_summary(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def get_deployment_summary(
+    deployment_id: UUID,
+    refresh_broker: bool = Query(default=True),
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     row = await get_deployment_or_404(db, deployment_id, current_user)
-    return success_response(await _summary(db, row))
+    return success_response(await _summary(db, row, refresh_broker=refresh_broker))
 
 
 @router.get("/{deployment_id}/broker-status")
@@ -1099,7 +1177,9 @@ async def enable_deployment_auto_runner(deployment_id: UUID, db: AsyncSession = 
     row.auto_runner_enabled = True
     row.runner_error_count = 0
     row.runner_last_error = None
-    await _write_log(db, row, "AUTO_RUNNER_ENABLED", "Auto runner enabled")
+    now = datetime.now(timezone.utc)
+    row.next_run_at = calculate_next_runner_at(now, row.timeframe, int(getattr(row, "broker_delay_seconds", None) or 3))
+    await _write_log(db, row, "AUTO_RUNNER_ENABLED", "Auto runner enabled", metadata={"next_run_at": row.next_run_at.isoformat() if row.next_run_at else None})
     await db.commit()
     await db.refresh(row)
     return success_response(dump_one(StrategyDeploymentOut, row), "Auto runner enabled")
@@ -1118,7 +1198,7 @@ async def disable_deployment_auto_runner(deployment_id: UUID, db: AsyncSession =
 @router.post("/{deployment_id}/auto-runner/run-now")
 async def run_deployment_auto_runner_now(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     await get_deployment_or_404(db, deployment_id, current_user)
-    result = await run_deployment_if_due(db, deployment_id)
+    result = await run_deployment_if_due(db, deployment_id, force=True)
     return success_response(result, result.get("message") or result.get("reason") or "Auto runner checked")
 
 
@@ -1240,7 +1320,9 @@ async def start_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_d
     row.started_at = now
     row.stopped_at = None
     row.last_heartbeat_at = now
-    await _write_log(db, row, "DEPLOYMENT_STARTED", "Deployment started")
+    if bool(getattr(row, "auto_runner_enabled", False)) or getattr(row, "next_run_at", None) is None:
+        row.next_run_at = calculate_next_runner_at(now, row.timeframe, int(getattr(row, "broker_delay_seconds", None) or 3))
+    await _write_log(db, row, "DEPLOYMENT_STARTED", "Deployment started", metadata={"next_run_at": row.next_run_at.isoformat() if row.next_run_at else None})
     await db.commit()
     await db.refresh(row)
     return success_response(dump_one(StrategyDeploymentOut, row), "Deployment started")

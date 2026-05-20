@@ -292,6 +292,7 @@ async def _execute_demo_entry(
         broker_account_id=deployment.broker_account_id,
         broker_order_id=result.broker_order_id,
         client_order_id=client_order_id,
+        idempotency_key=client_order_id,
         symbol=broker_symbol,
         side=order_side,
         order_type="MARKET",
@@ -534,10 +535,16 @@ async def _execute_upstox_entry(
         return await _create_error_order(db, deployment, signal, order_side, qty, price, risk.reason or "Upstox risk rejected", stop_loss=stop_loss, target=target)
 
     instrument_key = getattr(deployment, "instrument_key", None) or getattr(deployment, "broker_symbol", None) or signal.symbol
+    client_order_id = _client_order_id(deployment, signal, "ENTRY")
+    existing_order = await _existing_order_for_client_id(db, client_order_id)
+    if existing_order is not None:
+        signal.status = "EXECUTED" if existing_order.status in {"FILLED", "PLACED", "SUBMITTED", "PENDING"} else signal.status
+        await _log(db, deployment, "DUPLICATE_ORDER_BLOCKED", "Duplicate Upstox order blocked by client_order_id", "WARNING", {"signal_id": str(signal.id), "order_id": str(existing_order.id), "client_order_id": client_order_id})
+        return existing_order
     adapter = get_broker_adapter(broker, db)
-    await _log(db, deployment, "UPSTOX_ORDER_STARTED", "Upstox order send started", metadata={"instrument_key": instrument_key, "signal_id": str(signal.id), "side": order_side, "qty": str(qty), "sizing": sizing_metadata or {}})
+    await _log(db, deployment, "UPSTOX_ORDER_STARTED", "Upstox order send started", metadata={"instrument_key": instrument_key, "signal_id": str(signal.id), "side": order_side, "qty": str(qty), "client_order_id": client_order_id, "sizing": sizing_metadata or {}})
     result = await adapter.place_market_order(BrokerOrderRequest(
-        symbol=signal.symbol,
+        symbol=instrument_key,
         instrument_key=instrument_key,
         side=order_side,
         qty=qty,
@@ -546,14 +553,15 @@ async def _execute_upstox_entry(
         target=target,
         product_type=getattr(deployment, "product_type", "MIS"),
         order_variety=getattr(deployment, "order_variety", "REGULAR"),
-        tag=f"AAX-{str(deployment.id)[:8]}",
+        tag=f"AlgoAgentX-{str(deployment.id)[:8]}-{str(signal.id)[:8]}",
+        idempotency_key=client_order_id,
     ))
     status = result.status if result.success else "ERROR"
     order = LiveOrder(
         deployment_id=deployment.id, signal_id=signal.id, user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
-        broker_order_id=result.broker_order_id, symbol=instrument_key, side=order_side, order_type="MARKET", qty=qty, entry_price=price,
+        broker_order_id=result.broker_order_id, client_order_id=client_order_id, idempotency_key=client_order_id, symbol=instrument_key, side=order_side, order_type="MARKET", qty=qty, entry_price=price,
         executed_price=result.executed_price if result.success else None, stop_loss=stop_loss, target=target, status=status,
-        error_message=None if result.success else result.message, raw_response={**(result.raw_response or {}), **({"sizing": sizing_metadata} if sizing_metadata else {})},
+        error_message=None if result.success else result.message, raw_response={**(result.raw_response or {}), "client_order_id": client_order_id, **({"sizing": sizing_metadata} if sizing_metadata else {})},
     )
     if sizing_metadata:
         for field, key in {
@@ -601,7 +609,7 @@ async def _execute_upstox_close(db: AsyncSession, deployment: StrategyDeployment
 
     adapter = get_broker_adapter(broker, db)
     result = await adapter.place_market_order(BrokerOrderRequest(
-        symbol=position.symbol, instrument_key=position.symbol, side=close_side, qty=to_decimal(position.qty), price=price, product_type=getattr(deployment, "product_type", "MIS"), tag=f"AAX-EXIT-{str(deployment.id)[:8]}"
+        symbol=position.symbol, instrument_key=position.symbol, side=close_side, qty=to_decimal(position.qty), price=price, product_type=getattr(deployment, "product_type", "MIS"), tag=f"AlgoAgentX-EXIT-{str(deployment.id)[:8]}-{str(signal.id)[:8]}"
     ))
     order = LiveOrder(
         deployment_id=deployment.id, signal_id=signal.id, user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
