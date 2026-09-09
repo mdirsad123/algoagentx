@@ -36,6 +36,7 @@ import {
   SupportStatus,
   SupportTicket,
 } from "@/lib/api/support";
+import { formatDateTimeIST, parseApiDateTime } from "@/lib/timezone";
 
 const categories: Array<{ value: SupportCategory; label: string; icon: any; tips: string[]; placeholder: string }> = [
   {
@@ -83,12 +84,7 @@ const cx = (...classes: Array<string | false | null | undefined>) => classes.fil
 
 const labelize = (value?: string | null) => String(value || "-").replace(/_/g, " ");
 
-const formatDate = (value?: string | null) => {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString();
-};
+const formatDate = (value?: string | null) => value ? formatDateTimeIST(value) : "-";
 
 const formatBytes = (bytes?: number | null) => {
   const size = Number(bytes || 0);
@@ -213,7 +209,7 @@ export default function SupportTicketsPage() {
   }, []);
 
   const orderedTickets = useMemo(
-    () => [...tickets].sort((a, b) => +new Date(b.updated_at || b.created_at) - +new Date(a.updated_at || a.created_at)),
+    () => [...tickets].sort((a, b) => (parseApiDateTime(b.updated_at || b.created_at)?.getTime() || 0) - (parseApiDateTime(a.updated_at || a.created_at)?.getTime() || 0)),
     [tickets]
   );
 
@@ -233,7 +229,7 @@ export default function SupportTicketsPage() {
               attachments: selectedTicket.attachments || [],
             },
           ];
-    return [...messages].sort((a, b) => +new Date(a.created_at) - +new Date(b.created_at));
+    return [...messages].sort((a, b) => (parseApiDateTime(a.created_at)?.getTime() || 0) - (parseApiDateTime(b.created_at)?.getTime() || 0));
   }, [selectedTicket]);
 
   const validateFiles = (incoming: FileList | File[]) => {

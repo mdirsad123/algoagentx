@@ -28,6 +28,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 const fieldClass =
   "w-full rounded-xl border border-border/60 bg-card/25 px-4 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/35";
@@ -46,23 +47,13 @@ const freshnessLabel: Record<MarketDataFreshnessStatus, string> = {
   no_data: "No Data",
 };
 
-const timeframeOptions = ["5m", "15m", "1h", "1d"];
+const fallbackTimeframeOptions = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
 
 type MarketDataTab = "broker" | "csv";
 
 function formatDateTime(value?: string | null) {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "—";
-  return parsed.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDateTimeIST(value);
 }
-
 function formatInt(value?: number | null) {
   return new Intl.NumberFormat("en-IN").format(value || 0);
 }
@@ -278,8 +269,8 @@ export default function AdminMarketDataPage() {
   }, [selectedBrokerInstrument]);
 
   const availableTimeframes = useMemo(() => {
-    const merged = [...timeframeOptions, ...(catalog.timeframes || [])];
-    return Array.from(new Set(merged.filter(Boolean)));
+    const masterTimeframes = (catalog.timeframes || []).filter(Boolean);
+    return masterTimeframes.length ? masterTimeframes : fallbackTimeframeOptions;
   }, [catalog.timeframes]);
 
   const topCards = useMemo(

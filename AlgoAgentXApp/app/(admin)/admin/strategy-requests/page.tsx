@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Code2,
   Clock3,
+  Copy,
   Edit3,
   Eye,
   Filter,
@@ -38,6 +39,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { StrategyAttachmentGallery } from "@/components/strategies/StrategyAttachmentGallery";
 import { AuthenticatedStrategyImage } from "@/components/strategies/AuthenticatedStrategyImage";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 
 const strategyAssets = (strategy: any) => (strategy?.assets || strategy?.strategyAssets || strategy?.strategy_assets || []) as any[];
@@ -122,18 +124,8 @@ const initialEditorForm: StrategyEditorForm = {
 };
 
 function formatDateTime(value?: string | null) {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "—";
-  return parsed.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDateTimeIST(value);
 }
-
 function asNumberInput(value: number | null | undefined) {
   return value === null || value === undefined || Number.isNaN(Number(value)) ? "" : String(value);
 }
@@ -386,21 +378,51 @@ export default function AdminStrategyRequestsPage() {
   };
 
   const handleDeleteStrategy = async (strategy: ImplementedStrategy) => {
-    const approved = window.confirm(`Delete strategy '${strategy.name}'? This will un-link deployed requests.`);
+    const approved = window.confirm(
+      `Delete strategy '${strategy.name}'? If historical backtests or stopped deployments reference it, ` +
+        `AlgoAgentX will archive and hide the strategy instead of deleting that history. Active live deployments must be stopped first.`,
+    );
     if (!approved) return;
 
     setSaving(true);
     try {
-      await adminApi.deleteAdminStrategyById(strategy.id);
-      toast.success("Strategy deleted");
+      const result = await adminApi.deleteAdminStrategyById(strategy.id);
+      if (result?.deletion_mode === "ARCHIVED") {
+        toast.success("Strategy archived and removed from active lists. Historical data was preserved.");
+      } else {
+        toast.success("Strategy deleted permanently");
+      }
       await loadData(requestSkip, strategySkip);
     } catch (err: any) {
-      toast.error(err?.message || "Unable to delete strategy");
+      const detail = err?.response?.data?.detail;
+      const message =
+        (typeof detail === "string" ? detail : detail?.message) ||
+        err?.message ||
+        "Unable to delete strategy";
+      toast.error(message);
     } finally {
       setSaving(false);
     }
   };
 
+
+  const handleDuplicateStrategy = async (strategy: ImplementedStrategy) => {
+    const approved = window.confirm(
+      `Duplicate '${strategy.name}' as the next strategy version? The duplicate will be Private/Draft and must be verified again before publishing.`,
+    );
+    if (!approved) return;
+
+    setSaving(true);
+    try {
+      const duplicated = await adminApi.duplicateAdminStrategyById(strategy.id);
+      toast.success(`Strategy duplicated as ${duplicated?.name || "new version"}`);
+      await loadData(requestSkip, strategySkip);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || err?.message || "Unable to duplicate strategy");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleValidateStrategy = async (strategy: ImplementedStrategy) => {
     try {
@@ -889,9 +911,21 @@ export default function AdminStrategyRequestsPage() {
                           variant="outline"
                           className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50"
                           onClick={() => void handleTogglePublish(strategy)}
+                          disabled={saving}
                         >
                           <Upload className="mr-2 h-4 w-4" />
                           {isPublic ? "Unpublish" : "Publish Public"}
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          className="rounded-xl border-violet-500/40 bg-violet-500/10 text-violet-100 hover:bg-violet-500/20"
+                          onClick={() => void handleDuplicateStrategy(strategy)}
+                          disabled={saving}
+                          title="Create an independent next-version copy with the same strategy configuration and source code"
+                        >
+                          <Copy className="mr-2 h-4 w-4" />
+                          Duplicate Strategy
                         </Button>
 
                         <Button

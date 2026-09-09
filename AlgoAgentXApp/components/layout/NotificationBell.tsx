@@ -6,9 +6,10 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { notificationApi } from "@/lib/api/notifications";
 import type { NotificationResponse } from "@/types/notifications";
+import { parseApiDateTime } from "@/lib/timezone";
 
 function timeAgo(value: string) {
-  const diff = Date.now() - new Date(value).getTime();
+  const diff = Date.now() - (parseApiDateTime(value)?.getTime() || Date.now());
   if (Number.isNaN(diff)) return "Just now";
   const min = Math.max(1, Math.floor(diff / 60000));
   if (min < 60) return `${min}m ago`;

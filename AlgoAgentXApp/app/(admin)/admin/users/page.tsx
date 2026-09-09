@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input"
 import { RefreshCw, Trash2, UserPlus, Pencil, Coins } from "lucide-react"
 import { toast } from "sonner"
+import { formatDateIST } from "@/lib/timezone";
 
 const emptyForm = { email: "", password: "", fullname: "", mobile: "", role: "user", is_active: true }
 
@@ -133,7 +134,7 @@ export default function AdminUsersPage() {
                     <button className={`rounded-full px-3 py-1 text-xs ${user.is_active ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'}`} onClick={async () => { try { await adminApi.updateUserStatus(user.id, !user.is_active); toast.success("Status updated"); fetchUsers(skip) } catch (err: any) { toast.error(err?.response?.data?.detail || "Unable to update status") } }}>{user.is_active ? 'Active' : 'Inactive'}</button>
                   </td>
                   <td className="px-3 py-3">{user.mobile || '—'}</td>
-                  <td className="px-3 py-3">{new Date(user.created_at).toLocaleDateString()}</td>
+                  <td className="px-3 py-3">{formatDateIST(user.created_at)}</td>
                   <td className="admin-actions-cell px-3 py-3">
                     <div className="admin-actions-row">
                       <Button variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => { setEditing(user); setForm({ ...emptyForm, ...user }); setModalOpen(true) }}><Pencil className="mr-2 h-4 w-4" />Edit</Button>

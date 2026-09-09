@@ -226,6 +226,19 @@ class StrategyDeployment(Base):
     segment = Column(String(80), nullable=True)
     timeframe = Column(String(50), nullable=False)
     mode = Column(String(20), nullable=False, server_default="PAPER", index=True)
+    # Broker execution environment stays DEMO/LIVE. Funded behavior is an
+    # independent account policy layered on top of broker execution.
+    account_policy_type = Column(String(20), nullable=False, server_default="STANDARD", index=True)
+    funded_profile_id = Column(PG_UUID(as_uuid=True), ForeignKey("funded_account_profiles.id", ondelete="RESTRICT"), nullable=True, index=True)
+    funded_profile_snapshot = Column(JSONB, nullable=True)
+    funded_risk_plan_snapshot = Column(JSONB, nullable=True)
+    funded_risk_mode = Column(String(20), nullable=True)
+    funded_fixed_risk_pct = Column(Numeric(18, 10), nullable=True)
+    funded_safety_buffer_pct = Column(Numeric(18, 10), nullable=True, server_default="0")
+    funded_configured_max_risk_pct = Column(Numeric(18, 10), nullable=True)
+    funded_phase_number = Column(Integer, nullable=True)
+    funded_attach_mode = Column(String(30), nullable=True)
+    funded_initialization_json = Column(JSONB, nullable=True)
     status = Column(String(30), nullable=False, server_default="DRAFT", index=True)
     capital = Column(Numeric(18, 4), nullable=False, server_default="100000")
     risk_per_trade = Column(Numeric(10, 6), nullable=False, server_default="0.01")
@@ -506,32 +519,6 @@ class AdminLiveAction(Base):
     admin_user = relationship("User", lazy="joined")
     deployment = relationship("StrategyDeployment", lazy="joined")
 
-
-class LiveTradingApproval(Base):
-    __tablename__ = "live_trading_approvals"
-    __table_args__ = (
-        Index("idx_live_trading_approvals_user_status", "user_id", "status"),
-        Index("idx_live_trading_approvals_broker_status", "broker_account_id", "status"),
-        Index("idx_live_trading_approvals_created", "created_at"),
-    )
-
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    broker_account_id = Column(PG_UUID(as_uuid=True), ForeignKey("broker_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
-    approved_by = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    status = Column(String(30), nullable=False, server_default="PENDING", index=True)
-    approved_markets = Column(JSONB, nullable=True)
-    max_daily_loss = Column(Numeric(18, 4), nullable=True)
-    max_order_value = Column(Numeric(18, 4), nullable=True)
-    max_trades_per_day = Column(Integer, nullable=True)
-    notes = Column(Text, nullable=True)
-    risk_disclaimer_accepted_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-
-    user = relationship("User", foreign_keys=[user_id], lazy="joined")
-    broker_account = relationship("BrokerAccount", lazy="joined")
-    approver = relationship("User", foreign_keys=[approved_by], lazy="joined")
 
 
 class PlatformTradingSettings(Base):

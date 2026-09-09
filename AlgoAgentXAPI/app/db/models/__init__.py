@@ -27,6 +27,22 @@ from .billing_webhook_events import BillingWebhookEvent
 from .billing_documents import BillingDocument
 from .billing_refunds import BillingRefund
 from .financial_audit_logs import FinancialAuditLog
+from .funded_backtests import (
+    FundedAccountProfile,
+    FundedAccountPhase,
+    FundedRiskTier,
+    FundedBacktestRun,
+    FundedBacktestPhase,
+    FundedBacktestTrade,
+    FundedBacktestDailySnapshot,
+    FundedBacktestEvent,
+)
+from .funded_live import (
+    FundedLiveState,
+    FundedLiveDailySnapshot,
+    FundedLiveEvent,
+    FundedLiveRiskDecision,
+)
 from .live_trading import (
     BrokerProvider,
     BrokerAccount,
@@ -39,7 +55,6 @@ from .live_trading import (
     LiveSignal,
     LiveOrder,
     BrokerOrderEvent,
-    LiveTradingApproval,
     LivePosition,
     LiveTradeLog,
     LiveEquityPoint,
@@ -47,6 +62,8 @@ from .live_trading import (
     AdminLiveAction,
     PlatformTradingSettings,
 )
+
+from .alerts import PriceAlert, AlertEvent, NotificationDelivery, UserNotificationChannel, AlertFeedHealth
 
 __all__ = [
     "User",
@@ -87,6 +104,18 @@ __all__ = [
     "BillingDocument",
     "BillingRefund",
     "FinancialAuditLog",
+    "FundedAccountProfile",
+    "FundedAccountPhase",
+    "FundedRiskTier",
+    "FundedBacktestRun",
+    "FundedBacktestPhase",
+    "FundedBacktestTrade",
+    "FundedBacktestDailySnapshot",
+    "FundedBacktestEvent",
+    "FundedLiveState",
+    "FundedLiveDailySnapshot",
+    "FundedLiveEvent",
+    "FundedLiveRiskDecision",
     "BrokerProvider",
     "BrokerAccount",
     "BrokerOAuthState",
@@ -98,11 +127,16 @@ __all__ = [
     "LiveSignal",
     "LiveOrder",
     "BrokerOrderEvent",
-    "LiveTradingApproval",
     "LivePosition",
     "LiveTradeLog",
     "LiveEquityPoint",
     "LiveMarketCandle",
     "AdminLiveAction",
     "PlatformTradingSettings",
+    "PriceAlert",
+    "AlertEvent",
+    "NotificationDelivery",
+    "UserNotificationChannel",
+    "AlertFeedHealth",
 ]
+

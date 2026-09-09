@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { StrategyAttachmentGallery } from "@/components/strategies/StrategyAttachmentGallery";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 const STATUS_LABEL: Record<string, string> = {
   SUBMITTED: "Pending Review",
@@ -46,18 +47,8 @@ const fieldClass =
   "w-full rounded-xl border border-border/60 bg-card/25 px-4 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/35";
 
 function formatDateTime(value?: string | null) {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "—";
-  return parsed.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDateTimeIST(value);
 }
-
 export default function AdminStrategyRequestDetailPage() {
   const router = useRouter();
   const params = useParams();

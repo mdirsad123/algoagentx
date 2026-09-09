@@ -26,6 +26,7 @@ import {
   type SubscriptionPlansGrouped,
 } from "@/lib/api/subscriptions";
 import { formatErrorMessage, parseApiError } from "@/lib/api/error";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 const EMPTY_PLANS: SubscriptionPlansGrouped = { free: [], monthly: [], yearly: [] };
 
@@ -52,12 +53,7 @@ const normalizeUpper = (value?: string | null): string => String(value || "").tr
 const toPlanKey = (planCode?: string | null, billingPeriod?: string | null): string =>
   `${normalizeUpper(planCode)}::${normalizeUpper(billingPeriod)}`;
 
-const formatDateTime = (value?: string | null): string => {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString();
-};
+const formatDateTime = (value?: string | null): string => formatDateTimeIST(value);
 
 const formatCurrency = (value: number): string =>
   new Intl.NumberFormat("en-US", {

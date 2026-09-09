@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { RefreshCw } from "lucide-react"
 import { toast } from "sonner"
+import { formatDateIST, formatDateTimeIST } from "@/lib/timezone";
 
 export default function AdminSubscriptionsPage() {
   const [items, setItems] = useState<Subscription[]>([])
@@ -104,9 +105,9 @@ export default function AdminSubscriptionsPage() {
                     <td className="px-3 py-3 text-foreground">{item.included_credits_remaining ?? 0}</td>
                     <td className="px-3 py-3"><Badge className="bg-card/60 text-foreground border border-border/60">{item.status}</Badge></td>
                     <td className="px-3 py-3 text-foreground">{item.renews ? "Yes" : "No"}</td>
-                    <td className="px-3 py-3 text-muted-foreground">{item.next_credit_refill_at ? new Date(item.next_credit_refill_at).toLocaleString() : "—"}</td>
-                    <td className="px-3 py-3 text-muted-foreground">{item.start_at ? new Date(item.start_at).toLocaleDateString() : '—'}</td>
-                    <td className="px-3 py-3 text-muted-foreground">{item.end_at ? new Date(item.end_at).toLocaleDateString() : '—'}</td>
+                    <td className="px-3 py-3 text-muted-foreground">{formatDateTimeIST(item.next_credit_refill_at)}</td>
+                    <td className="px-3 py-3 text-muted-foreground">{formatDateIST(item.start_at)}</td>
+                    <td className="px-3 py-3 text-muted-foreground">{formatDateIST(item.end_at)}</td>
                     <td className="px-3 py-3">
                       <div className="flex gap-2">
                         <Button size="sm" variant="outline" className="rounded-xl border-border/60 bg-card/20 text-foreground hover:bg-card/40" onClick={() => updateStatus(item.id, "CANCELED")}>Cancel</Button>

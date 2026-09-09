@@ -11,6 +11,7 @@ import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
 import type { BrokerAccount, BrokerConnectionResult, BrokerProvider, LiveMode, MT5AgentStatus, CTraderTradingAccount } from "@/types/live-trading";
 import { getBackendCallbackUrl } from "@/lib/api-base";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 const CRYPTO_CODES = new Set(["BINANCE", "BYBIT", "OKX"]);
 const CTRADER_CODES = new Set(["CTRADER", "CTRADER_API"]);
@@ -63,7 +64,7 @@ function displayBrokerName(code?: string | null) {
   return value || "Broker";
 }
 
-const formatDate = (value?: string | null) => (value ? new Date(value).toLocaleString() : "Not connected yet");
+const formatDate = (value?: string | null) => value ? formatDateTimeIST(value) : "Not connected yet";
 const money = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const brokerCodeOf = (broker: BrokerAccount) => (broker.broker_code || broker.broker_name || "").toUpperCase();
 const statusOf = (broker: BrokerAccount, agent?: MT5AgentStatus | null) => {

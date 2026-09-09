@@ -11,6 +11,7 @@ from strategies.stock_burner_ema_9_20 import StockBurnerEMA920
 from strategies.trend_continuation_tce_adam import TrendContinuationTCE
 from strategies.simple_trendline import SimpleTrendlineStrategy
 from strategies.every_two_candle_color_demo import EveryTwoCandleColorDemoStrategy
+from strategies.xauusd_5m_resistance_rejection_v1 import XAUUSD5MResistanceRejectionV1
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,11 @@ _REGISTRY: dict[str, StrategyRegistryEntry] = {
     "stock_burner_ema_920": StrategyRegistryEntry(StockBurnerEMA920, {"rr_ratio": 2.0}, "Stock Burner EMA 9/20"),
     "trend_continuation_tce": StrategyRegistryEntry(TrendContinuationTCE, {"rr_ratio": 2.0}, "Trend Continuation TCE"),
     "simple_trendline": StrategyRegistryEntry(SimpleTrendlineStrategy, {"lookback": 3, "breakout_buffer": 0.0}, "Simple Trendline Strategy"),
+    "xauusd_5m_resistance_rejection_v1": StrategyRegistryEntry(
+        XAUUSD5MResistanceRejectionV1,
+        {"entry_confirmation": "BREAK_REJECTION_LOW", "sl_mode": "REJECTION_HIGH", "tp_mode": "FIXED_RR", "minimum_rr": 1.5, "target_rr": 2.0, "debug_mode": False},
+        "XAUUSD 5M Resistance Rejection V1",
+    ),
     "every_two_candle_color_demo": StrategyRegistryEntry(
         EveryTwoCandleColorDemoStrategy,
         {"signal_every_n_candles": 2, "warmup_bars": 2, "signal_latest_candle": True},
@@ -64,7 +70,9 @@ def resolve_strategy(strategy_id: str | None, strategy_name: str | None, db_para
     haystack = f"{normalized_id} {normalized_name}".strip()
 
     key = None
-    if (
+    if "resistance rejection" in haystack or "xauusd 5m resistance" in haystack:
+        key = "xauusd_5m_resistance_rejection_v1"
+    elif (
         "every 2 candle" in haystack
         or "every two candle" in haystack
         or "candle color demo" in haystack

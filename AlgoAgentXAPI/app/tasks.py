@@ -561,3 +561,198 @@ def save_backtest_results(db, user_id: str, backtest_params: Dict[str, Any],
         db.rollback()
         logger.error(f"Failed to save backtest results for job {backtest_params.get('job_id', 'unknown')}: {e}")
         raise e
+# ---------------------------------------------------------------------------
+# Long-running backtest queue (v2)
+# ---------------------------------------------------------------------------
+# These tasks intentionally use the current API execution implementation rather
+# than the legacy save_backtest_results helpers above. This keeps billing,
+# advanced filters, runtime configuration, reports and transparency fields
+# identical to /api/v1/backtests/run.
+
+
+def _fresh_async_engine_and_sessionmaker():
+    """Create a DB engine bound to the worker/background thread event loop."""
+    from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession, create_async_engine
+    from sqlalchemy.orm import sessionmaker as _sessionmaker
+    from .core.config import settings
+
+    connect_args = {"command_timeout": 14400} if settings.database_url.startswith("postgresql+asyncpg") else {}
+    worker_engine = create_async_engine(
+        settings.database_url,
+        echo=False,
+        future=True,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+        pool_timeout=60,
+        connect_args=connect_args,
+    )
+    factory = _sessionmaker(bind=worker_engine, class_=_AsyncSession, expire_on_commit=False)
+    return worker_engine, factory
+
+
+async def _mark_background_job_failed(session_factory, job_id: str, exc: Exception) -> None:
+    """Best-effort terminal state so the browser never polls forever."""
+    try:
+        async with session_factory() as db:
+            job = await db.get(JobStatus, str(job_id))
+            if job is None:
+                return
+            if str(job.status or "").lower() == "completed":
+                return
+            detail = getattr(exc, "detail", None)
+            if isinstance(detail, dict):
+                message = str(detail.get("message") or detail.get("code") or detail)
+            elif detail:
+                message = str(detail)
+            else:
+                message = str(exc) or exc.__class__.__name__
+            job.status = "failed"
+            job.progress = 0
+            job.message = message[:4000]
+            job.completed_at = datetime.utcnow()
+            job.result_data = json.dumps({"error": message, "stage": "background_execution"})
+            await db.commit()
+    except Exception:
+        logger.exception("Failed to persist terminal status for queued job %s", job_id)
+
+
+async def _run_backtest_v2_async(job_id: str, user_id: str, payload_dict: Dict[str, Any], plan_code: str | None = None):
+    worker_engine, session_factory = _fresh_async_engine_and_sessionmaker()
+    try:
+        from .api.v1.backtests import _execute_backtest_sync
+        from .schemas.backtests import BacktestRunRequest
+
+        payload = BacktestRunRequest.model_validate(payload_dict)
+        async with session_factory() as db:
+            return await _execute_backtest_sync(
+                payload=payload,
+                db=db,
+                current_user={"user_id": user_id},
+                entitlements={"plan_code": plan_code} if plan_code else {},
+                execution_job_id=str(job_id),
+            )
+    except Exception as exc:
+        await _mark_background_job_failed(session_factory, job_id, exc)
+        logger.exception("Queued backtest job %s failed", job_id)
+        return {"job_id": job_id, "status": "failed", "error": str(getattr(exc, "detail", None) or exc)}
+    finally:
+        await worker_engine.dispose()
+
+
+@celery_app.task(name="app.tasks.run_backtest_v2_task", bind=True, max_retries=0)
+def run_backtest_v2_task(self, job_id: str, user_id: str, payload_dict: Dict[str, Any], plan_code: str | None = None):
+    """Durable Celery execution for multi-year Standard Backtests."""
+    return asyncio.run(_run_backtest_v2_async(job_id, user_id, payload_dict, plan_code))
+
+
+def run_backtest_v2_fallback(job_id: str, user_id: str, payload_dict: Dict[str, Any], plan_code: str | None = None):
+    """FastAPI BackgroundTasks fallback when Redis/Celery dispatch is unavailable.
+
+    FastAPI runs synchronous background functions in a worker thread, so the
+    HTTP response is returned immediately and the main event loop remains free.
+    For production durability, run a Celery worker and Redis.
+    """
+    return asyncio.run(_run_backtest_v2_async(job_id, user_id, payload_dict, plan_code))
+
+async def _run_strategy_sandbox_v2_async(job_id: str, admin_user_id: str, strategy_id: str, payload_dict: Dict[str, Any]):
+    worker_engine, session_factory = _fresh_async_engine_and_sessionmaker()
+    try:
+        from .api.v1.admin_strategy_requests import StrategySandboxBacktestIn, _execute_sandbox_backtest
+
+        payload = StrategySandboxBacktestIn.model_validate(payload_dict)
+        async with session_factory() as db:
+            job = await db.get(JobStatus, str(job_id))
+            if job is not None:
+                job.status = "running"
+                job.progress = 10
+                job.message = "Running strategy sandbox in background"
+                job.started_at = job.started_at or datetime.utcnow()
+                await db.commit()
+
+            response = await _execute_sandbox_backtest(
+                strategy_id=strategy_id,
+                payload=payload,
+                admin_user={"user_id": admin_user_id, "role": "admin"},
+                db=db,
+            )
+            data = response.get("data") if isinstance(response, dict) else response
+            job = await db.get(JobStatus, str(job_id))
+            if job is not None:
+                job.status = "completed"
+                job.progress = 100
+                job.message = "Strategy sandbox completed"
+                job.result_data = json.dumps(data, default=str)
+                job.completed_at = datetime.utcnow()
+                await db.commit()
+            return data
+    except Exception as exc:
+        await _mark_background_job_failed(session_factory, job_id, exc)
+        logger.exception("Queued strategy sandbox job %s failed", job_id)
+        return {"job_id": job_id, "status": "failed", "error": str(getattr(exc, "detail", None) or exc)}
+    finally:
+        await worker_engine.dispose()
+
+
+@celery_app.task(name="app.tasks.run_strategy_sandbox_v2_task", bind=True, max_retries=0)
+def run_strategy_sandbox_v2_task(self, job_id: str, admin_user_id: str, strategy_id: str, payload_dict: Dict[str, Any]):
+    """Durable Celery execution for admin strategy sandbox backtests."""
+    return asyncio.run(_run_strategy_sandbox_v2_async(job_id, admin_user_id, strategy_id, payload_dict))
+
+
+def run_strategy_sandbox_v2_fallback(job_id: str, admin_user_id: str, strategy_id: str, payload_dict: Dict[str, Any]):
+    """Threaded FastAPI background fallback for sandbox backtests."""
+    return asyncio.run(_run_strategy_sandbox_v2_async(job_id, admin_user_id, strategy_id, payload_dict))
+
+async def _run_funded_backtest_v2_async(run_id: str, user_id: str, payload_dict: Dict[str, Any], user_role: str = ""):
+    worker_engine, session_factory = _fresh_async_engine_and_sessionmaker()
+    try:
+        from uuid import UUID
+        from .api.v1.funded_backtests import _execute_funded_backtest_run
+        from .schemas.funded_backtests import FundedRunRequest
+
+        payload = FundedRunRequest.model_validate(payload_dict)
+        async with session_factory() as db:
+            return await _execute_funded_backtest_run(
+                db=db,
+                run_id=UUID(str(run_id)),
+                payload=payload,
+                user_id=str(user_id),
+                user_role=str(user_role or ""),
+            )
+    except Exception as exc:
+        logger.exception("Queued funded backtest run %s failed", run_id)
+        try:
+            from uuid import UUID
+            from .db.models import FundedBacktestRun
+            async with session_factory() as db:
+                run = await db.get(FundedBacktestRun, UUID(str(run_id)))
+                if run is not None and str(run.status or "").upper() == "RUNNING":
+                    detail = getattr(exc, "detail", None)
+                    if isinstance(detail, dict):
+                        message = str(detail.get("message") or detail.get("code") or detail)
+                    else:
+                        message = str(detail or exc)
+                    run.status = "SIMULATION_ERROR"
+                    run.failure_reason = message[:4000]
+                    run.summary_json = {
+                        "status": "SIMULATION_ERROR",
+                        "technical_error": message,
+                        "execution_mode": "background",
+                    }
+                    await db.commit()
+        except Exception:
+            logger.exception("Failed to mark funded run %s as SIMULATION_ERROR", run_id)
+        return {"funded_backtest_id": run_id, "status": "SIMULATION_ERROR", "error": str(getattr(exc, "detail", None) or exc)}
+    finally:
+        await worker_engine.dispose()
+
+
+@celery_app.task(name="app.tasks.run_funded_backtest_v2_task", bind=True, max_retries=0)
+def run_funded_backtest_v2_task(self, run_id: str, user_id: str, payload_dict: Dict[str, Any], user_role: str = ""):
+    """Durable Celery execution for long-running funded simulations."""
+    return asyncio.run(_run_funded_backtest_v2_async(run_id, user_id, payload_dict, user_role))
+
+
+def run_funded_backtest_v2_fallback(run_id: str, user_id: str, payload_dict: Dict[str, Any], user_role: str = ""):
+    """Threaded FastAPI background fallback for funded simulations."""
+    return asyncio.run(_run_funded_backtest_v2_async(run_id, user_id, payload_dict, user_role))

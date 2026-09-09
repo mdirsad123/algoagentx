@@ -23,6 +23,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StrategyAttachmentGallery } from "@/components/strategies/StrategyAttachmentGallery";
 import { AuthenticatedStrategyImage } from "@/components/strategies/AuthenticatedStrategyImage";
+import { formatChartDateTimeIST, formatDateTimeIST } from "@/lib/timezone";
 
 
 const RUNTIME_FIELD_HELP: Record<string, string> = {"Initial Capital": "Starting capital used in this runtime preset. It affects backtest sizing, equity curve and drawdown calculations.", "Risk Percent": "Percentage of capital risked per trade for risk-based sizing. Example: 1% means 0.01 in config. High risk can create large drawdowns.", "Position Size Mode": "Risk Based calculates size from stop loss and risk percent. Fixed Lot/Quantity uses a manual size.", "Max Lot Cap": "Maximum allowed lot size to prevent oversized trades.", "Fixed Lot": "Manual lot size used for every trade in this preset. High fixed lots can create unrealistic risk.", "Fixed Quantity": "Manual quantity used for non-lot instruments.", "Max Quantity Cap": "Maximum quantity cap for non-lot instruments.", "SL Mode": "Defines how stop loss is calculated: Fixed Percent, ATR volatility, recent swing, or strategy suggested.", "RR Ratio": "Reward-to-risk ratio. Example: 2 means target is twice the stop loss distance.", "ATR Period": "Number of candles used to calculate Average True Range. Higher values smooth the volatility estimate.", "ATR Multiplier": "Multiplier applied to ATR for stop distance. Higher multiplier means wider stop.", "Swing Lookback": "Number of candles used to find recent swing high/low for stop placement.", "Fixed Price Risk %": "Stop loss distance as a fixed percent of entry price.", "Entry Mode": "Controls when trade enters after signal. Next Candle Open is safer for realistic backtests.", "Max Open Positions": "Limits simultaneous open positions.", "Max Trades Per Day": "Limits daily trade count to reduce overtrading.", "Square Off Time": "Time used to close intraday Indian-market positions.", "Break Even Trigger R": "Profit multiple required before stop loss moves to entry.", "Trailing Mode": "Method used to trail stop. ATR trail uses volatility.", "Trail Start R": "Profit multiple after which trailing starts.", "Trail ATR Multiplier": "ATR multiplier used for trailing stop distance.", "Partial Exit At R": "R multiple where partial exit happens.", "Partial Exit Percent": "Percent of position closed during partial exit."};
@@ -44,19 +45,66 @@ const safeNumber = (value: unknown, fallback = 0): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const metricFromParameters = (strategy: ImplementedStrategy, camelKey: string, snakeKey: string): unknown => {
+  const params = strategy.parameters || {};
+  const candidates = [
+    (params as any).performance_metrics,
+    (params as any).metrics,
+    (params as any).performance,
+    (params as any).stats,
+    (params as any).metricSummary,
+    (params as any).metric_summary,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue;
+    if ((candidate as any)[camelKey] !== undefined && (candidate as any)[camelKey] !== null) return (candidate as any)[camelKey];
+    if ((candidate as any)[snakeKey] !== undefined && (candidate as any)[snakeKey] !== null) return (candidate as any)[snakeKey];
+  }
+  return undefined;
+};
+
+const displayPercentInput = (value: unknown): string => {
+  if (value === null || value === undefined || value === "") return "";
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return "";
+  return String(Math.abs(raw) <= 1 ? raw * 100 : raw);
+};
+
+const percentInputToRatio = (value: string): number | null => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.abs(parsed) > 1 ? parsed / 100 : parsed;
+};
+
+const optionalNumber = (value: string): number | null => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const displayNumberInput = (value: unknown): string => {
+  if (value === null || value === undefined || value === "") return "";
+  const raw = Number(value);
+  return Number.isFinite(raw) ? String(raw) : "";
+};
+
 const formatCurrency = (value: number | null | undefined): string =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(safeNumber(value, 0));
 
 const formatPercent = (value: number | null | undefined): string => `${safeNumber(value, 0).toFixed(2)}%`;
 
-const formatDateTime = (value?: string | null) => {
-  if (!value) return "—";
-  const dt = new Date(value);
-  return Number.isNaN(dt.getTime()) ? value : dt.toLocaleString();
-};
+const formatDateTime = (value?: string | null) => value ? formatDateTimeIST(value) : "—";
 
 const strategyToForm = (strategy: ImplementedStrategy) => {
   const params = strategy.parameters || {};
+  const winRate = strategy.winRate ?? metricFromParameters(strategy, "winRate", "win_rate");
+  const sharpeRatio = strategy.sharpeRatio ?? metricFromParameters(strategy, "sharpeRatio", "sharpe_ratio");
+  const maxDrawdown = strategy.maxDrawdown ?? metricFromParameters(strategy, "maxDrawdown", "max_drawdown");
+  const totalTrades = strategy.totalTrades ?? metricFromParameters(strategy, "totalTrades", "total_trades");
+  const profitFactor = strategy.profitFactor ?? metricFromParameters(strategy, "profitFactor", "profit_factor");
   return {
     name: strategy.name || "",
     description: strategy.description || "",
@@ -76,6 +124,11 @@ const strategyToForm = (strategy: ImplementedStrategy) => {
     capital_risk_pct: String(params.capital_risk_pct ?? 0.01),
     price_risk_pct: String(params.price_risk_pct ?? 0.002),
     max_bars_in_trade: String(params.max_bars_in_trade ?? 6),
+    winRate: displayPercentInput(winRate),
+    sharpeRatio: displayNumberInput(sharpeRatio),
+    maxDrawdown: displayPercentInput(maxDrawdown),
+    totalTrades: displayNumberInput(totalTrades),
+    profitFactor: displayNumberInput(profitFactor),
   };
 };
 
@@ -330,7 +383,7 @@ export default function AdminStrategyWorkspacePage() {
   }, [strategyId]);
 
   const equityRows = useMemo(
-    () => (sandboxResult?.equity_curve || []).map((point, index) => ({ label: point.timestamp ? new Date(point.timestamp).toLocaleDateString() : String(index + 1), equity: safeNumber(point.equity, 0) })),
+    () => (sandboxResult?.equity_curve || []).map((point, index) => ({ label: point.timestamp ? formatChartDateTimeIST(point.timestamp) : String(index + 1), equity: safeNumber(point.equity, 0) })),
     [sandboxResult?.equity_curve],
   );
 
@@ -469,6 +522,18 @@ export default function AdminStrategyWorkspacePage() {
         trade_management_rules: form.trade_management_rules,
         notes: form.notes,
         source_code: form.source_code,
+        performance_metrics: {
+          winRate: percentInputToRatio(form.winRate),
+          win_rate: percentInputToRatio(form.winRate),
+          sharpeRatio: optionalNumber(form.sharpeRatio),
+          sharpe_ratio: optionalNumber(form.sharpeRatio),
+          maxDrawdown: percentInputToRatio(form.maxDrawdown),
+          max_drawdown: percentInputToRatio(form.maxDrawdown),
+          totalTrades: optionalNumber(form.totalTrades),
+          total_trades: optionalNumber(form.totalTrades),
+          profitFactor: optionalNumber(form.profitFactor),
+          profit_factor: optionalNumber(form.profitFactor),
+        },
         parameters: {
           rr_ratio: safeNumber(form.rr_ratio, 2),
           capital_risk_pct: safeNumber(form.capital_risk_pct, 0.01),
@@ -489,8 +554,50 @@ export default function AdminStrategyWorkspacePage() {
   };
 
   const verifyCode = async () => {
+    if (!form) return;
     setVerifying(true);
     try {
+      // Verify must run against what is currently visible in the editor, not an
+      // older source_code value already stored in the DB. Persist the current
+      // workspace first, then invoke the validation/backtest endpoint.
+      const savePayload = {
+        name: form.name,
+        description: form.description,
+        visibility: form.visibility,
+        strategy_type: form.strategy_type,
+        market: form.market,
+        timeframe: form.timeframe,
+        entry_rules: form.entry_rules,
+        exit_rules: form.exit_rules,
+        confirmation_rules: form.confirmation_rules,
+        risk_rules: form.risk_rules,
+        invalidation_rules: form.invalidation_rules,
+        trade_management_rules: form.trade_management_rules,
+        notes: form.notes,
+        source_code: form.source_code,
+        performance_metrics: {
+          winRate: percentInputToRatio(form.winRate),
+          win_rate: percentInputToRatio(form.winRate),
+          sharpeRatio: optionalNumber(form.sharpeRatio),
+          sharpe_ratio: optionalNumber(form.sharpeRatio),
+          maxDrawdown: percentInputToRatio(form.maxDrawdown),
+          max_drawdown: percentInputToRatio(form.maxDrawdown),
+          totalTrades: optionalNumber(form.totalTrades),
+          total_trades: optionalNumber(form.totalTrades),
+          profitFactor: optionalNumber(form.profitFactor),
+          profit_factor: optionalNumber(form.profitFactor),
+        },
+        parameters: {
+          rr_ratio: safeNumber(form.rr_ratio, 2),
+          capital_risk_pct: safeNumber(form.capital_risk_pct, 0.01),
+          price_risk_pct: safeNumber(form.price_risk_pct, 0.002),
+          max_bars_in_trade: safeNumber(form.max_bars_in_trade, 6),
+        },
+      };
+      const updated = await adminApi.updateAdminStrategyById(strategyId, savePayload);
+      setStrategy(updated);
+      setForm(strategyToForm(updated));
+
       const res = await adminApi.validateAdminStrategyById(strategyId, sandboxInput);
       if (res.validation_ok) toast.success(res.message || "Validation passed");
       else toast.error(res.message || "Validation failed");
@@ -505,7 +612,14 @@ export default function AdminStrategyWorkspacePage() {
   const runSandbox = async () => {
     setSandboxing(true);
     try {
-      const res = await adminApi.runAdminStrategySandboxBacktest(strategyId, sandboxInput);
+      const res = await adminApi.runAdminStrategySandboxBacktest(strategyId, {
+        ...sandboxInput,
+        runtime_config: runtimeDeepMerge(runtimePresetConfig, {
+          strategy_params: { ...(runtimePresetConfig?.strategy_params || {}), debug_mode: true },
+          sl_tp: { ...(runtimePresetConfig?.sl_tp || {}), use_strategy_suggested_sl: true },
+          execution: { ...(runtimePresetConfig?.execution || {}), allow_long: false, allow_short: true },
+        }),
+      });
       setSandboxResult(res);
       toast.success("Sandbox backtest completed");
       await refreshWorkflowAndVersions();
@@ -1165,6 +1279,33 @@ export default function AdminStrategyWorkspacePage() {
               <p className="mt-3 text-xs text-muted-foreground">Engine uses these values for quantity sizing, stop-loss distance, target calculation, and holding rules.</p>
             </div>
 
+            <div className="rounded-xl border border-border/50 bg-card/20 p-4">
+              <p className="mb-1 text-sm font-medium text-foreground">Performance Metrics</p>
+              <p className="mb-4 text-xs text-muted-foreground">Marketing/performance summary shown on user strategy cards and strategy detail pages. Percent fields can be entered as 38 for 38%.</p>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+                <div>
+                  <p className="mb-2 text-xs text-muted-foreground">Win Rate %</p>
+                  <input className={fieldClass} type="number" step="0.01" value={form.winRate} onChange={(e)=>setForm((p:any)=>({...p,winRate:e.target.value}))} placeholder="38" />
+                </div>
+                <div>
+                  <p className="mb-2 text-xs text-muted-foreground">Sharpe Ratio</p>
+                  <input className={fieldClass} type="number" step="0.01" value={form.sharpeRatio} onChange={(e)=>setForm((p:any)=>({...p,sharpeRatio:e.target.value}))} placeholder="-0.56" />
+                </div>
+                <div>
+                  <p className="mb-2 text-xs text-muted-foreground">Max Drawdown %</p>
+                  <input className={fieldClass} type="number" step="0.01" value={form.maxDrawdown} onChange={(e)=>setForm((p:any)=>({...p,maxDrawdown:e.target.value}))} placeholder="-19" />
+                </div>
+                <div>
+                  <p className="mb-2 text-xs text-muted-foreground">Total Trades</p>
+                  <input className={fieldClass} type="number" step="1" value={form.totalTrades} onChange={(e)=>setForm((p:any)=>({...p,totalTrades:e.target.value}))} placeholder="180431" />
+                </div>
+                <div>
+                  <p className="mb-2 text-xs text-muted-foreground">Profit Factor</p>
+                  <input className={fieldClass} type="number" step="0.01" value={form.profitFactor} onChange={(e)=>setForm((p:any)=>({...p,profitFactor:e.target.value}))} placeholder="1.18" />
+                </div>
+              </div>
+            </div>
+
             {[
               ["Entry Rules","entry_rules"], ["Exit Rules","exit_rules"], ["Confirmation Rules","confirmation_rules"], ["Risk Rules","risk_rules"], ["Invalidation Rules","invalidation_rules"], ["Trade Management Rules","trade_management_rules"], ["Additional Notes","notes"]
             ].map(([label,key]) => (
@@ -1216,15 +1357,47 @@ export default function AdminStrategyWorkspacePage() {
               <p className="mt-3 text-sm text-muted-foreground">Loading may take a few minutes on large datasets. Please keep this page open while the backend finishes.</p>
             )}
             {sandboxResult && (
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                {[
-                  ["PnL", formatCurrency(sandboxResult.summary.net_profit)],
-                  ["Return", formatPercent(sandboxResult.summary.return_pct)],
-                  ["Win Rate", formatPercent(sandboxResult.summary.win_rate)],
-                  ["Sharpe", sandboxResult.summary.sharpe_ratio.toFixed(2)],
-                  ["Profit Factor", sandboxResult.summary.profit_factor.toFixed(2)],
-                  ["Trades", String(sandboxResult.summary.total_trades)],
-                ].map(([label,val]) => <div key={label} className="rounded-xl border border-border/50 bg-card/20 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 text-foreground">{val}</p></div>)}
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  {[
+                    ["PnL", formatCurrency(sandboxResult.summary.net_profit)],
+                    ["Return", formatPercent(sandboxResult.summary.return_pct)],
+                    ["Win Rate", formatPercent(sandboxResult.summary.win_rate)],
+                    ["Sharpe", sandboxResult.summary.sharpe_ratio.toFixed(2)],
+                    ["Profit Factor", sandboxResult.summary.profit_factor.toFixed(2)],
+                    ["Trades", String(sandboxResult.summary.total_trades)],
+                  ].map(([label,val]) => <div key={label} className="rounded-xl border border-border/50 bg-card/20 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 text-foreground">{val}</p></div>)}
+                </div>
+                {(sandboxResult.summary.total_zones !== undefined || sandboxResult.summary.strategy_diagnostics) && (
+                  <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
+                    <p className="text-sm font-semibold text-foreground">Resistance Rejection Debug Funnel</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Correctness funnel: zones → interactions → rejections → confirmations → trades. Sandbox forces diagnostic mode without changing production defaults.</p>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-3">
+                      {[
+                        ["Zones", sandboxResult.summary.total_zones],
+                        ["Interactions", sandboxResult.summary.zone_interactions],
+                        ["Rejections", sandboxResult.summary.rejection_setups],
+                        ["Confirmed", sandboxResult.summary.confirmed_setups],
+                        ["Executed", sandboxResult.summary.executed_trades],
+                        ["Rejected", sandboxResult.summary.rejected_setups],
+                      ].map(([label, value]) => (
+                        <div key={String(label)} className="rounded-lg border border-border/50 bg-background/20 p-2">
+                          <p className="text-muted-foreground">{label}</p><p className="mt-1 text-base font-semibold text-foreground">{Number(value || 0)}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {Object.keys(sandboxResult.summary.strategy_rejection_reasons || {}).length > 0 && (
+                      <div className="mt-3">
+                        <p className="text-xs font-medium text-foreground">Rejected setup reasons</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {Object.entries(sandboxResult.summary.strategy_rejection_reasons || {}).map(([reason, count]) => (
+                            <span key={reason} className="rounded-full border border-border/50 px-2.5 py-1 text-xs text-muted-foreground">{reason}: {count}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </CardContent>

@@ -52,7 +52,25 @@ class MT5AgentAdapter(BrokerAdapter):
         return {"connected": result.connected, "message": result.message, "account_login": result.account_login, "server": result.server, "balance": str(result.balance) if result.balance is not None else None, "equity": str(result.equity) if result.equity is not None else None, "currency": result.currency, "raw": result.raw}
 
     async def get_quote(self, symbol: str) -> dict[str, Any]:
-        return {"success": False, "message": "MT5 Agent quote streaming is prepared but not enabled in this phase.", "symbol": symbol}
+        agent = await self._latest_agent()
+        if not _is_fresh(agent):
+            return {"success": False, "message": FRIENDLY_DISCONNECTED, "symbol": symbol}
+        try:
+            import json
+            from ...core.redis_manager import redis_manager
+            from ..alerts.quote_bus import quote_key
+            client = redis_manager.client
+            if client is None:
+                return {"success": False, "message": "Redis is unavailable for MT5 Agent live quotes.", "symbol": symbol}
+            raw = await client.get(quote_key("MT5", str(self.broker_account.id), symbol))
+            if raw is None:
+                return {"success": False, "message": f"No fresh MT5 Agent quote for {symbol}. Create/enable an alert or wait for the agent quote stream.", "symbol": symbol}
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            payload = json.loads(raw)
+            return {"success": True, "symbol": payload.get("symbol") or symbol, "bid": payload.get("bid"), "ask": payload.get("ask"), "last": payload.get("price"), "market_timestamp": payload.get("market_timestamp"), "raw": payload}
+        except Exception as exc:
+            return {"success": False, "message": str(exc), "symbol": symbol}
 
     async def place_market_order(self, order_request: BrokerOrderRequest) -> BrokerOrderResult:
         agent = await self._latest_agent()
@@ -138,11 +156,16 @@ class MT5AgentAdapter(BrokerAdapter):
 
         safe_count = max(1, min(int(count or 300), 2000))
         requested_timeframe = str(timeframe or "").strip().upper()
+        # Fetch the current MT5 bar too. The API candle service is the single
+        # authority that decides whether a bar is closed from its OPEN timestamp
+        # + timeframe. Using start_pos=1 here can become one-bar late around a
+        # rollover when MT5 has not yet created the next forming bar.
+        requested_count = min(safe_count + 1, 2000)
         payload = {
             "symbol": str(symbol or "").strip(),
             "timeframe": requested_timeframe,
-            "count": safe_count,
-            "skip_forming": True,
+            "count": requested_count,
+            "skip_forming": False,
         }
         if not payload["symbol"]:
             raise RuntimeError("MT5 Agent candle request requires a symbol.")
@@ -299,4 +322,49 @@ class MT5AgentAdapter(BrokerAdapter):
         }
 
     async def get_symbols(self, query: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
-        return []
+        if self.db is None:
+            return [{"success": False, "message": "MT5 Agent database session is unavailable."}]
+
+        agent = await self._latest_agent()
+        if not _is_fresh(agent):
+            return [{"success": False, "message": FRIENDLY_DISCONNECTED}]
+
+        safe_limit = max(1, min(int(limit or 200), 500))
+        payload = {
+            "query": str(query or "").strip(),
+            "limit": safe_limit,
+        }
+        command = MT5AgentCommand(
+            agent_id=agent.id,
+            user_id=self.broker_account.user_id,
+            broker_account_id=self.broker_account.id,
+            command_type="FETCH_SYMBOLS",
+            status="PENDING",
+            request_payload=payload,
+        )
+        self.db.add(command)
+        await self.db.flush()
+        await self.db.commit()
+
+        timeout_seconds = 20
+        for _ in range(timeout_seconds * 2):
+            await asyncio.sleep(0.5)
+            await self.db.refresh(command)
+            status = str(command.status or "").upper()
+            if status == "COMPLETED":
+                result = command.result_payload or {}
+                raw = self._extract_raw_response(result)
+                rows = raw.get("symbols") if isinstance(raw, dict) else None
+                if not isinstance(rows, list):
+                    rows = result.get("symbols") if isinstance(result, dict) else None
+                return [row for row in (rows or []) if isinstance(row, dict)]
+            if status == "ERROR":
+                result = command.result_payload or {}
+                raw = self._extract_raw_response(result)
+                message = command.error_message or result.get("message") or raw.get("message")
+                return [{"success": False, "message": str(message or "MT5 Agent symbol fetch failed.")}]
+
+        command.status = "TIMEOUT"
+        command.error_message = "MT5 Agent symbol request timed out. Make sure the updated AlgoAgentX MT5 Agent is running and polling commands."
+        await self.db.commit()
+        return [{"success": False, "message": command.error_message}]

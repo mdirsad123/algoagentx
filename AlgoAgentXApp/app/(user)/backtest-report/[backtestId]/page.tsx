@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { useToast } from "@/components/shared/toast";
 import { backtestsApi, type BacktestDetailResponse, type TradeChartContextResponse } from "@/lib/api/backtests";
 import { formatCurrency as formatMoney, formatNumber as formatDisplayNumber } from "@/lib/formatters";
+import { dateKeyIST, formatChartDateTimeIST, formatDateIST, formatDateTimeIST, parseApiDateTime } from "@/lib/timezone";
 import { parseApiError, formatErrorMessage } from "@/lib/api/error";
 
 type TradeRow = BacktestDetailResponse["trades"][number];
@@ -37,25 +38,9 @@ const formatRMultiple = (value: number | null | undefined): string => {
   return `${sign}${formatNumber(value, 2)}R`;
 };
 
-const formatDateTime = (value?: string | null): string => {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "—";
-  return parsed.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
+const formatDateTime = (value?: string | null): string => formatDateTimeIST(value);
 
-const formatDateOnly = (value?: string | null): string => {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
-};
+const formatDateOnly = (value?: string | null): string => formatDateIST(value);
 
 
 type NormalizedEquityPoint = {
@@ -96,9 +81,8 @@ const getStringField = (value: unknown, keys: string[]): string | null => {
 
 const formatChartLabel = (timestamp: string | null | undefined, index: number): string => {
   if (!timestamp) return `Point ${index + 1}`;
-  const parsed = new Date(timestamp);
-  if (Number.isNaN(parsed.getTime())) return String(timestamp);
-  return parsed.toLocaleString(undefined, { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const label = formatChartDateTimeIST(timestamp);
+  return label === "—" ? String(timestamp) : label;
 };
 
 const formatAxisCurrency = (value: number, symbol?: string | null): string => {
@@ -134,6 +118,16 @@ const normalizeEquityCurve = (points: unknown[] | undefined, initialCapital?: nu
       index,
     };
   });
+};
+
+
+const downsampleChartRows = <T,>(rows: T[], maxPoints = 900): T[] => {
+  if (!rows.length || rows.length <= maxPoints) return rows;
+  const step = Math.ceil(rows.length / maxPoints);
+  const sampled = rows.filter((_, index) => index % step === 0);
+  const last = rows[rows.length - 1];
+  if (sampled[sampled.length - 1] !== last) sampled.push(last);
+  return sampled;
 };
 
 const normalizeDrawdownCurve = (points: unknown[] | undefined, equityRows: NormalizedEquityPoint[]): NormalizedDrawdownPoint[] => {
@@ -179,15 +173,7 @@ const DrawdownTooltip = ({ active, payload }: { active?: boolean; payload?: Arra
 
 const getDateKey = (value?: string | null): string => {
   if (!value) return "—";
-  const raw = String(value);
-  const isoMatch = raw.match(/^\d{4}-\d{2}-\d{2}/);
-  if (isoMatch) return isoMatch[0];
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return raw;
-  const year = parsed.getFullYear();
-  const month = String(parsed.getMonth() + 1).padStart(2, "0");
-  const day = String(parsed.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return dateKeyIST(value);
 };
 
 const shortenId = (value?: string | null): string => {
@@ -414,12 +400,12 @@ const priceToY = (price: number, minPrice: number, maxPrice: number, height: num
 
 const findNearestCandleIndex = (candles: TradeChartContextResponse["candles"], timestamp?: string | null): number => {
   if (!candles.length || !timestamp) return -1;
-  const target = new Date(timestamp).getTime();
+  const target = parseApiDateTime(timestamp)?.getTime() ?? Number.NaN;
   if (!Number.isFinite(target)) return -1;
   let bestIndex = 0;
   let bestDistance = Number.POSITIVE_INFINITY;
   candles.forEach((candle, index) => {
-    const current = new Date(candle.timestamp).getTime();
+    const current = parseApiDateTime(candle.timestamp)?.getTime() ?? Number.NaN;
     const distance = Math.abs(current - target);
     if (distance < bestDistance) {
       bestDistance = distance;
@@ -815,6 +801,9 @@ export default function BacktestReportPage() {
     return normalizeDrawdownCurve(detailRecord?.drawdown_curve, equityRows);
   }, [detail, equityRows]);
 
+  const chartEquityRows = useMemo(() => downsampleChartRows(equityRows, 900), [equityRows]);
+  const chartDrawdownRows = useMemo(() => downsampleChartRows(drawdownRows, 900), [drawdownRows]);
+
   const dailyTradeStats = useMemo(() => {
     const map = new Map<string, { trades: number; wins: number; losses: number; breakeven: number }>();
     (detail?.trades || []).forEach((trade) => {
@@ -886,7 +875,7 @@ export default function BacktestReportPage() {
       setExporting("csv");
       downloadCsv(
         `backtest-${shortBacktestId}-trades.csv`,
-        ["Entry Time", "Exit Time", "Side", "Account Currency", "Quantity Mode", "Lot Size", "Quantity", "Entry Price", "Exit Price", "Stop Loss", "Target / TP", "Risk Amount", "Actual Risk Amount", "Risk Points", "Risk Ticks/Pips", "Reward Points", "Expected Reward Amount", "RR Ratio", "SL Mode", "Position Size Mode", "R Multiple", "PnL", "Exit Reason", "Signal Reason", "Lifecycle Events"],
+        ["Entry Time (IST)", "Exit Time (IST)", "Side", "Account Currency", "Quantity Mode", "Lot Size", "Quantity", "Entry Price", "Exit Price", "Stop Loss", "Target / TP", "Risk Amount", "Actual Risk Amount", "Risk Points", "Risk Ticks/Pips", "Reward Points", "Expected Reward Amount", "RR Ratio", "SL Mode", "Position Size Mode", "R Multiple", "PnL", "Final Capital", "Exit Reason", "Signal Reason", "Lifecycle Events"],
         detail.trades.map((trade) => [
           trade.entry_time || "",
           trade.exit_time || "",
@@ -910,6 +899,7 @@ export default function BacktestReportPage() {
           trade.position_size_mode || summary?.position_size_mode || "",
           trade.r_multiple ?? "",
           trade.pnl ?? "",
+          numericOrNull((trade as any).final_capital_after_trade) ?? numericOrNull((trade as any).running_capital) ?? numericOrNull((trade as any).capital_after_trade) ?? "",
           trade.exit_reason || trade.exit_type || "",
           trade.signal_reason || "",
           asArray(trade.lifecycle_events).map((event) => `${event.event_type || "EVENT"}@${event.candle_time || ""}`).join(" | "),
@@ -972,7 +962,7 @@ export default function BacktestReportPage() {
             <p>{error || "Unable to load report."}</p>
             <div className="flex gap-3">
               <Button onClick={() => router.refresh()} className="rounded-xl bg-primary text-primary-foreground">Retry</Button>
-              <Button variant="outline" onClick={() => router.push("/backtest-history")} className="rounded-xl">Back to History</Button>
+              <Button variant="outline" onClick={() => router.push("/backtest-history?type=standard")} className="rounded-xl">Back to History</Button>
             </div>
           </CardContent>
         </Card>
@@ -988,7 +978,7 @@ export default function BacktestReportPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" className="rounded-xl" asChild>
-              <Link href="/backtest-history"><ArrowLeft className="mr-2 h-4 w-4" />Back to History</Link>
+              <Link href="/backtest-history?type=standard"><ArrowLeft className="mr-2 h-4 w-4" />Back to History</Link>
             </Button>
             <Button variant="outline" onClick={() => router.push(`/backtest?strategyId=${summary.strategy_id || ""}&instrumentId=${summary.instrument_id || ""}`)} className="rounded-xl"><Play className="mr-2 h-4 w-4" />Rerun</Button>
             <div className="flex flex-col gap-1">
@@ -1212,10 +1202,10 @@ export default function BacktestReportPage() {
 
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card className="rounded-xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
-          <CardHeader><CardTitle>Equity Curve</CardTitle><CardDescription>{equityRows.length} points captured for this run.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>Equity Curve</CardTitle><CardDescription>All range · {chartEquityRows.length} plotted / {equityRows.length} points captured.</CardDescription></CardHeader>
           <CardContent className="h-80">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={equityRows}><CartesianGrid strokeDasharray="3 3" opacity={0.15} /><XAxis dataKey="label" hide /><YAxis tickFormatter={(value) => formatAxisCurrency(Number(value), reportCurrencySymbol)} width={64} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} /><Tooltip content={<EquityTooltip currencySymbol={reportCurrencySymbol} />} /><Line type="monotone" dataKey="equity" stroke="#b7ff39" strokeWidth={2} dot={false} /></LineChart>
+              <LineChart data={chartEquityRows}><CartesianGrid strokeDasharray="3 3" opacity={0.15} /><XAxis dataKey="label" interval="preserveStartEnd" minTickGap={32} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} /><YAxis tickFormatter={(value) => formatAxisCurrency(Number(value), reportCurrencySymbol)} width={64} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} /><Tooltip content={<EquityTooltip currencySymbol={reportCurrencySymbol} />} /><Line type="monotone" dataKey="equity" stroke="#b7ff39" strokeWidth={2} dot={false} /></LineChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
@@ -1223,7 +1213,7 @@ export default function BacktestReportPage() {
           <CardHeader><CardTitle>Drawdown Curve</CardTitle><CardDescription>Rolling peak-to-equity decline across the run.</CardDescription></CardHeader>
           <CardContent className="h-80">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={drawdownRows}><CartesianGrid strokeDasharray="3 3" opacity={0.15} /><XAxis dataKey="label" hide /><YAxis tickFormatter={(value) => formatPercent(Number(value))} width={56} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} /><Tooltip content={<DrawdownTooltip />} /><Area type="monotone" dataKey="drawdown" stroke="#fb7185" fill="#fb7185" fillOpacity={0.18} /></AreaChart>
+              <AreaChart data={chartDrawdownRows}><CartesianGrid strokeDasharray="3 3" opacity={0.15} /><XAxis dataKey="label" interval="preserveStartEnd" minTickGap={32} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} /><YAxis tickFormatter={(value) => formatPercent(Number(value))} width={56} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} /><Tooltip content={<DrawdownTooltip />} /><Area type="monotone" dataKey="drawdown" stroke="#fb7185" fill="#fb7185" fillOpacity={0.18} /></AreaChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
@@ -1253,11 +1243,11 @@ export default function BacktestReportPage() {
             </div>
 
             <div className="responsive-table-wrapper max-h-[560px] overflow-auto rounded-lg border border-border/40">
-              <table className="min-w-[1100px] w-full text-sm">
+              <table className="min-w-[1220px] w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-card/95 text-left text-xs uppercase tracking-wide text-muted-foreground backdrop-blur-xl">
                   <tr>
-                    <th className="px-3 py-3">Entry Time</th>
-                    <th className="px-3 py-3">Exit Time</th>
+                    <th className="px-3 py-3">Entry Time (IST)</th>
+                    <th className="px-3 py-3">Exit Time (IST)</th>
                     <th className="px-3 py-3">Side</th>
                     <th className="px-3 py-3">Size</th>
                     <th className="px-3 py-3">Entry</th>
@@ -1265,6 +1255,7 @@ export default function BacktestReportPage() {
                     <th className="px-3 py-3">SL</th>
                     <th className="px-3 py-3">TP</th>
                     <th className="px-3 py-3">PnL</th>
+                    <th className="px-3 py-3">Final Capital</th>
                     <th className="px-3 py-3">R</th>
                     <th className="px-3 py-3">Exit Reason</th>
                     <th className="px-3 py-3 text-right">Actions</th>
@@ -1280,6 +1271,7 @@ export default function BacktestReportPage() {
                     const exitKey = getTradeExitLabel(trade);
                     const isTp = exitKey.includes("TAKE_PROFIT") || /\bTP\b/.test(exitKey);
                     const isSl = exitKey.includes("STOP_LOSS") || /\bSL\b/.test(exitKey);
+                    const finalCapitalAfterTrade = numericOrNull((trade as any).final_capital_after_trade) ?? numericOrNull((trade as any).running_capital) ?? numericOrNull((trade as any).capital_after_trade);
                     return (
                       <tr key={`${trade.id || index}`} onClick={() => setSelectedTrade(trade)} className="cursor-pointer border-t border-border/30 transition hover:bg-primary/10">
                         <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{formatDateTime(trade.entry_time)}</td>
@@ -1293,6 +1285,7 @@ export default function BacktestReportPage() {
                         <td className="px-3 py-3 text-rose-200">{formatNumber(safeNumber(trade.stop_loss, NaN), 2)}</td>
                         <td className="px-3 py-3 text-emerald-200">{formatNumber(safeNumber(trade.target, NaN), 2)}</td>
                         <td className={`px-3 py-3 font-semibold ${safeNumber(trade.pnl, 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatCurrency(safeNumber(trade.pnl, NaN), tradeCurrency)}</td>
+                        <td className="px-3 py-3 font-semibold text-sky-200">{finalCapitalAfterTrade === null ? "—" : formatCurrency(finalCapitalAfterTrade, tradeCurrency)}</td>
                         <td className={`px-3 py-3 font-semibold ${safeNumber(trade.r_multiple, 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatRMultiple(safeNumber(trade.r_multiple, NaN))}</td>
                         <td className="px-3 py-3">
                           <span className={`inline-flex max-w-[170px] rounded-full border px-2.5 py-1 text-xs font-medium ${isTp ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : isSl ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-border/40 bg-background/30 text-muted-foreground"}`}>{exitLabel}</span>
@@ -1326,7 +1319,7 @@ export default function BacktestReportPage() {
                       </tr>
                     );
                   }) : (
-                    <tr><td className="px-3 py-8 text-center text-muted-foreground" colSpan={12}>No trade rows are available for this run.</td></tr>
+                    <tr><td className="px-3 py-8 text-center text-muted-foreground" colSpan={13}>No trade rows are available for this run.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -1550,8 +1543,8 @@ export default function BacktestReportPage() {
                         {[
                           ["Instrument", chartContext.meta.instrument_symbol || summary?.instrument_symbol || "—"],
                           ["Timeframe", chartContext.meta.timeframe || summary?.timeframe || "—"],
-                          ["Entry Time", formatDateTime(chartContext.overlays.entry_time || chartTrade?.entry_time)],
-                          ["Exit Time", formatDateTime(chartContext.overlays.exit_time || chartTrade?.exit_time)],
+                          ["Entry Time (IST)", formatDateTime(chartContext.overlays.entry_time || chartTrade?.entry_time)],
+                          ["Exit Time (IST)", formatDateTime(chartContext.overlays.exit_time || chartTrade?.exit_time)],
                           ["Exit Reason", chartContext.overlays.exit_reason || chartTrade?.exit_reason || chartTrade?.exit_type || "—"],
                           ["Candles", `${chartContext.candles.length} loaded`],
                         ].map(([label, value]) => (

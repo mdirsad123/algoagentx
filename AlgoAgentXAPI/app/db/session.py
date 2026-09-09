@@ -14,7 +14,7 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_recycle=1800,
     pool_timeout=60,
-    connect_args={"command_timeout": 600} if settings.database_url.startswith("postgresql+asyncpg") else {},
+    connect_args={"command_timeout": 14400} if settings.database_url.startswith("postgresql+asyncpg") else {},
 )
 
 # Create async session factory

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..celery_app import is_celery_available
 from ..core.redis_manager import redis_manager
 from ..db.compat import as_uuid_or_str
-from ..db.models import Instrument, JobStatus, MarketData
+from ..db.models import Instrument, JobStatus, MarketData, Timeframe
 
 
 class AdminMarketDataService:
@@ -217,12 +217,20 @@ class AdminMarketDataService:
         instruments = (await db.execute(select(Instrument).order_by(Instrument.symbol.asc()))).scalars().all()
         timeframes = (
             await db.execute(
-                select(MarketData.timeframe)
-                .where(MarketData.timeframe.is_not(None))
-                .distinct()
-                .order_by(MarketData.timeframe.asc())
+                select(Timeframe.code)
+                .where(Timeframe.is_active.is_(True))
+                .order_by(Timeframe.display_order.asc(), Timeframe.id.asc())
             )
         ).scalars().all()
+        if not timeframes:
+            timeframes = (
+                await db.execute(
+                    select(MarketData.timeframe)
+                    .where(MarketData.timeframe.is_not(None))
+                    .distinct()
+                    .order_by(MarketData.timeframe.asc())
+                )
+            ).scalars().all()
 
         return {
             "instruments": [

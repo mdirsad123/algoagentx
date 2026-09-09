@@ -125,6 +125,9 @@ class TradeData(BaseModel):
     entry_price: Decimal
     exit_price: Optional[Decimal] = None
     pnl: Optional[Decimal] = None
+    final_capital_after_trade: Optional[Decimal] = None
+    running_capital: Optional[Decimal] = None
+    capital_after_trade: Optional[Decimal] = None
     exit_type: Optional[str] = None
     stop_loss: Optional[Decimal] = None
     target: Optional[Decimal] = None

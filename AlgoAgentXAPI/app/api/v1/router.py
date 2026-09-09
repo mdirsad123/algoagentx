@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from . import auth, users, strategies, backtests, reports, signals, metrics, instruments, jobs, market_data, credits, billing, payments, subscriptions, ai_screener, notifications, strategy_requests, admin_strategy_requests, ai_screener_jobs, admin, admin_market_data, support_tickets, public, dashboard
+from . import auth, users, strategies, backtests, funded_backtests, reports, signals, metrics, instruments, jobs, market_data, credits, billing, payments, subscriptions, ai_screener, notifications, strategy_requests, admin_strategy_requests, ai_screener_jobs, admin, admin_market_data, support_tickets, public, dashboard
 from . import admin_pricing
 from . import admin_coupons
 from . import admin_credit_rules
@@ -14,7 +14,7 @@ from . import live_runner
 from . import live_trading_preview
 from . import profile_settings
 from . import admin_strategy_gate
-from . import broker_accounts, live_deployments, live_signals, live_orders, live_positions, live_logs, webhooks, admin_live, admin_live_settings, admin_live_trading_actions, admin_broker_providers, broker_instruments, live_approvals, mt5_agent
+from . import broker_accounts, live_deployments, live_signals, live_orders, live_positions, live_logs, webhooks, admin_live, admin_live_settings, admin_live_trading_actions, admin_broker_providers, broker_instruments, mt5_agent, alerts
 
 api_router = APIRouter()
 
@@ -25,6 +25,7 @@ api_router.include_router(strategies.router, prefix="/strategies", tags=["strate
 api_router.include_router(instruments.router, prefix="/instruments", tags=["instruments"])
 api_router.include_router(market_data.router, prefix="/market-data", tags=["market-data"])
 api_router.include_router(backtests.router, prefix="/backtests", tags=["backtests"])
+api_router.include_router(funded_backtests.router, prefix="/funded-backtests", tags=["funded-backtests"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(signals.router, prefix="/signals", tags=["signals"])
 api_router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
@@ -42,6 +43,7 @@ api_router.include_router(settings.router, prefix="/settings", tags=["settings"]
 api_router.include_router(settings.admin_router, prefix="/admin/settings", tags=["admin-settings"])
 api_router.include_router(ai_screener.router, prefix="/ai-screener", tags=["ai-screener"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
+api_router.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
 api_router.include_router(strategy_requests.router, prefix="/strategy-requests", tags=["strategy-requests"])
 api_router.include_router(admin_strategy_requests.router, prefix="/admin/strategy-requests", tags=["admin-strategy-requests"])
 api_router.include_router(ai_screener_jobs.router, prefix="/ai-screener-jobs", tags=["ai-screener-jobs"])
@@ -71,8 +73,6 @@ api_router.include_router(live_logs.router, prefix="/live/logs", tags=["live-log
 api_router.include_router(live_runner.router, prefix="/live/runner", tags=["live-runner"])
 api_router.include_router(live_trading_preview.router, prefix="/live-trading", tags=["live-trading-preview"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
-api_router.include_router(live_approvals.router, prefix="/live-approvals", tags=["live-approvals"])
-api_router.include_router(live_approvals.admin_router, prefix="/admin/live-approvals", tags=["admin-live-approvals"])
 
 api_router.include_router(admin_live.router, prefix="/admin/live", tags=["admin-live-trading"])
 api_router.include_router(admin_live_settings.router, prefix="/admin/live-settings", tags=["admin-live-settings"])

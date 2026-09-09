@@ -3,6 +3,9 @@ export type BrokerStatus = "CONNECTED" | "DISCONNECTED" | "ERROR" | "PENDING_AUT
 export type DeploymentStatus = "DRAFT" | "RUNNING" | "PAUSED" | "STOPPED" | "ERROR";
 export type SignalType = "BUY" | "SELL" | "EXIT" | "HOLD";
 export type PositionSide = "LONG" | "SHORT";
+export type AccountPolicyType = "STANDARD" | "FUNDED";
+export type FundedLiveRiskMode = "DYNAMIC" | "FIXED";
+export type FundedAttachMode = "NEW_OR_RESET_ACCOUNT" | "EXISTING_IN_PROGRESS";
 
 
 export interface MT5AgentStatus {
@@ -33,28 +36,6 @@ export interface MT5AgentRegisterResponse {
 }
 
 
-export interface ApprovedBrokerAccount {
-  approval_id: string;
-  broker_account_id: string;
-  broker_name?: string | null;
-  broker_code?: string | null;
-  account_label?: string | null;
-  mode: LiveMode | string;
-  approval_mode?: LiveMode | string | null;
-  broker_mode?: LiveMode | string | null;
-  status: string;
-  broker_status?: string | null;
-  approved_markets?: string[];
-  max_daily_loss?: number | string | null;
-  max_order_value?: number | string | null;
-  max_trades_per_day?: number | null;
-  approved_at?: string | null;
-  currency?: string | null;
-  server_name?: string | null;
-  login_id?: string | null;
-  selected_account?: Record<string, unknown> | null;
-  metadata_json?: Record<string, unknown> | null;
-}
 
 export interface BrokerAccount {
   id: string;
@@ -282,6 +263,59 @@ export interface StrategyCatalogItem {
   approved_by?: string | null;
 }
 
+export interface FundedLiveGuardState {
+  status?: string | null;
+  reason?: string | null;
+  rule_date?: string | null;
+  rule_timezone?: string | null;
+  daily_reset_time?: string | null;
+  balance?: number | string | null;
+  equity?: number | string | null;
+  daily_floor?: number | string | null;
+  max_floor?: number | string | null;
+  remaining_daily_capacity?: number | string | null;
+  remaining_max_capacity?: number | string | null;
+  account_return_pct?: number | string | null;
+  risk_tier?: string | null;
+  requested_risk_pct?: number | string | null;
+  requested_risk_amount?: number | string | null;
+  effective_risk_pct?: number | string | null;
+  effective_risk_amount?: number | string | null;
+  limiting_rule?: string | null;
+  trading_days?: number;
+  qualifying_days?: number;
+  target_balance?: number | string | null;
+  target_progress_pct?: number | string | null;
+  target_reached_at?: string | null;
+  payout_eligible_at?: string | null;
+  payout_ready_at?: string | null;
+  failed_at?: string | null;
+  last_evaluated_at?: string | null;
+}
+
+export interface FundedLiveStatus {
+  account_policy_type: "FUNDED";
+  profile?: { id?: string | null; name?: string | null; provider_name?: string | null; challenge_type?: string | null; account_size?: number | string | null; account_currency?: string | null } | null;
+  phase?: Record<string, any> | null;
+  phase_number?: number | null;
+  risk_mode?: FundedLiveRiskMode | string | null;
+  risk_plan?: any[] | Record<string, any> | null;
+  fixed_risk_pct?: number | string | null;
+  safety_buffer_pct?: number | string | null;
+  configured_max_risk_pct?: number | string | null;
+  attach_mode?: FundedAttachMode | string | null;
+  broker?: { balance?: number | string | null; equity?: number | string | null; free_margin?: number | string | null; currency?: string | null; fresh?: boolean; age_seconds?: number | string | null; synced_at?: string | null } | null;
+  guard?: FundedLiveGuardState | null;
+}
+
+export interface FundedRiskPlanPayload {
+  risk_mode: FundedLiveRiskMode;
+  fixed_risk_pct?: number | null;
+  safety_buffer_pct: number;
+  configured_max_risk_pct?: number | null;
+  risk_tiers: Array<{ id?: string | null; name: string; sort_order: number; min_account_return_pct?: number | null; max_account_return_pct?: number | null; risk_percent: number; is_active: boolean }>;
+}
+
 export interface StrategyDeployment {
   id: string;
   user_id?: string;
@@ -303,6 +337,17 @@ export interface StrategyDeployment {
   upstox_order_confirmed?: boolean;
   timeframe: string;
   mode: LiveMode;
+  account_policy_type?: AccountPolicyType;
+  funded_profile_id?: string | null;
+  funded_profile_snapshot?: Record<string, any> | null;
+  funded_risk_plan_snapshot?: any[] | Record<string, any> | null;
+  funded_risk_mode?: FundedLiveRiskMode | string | null;
+  funded_fixed_risk_pct?: number | string | null;
+  funded_safety_buffer_pct?: number | string | null;
+  funded_configured_max_risk_pct?: number | string | null;
+  funded_phase_number?: number | null;
+  funded_attach_mode?: FundedAttachMode | string | null;
+  funded_initialization_json?: Record<string, any> | null;
   status: DeploymentStatus;
   capital: number | string;
   risk_per_trade: number | string;
@@ -363,6 +408,15 @@ export interface DeploymentPayload {
   upstox_order_confirmed?: boolean;
   timeframe: string;
   mode: LiveMode;
+  account_policy_type?: AccountPolicyType;
+  funded_profile_id?: string | null;
+  funded_phase_number?: number | null;
+  funded_risk_mode?: FundedLiveRiskMode | null;
+  funded_fixed_risk_pct?: number | null;
+  funded_safety_buffer_pct?: number;
+  funded_configured_max_risk_pct?: number | null;
+  funded_attach_mode?: FundedAttachMode | null;
+  funded_initialization_json?: Record<string, any> | null;
   capital?: number;
   risk_per_trade: number;
   rr_ratio: number;
@@ -534,6 +588,14 @@ export interface LiveDeploymentSummaryDeployment {
   upstox_order_confirmed?: boolean;
   timeframe: string;
   mode: LiveMode;
+  account_policy_type?: AccountPolicyType;
+  funded_profile_id?: string | null;
+  funded_phase_number?: number | null;
+  funded_risk_mode?: FundedLiveRiskMode | string | null;
+  funded_fixed_risk_pct?: number | string | null;
+  funded_safety_buffer_pct?: number | string | null;
+  funded_configured_max_risk_pct?: number | string | null;
+  funded_attach_mode?: FundedAttachMode | string | null;
   status: DeploymentStatus;
   auto_trade_enabled: boolean;
   auto_runner_enabled?: boolean;
@@ -583,6 +645,7 @@ export interface BrokerSyncSummary {
 export interface LiveDeploymentSummary {
   deployment?: LiveDeploymentSummaryDeployment;
   broker?: SafeBrokerStatus | null;
+  funded?: FundedLiveStatus | null;
   metrics?: LiveDeploymentSummaryMetrics;
   latest_signal?: LiveSignal | null;
   latest_order?: LiveOrder | null;
@@ -795,6 +858,12 @@ export interface LiveCandleSnapshot {
   stored_count: number;
   upserted_count?: number;
   latest_candle_time?: string | null;
+  latest_candle_close_time?: string | null;
+  latest_ingested_at?: string | null;
+  ingestion_latency_seconds?: number | null;
+  candle_time_semantics?: "OPEN_TIME" | string;
+  server_time?: string | null;
+  next_closed_candle_expected_at?: string | null;
   latest_close?: number | string | null;
   candles: LiveMarketCandle[];
 }
@@ -995,34 +1064,6 @@ export interface LiveSyncStatus {
   platform_auto_sync_enabled: boolean;
 }
 
-export interface LiveTradingApproval {
-  id: string;
-  user_id: string;
-  user_name?: string | null;
-  user_email?: string | null;
-  broker_account_id?: string | null;
-  broker_name?: string | null;
-  broker_provider?: string | null;
-  broker_code?: string | null;
-  account_label?: string | null;
-  broker_mode?: string | null;
-  mode?: string | null;
-  broker_status?: string | null;
-  currency?: string | null;
-  server_name?: string | null;
-  login_id?: string | null;
-  approved_by?: string | null;
-  approved_by_email?: string | null;
-  status: "PENDING" | "APPROVED" | "REJECTED" | "REVOKED" | string;
-  approved_markets?: string[];
-  max_daily_loss?: number | string | null;
-  max_order_value?: number | string | null;
-  max_trades_per_day?: number | null;
-  notes?: string | null;
-  risk_disclaimer_accepted_at?: string | null;
-  created_at?: string;
-  updated_at?: string;
-}
 
 
 export interface LiveOrderPreview {

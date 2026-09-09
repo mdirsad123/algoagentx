@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Loader2, RefreshCw, Eye, Clock, Calendar, User } from "lucide-react"
+import { formatDateTimeIST } from "@/lib/timezone";
 
 interface StrategyRequest {
   id: string
@@ -87,15 +88,7 @@ export function MyStrategyRequests() {
     fetchRequests()
   }
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  }
+  const formatDate = (dateString: string) => formatDateTimeIST(dateString)
 
   const getStatusBadge = (status: StrategyStatus) => {
     const config = statusConfig[status]

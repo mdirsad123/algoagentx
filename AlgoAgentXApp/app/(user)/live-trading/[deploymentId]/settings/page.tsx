@@ -15,7 +15,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { PageShell } from "@/components/ui/PageShell";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
-import type { BrokerAccount, BrokerSymbol, LiveCompatibilityResult, LiveDeploymentSummary, LiveOrderPreview, MarketInstrument } from "@/types/live-trading";
+import type { BrokerAccount, BrokerSymbol, FundedLiveStatus, FundedRiskPlanPayload, LiveCompatibilityResult, LiveDeploymentSummary, LiveOrderPreview, MarketInstrument } from "@/types/live-trading";
 
 
 const FIELD_HELP: Record<string, string> = {
@@ -230,6 +230,15 @@ export default function LiveDeploymentSettingsPage() {
   const [summary, setSummary] = useState<LiveDeploymentSummary | null>(null);
   const [compatibility, setCompatibility] = useState<LiveCompatibilityResult | null>(null);
   const [compatBusy, setCompatBusy] = useState(false);
+  const [fundedStatus, setFundedStatus] = useState<FundedLiveStatus | null>(null);
+  const [fundedSaving, setFundedSaving] = useState(false);
+  const [fundedRiskMode, setFundedRiskMode] = useState<"DYNAMIC" | "FIXED">("DYNAMIC");
+  const [fundedFixedRiskPct, setFundedFixedRiskPct] = useState(0.01);
+  const [fundedSafetyBufferPct, setFundedSafetyBufferPct] = useState(0.05);
+  const [fundedConfiguredMaxRiskPct, setFundedConfiguredMaxRiskPct] = useState<number | null>(null);
+  const [fundedTiers, setFundedTiers] = useState<FundedRiskPlanPayload["risk_tiers"]>([]);
+  const [phaseAdvanceBrokerId, setPhaseAdvanceBrokerId] = useState("");
+  const [phaseAdvanceBusy, setPhaseAdvanceBusy] = useState(false);
   const [form, setForm] = useState<FormState>({
     name: "", instrument: "", timeframe: "", mode: "PAPER", broker_account_id: "", capital: 100000, risk_per_trade: 0.01, rr_ratio: 2,
     sl_mode: "FIXED_PERCENT", atr_period: 14, atr_multiplier: 2, swing_lookback: 10, price_risk_pct: 0.002, max_daily_loss: 5000,
@@ -243,6 +252,8 @@ export default function LiveDeploymentSettingsPage() {
   const connectedBrokers = useMemo(() => brokers.filter((broker) => (broker.mode === "DEMO" || broker.mode === "LIVE") && broker.status === "CONNECTED"), [brokers]);
   const isUpstox = (selectedBroker?.broker_name || selectedBroker?.broker_code || "").toUpperCase() === "UPSTOX";
   const isRunning = deploymentStatus === "RUNNING";
+  const isFunded = fundedStatus?.account_policy_type === "FUNDED";
+  const fundedRiskLocked = isRunning || Number(summary?.metrics?.open_positions || 0) > 0;
   const isPaperDeprecated = form.mode === "PAPER";
   const selectedMasterInstrument = useMemo(() => findSelectedMasterInstrument(form.instrument, marketInstruments), [form.instrument, marketInstruments]);
   const accountMetrics = summary?.metrics || null;
@@ -285,6 +296,23 @@ export default function LiveDeploymentSettingsPage() {
         setMarketInstruments(instrumentRows);
         setDeploymentStatus(row.status);
         setSummary(summaryRow);
+        const loadedFunded = summaryRow?.funded || (row.account_policy_type === "FUNDED" ? await liveTradingApi.getFundedStatus(deploymentId).catch(() => null) : null);
+        if (loadedFunded && "account_policy_type" in loadedFunded && loadedFunded.account_policy_type === "FUNDED") {
+          setFundedStatus(loadedFunded as FundedLiveStatus);
+          setFundedRiskMode(String((loadedFunded as FundedLiveStatus).risk_mode || row.funded_risk_mode || "DYNAMIC").toUpperCase() === "FIXED" ? "FIXED" : "DYNAMIC");
+          setFundedFixedRiskPct(Number((loadedFunded as FundedLiveStatus).fixed_risk_pct ?? row.funded_fixed_risk_pct ?? 0.01));
+          setFundedSafetyBufferPct(Number((loadedFunded as FundedLiveStatus).safety_buffer_pct ?? row.funded_safety_buffer_pct ?? 0.05));
+          const maxRisk = (loadedFunded as FundedLiveStatus).configured_max_risk_pct ?? row.funded_configured_max_risk_pct;
+          setFundedConfiguredMaxRiskPct(maxRisk === null || maxRisk === undefined ? null : Number(maxRisk));
+          const plan = (loadedFunded as FundedLiveStatus).risk_plan;
+          setFundedTiers(Array.isArray(plan) ? plan.map((tier: any, index: number) => ({
+            id: tier.id || null, name: tier.name || `Tier ${index + 1}`, sort_order: Number(tier.sort_order ?? tier.sequence ?? index),
+            min_account_return_pct: tier.min_account_return_pct === null || tier.min_account_return_pct === undefined ? null : Number(tier.min_account_return_pct),
+            max_account_return_pct: tier.max_account_return_pct === null || tier.max_account_return_pct === undefined ? null : Number(tier.max_account_return_pct),
+            risk_percent: Number(tier.risk_percent ?? tier.risk_pct ?? 0.01), is_active: tier.is_active !== false,
+          })) : []);
+        } else setFundedStatus(null);
+        setPhaseAdvanceBrokerId(row.broker_account_id || "");
         if (compatRow) setCompatibility(compatRow);
         setForm((prev) => ({ ...prev,
           name: row.name, instrument: row.instrument, timeframe: row.timeframe, mode: (row.mode === "LIVE" ? "LIVE" : row.mode === "DEMO" ? "DEMO" : "PAPER"), broker_account_id: row.broker_account_id || "",
@@ -367,8 +395,8 @@ export default function LiveDeploymentSettingsPage() {
 
   const validateBeforeSave = () => {
     if (isPaperDeprecated) return "PAPER deployment is deprecated. Please create a DEMO or LIVE broker deployment.";
-    if (form.risk_per_trade <= 0 || form.risk_per_trade > 0.10) return "Risk per trade must be greater than 0% and not more than 10%.";
-    if (form.risk_per_trade > 0.03) return "Normal UI blocks risk above 3%. Use a lower safe risk value.";
+    if (!isFunded && (form.risk_per_trade <= 0 || form.risk_per_trade > 0.10)) return "Risk per trade must be greater than 0% and not more than 10%.";
+    if (!isFunded && form.risk_per_trade > 0.03) return "Normal UI blocks risk above 3%. Use a lower safe risk value.";
     if (form.rr_ratio <= 0) return "RR ratio must be greater than 0.";
     if (form.price_risk_pct <= 0) return "Fixed price risk percent must be greater than 0.";
     if (form.max_daily_loss < 0) return "Max daily loss cannot be negative.";
@@ -404,6 +432,37 @@ export default function LiveDeploymentSettingsPage() {
       showToast("Deployment settings updated", "success");
       router.push(`/live-trading/${deploymentId}`);
     } catch (error: any) { showToast(error.message || "Failed to update settings", "error"); } finally { setSaving(false); }
+  };
+
+  const saveFundedRiskPlan = async () => {
+    if (!isFunded) return;
+    if (fundedRiskLocked) { showToast("Pause/stop the deployment and close all positions before changing funded risk policy.", "error"); return; }
+    if (fundedRiskMode === "FIXED" && (fundedFixedRiskPct <= 0 || fundedFixedRiskPct > 0.10)) { showToast("Fixed funded risk must be greater than 0% and not more than 10%.", "error"); return; }
+    try {
+      setFundedSaving(true);
+      const updated = await liveTradingApi.updateFundedRiskPlan(deploymentId, {
+        risk_mode: fundedRiskMode,
+        fixed_risk_pct: fundedRiskMode === "FIXED" ? fundedFixedRiskPct : null,
+        safety_buffer_pct: fundedSafetyBufferPct,
+        configured_max_risk_pct: fundedConfiguredMaxRiskPct,
+        risk_tiers: fundedRiskMode === "DYNAMIC" ? fundedTiers : [],
+      });
+      setFundedStatus(updated);
+      showToast("Funded risk plan updated", "success");
+    } catch (error: any) { showToast(error?.message || "Failed to update funded risk plan", "error"); } finally { setFundedSaving(false); }
+  };
+
+  const advanceFundedPhase = async () => {
+    if (!isFunded || !["PASS_READY", "AWAITING_PROVIDER_TRANSITION"].includes(String(fundedStatus?.guard?.status || "").toUpperCase())) return;
+    if (fundedRiskLocked) { showToast("Pause/stop the deployment and close all positions before advancing the funded phase.", "error"); return; }
+    const ok = window.confirm("Advance to the next funded provider phase? AlgoAgentX will revalidate the selected broker account and create fresh funded runtime state. This does not change the broker login automatically unless you select another connected account.");
+    if (!ok) return;
+    try {
+      setPhaseAdvanceBusy(true);
+      const updated = await liveTradingApi.advanceFundedPhase(deploymentId, { broker_account_id: phaseAdvanceBrokerId || null, confirm: true });
+      setFundedStatus(updated);
+      showToast("Funded phase advanced. Run a fresh readiness check before starting.", "success");
+    } catch (error: any) { showToast(error?.message || "Failed to advance funded phase", "error"); } finally { setPhaseAdvanceBusy(false); }
   };
 
   const LockedNote = () => <div className="rounded-xl border border-cyan-300/25 bg-cyan-400/10 p-4 text-sm text-cyan-100"><Lock className="mr-2 inline h-4 w-4" />Mode, broker account, instrument, and timeframe are locked after deployment creation to keep approval, sync, candle storage, and execution routing safe. Create a new deployment to change them. {isRunning && <span className="ml-1 text-amber-100">This deployment is RUNNING, so additional runtime changes may also be guarded by backend safety.</span>} <Link className="ml-2 underline" href={`/live-trading/new?clone=${deploymentId}`}><Copy className="mr-1 inline h-4 w-4" />Clone Deployment</Link></div>;
@@ -479,6 +538,54 @@ export default function LiveDeploymentSettingsPage() {
               </div> : <p className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-emerald-50">Broker balance/equity will appear after broker sync.</p>}
             </div>
 
+            {isFunded && fundedStatus && <div className="rounded-2xl border border-lime-300/20 bg-lime-400/10 p-5">
+              <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-white">Funded Account Guard</h3><span className="rounded-full border border-lime-300/30 bg-lime-300/10 px-3 py-1 text-xs font-bold text-lime-100">{fundedStatus.guard?.status || "NOT_INITIALIZED"}</span></div>
+                  <p className="mt-1 text-xs text-lime-100/80">Prop-firm hard rules are read-only here. You may edit only this deployment's risk-plan snapshot while stopped/paused with no open positions.</p>
+                  {fundedRiskLocked && <p className="mt-2 text-xs text-amber-100">Risk plan locked: stop/pause the deployment and close all positions before editing.</p>}
+                </div>
+                <Button type="button" disabled={fundedSaving} onClick={async () => { try { const result = await liveTradingApi.refreshFundedStatus(deploymentId); const next = (result as any)?.funded; if (next) setFundedStatus(next); showToast("Funded guard refreshed", "success"); } catch (error: any) { showToast(error?.message || "Funded refresh failed", "error"); } }} variant="outline" className="border-lime-300/20 bg-lime-300/10 text-lime-50 hover:bg-lime-300/20">Refresh Funded Guard</Button>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
+                <Info label="Profile" value={fundedStatus.profile?.name || "—"} /><Info label="Provider" value={fundedStatus.profile?.provider_name || "—"} />
+                <Info label="Stage" value={fundedStatus.phase_number ? `Phase ${fundedStatus.phase_number}` : "Instant"} /><Info label="Rule Timezone" value={fundedStatus.guard?.rule_timezone || "—"} />
+                <Info label="Balance" value={money(fundedStatus.guard?.balance ?? fundedStatus.broker?.balance, fundedStatus.broker?.currency || fundedStatus.profile?.account_currency || "USD")} /><Info label="Equity" value={money(fundedStatus.guard?.equity ?? fundedStatus.broker?.equity, fundedStatus.broker?.currency || fundedStatus.profile?.account_currency || "USD")} />
+                <Info label="Daily Floor" value={money(fundedStatus.guard?.daily_floor, fundedStatus.broker?.currency || fundedStatus.profile?.account_currency || "USD")} /><Info label="Max DD Floor" value={money(fundedStatus.guard?.max_floor, fundedStatus.broker?.currency || fundedStatus.profile?.account_currency || "USD")} />
+                <Info label="Daily Remaining" value={money(fundedStatus.guard?.remaining_daily_capacity, fundedStatus.broker?.currency || fundedStatus.profile?.account_currency || "USD")} /><Info label="Max DD Remaining" value={money(fundedStatus.guard?.remaining_max_capacity, fundedStatus.broker?.currency || fundedStatus.profile?.account_currency || "USD")} />
+                <Info label="Risk Tier" value={fundedStatus.guard?.risk_tier || "—"} /><Info label="Effective Risk" value={fundedStatus.guard?.effective_risk_pct == null ? "—" : percent(Number(fundedStatus.guard.effective_risk_pct))} />
+              </div>
+              {(!fundedStatus.broker?.fresh || Number(fundedStatus.broker?.balance || 0) <= 0 || Number(fundedStatus.broker?.equity || 0) <= 0) && <div className="mt-4 rounded-xl border border-rose-300/20 bg-rose-500/10 p-3 text-sm text-rose-100">Broker funded state unavailable/incomplete. Auto entries are blocked until fresh positive broker balance and equity are synchronized. Fallback deployment capital is never used for FUNDED.</div>}
+              <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+                <FieldShell label="Funded Risk Mode"><SelectBox disabled={fundedRiskLocked} value={fundedRiskMode} onChange={(e) => setFundedRiskMode(e.target.value === "FIXED" ? "FIXED" : "DYNAMIC")}><option value="DYNAMIC">Dynamic Risk Ladder</option><option value="FIXED">Fixed Risk</option></SelectBox></FieldShell>
+                {fundedRiskMode === "FIXED" && <FieldShell label="Fixed Risk %"><InputBox disabled={fundedRiskLocked} type="number" min="0.01" max="10" step="0.01" value={fundedFixedRiskPct * 100} onChange={(e) => setFundedFixedRiskPct(Number(e.target.value || 0) / 100)} /></FieldShell>}
+                <FieldShell label="Safety Buffer %"><InputBox disabled={fundedRiskLocked} type="number" min="0" max="99" step="0.1" value={fundedSafetyBufferPct * 100} onChange={(e) => setFundedSafetyBufferPct(Number(e.target.value || 0) / 100)} /></FieldShell>
+                <FieldShell label="Configured Max Risk %"><InputBox disabled={fundedRiskLocked} type="number" min="0" max="10" step="0.01" value={fundedConfiguredMaxRiskPct == null ? "" : fundedConfiguredMaxRiskPct * 100} onChange={(e) => setFundedConfiguredMaxRiskPct(e.target.value === "" ? null : Number(e.target.value) / 100)} /></FieldShell>
+              </div>
+              {fundedRiskMode === "DYNAMIC" && <div className="mt-5 space-y-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-lime-100">Deployment Risk Ladder</p>
+                {fundedTiers.map((tier, index) => <div key={tier.id || index} className="grid grid-cols-1 gap-3 rounded-xl border border-white/10 bg-white/5 p-3 md:grid-cols-5">
+                  <InputBox disabled={fundedRiskLocked} value={tier.name} onChange={(e) => setFundedTiers((rows) => rows.map((row, i) => i === index ? { ...row, name: e.target.value } : row))} />
+                  <InputBox disabled={fundedRiskLocked} type="number" step="0.01" placeholder="Min return % / blank" value={tier.min_account_return_pct == null ? "" : Number(tier.min_account_return_pct) * 100} onChange={(e) => setFundedTiers((rows) => rows.map((row, i) => i === index ? { ...row, min_account_return_pct: e.target.value === "" ? null : Number(e.target.value) / 100 } : row))} />
+                  <InputBox disabled={fundedRiskLocked} type="number" step="0.01" placeholder="Max return % / blank" value={tier.max_account_return_pct == null ? "" : Number(tier.max_account_return_pct) * 100} onChange={(e) => setFundedTiers((rows) => rows.map((row, i) => i === index ? { ...row, max_account_return_pct: e.target.value === "" ? null : Number(e.target.value) / 100 } : row))} />
+                  <InputBox disabled={fundedRiskLocked} type="number" step="0.01" min="0.01" max="10" value={Number(tier.risk_percent) * 100} onChange={(e) => setFundedTiers((rows) => rows.map((row, i) => i === index ? { ...row, risk_percent: Number(e.target.value || 0) / 100 } : row))} />
+                  <label className="flex items-center gap-2 text-xs text-purple-100"><input disabled={fundedRiskLocked} type="checkbox" checked={tier.is_active} onChange={(e) => setFundedTiers((rows) => rows.map((row, i) => i === index ? { ...row, is_active: e.target.checked } : row))} />Active · Tier {index + 1}</label>
+                </div>)}
+                <p className="text-xs text-purple-200">Columns: name · min account return % · max account return % · risk % · active. Blank first min and blank last max are preserved as open bounds.</p>
+              </div>}
+              <div className="mt-4 flex flex-wrap gap-2"><Button type="button" disabled={fundedSaving || fundedRiskLocked} onClick={saveFundedRiskPlan} className="bg-lime-400 text-slate-950 hover:bg-lime-300">{fundedSaving ? "Saving Funded Risk..." : "Save Funded Risk Plan"}</Button></div>
+              {["PASS_READY", "AWAITING_PROVIDER_TRANSITION"].includes(String(fundedStatus.guard?.status || "").toUpperCase()) && <div className="mt-5 rounded-xl border border-cyan-300/20 bg-cyan-400/10 p-4">
+                <p className="text-sm font-bold text-cyan-50">Provider phase transition required</p>
+                <p className="mt-1 text-xs text-cyan-100/80">AlgoAgentX will not auto-advance a funded phase. Select the current/new provider account, then explicitly advance after the provider issues or confirms the next phase.</p>
+                <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+                  <SelectBox disabled={fundedRiskLocked || phaseAdvanceBusy} value={phaseAdvanceBrokerId} onChange={(e) => setPhaseAdvanceBrokerId(e.target.value)}>
+                    {connectedBrokers.filter((broker) => String(broker.mode || "").toUpperCase() === String(form.mode || "").toUpperCase()).map((broker) => <option key={broker.id} value={broker.id}>{broker.broker_code || broker.broker_name} • {broker.account_label || "Account"} • {broker.login_id || broker.server_name || "—"}</option>)}
+                  </SelectBox>
+                  <Button type="button" disabled={fundedRiskLocked || phaseAdvanceBusy || !phaseAdvanceBrokerId} onClick={advanceFundedPhase} className="bg-cyan-300 text-slate-950 hover:bg-cyan-200">{phaseAdvanceBusy ? "Advancing..." : "Advance Funded Phase"}</Button>
+                </div>
+              </div>}
+            </div>}
+
             <div className="rounded-2xl border border-white/10 bg-white/5 p-5"><div className="flex items-center justify-between gap-3"><div><h3 className="font-black text-white">Beginner Safe Mode</h3><p className="text-xs text-purple-200">Safe dropdowns prevent invalid values. Advanced custom inputs stay collapsed.</p></div><Button type="button" variant="outline" onClick={() => setAdvancedMode((v) => !v)} className="border-white/10 bg-white/5 text-white hover:bg-white/10">{advancedMode ? "Hide Advanced" : "Advanced Mode"}</Button></div>
               <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                 <FieldShell label="Name"><InputBox value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></FieldShell>
@@ -486,16 +593,16 @@ export default function LiveDeploymentSettingsPage() {
                 <FieldShell label="Broker Account" hint="Broker account is locked after deployment creation to keep approval, sync, and risk routing safe."><SelectBox disabled value={form.broker_account_id}><option value={form.broker_account_id}>{brokerLabel}</option>{connectedBrokers.filter((broker) => broker.id !== form.broker_account_id).map((broker) => <option key={broker.id} value={broker.id}>{broker.broker_code || broker.broker_name} • {broker.account_label} • {broker.mode} • {broker.status} • {broker.login_id || broker.server_name || "—"}</option>)}</SelectBox></FieldShell>
                 <FieldShell label="Instrument" hint="Instrument is locked after deployment creation. Create a new deployment to trade another instrument."><SelectBox disabled value={normalizeSymbol(form.instrument)}>{instrumentOptions.length ? instrumentOptions.map((option) => <option key={option.key} value={option.value}>{option.label}</option>) : <option value={normalizeSymbol(form.instrument)}>{loadingSymbols ? "Loading symbols..." : (form.instrument || "Selected symbol")}</option>}</SelectBox><p className="mt-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-purple-100">{brokerMappingLabel}</p></FieldShell>
                 <FieldShell label="Timeframe" hint="Timeframe is locked after creation because live candles are stored per deployment timeframe."><SelectBox disabled value={form.timeframe}>{[...new Set([form.timeframe, ...(isUpstox ? UPSTOX_TIMEFRAME_OPTIONS : TIMEFRAME_OPTIONS)])].filter(Boolean).map((tf) => <option key={tf} value={tf}>{tf}</option>)}</SelectBox></FieldShell>
-                <FieldShell label="Risk per Trade" hint={form.risk_per_trade > 0.02 ? "Warning: above 2% is aggressive." : "Default recommended: 1%."}><SelectBox value={selectValue(form.risk_per_trade, RISK_OPTIONS)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, risk_per_trade: Number(e.target.value) }) : setAdvancedMode(true)}>{RISK_OPTIONS.map((value) => <option key={value} value={value}>{percent(value)}</option>)}<option value="CUSTOM">Custom Advanced</option></SelectBox>{advancedMode && selectValue(form.risk_per_trade, RISK_OPTIONS) === "CUSTOM" && <InputBox type="number" step="0.001" max="0.10" value={form.risk_per_trade} onChange={(e) => setForm({ ...form, risk_per_trade: Number(e.target.value) })} />}</FieldShell>
+                {!isFunded && <FieldShell label="Risk per Trade" hint={form.risk_per_trade > 0.02 ? "Warning: above 2% is aggressive." : "Default recommended: 1%."}><SelectBox value={selectValue(form.risk_per_trade, RISK_OPTIONS)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, risk_per_trade: Number(e.target.value) }) : setAdvancedMode(true)}>{RISK_OPTIONS.map((value) => <option key={value} value={value}>{percent(value)}</option>)}<option value="CUSTOM">Custom Advanced</option></SelectBox>{advancedMode && selectValue(form.risk_per_trade, RISK_OPTIONS) === "CUSTOM" && <InputBox type="number" step="0.001" max="0.10" value={form.risk_per_trade} onChange={(e) => setForm({ ...form, risk_per_trade: Number(e.target.value) })} />}</FieldShell>}
                 <FieldShell label="RR Ratio"><SelectBox value={form.rr_ratio} onChange={(e) => setForm({ ...form, rr_ratio: Number(e.target.value) })}>{RR_OPTIONS.map((value) => <option key={value} value={value}>1:{value}</option>)}</SelectBox></FieldShell>
                 <FieldShell label="SL Mode"><SelectBox value={liveSlMode} onChange={(e) => setForm({ ...form, sl_mode: e.target.value })}>{SL_MODES.map((value) => <option key={value} value={value}>{value.replace(/_/g, " ")}</option>)}</SelectBox></FieldShell>
-                <FieldShell label="Max Daily Loss"><SelectBox value={selectValue(form.max_daily_loss, dailyLossOptions)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, max_daily_loss: Number(e.target.value) }) : setAdvancedMode(true)}>{dailyLossOptions.map((value) => <option key={value} value={value}>{money(value, currency)}</option>)}<option value="CUSTOM">Custom</option></SelectBox>{advancedMode && selectValue(form.max_daily_loss, dailyLossOptions) === "CUSTOM" && <InputBox type="number" min="0" value={form.max_daily_loss} onChange={(e) => setForm({ ...form, max_daily_loss: Number(e.target.value) })} />}</FieldShell>
+                {!isFunded && <FieldShell label="Max Daily Loss"><SelectBox value={selectValue(form.max_daily_loss, dailyLossOptions)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, max_daily_loss: Number(e.target.value) }) : setAdvancedMode(true)}>{dailyLossOptions.map((value) => <option key={value} value={value}>{money(value, currency)}</option>)}<option value="CUSTOM">Custom</option></SelectBox>{advancedMode && selectValue(form.max_daily_loss, dailyLossOptions) === "CUSTOM" && <InputBox type="number" min="0" value={form.max_daily_loss} onChange={(e) => setForm({ ...form, max_daily_loss: Number(e.target.value) })} />}</FieldShell>}
                 <FieldShell label="Max Trades / Day"><SelectBox value={form.max_trades_per_day} onChange={(e) => setForm({ ...form, max_trades_per_day: Number(e.target.value) })}>{MAX_TRADES.map((value) => <option key={value} value={value}>{value}</option>)}</SelectBox></FieldShell>
                 <FieldShell label="MT5 DEMO Max Lot"><SelectBox value={selectValue(form.mt5_demo_max_lot, MT5_LOT_CAPS)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, mt5_demo_max_lot: Number(e.target.value) }) : setAdvancedMode(true)}>{MT5_LOT_CAPS.map((value) => <option key={value} value={value}>{value.toFixed(2)}</option>)}<option value="CUSTOM">Custom Advanced</option></SelectBox>{advancedMode && selectValue(form.mt5_demo_max_lot, MT5_LOT_CAPS) === "CUSTOM" && <InputBox type="number" step="0.01" min="0.01" value={form.mt5_demo_max_lot} onChange={(e) => setForm({ ...form, mt5_demo_max_lot: Number(e.target.value) })} />}</FieldShell>
               </div>
             </div>
 
-            {advancedMode && <div className="rounded-2xl border border-purple-300/20 bg-purple-500/10 p-5">
+            {advancedMode && !isFunded && <div className="rounded-2xl border border-purple-300/20 bg-purple-500/10 p-5">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="font-black text-white">Unified Runtime Settings</h3>
@@ -518,7 +625,7 @@ export default function LiveDeploymentSettingsPage() {
                 {isUpstox && <><FieldShell label="Upstox Instrument Key"><InputBox disabled value={form.instrument_key} placeholder="NSE_EQ|INE040A01034" /></FieldShell><FieldShell label="Exchange"><InputBox disabled value={form.exchange} /></FieldShell><FieldShell label="Segment"><InputBox disabled value={form.segment} /></FieldShell></>}
                 <FieldShell label="Product Type"><SelectBox value={form.product_type} onChange={(e) => setForm({ ...form, product_type: e.target.value })}><option value="MIS">MIS / Intraday</option><option value="CNC">CNC / Delivery</option></SelectBox></FieldShell>
               </div>}
-              <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-500/10 p-3 text-xs text-amber-100">Live safety remains enforced by broker readiness, MT5_DEMO_MAX_LOT, max lot/quantity caps and daily loss guardrails. Runtime UI cannot bypass backend caps.</div>
+              <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-500/10 p-3 text-xs text-amber-100">{isFunded ? "Funded hard rules, broker balance/equity, safety buffer and deployment risk plan remain authoritative. Runtime UI cannot bypass the funded guard." : "Live safety remains enforced by broker readiness, MT5_DEMO_MAX_LOT, max lot/quantity caps and daily loss guardrails. Runtime UI cannot bypass backend caps."}</div>
             </div>}
 
             <div className="flex flex-wrap gap-4 rounded-xl border border-white/10 bg-white/5 p-4"><label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={form.allow_short} onChange={(e) => setForm({ ...form, allow_short: e.target.checked })} />Allow short</label><label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={form.auto_trade_enabled} onChange={(e) => setForm({ ...form, auto_trade_enabled: e.target.checked })} />Auto trade enabled</label><label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={form.auto_runner_enabled} onChange={(e) => setForm({ ...form, auto_runner_enabled: e.target.checked })} />Auto runner enabled</label>{isUpstox && <label className="flex items-center gap-2 text-sm text-yellow-100"><input type="checkbox" checked={form.upstox_order_confirmed} onChange={(e) => setForm({ ...form, upstox_order_confirmed: e.target.checked })} />I understand Upstox orders may place real trades</label>}</div>

@@ -6,10 +6,12 @@ from pathlib import Path
 from datetime import date, timedelta, datetime, timezone
 from uuid import uuid4
 import hashlib
+import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, Form
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select, update, String
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_admin_user, get_db
@@ -17,7 +19,15 @@ from ...db.compat import as_uuid_or_str, column_text
 from ...db.models.strategy_requests import StrategyRequest, StrategyRequestAttachment
 from ...db.models.strategies import Strategy, StrategyRuntimePreset, StrategyAsset
 from ...db.models.users import User
-from ...db.models import Instrument, MarketData
+from ...db.models import (
+    Instrument,
+    MarketData,
+    PerformanceMetric,
+    FundedBacktestRun,
+    StrategyDeployment,
+    LiveSignal,
+    JobStatus,
+)
 from ...services.backtest_service import BacktestService
 from ...services.dynamic_strategy_loader import validate_dynamic_strategy_source, DynamicStrategyLoadError, DynamicStrategySecurityError
 from ...services.trading.runtime_config_service import get_system_default_runtime_config, get_default_runtime_config_schema, normalize_runtime_config
@@ -383,14 +393,23 @@ def _extract_metrics_from_parameters(parameters: Any) -> dict[str, Any]:
         parameters.get("metricSummary"),
         parameters.get("metric_summary"),
     ]
-    summary = next((item for item in candidates if isinstance(item, dict)), {})
+
+    def pick(camel_key: str, snake_key: str) -> Any:
+        for summary in candidates:
+            if not isinstance(summary, dict):
+                continue
+            if summary.get(camel_key) is not None:
+                return summary.get(camel_key)
+            if summary.get(snake_key) is not None:
+                return summary.get(snake_key)
+        return None
 
     return {
-        "win_rate": summary.get("winRate") if summary.get("winRate") is not None else summary.get("win_rate"),
-        "sharpe_ratio": summary.get("sharpeRatio") if summary.get("sharpeRatio") is not None else summary.get("sharpe_ratio"),
-        "max_drawdown": summary.get("maxDrawdown") if summary.get("maxDrawdown") is not None else summary.get("max_drawdown"),
-        "total_trades": summary.get("totalTrades") if summary.get("totalTrades") is not None else summary.get("total_trades"),
-        "profit_factor": summary.get("profitFactor") if summary.get("profitFactor") is not None else summary.get("profit_factor"),
+        "win_rate": pick("winRate", "win_rate"),
+        "sharpe_ratio": pick("sharpeRatio", "sharpe_ratio"),
+        "max_drawdown": pick("maxDrawdown", "max_drawdown"),
+        "total_trades": pick("totalTrades", "total_trades"),
+        "profit_factor": pick("profitFactor", "profit_factor"),
     }
 
 
@@ -558,6 +577,23 @@ def _serialize_strategy(item: Strategy) -> dict[str, Any]:
         "maxDrawdown": _safe_float(metrics.get("max_drawdown")),
         "totalTrades": _safe_int(metrics.get("total_trades")),
         "profitFactor": _safe_float(metrics.get("profit_factor")),
+        "win_rate": _safe_float(metrics.get("win_rate")),
+        "sharpe_ratio": _safe_float(metrics.get("sharpe_ratio")),
+        "max_drawdown": _safe_float(metrics.get("max_drawdown")),
+        "total_trades": _safe_int(metrics.get("total_trades")),
+        "profit_factor": _safe_float(metrics.get("profit_factor")),
+        "performance_metrics": {
+            "winRate": _safe_float(metrics.get("win_rate")),
+            "win_rate": _safe_float(metrics.get("win_rate")),
+            "sharpeRatio": _safe_float(metrics.get("sharpe_ratio")),
+            "sharpe_ratio": _safe_float(metrics.get("sharpe_ratio")),
+            "maxDrawdown": _safe_float(metrics.get("max_drawdown")),
+            "max_drawdown": _safe_float(metrics.get("max_drawdown")),
+            "totalTrades": _safe_int(metrics.get("total_trades")),
+            "total_trades": _safe_int(metrics.get("total_trades")),
+            "profitFactor": _safe_float(metrics.get("profit_factor")),
+            "profit_factor": _safe_float(metrics.get("profit_factor")),
+        },
         "parameters": params,
         "workflow": _get_workflow_state(params),
         "workspace_status": _workspace_status_for_strategy(item),
@@ -979,14 +1015,14 @@ class StrategySandboxBacktestIn(BaseModel):
     start_date: date
     end_date: date
     capital: float = 100000
+    runtime_config: Optional[dict[str, Any]] = None
 
 
-@router.post("/strategies/{strategy_id}/sandbox-backtest")
-async def sandbox_backtest_strategy(
+async def _execute_sandbox_backtest(
     strategy_id: str,
     payload: StrategySandboxBacktestIn,
-    admin_user: dict = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    admin_user: dict,
+    db: AsyncSession,
 ):
     strategy = await _get_strategy_or_404(db, strategy_id)
     resolved_start_date, resolved_end_date = await _resolve_validation_window(db, int(payload.instrument_id), str(payload.timeframe), payload.start_date, payload.end_date)
@@ -998,6 +1034,7 @@ async def sandbox_backtest_strategy(
         start_date=resolved_start_date,
         end_date=resolved_end_date,
         initial_capital=payload.capital,
+        runtime_config=payload.runtime_config,
     )
 
     result = service_response.result
@@ -1120,6 +1157,14 @@ async def sandbox_backtest_strategy(
             "avg_loss": float(summary.get('avg_loss', 0) or 0),
             "expectancy": float(summary.get('expectancy', 0) or 0),
             "total_trades": int(summary.get('total_trades', len(trades)) or 0),
+            "total_zones": int(summary.get('total_zones', 0) or 0),
+            "zone_interactions": int(summary.get('zone_interactions', 0) or 0),
+            "rejection_setups": int(summary.get('rejection_setups', 0) or 0),
+            "confirmed_setups": int(summary.get('confirmed_setups', 0) or 0),
+            "executed_trades": int(summary.get('executed_trades', summary.get('total_trades', len(trades))) or 0),
+            "rejected_setups": int(summary.get('rejected_setups', 0) or 0),
+            "strategy_rejection_reasons": summary.get('strategy_rejection_reasons', {}) or {},
+            "strategy_diagnostics": summary.get('strategy_diagnostics', {}) or {},
         },
         "trades": [
             {
@@ -1141,6 +1186,70 @@ async def sandbox_backtest_strategy(
         ],
     })
 
+
+@router.post("/strategies/{strategy_id}/sandbox-backtest", status_code=202)
+async def sandbox_backtest_strategy(
+    strategy_id: str,
+    payload: StrategySandboxBacktestIn,
+    background_tasks: BackgroundTasks,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue strategy sandbox validation so large historical windows do not timeout."""
+    await _get_strategy_or_404(db, strategy_id)
+    job_id = str(uuid4())
+    job_payload = {"strategy_id": strategy_id, **payload.model_dump(mode="json")}
+    job = JobStatus(
+        id=job_id,
+        user_id=as_uuid_or_str(admin_user["user_id"]),
+        job_type="strategy_sandbox",
+        status="queued",
+        progress=0,
+        message="Strategy sandbox queued. Long date ranges run in the background.",
+        job_data=__import__("json").dumps(job_payload),
+        max_retries=0,
+    )
+    db.add(job)
+    await db.commit()
+
+    dispatch_mode = "background"
+    try:
+        from ...celery_app import celery_app, is_celery_available, is_celery_worker_available
+        if is_celery_available() and is_celery_worker_available():
+            celery_app.send_task(
+                "app.tasks.run_strategy_sandbox_v2_task",
+                args=[job_id, str(admin_user["user_id"]), strategy_id, payload.model_dump(mode="json")],
+            )
+            dispatch_mode = "celery"
+        else:
+            from ...tasks import run_strategy_sandbox_v2_fallback
+            background_tasks.add_task(
+                run_strategy_sandbox_v2_fallback,
+                job_id,
+                str(admin_user["user_id"]),
+                strategy_id,
+                payload.model_dump(mode="json"),
+            )
+    except Exception:
+        from ...tasks import run_strategy_sandbox_v2_fallback
+        background_tasks.add_task(
+            run_strategy_sandbox_v2_fallback,
+            job_id,
+            str(admin_user["user_id"]),
+            strategy_id,
+            payload.model_dump(mode="json"),
+        )
+        dispatch_mode = "background"
+
+    return success_response({
+        "job_id": job_id,
+        "status": "queued",
+        "progress": 0,
+        "poll_url": f"/api/v1/jobs/{job_id}",
+        "execution_mode": dispatch_mode,
+        "message": "Sandbox backtest queued successfully.",
+    })
+
 @router.get("/strategies")
 async def list_strategies(
     skip: int = 0,
@@ -1148,12 +1257,16 @@ async def list_strategies(
     search: Optional[str] = None,
     visibility: Optional[str] = None,
     source: Optional[str] = Query(default=None, pattern="^(MANUAL|REQUESTED)$"),
+    include_archived: bool = Query(default=False),
     admin_user: dict = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(Strategy)
     count_stmt = select(func.count()).select_from(Strategy)
     filters = []
+
+    if not include_archived:
+        filters.append(func.upper(func.coalesce(Strategy.lifecycle_status, "")) != ARCHIVED_STRATEGY_LIFECYCLE)
 
     if search:
         like = f"%{search.strip()}%"
@@ -1279,17 +1392,49 @@ async def update_strategy(
     return success_response(_serialize_strategy(strategy), "Strategy updated successfully")
 
 
-@router.delete("/strategies/{strategy_id}")
-async def delete_strategy(
-    strategy_id: str,
-    admin_user: dict = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
-):
-    strategy = await _get_strategy_or_404(db, strategy_id)
+ARCHIVED_STRATEGY_LIFECYCLE = "ARCHIVED"
+SAFE_DELETE_INACTIVE_DEPLOYMENT_STATUSES = {"DRAFT", "STOPPED", "ERROR"}
 
+
+async def _strategy_delete_reference_counts(db: AsyncSession, strategy_id: str) -> dict[str, int]:
+    """Return direct strategy references that can prevent a physical DELETE.
+
+    Historical backtests and stopped deployments are intentionally preserved.  A
+    strategy with those references is archived instead of deleting user history.
+    """
+    sid = str(strategy_id)
+
+    async def _count(model, *conditions) -> int:
+        stmt = select(func.count()).select_from(model).where(*conditions)
+        return int((await db.execute(stmt)).scalar() or 0)
+
+    deployment_total = await _count(StrategyDeployment, StrategyDeployment.strategy_id == sid)
+    active_deployments = await _count(
+        StrategyDeployment,
+        StrategyDeployment.strategy_id == sid,
+        func.upper(StrategyDeployment.status).notin_(SAFE_DELETE_INACTIVE_DEPLOYMENT_STATUSES),
+    )
+
+    return {
+        "normal_backtests": await _count(PerformanceMetric, PerformanceMetric.strategy_id == sid),
+        "funded_backtests": await _count(FundedBacktestRun, FundedBacktestRun.strategy_id == sid),
+        "deployments": deployment_total,
+        "active_deployments": active_deployments,
+        "live_signals": await _count(LiveSignal, LiveSignal.strategy_id == sid),
+    }
+
+
+def _has_preserved_strategy_references(reference_counts: dict[str, int]) -> bool:
+    return any(
+        int(reference_counts.get(key, 0) or 0) > 0
+        for key in ("normal_backtests", "funded_backtests", "deployments", "live_signals")
+    )
+
+
+async def _release_strategy_requests(db: AsyncSession, strategy_id: str) -> list[StrategyRequest]:
     dependent_requests = (
         await db.execute(
-            select(StrategyRequest).where(column_text(StrategyRequest.deployed_strategy_id) == str(strategy.id))
+            select(StrategyRequest).where(column_text(StrategyRequest.deployed_strategy_id) == str(strategy_id))
         )
     ).scalars().all()
 
@@ -1297,17 +1442,146 @@ async def delete_strategy(
         req.deployed_strategy_id = None
         if req.status == "DEPLOYED":
             req.status = "UNDER_DEVELOPMENT"
+    return dependent_requests
 
-    await db.delete(strategy)
-    await db.commit()
 
-    return success_response(
-        {
-            "id": str(strategy_id),
-            "released_request_count": len(dependent_requests),
-        },
-        "Strategy deleted successfully",
-    )
+def _archive_strategy_for_safe_delete(
+    strategy: Strategy,
+    *,
+    admin_user: dict,
+    reference_counts: dict[str, int],
+    reason: str,
+) -> None:
+    """Hide a referenced strategy without destroying historical/audit data."""
+    strategy.visibility = PRIVATE_VISIBILITY
+    strategy.lifecycle_status = ARCHIVED_STRATEGY_LIFECYCLE
+    strategy.is_deployable_paper = False
+    strategy.is_deployable_demo = False
+    strategy.is_live_approved = False
+    strategy.published_by = None
+
+    params = dict(strategy.parameters or {})
+    params["admin_delete_archive"] = {
+        "archived_at": datetime.now(timezone.utc).isoformat(),
+        "archived_by": str(admin_user.get("user_id") or ""),
+        "reason": reason,
+        "reference_counts": {key: int(value or 0) for key, value in reference_counts.items()},
+    }
+    strategy.parameters = params
+
+
+@router.delete("/strategies/{strategy_id}")
+async def delete_strategy(
+    strategy_id: str,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Safely remove an old strategy version.
+
+    - Unreferenced strategies are physically deleted.
+    - Strategies referenced by historical backtests/stopped deployments are
+      archived and hidden so those reports remain valid.
+    - A strategy used by a RUNNING/PAUSED/other active deployment cannot be
+      deleted/archived until that deployment is stopped or removed.
+
+    This prevents the intermittent PostgreSQL ForeignKeyViolation that occurred
+    when funded_backtest_runs (or another history table) still referenced the
+    strategy row.
+    """
+    strategy = await _get_strategy_or_404(db, strategy_id)
+    reference_counts = await _strategy_delete_reference_counts(db, strategy_id)
+
+    if reference_counts.get("active_deployments", 0) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "STRATEGY_IN_ACTIVE_DEPLOYMENT",
+                "message": (
+                    "This strategy is still used by an active live-trading deployment. "
+                    "Stop/delete that deployment first, then delete the strategy."
+                ),
+                "strategy_id": str(strategy_id),
+                "references": reference_counts,
+            },
+        )
+
+    dependent_requests = await _release_strategy_requests(db, strategy_id)
+
+    # Preserve historical reports and stopped deployment audit trails.  The
+    # strategy disappears from active admin/user lists but its FK remains valid.
+    if _has_preserved_strategy_references(reference_counts):
+        _archive_strategy_for_safe_delete(
+            strategy,
+            admin_user=admin_user,
+            reference_counts=reference_counts,
+            reason="REFERENCED_HISTORY",
+        )
+        await db.commit()
+        return success_response(
+            {
+                "id": str(strategy_id),
+                "deletion_mode": "ARCHIVED",
+                "archived": True,
+                "released_request_count": len(dependent_requests),
+                "preserved_references": reference_counts,
+            },
+            "Strategy archived and removed from active lists; referenced history was preserved",
+        )
+
+    # No known references: preserve the original hard-delete behavior.
+    try:
+        await db.delete(strategy)
+        await db.commit()
+        return success_response(
+            {
+                "id": str(strategy_id),
+                "deletion_mode": "DELETED",
+                "archived": False,
+                "released_request_count": len(dependent_requests),
+                "preserved_references": reference_counts,
+            },
+            "Strategy deleted successfully",
+        )
+    except IntegrityError:
+        # Race/unknown-reference safety net: another row may have been written
+        # between the reference check and DELETE.  Roll back and archive rather
+        # than leaking a 500 error or deleting dependent history.
+        await db.rollback()
+        strategy = await _get_strategy_or_404(db, strategy_id)
+        reference_counts = await _strategy_delete_reference_counts(db, strategy_id)
+
+        if reference_counts.get("active_deployments", 0) > 0:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "STRATEGY_IN_ACTIVE_DEPLOYMENT",
+                    "message": (
+                        "This strategy became referenced by an active live-trading deployment. "
+                        "Stop/delete that deployment first, then delete the strategy."
+                    ),
+                    "strategy_id": str(strategy_id),
+                    "references": reference_counts,
+                },
+            )
+
+        dependent_requests = await _release_strategy_requests(db, strategy_id)
+        _archive_strategy_for_safe_delete(
+            strategy,
+            admin_user=admin_user,
+            reference_counts=reference_counts,
+            reason="FOREIGN_KEY_REFERENCE_DETECTED_DURING_DELETE",
+        )
+        await db.commit()
+        return success_response(
+            {
+                "id": str(strategy_id),
+                "deletion_mode": "ARCHIVED",
+                "archived": True,
+                "released_request_count": len(dependent_requests),
+                "preserved_references": reference_counts,
+            },
+            "Strategy archived and removed from active lists; referenced history was preserved",
+        )
 
 
 async def _get_strategy_asset_or_404(db: AsyncSession, strategy_id: str, asset_id: str) -> StrategyAsset:
@@ -1495,6 +1769,35 @@ async def list_strategy_presets(
     return success_response({"items": presets})
 
 
+def _next_duplicate_strategy_name(name: str) -> str:
+    """Create a research-friendly next version name.
+
+    Examples:
+      XAUUSD ... V1 -> XAUUSD ... V1.1
+      XAUUSD ... V1.1 -> XAUUSD ... V1.2
+      Other Name -> Other Name Copy
+    """
+    cleaned = (name or "Strategy").strip()
+    match = re.search(r"(?i)(.*?\bV)(\d+)(?:\.(\d+))?\s*$", cleaned)
+    if not match:
+        return f"{cleaned} Copy"[:255]
+    prefix, major, minor = match.group(1), int(match.group(2)), match.group(3)
+    if minor is None:
+        return f"{prefix}{major}.1"[:255]
+    return f"{prefix}{major}.{int(minor) + 1}"[:255]
+
+
+def _duplicate_parameters(source: Strategy) -> dict[str, Any]:
+    params = dict(source.parameters or {})
+    # A duplicate is a new research candidate. Source/config is copied, but verification
+    # and sandbox evidence must never be inherited from the parent strategy.
+    params["_workflow"] = {}
+    params["_ide_versions"] = []
+    params["_duplicated_from_strategy_id"] = str(source.id)
+    params["_duplicated_from_strategy_name"] = str(source.name)
+    return params
+
+
 def _ensure_publish_gate(params: dict[str, Any]) -> None:
     workflow = _get_workflow_state(params)
     current_hash = _strategy_hash_from_params(params)
@@ -1529,6 +1832,76 @@ async def deploy_private_strategy(
     await db.commit()
     await db.refresh(strategy)
     return success_response(_serialize_strategy(strategy), "Strategy deployed privately to requesting user")
+
+
+@router.post("/strategies/{strategy_id}/duplicate")
+async def duplicate_strategy(
+    strategy_id: str,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    source = await _get_strategy_or_404(db, strategy_id)
+    params = _duplicate_parameters(source)
+    new_id = str(uuid4())
+
+    duplicate = Strategy(
+        id=new_id,
+        name=_next_duplicate_strategy_name(source.name),
+        description=source.description,
+        parameters=params,
+        default_runtime_config=dict(source.default_runtime_config or {}),
+        runtime_config_schema=dict(source.runtime_config_schema or {}),
+        supports_runtime_config=bool(source.supports_runtime_config),
+        config_version=int(source.config_version or 1),
+        created_by=as_uuid_or_str(admin_user["user_id"]),
+        visibility=PRIVATE_VISIBILITY,
+        # Do not attach a duplicate to the original user request. A request has one
+        # deployed strategy relationship and cloning it would make ownership ambiguous.
+        source_request_id=None,
+        published_by=None,
+        lifecycle_status="DRAFT",
+        is_deployable_paper=False,
+        is_deployable_demo=False,
+        is_live_approved=False,
+        verified_at=None,
+        sandbox_passed_at=None,
+        paper_enabled_at=None,
+        demo_enabled_at=None,
+        live_approved_at=None,
+        approved_by=None,
+    )
+    db.add(duplicate)
+    await db.flush()
+
+    # Clone every runtime preset/config so the new version starts with the same
+    # execution configuration while remaining fully independent from the parent.
+    source_presets = (await db.execute(
+        select(StrategyRuntimePreset).where(StrategyRuntimePreset.strategy_id == str(source.id))
+    )).scalars().all()
+    for preset in source_presets:
+        db.add(StrategyRuntimePreset(
+            id=str(uuid4()),
+            strategy_id=new_id,
+            name=preset.name,
+            description=preset.description,
+            config_json=dict(preset.config_json or {}),
+            risk_label=preset.risk_label,
+            is_default=bool(preset.is_default),
+            is_active=bool(preset.is_active),
+            created_by=as_uuid_or_str(admin_user["user_id"]),
+        ))
+
+    # Older strategies may not have a runtime preset yet. Preserve current behavior
+    # by creating the normal default in that case.
+    if not source_presets:
+        await _ensure_default_runtime_preset(db, duplicate, admin_user)
+
+    await db.commit()
+    await db.refresh(duplicate)
+    return success_response(
+        _serialize_strategy(duplicate),
+        f"Strategy duplicated as {duplicate.name}. Verify Code and Sandbox Backtest are required before publishing.",
+    )
 
 
 @router.post("/strategies/{strategy_id}/publish")

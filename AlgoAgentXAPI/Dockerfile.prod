@@ -40,4 +40,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
 # Production command. Tune WEB_CONCURRENCY in .env if needed.
-CMD ["sh", "-c", "gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers ${WEB_CONCURRENCY:-2} --bind 0.0.0.0:8000 --timeout ${GUNICORN_TIMEOUT:-600} --access-logfile - --error-logfile -"]
+CMD ["sh", "-c", "gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers ${WEB_CONCURRENCY:-2} --bind 0.0.0.0:8000 --timeout ${GUNICORN_TIMEOUT:-14400} --access-logfile - --error-logfile -"]

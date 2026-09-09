@@ -335,6 +335,35 @@ async def sync_deployment_broker_state(db: AsyncSession, deployment_id: UUID | s
     orders: list[dict[str, Any]] = []
     positions: list[dict[str, Any]] = []
     warnings: list[str] = []
+    account_info: dict[str, Any] | None = None
+
+    # Always refresh account financial state as part of broker sync. Funded live
+    # trading requires fresh balance + equity and must never rely on deployment
+    # fallback capital.
+    if hasattr(adapter, "get_account_info"):
+        try:
+            account_info = await adapter.get_account_info() or {}
+            if isinstance(account_info, dict) and account_info.get("connected"):
+                broker.status = "CONNECTED"
+                broker.last_connected_at = now
+                meta = dict(broker.metadata_json or {})
+                meta["last_test"] = {
+                    "connected": True,
+                    "message": account_info.get("message"),
+                    "account_login": account_info.get("account_login"),
+                    "server": account_info.get("server"),
+                    "balance": str(account_info.get("balance")) if account_info.get("balance") is not None else None,
+                    "equity": str(account_info.get("equity")) if account_info.get("equity") is not None else None,
+                    "free_margin": str(account_info.get("free_margin")) if account_info.get("free_margin") is not None else None,
+                    "currency": account_info.get("currency"),
+                    "warning": account_info.get("warning"),
+                    "synced_at": now.isoformat(),
+                }
+                broker.metadata_json = meta
+            elif isinstance(account_info, dict):
+                warnings.append(str(account_info.get("message") or "Broker account-info refresh failed"))
+        except Exception as exc:
+            warnings.append(f"Broker account-info refresh failed: {exc}")
 
     if hasattr(adapter, "get_orders"):
         orders = await adapter.get_orders() or []
@@ -361,13 +390,23 @@ async def sync_deployment_broker_state(db: AsyncSession, deployment_id: UUID | s
     deployment.live_sync_error_count = 0
     deployment.live_sync_last_error = None
     deployment.last_heartbeat_at = now
+    funded_guard = None
+    if str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED":
+        try:
+            from .funded_guard_service import evaluate_funded_guard
+            funded_decision = await evaluate_funded_guard(db, deployment, purpose="SYNC", persist_decision=False, auto_pause_on_breach=True)
+            funded_guard = funded_decision.to_dict()
+        except Exception as exc:
+            warnings.append(f"Funded guard evaluation failed: {exc}")
+            funded_guard = {"allowed_new_entry": False, "guard_status": "BLOCKED", "reason": str(exc)}
+
     await _write_log(
         db,
         deployment,
         "BROKER_STATE_SYNCED" if not warnings else "BROKER_SYNC_WARNING",
         f"{provider_code} broker sync completed" if not warnings else f"{provider_code} broker sync completed with warnings",
         "INFO" if not warnings else "WARNING",
-        {"provider_code": provider_code, "orders_count": len(orders), "positions_count": len(positions), "warnings": warnings, **order_result, **position_result},
+        {"provider_code": provider_code, "orders_count": len(orders), "positions_count": len(positions), "warnings": warnings, "account_info": _safe_payload(account_info or {}), "funded_guard": funded_guard, **order_result, **position_result},
     )
     await db.commit()
     return {
@@ -378,6 +417,8 @@ async def sync_deployment_broker_state(db: AsyncSession, deployment_id: UUID | s
         "orders_count": len(orders),
         "positions_count": len(positions),
         "warnings": warnings,
+        "account_info": _safe_payload(account_info or {}),
+        "funded_guard": funded_guard,
         **order_result,
         **position_result,
     }

@@ -211,13 +211,24 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
     latest = latest_rows[0] if latest_rows else None
     total_count = int((await db.execute(select(func.count(LiveMarketCandle.id)).where(LiveMarketCandle.deployment_id == deployment_id))).scalar() or 0)
     next_closed_expected_at = None
+    latest_close_time = None
+    latest_ingested_at = None
+    ingestion_latency_seconds = None
     latest_open_time = latest.get("candle_time") if latest else None
     if latest_open_time:
         try:
             base_dt = latest_open_time if isinstance(latest_open_time, datetime) else _parse_dt(latest_open_time)
+            latest_close_time = base_dt + timedelta(minutes=_timeframe_minutes(deployment.timeframe))
             next_closed_expected_at = base_dt + timedelta(minutes=_timeframe_minutes(deployment.timeframe) * 2, seconds=2)
+            created_value = latest.get("created_at") if latest else None
+            if created_value:
+                latest_ingested_at = created_value if isinstance(created_value, datetime) else _parse_dt(created_value)
+                ingestion_latency_seconds = max(0.0, (latest_ingested_at - latest_close_time).total_seconds())
         except Exception:
             next_closed_expected_at = None
+            latest_close_time = None
+            latest_ingested_at = None
+            ingestion_latency_seconds = None
     return {
         "source": source,
         "symbol": deployment.instrument,
@@ -230,6 +241,11 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
         "upserted_count": upserted,
         "skipped_forming_count": skipped_forming,
         "latest_candle_time": latest.get("candle_time") if latest else None,
+        "latest_candle_close_time": latest_close_time,
+        "latest_ingested_at": latest_ingested_at,
+        "ingestion_latency_seconds": round(ingestion_latency_seconds, 3) if ingestion_latency_seconds is not None else None,
+        "candle_time_semantics": "OPEN_TIME",
+        "server_time": datetime.now(timezone.utc),
         "latest_close": latest.get("close") if latest else None,
         "next_closed_candle_expected_at": next_closed_expected_at,
         "candles": latest_rows,
@@ -296,12 +312,23 @@ async def get_candle_snapshot(db: AsyncSession, deployment_id: UUID, limit: int 
     latest = rows[0] if rows else None
     latest_open_time = latest.get("candle_time") if latest else None
     next_closed_expected_at = None
+    latest_close_time = None
+    latest_ingested_at = None
+    ingestion_latency_seconds = None
     if latest_open_time:
         try:
             base_dt = latest_open_time if isinstance(latest_open_time, datetime) else _parse_dt(latest_open_time)
+            latest_close_time = base_dt + timedelta(minutes=_timeframe_minutes(deployment.timeframe))
             next_closed_expected_at = base_dt + timedelta(minutes=_timeframe_minutes(deployment.timeframe) * 2, seconds=2)
+            created_value = latest.get("created_at") if latest else None
+            if created_value:
+                latest_ingested_at = created_value if isinstance(created_value, datetime) else _parse_dt(created_value)
+                ingestion_latency_seconds = max(0.0, (latest_ingested_at - latest_close_time).total_seconds())
         except Exception:
             next_closed_expected_at = None
+            latest_close_time = None
+            latest_ingested_at = None
+            ingestion_latency_seconds = None
     return {
         "source": latest.get("source") if latest else source,
         "symbol": deployment.instrument,
@@ -311,6 +338,11 @@ async def get_candle_snapshot(db: AsyncSession, deployment_id: UUID, limit: int 
         "timeframe": deployment.timeframe,
         "stored_count": total_count,
         "latest_candle_time": latest.get("candle_time") if latest else None,
+        "latest_candle_close_time": latest_close_time,
+        "latest_ingested_at": latest_ingested_at,
+        "ingestion_latency_seconds": round(ingestion_latency_seconds, 3) if ingestion_latency_seconds is not None else None,
+        "candle_time_semantics": "OPEN_TIME",
+        "server_time": datetime.now(timezone.utc),
         "latest_close": latest.get("close") if latest else None,
         "next_closed_candle_expected_at": next_closed_expected_at,
         "candles": rows,

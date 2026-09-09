@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from typing import Any
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -27,6 +27,7 @@ from ...db.models import (
     CreditTransactionType,
     EquityCurve,
     Instrument,
+    Timeframe,
     JobStatus,
     MarketData,
     PerformanceMetric,
@@ -43,7 +44,9 @@ from ...services.notification_service import NotificationService
 from ...services.pricing.backtest_pricing_service import BacktestPricingService
 from ...services.billing.credit_cost_service import CreditCostService
 from ...services.backtest_advanced_filters import apply_advanced_filters, build_filter_summary
+from ...services.trade_chart_context import load_trade_chart_candles
 from ...utils.api_response import success_response
+from ...utils.timezone import ensure_utc, iso_utc, format_kolkata_datetime, kolkata_date_key
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -65,6 +68,113 @@ def _to_int(value, default: int = 0) -> int:
         return int(value)
     except Exception:
         return default
+
+
+def _equity_point_value(point, default: float = 0.0) -> float:
+    if isinstance(point, dict):
+        return _to_float(point.get("equity", point.get("value")), default)
+    if hasattr(point, "equity"):
+        return _to_float(getattr(point, "equity", None), default)
+    return _to_float(point, default)
+
+
+def _equity_point_timestamp(point, fallback: datetime) -> datetime:
+    raw = None
+    if isinstance(point, dict):
+        raw = point.get("timestamp") or point.get("time") or point.get("date")
+    else:
+        raw = getattr(point, "timestamp", None) or getattr(point, "time", None) or getattr(point, "date", None)
+    if raw is not None:
+        try:
+            parsed = pd.to_datetime(raw, errors="coerce")
+            if not pd.isna(parsed):
+                return parsed.to_pydatetime()
+        except Exception:
+            pass
+    return fallback
+
+
+def _equity_point_json(point, fallback: datetime) -> dict:
+    ts = _equity_point_timestamp(point, fallback)
+    return {"timestamp": _ensure_aware_datetime(ts).isoformat() if ts is not None else None, "equity": _equity_point_value(point)}
+
+
+def _parse_dt_or_none(value):
+    if value in (None, ""):
+        return None
+    try:
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.isna(parsed):
+            return None
+        dt = parsed.to_pydatetime()
+        return dt.replace(tzinfo=None) if getattr(dt, "tzinfo", None) is not None else dt
+    except Exception:
+        return None
+
+
+def _compute_running_capital(trades_data: list[dict], initial_capital: float) -> list[dict]:
+    running = _to_float(initial_capital, 0.0)
+    for trade in trades_data or []:
+        pnl = _to_float(trade.get("pnl"), 0.0)
+        running += pnl
+        trade["final_capital_after_trade"] = running
+        trade["running_capital"] = running
+        trade["capital_after_trade"] = running
+    return trades_data
+
+
+def _trade_running_capital_value(trade: dict):
+    for key in ("final_capital_after_trade", "running_capital", "capital_after_trade"):
+        if trade.get(key) is not None:
+            return trade.get(key)
+    return None
+
+
+def _equity_dates_look_synthetic(equity_data: list[dict], summary_start, summary_end, trades_data: list[dict]) -> bool:
+    if not equity_data:
+        return False
+    first_eq = _parse_dt_or_none(equity_data[0].get("timestamp"))
+    last_eq = _parse_dt_or_none(equity_data[-1].get("timestamp"))
+    if not first_eq or not last_eq:
+        return False
+    start_dt = _parse_dt_or_none(summary_start)
+    end_dt = _parse_dt_or_none(summary_end)
+    trade_times = []
+    for trade in trades_data or []:
+        dt = _parse_dt_or_none(trade.get("exit_time") or trade.get("entry_time"))
+        if dt:
+            trade_times.append(dt)
+    if not start_dt or not end_dt or not trade_times:
+        return False
+    selected_span_days = abs((end_dt - start_dt).days)
+    equity_span_days = abs((last_eq - first_eq).days)
+    trade_span_days = abs((max(trade_times) - min(trade_times)).days)
+    if selected_span_days > 60 and equity_span_days < 30 and trade_span_days > 60:
+        return True
+    if selected_span_days > 60 and last_eq < max(trade_times) - timedelta(days=30):
+        return True
+    return False
+
+
+def _rebuild_equity_from_trades(summary: dict, trades_data: list[dict]) -> list[dict]:
+    initial = _to_float(summary.get("initial_capital"), 0.0)
+    running = initial
+    start_dt = _parse_dt_or_none(summary.get("start_date")) or datetime.utcnow()
+    end_dt = _parse_dt_or_none(summary.get("end_date"))
+    rows = [{"timestamp": _ensure_aware_datetime(datetime.combine(start_dt.date(), time(0, 0, 0))).isoformat(), "equity": running}]
+    sorted_trades = sorted(trades_data or [], key=lambda t: _parse_dt_or_none(t.get("exit_time") or t.get("entry_time")) or datetime.max)
+    for trade in sorted_trades:
+        running += _to_float(trade.get("pnl"), 0.0)
+        trade["final_capital_after_trade"] = running
+        trade["running_capital"] = running
+        trade["capital_after_trade"] = running
+        ts = _parse_dt_or_none(trade.get("exit_time") or trade.get("entry_time"))
+        if ts:
+            rows.append({"timestamp": _ensure_aware_datetime(ts).isoformat(), "equity": running})
+    final_cap = _to_float(summary.get("final_capital"), running)
+    if end_dt:
+        rows.append({"timestamp": _ensure_aware_datetime(datetime.combine(end_dt.date(), time(23, 59, 59))).isoformat(), "equity": final_cap})
+    return rows
 
 
 
@@ -237,27 +347,14 @@ def _parse_date_param(value, field_name: str = "date") -> date | None:
     raise HTTPException(status_code=422, detail=f"Invalid {field_name}. Use yyyy-mm-dd or dd-mm-yyyy.")
 
 
-from zoneinfo import ZoneInfo
-
-MARKET_DATA_TZ = ZoneInfo("Asia/Kolkata")
-
-
 def _ensure_aware_datetime(value):
+    """Return the canonical UTC instant for backtest/market timestamps.
+
+    Older AlgoAgentX schemas may expose TIMESTAMP values without tzinfo even
+    though those values represent UTC.  Treating those values as Kolkata time
+    shifts every trade by 5h30m, so naive timestamps are normalized as UTC.
     """
-    Market candle timestamps in DB are stored as IST local time.
-    Do NOT treat naive candle timestamps as UTC.
-    """
-    if value is None:
-        return None
-
-    ts = pd.Timestamp(value)
-
-    if ts.tzinfo is None:
-        ts = ts.tz_localize(MARKET_DATA_TZ)
-    else:
-        ts = ts.tz_convert(MARKET_DATA_TZ)
-
-    return ts.to_pydatetime()
+    return ensure_utc(value)
 
 
 async def _table_exists(db: AsyncSession, table_name: str) -> bool:
@@ -591,14 +688,17 @@ def _trade_json_from_service(service_response) -> list[dict]:
     for trade in (getattr(getattr(service_response, "result", None), "trades", None) or []):
         risk_values = _trade_transparency_values(trade)
         row = {
-            "entry_time": getattr(trade, "entry_datetime", None).isoformat() if getattr(trade, "entry_datetime", None) else None,
-            "exit_time": getattr(trade, "exit_datetime", None).isoformat() if getattr(trade, "exit_datetime", None) else None,
+            "entry_time": iso_utc(getattr(trade, "entry_datetime", None)),
+            "exit_time": iso_utc(getattr(trade, "exit_datetime", None)),
             "side": getattr(trade, "direction", None),
             "quantity": _to_float(getattr(trade, "quantity", 0), None),
             "lot_size": _to_float(getattr(trade, "lot_size", None), None),
             "entry_price": _to_float(getattr(trade, "entry_price", None), None),
             "exit_price": _to_float(getattr(trade, "exit_price", None), None),
             "pnl": _to_float(getattr(trade, "pnl", None), None),
+            "final_capital_after_trade": _to_float(getattr(trade, "capital_after_trade", None), None),
+            "running_capital": _to_float(getattr(trade, "capital_after_trade", None), None),
+            "capital_after_trade": _to_float(getattr(trade, "capital_after_trade", None), None),
             "exit_type": getattr(trade, "exit_reason", None),
             "exit_reason": getattr(trade, "exit_reason", None),
             "account_currency": getattr(trade, "account_currency", None),
@@ -639,7 +739,7 @@ def _normalise_trade_detail_rows(value) -> list[dict]:
         row = _normalise_chart_trade_aliases(item, trade_index=trade_index)
         row["id"] = str(row.get("id")) if row.get("id") is not None else None
         row["quantity"] = _to_float(row.get("quantity"), None)
-        for key in ["entry_price", "exit_price", "stop_loss", "target", "risk_points", "risk_ticks", "risk_pips", "reward_points", "reward_ticks", "rr_ratio", "risk_amount", "actual_risk_amount", "reward_amount", "expected_reward_amount", "r_multiple", "pnl", "lot_size"]:
+        for key in ["entry_price", "exit_price", "stop_loss", "target", "risk_points", "risk_ticks", "risk_pips", "reward_points", "reward_ticks", "rr_ratio", "risk_amount", "actual_risk_amount", "reward_amount", "expected_reward_amount", "r_multiple", "pnl", "lot_size", "final_capital_after_trade", "running_capital", "capital_after_trade"]:
             row[key] = _to_float(row.get(key), None)
         row["entry_time"] = _chart_iso_datetime(row.get("entry_time"))
         row["exit_time"] = _chart_iso_datetime(row.get("exit_time"))
@@ -689,15 +789,53 @@ def _trade_df_from_service(service_response) -> pd.DataFrame:
     )
 
 
-def _equity_df_from_service(service_response, start_date: date) -> pd.DataFrame:
-    if not service_response.result.equity_curve:
-        return pd.DataFrame(columns=["timestamp", "equity"])
 
-    base = datetime.combine(start_date, time(0, 0, 0))
-    rows = []
-    for i, value in enumerate(service_response.result.equity_curve):
-        rows.append({"timestamp": base + timedelta(minutes=i), "equity": _to_float(value)})
-    return pd.DataFrame(rows)
+
+def _service_equity_rows(service_response, start_date: date) -> list[dict]:
+    """Build API/DB equity rows while keeping engine equity_curve as List[float].
+
+    BACKTEST-EQUITY-REGRESSION-FIX-1 restores the stable engine contract:
+    result.equity_curve is a plain float list and result.equity_timestamps carries
+    the matching real candle timestamps. This helper also remains backward
+    compatible with older object/dict equity points.
+    """
+    result = getattr(service_response, "result", None)
+    values = list(getattr(result, "equity_curve", []) or [])
+    timestamps = list(getattr(result, "equity_timestamps", []) or [])
+
+    rows: list[dict] = []
+    fallback_base = datetime.combine(start_date, time(0, 0, 0))
+    previous_ts = fallback_base
+
+    for idx, value in enumerate(values):
+        raw_ts = timestamps[idx] if idx < len(timestamps) else None
+        if raw_ts is None and isinstance(value, dict):
+            raw_ts = value.get("timestamp") or value.get("time") or value.get("date")
+        elif raw_ts is None and hasattr(value, "timestamp"):
+            raw_ts = getattr(value, "timestamp", None)
+
+        fallback_ts = previous_ts + timedelta(minutes=1 if idx else 0)
+        ts = _equity_point_timestamp({"timestamp": raw_ts}, fallback_ts)
+        previous_ts = ts
+
+        rows.append({
+            "timestamp": _ensure_aware_datetime(ts).isoformat(),
+            "equity": _equity_point_value(value),
+        })
+    return rows
+
+
+def _equity_json_from_service(service_response, start_date: date) -> list[dict]:
+    return _service_equity_rows(service_response, start_date)
+
+
+def _equity_df_from_service(service_response, start_date: date) -> pd.DataFrame:
+    rows = _service_equity_rows(service_response, start_date)
+    if not rows:
+        return pd.DataFrame(columns=["timestamp", "equity"])
+    df = pd.DataFrame(rows)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    return df
 
 
 async def _quote_backtest_cost(
@@ -1311,6 +1449,9 @@ async def _save_backtest_payload(
                         "entry_price": _decimal(trade.entry_price),
                         "exit_price": _decimal(trade.exit_price),
                         "pnl": _decimal(trade.pnl),
+                        "final_capital_after_trade": _decimal(getattr(trade, "capital_after_trade", None)),
+                        "running_capital": _decimal(getattr(trade, "capital_after_trade", None)),
+                        "capital_after_trade": _decimal(getattr(trade, "capital_after_trade", None)),
                         "exit_type": trade.exit_reason,
                         "exit_reason": trade.exit_reason,
                         "actual_risk_amount": _decimal(getattr(trade, "actual_risk_amount", None)),
@@ -1342,16 +1483,16 @@ async def _save_backtest_payload(
         except Exception as exc:
             logger.exception("Failed to persist trades for backtest %s. Report will use performance_metrics.trade_details fallback when available. Error: %s", backtest_id, exc)
 
-    if service_response.result.equity_curve:
+    equity_rows = _service_equity_rows(service_response, payload.start_date)
+    if equity_rows:
         try:
             async with db.begin_nested():
-                base = datetime.combine(payload.start_date, time(0, 0, 0))
-                for idx, equity in enumerate(service_response.result.equity_curve):
+                for row in equity_rows:
                     db.add(
                         EquityCurve(
                             backtest_id=equity_fk_value,
-                            timestamp=_ensure_aware_datetime(base + timedelta(minutes=idx)),
-                            equity=_decimal(equity),
+                            timestamp=_ensure_aware_datetime(row.get("timestamp")),
+                            equity=_decimal(row.get("equity")),
                         )
                     )
         except Exception as exc:
@@ -1363,7 +1504,10 @@ async def _save_backtest_payload(
             for trade in service_response.result.trades:
                 if not trade.exit_datetime:
                     continue
-                day = trade.exit_datetime.date()
+                day_key = kolkata_date_key(trade.exit_datetime)
+                if not day_key:
+                    continue
+                day = date.fromisoformat(day_key)
                 pnl_map[day] = pnl_map.get(day, Decimal("0")) + _decimal(trade.pnl)
 
             if pnl_map:
@@ -1483,16 +1627,16 @@ def _excel_result_label(value) -> str:
 
 
 def _date_key_from_trade(trade: dict) -> str | None:
+    """Return the reporting day in Asia/Kolkata for a trade instant.
+
+    Trade timestamps remain canonical UTC. Daily/monthly report buckets are
+    display/report concepts and therefore use the product display timezone.
+    """
     raw = (trade or {}).get("exit_time") or (trade or {}).get("entry_time")
     if not raw:
         return None
-    try:
-        parsed = pd.to_datetime(raw, errors="coerce")
-        if pd.isna(parsed):
-            return None
-        return parsed.date().isoformat()
-    except Exception:
-        return str(raw)[:10] if str(raw) else None
+    key = kolkata_date_key(raw)
+    return key or None
 
 
 def _month_key_from_date(value) -> str | None:
@@ -1635,8 +1779,8 @@ def _build_detail_export_frames(detail: dict):
         trade_rows.append(
             {
                 "Trade #": index,
-                "Entry Time": trade.get("entry_time"),
-                "Exit Time": trade.get("exit_time"),
+                "Entry Time": format_kolkata_datetime(trade.get("entry_time"), fallback=""),
+                "Exit Time": format_kolkata_datetime(trade.get("exit_time"), fallback=""),
                 "Side": trade.get("side"),
                 "Size / Lot / Qty": trade.get("lot_size") if trade.get("lot_size") is not None else trade.get("quantity"),
                 "Entry": trade.get("entry_price"),
@@ -1646,6 +1790,7 @@ def _build_detail_export_frames(detail: dict):
                 "Risk Amount": trade.get("risk_amount"),
                 "Actual Risk": trade.get("actual_risk_amount"),
                 "PnL": trade.get("pnl"),
+                "Final Capital": _trade_running_capital_value(trade),
                 "R": trade.get("r_multiple"),
                 "Exit Reason": trade.get("exit_reason") or trade.get("exit_type"),
                 "Signal Reason": trade.get("signal_reason"),
@@ -1653,7 +1798,7 @@ def _build_detail_export_frames(detail: dict):
         )
     trades_df = pd.DataFrame(trade_rows, columns=[
         "Trade #", "Entry Time", "Exit Time", "Side", "Size / Lot / Qty", "Entry", "Exit", "SL", "TP",
-        "Risk Amount", "Actual Risk", "PnL", "R", "Exit Reason", "Signal Reason",
+        "Risk Amount", "Actual Risk", "PnL", "Final Capital", "R", "Exit Reason", "Signal Reason",
     ])
 
     daily_rows: list[dict[str, Any]] = []
@@ -1958,8 +2103,21 @@ async def get_backtest_config(
     strategies = [s for s in strategies if _is_backtest_dropdown_eligible(s, uid, request_status_by_id)]
     instruments = (await db.execute(select(Instrument).order_by(Instrument.symbol.asc()))).scalars().all()
     timeframes = (
-        await db.execute(select(MarketData.timeframe).distinct().order_by(MarketData.timeframe.asc()))
+        await db.execute(
+            select(Timeframe.code)
+            .where(Timeframe.is_active.is_(True))
+            .order_by(Timeframe.display_order.asc(), Timeframe.id.asc())
+        )
     ).scalars().all()
+    if not timeframes:
+        timeframes = (
+            await db.execute(
+                select(MarketData.timeframe)
+                .where(MarketData.timeframe.is_not(None))
+                .distinct()
+                .order_by(MarketData.timeframe.asc())
+            )
+        ).scalars().all()
 
     try:
 
@@ -2013,10 +2171,23 @@ async def get_backtest_timeframes(
     instrument_id: int | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(MarketData.timeframe).distinct().order_by(MarketData.timeframe.asc())
-    if instrument_id is not None:
-        stmt = stmt.where(MarketData.instrument_id == instrument_id)
-    rows = (await db.execute(stmt)).scalars().all()
+    # Timeframe dropdown must come from the master `timeframes` table, not only
+    # from existing market_data rows. This allows 1m/3m/30m/4h etc. to appear
+    # before candles are imported for every instrument. `instrument_id` is kept
+    # for backward compatibility with the frontend, but does not limit the
+    # master timeframe list.
+    rows = (
+        await db.execute(
+            select(Timeframe.code)
+            .where(Timeframe.is_active.is_(True))
+            .order_by(Timeframe.display_order.asc(), Timeframe.id.asc())
+        )
+    ).scalars().all()
+    if not rows:
+        stmt = select(MarketData.timeframe).where(MarketData.timeframe.is_not(None)).distinct().order_by(MarketData.timeframe.asc())
+        if instrument_id is not None:
+            stmt = stmt.where(MarketData.instrument_id == instrument_id)
+        rows = (await db.execute(stmt)).scalars().all()
     return success_response({"timeframes": [tf for tf in rows if tf]})
 
 
@@ -2227,12 +2398,12 @@ async def preview_backtest_cost(
     return success_response(response_payload)
 
 
-@router.post("/run", status_code=status.HTTP_202_ACCEPTED)
-async def run_backtest(
+async def _execute_backtest_sync(
     payload: BacktestRunRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-    entitlements: dict = Depends(get_user_entitlements),
+    db: AsyncSession,
+    current_user: dict,
+    entitlements: dict,
+    execution_job_id: str | None = None,
 ):
     strategy = await db.get(Strategy, payload.strategy_id)
     if not strategy:
@@ -2317,19 +2488,36 @@ async def run_backtest(
             "performance_metrics.instrument_id missing; history/detail pages will be limited until scripts/backtest_performance_metrics_safe_migration.sql is applied"
         )
 
-    job_id = str(uuid4())
-    job = JobStatus(
-        id=job_id,
-        user_id=as_uuid_or_str(current_user["user_id"]),
-        job_type="backtest",
-        status="running",
-        progress=10,
-        message="Running backtest",
-        job_data=json.dumps(payload.model_dump(mode="json")),
-        started_at=datetime.utcnow(),
-    )
-    db.add(job)
+    if execution_job_id:
+        job_id = str(execution_job_id)
+        job = await db.get(JobStatus, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Queued backtest job not found")
+        if str(job.user_id) != str(current_user["user_id"]):
+            raise HTTPException(status_code=403, detail="Queued backtest job does not belong to this user")
+        job.status = "running"
+        job.progress = max(int(job.progress or 0), 10)
+        job.message = "Running backtest in background"
+        job.job_data = json.dumps(payload.model_dump(mode="json"))
+        job.started_at = job.started_at or datetime.utcnow()
+    else:
+        job_id = str(uuid4())
+        job = JobStatus(
+            id=job_id,
+            user_id=as_uuid_or_str(current_user["user_id"]),
+            job_type="backtest",
+            status="running",
+            progress=10,
+            message="Running backtest",
+            job_data=json.dumps(payload.model_dump(mode="json")),
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
     await db.flush()
+    if execution_job_id:
+        # Publish RUNNING before the long transaction starts. Credits/results remain
+        # atomic below and are still rolled back together on execution failure.
+        await db.commit()
 
     debit_txn = None
     included_txn = None
@@ -2356,8 +2544,8 @@ async def run_backtest(
             job.debit_txn_id = str(debit_txn.id)
         elif included_txn is not None:
             job.debit_txn_id = str(included_txn.id)
-        job.progress = 40
-        job.message = "Executing strategy"
+        job.progress = 30
+        job.message = "Loading candles and executing strategy. Large ranges may take a long time."
 
         service_response = await BacktestService.run_backtest(
             db=db,
@@ -2373,6 +2561,9 @@ async def run_backtest(
             timeframe_id=payload.timeframe_id,
         )
 
+        job.progress = 75
+        job.message = "Strategy execution finished. Calculating metrics."
+
         trade_df = _trade_df_from_service(service_response)
         equity_df = _equity_df_from_service(service_response, payload.start_date)
         metrics = MetricsCalculator.calculate_all_metrics(
@@ -2380,6 +2571,9 @@ async def run_backtest(
             trades=trade_df,
             initial_capital=_to_float(payload.capital),
         )
+
+        job.progress = 90
+        job.message = "Saving backtest result and trade history."
 
         backtest_id = await _save_backtest_payload(
             db,
@@ -2397,6 +2591,15 @@ async def run_backtest(
                 .where(CreditTransaction.id == txn.id)
                 .values(backtest_id=backtest_id)
             )
+
+        result_summary = getattr(service_response.result, "summary", {}) or {}
+        result_warnings = list(service_response.warnings or [])
+        signal_count = int(result_summary.get("signal_count") or 0)
+        rejected_trade_count = int(getattr(service_response, "rejected_trade_count", 0) or 0)
+        if signal_count > 0 and int(service_response.total_trades or 0) == 0:
+            zero_trade_warning = "Strategy generated signals, but no trades were opened. Check SL/TP mode, risk sizing, max trades per day, and rejection reasons."
+            if zero_trade_warning not in result_warnings:
+                result_warnings.append(zero_trade_warning)
 
         result_data = {
             "backtest_id": backtest_id,
@@ -2420,28 +2623,37 @@ async def run_backtest(
             "credit_cost": _to_float(cost),
             "included_credits_used": int((consumption or {}).get("effective_included_debited") or 0),
             "wallet_credits_used": int((consumption or {}).get("effective_wallet_debited") or 0),
+            "wallet_balance_after": int((consumption or {}).get("wallet_balance_after") or 0),
+            "included_balance_after": int((consumption or {}).get("included_balance_after") or 0),
+            "total_balance_after": int((consumption or {}).get("wallet_balance_after") or 0) + int((consumption or {}).get("included_balance_after") or 0),
+            "subscription_state": (consumption or {}).get("subscription_state"),
             "charge_idempotent": bool((consumption or {}).get("idempotent", False)),
             "included_debit_transaction_id": str(included_txn.id) if included_txn is not None else None,
             "debit_transaction_id": str(debit_txn.id) if debit_txn is not None else None,
             "pricing": estimate.get("breakdown", {}),
             "advanced_filters": _filter_meta_from_impact(service_response.advanced_filter_impact, payload.advanced_filters),
             "advanced_filter_impact": service_response.advanced_filter_impact,
-            "warnings": service_response.warnings or [],
-            "rejected_trade_count": int(getattr(service_response, "rejected_trade_count", 0) or 0),
-            "rejection_reasons": getattr(service_response, "rejection_reasons", {}) or {},
-            "risk_engine_version": (getattr(service_response.result, "summary", {}) or {}).get("risk_engine_version"),
-            "pnl_engine_version": (getattr(service_response.result, "summary", {}) or {}).get("pnl_engine_version"),
+            "warnings": result_warnings,
+            "signal_count": result_summary.get("signal_count"),
+            "generated_buy_signals": result_summary.get("generated_buy_signals"),
+            "generated_sell_signals": result_summary.get("generated_sell_signals"),
+            "rejected_trade_count": rejected_trade_count,
+            "rejection_reasons": getattr(service_response, "rejection_reasons", {}) or result_summary.get("rejection_reasons") or {},
+            "forced_end_of_backtest_exits": result_summary.get("forced_end_of_backtest_exits"),
+            "risk_engine_version": result_summary.get("risk_engine_version"),
+            "pnl_engine_version": result_summary.get("pnl_engine_version"),
             "account_currency": getattr(service_response.result, "account_currency", None),
             "currency_symbol": getattr(service_response.result, "currency_symbol", None),
-            "asset_class": (getattr(service_response.result, "summary", {}) or {}).get("asset_class"),
+            "asset_class": result_summary.get("asset_class"),
             "quantity_mode": getattr(service_response.result, "quantity_mode", None),
-            "position_size_mode": (getattr(service_response.result, "summary", {}) or {}).get("position_size_mode"),
-            "sl_mode": (getattr(service_response.result, "summary", {}) or {}).get("sl_mode"),
-            "rr_ratio": (getattr(service_response.result, "summary", {}) or {}).get("rr_ratio"),
-            "risk_percent": (getattr(service_response.result, "summary", {}) or {}).get("risk_percent"),
-            "avg_lot_size": (getattr(service_response.result, "summary", {}) or {}).get("avg_lot_size"),
-            "avg_quantity": (getattr(service_response.result, "summary", {}) or {}).get("avg_quantity"),
-            "professional_summary": getattr(service_response.result, "summary", {}) or {},
+            "position_size_mode": result_summary.get("position_size_mode"),
+            "sl_mode": result_summary.get("sl_mode"),
+            "rr_ratio": result_summary.get("rr_ratio"),
+            "risk_percent": result_summary.get("risk_percent"),
+            "avg_lot_size": result_summary.get("avg_lot_size"),
+            "avg_quantity": result_summary.get("avg_quantity"),
+            "professional_summary": result_summary,
+            "equity_curve": _equity_json_from_service(service_response, payload.start_date),
             "saved": True,
         }
 
@@ -2582,6 +2794,90 @@ async def run_backtest(
                 "Run scripts/backtest_performance_metrics_safe_migration.sql and retry."
             )
         raise HTTPException(status_code=500, detail=detail)
+
+
+@router.post("/run", status_code=status.HTTP_202_ACCEPTED)
+async def run_backtest(
+    payload: BacktestRunRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    entitlements: dict = Depends(get_user_entitlements),
+):
+    """Queue every Standard Backtest so browser/proxy timeouts cannot kill long runs.
+
+    The heavy strategy execution happens outside the request. The client polls
+    /api/v1/jobs/{job_id}. Small and large backtests use the same execution
+    implementation, credit rules, persistence and reports.
+    """
+    strategy = await db.get(Strategy, payload.strategy_id)
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    instrument = await db.get(Instrument, payload.instrument_id)
+    if not instrument:
+        raise HTTPException(status_code=404, detail="Instrument not found")
+
+    # Keep the HTTP request lightweight. Full market-data coverage, exact candle
+    # counts, advanced filters and billing are validated inside the background
+    # worker by _execute_backtest_sync(). The UI already requires Preview Data
+    # before Run, and direct API callers receive any validation failure through
+    # the persisted JobStatus instead of holding this request open for minutes.
+    job_id = str(uuid4())
+    plan_code = str((entitlements or {}).get("plan_code") or "").upper() or None
+    job_payload = payload.model_dump(mode="json")
+    job_payload["_plan_code"] = plan_code
+    job = JobStatus(
+        id=job_id,
+        user_id=as_uuid_or_str(current_user["user_id"]),
+        job_type="backtest",
+        status="queued",
+        progress=0,
+        message="Backtest queued. You can leave this page; the job will continue in the background.",
+        job_data=json.dumps(job_payload),
+        max_retries=0,
+    )
+    db.add(job)
+    await db.commit()
+
+    dispatch_mode = "background"
+    try:
+        from ...celery_app import celery_app, is_celery_available, is_celery_worker_available
+        if is_celery_available() and is_celery_worker_available():
+            celery_app.send_task(
+                "app.tasks.run_backtest_v2_task",
+                args=[job_id, str(current_user["user_id"]), payload.model_dump(mode="json"), plan_code],
+            )
+            dispatch_mode = "celery"
+        else:
+            from ...tasks import run_backtest_v2_fallback
+            background_tasks.add_task(
+                run_backtest_v2_fallback,
+                job_id,
+                str(current_user["user_id"]),
+                payload.model_dump(mode="json"),
+                plan_code,
+            )
+    except Exception:
+        logger.exception("Could not dispatch backtest %s to Celery; using local background worker", job_id)
+        from ...tasks import run_backtest_v2_fallback
+        background_tasks.add_task(
+            run_backtest_v2_fallback,
+            job_id,
+            str(current_user["user_id"]),
+            payload.model_dump(mode="json"),
+            plan_code,
+        )
+        dispatch_mode = "background"
+
+    return success_response({
+        "job_id": job_id,
+        "status": "queued",
+        "progress": 0,
+        "poll_url": f"/api/v1/jobs/{job_id}",
+        "message": "Backtest queued successfully. Long date ranges can run without keeping the HTTP request open.",
+        "execution_mode": dispatch_mode,
+        "estimated_candles": None,
+    }, "Backtest queued")
 
 
 @router.get("/")
@@ -2928,23 +3224,16 @@ def _timeframe_to_minutes(timeframe: str | None) -> int:
 
 
 def _parse_chart_datetime(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.replace(tzinfo=None) if value.tzinfo else value
-    try:
-        parsed = pd.Timestamp(value)
-        if parsed.tzinfo is not None:
-            parsed = parsed.tz_convert(MARKET_DATA_TZ).tz_localize(None)
-        return parsed.to_pydatetime()
-    except Exception:
-        return None
+    # Chart lookups must use the same canonical UTC instant as market_data.
+    return ensure_utc(value)
 
 
 def _chart_iso_datetime(value: Any) -> str | None:
-    parsed = _parse_chart_datetime(value)
+    # Always include timezone information so browsers never interpret a UTC
+    # trade timestamp as their local wall-clock time.
+    parsed = iso_utc(value)
     if parsed is not None:
-        return parsed.isoformat()
+        return parsed
     return str(value) if value else None
 
 
@@ -3126,78 +3415,41 @@ async def _build_trade_chart_context_payload(
 
     candles: list[dict] = []
     warning = None
+    lookup_meta: dict[str, Any] = {}
     if instrument_id is not None and entry_time is not None:
         try:
-            prev_rows = (
-                await db.execute(
-                    text(
-                        """
-                        SELECT timestamp, open, high, low, close, volume
-                        FROM market_data
-                        WHERE instrument_id = :instrument_id
-                          AND timeframe = :timeframe
-                          AND timestamp < :entry_time
-                        ORDER BY timestamp DESC
-                        LIMIT 50
-                        """
-                    ),
-                    {"instrument_id": instrument_id, "timeframe": timeframe, "entry_time": entry_time},
-                )
-            ).mappings().all()
-            range_rows = (
-                await db.execute(
-                    text(
-                        """
-                        SELECT timestamp, open, high, low, close, volume
-                        FROM market_data
-                        WHERE instrument_id = :instrument_id
-                          AND timeframe = :timeframe
-                          AND timestamp >= :entry_time
-                          AND timestamp <= :exit_time
-                        ORDER BY timestamp ASC
-                        """
-                    ),
-                    {"instrument_id": instrument_id, "timeframe": timeframe, "entry_time": entry_time, "exit_time": exit_time or entry_time},
-                )
-            ).mappings().all()
-            after_rows = (
-                await db.execute(
-                    text(
-                        """
-                        SELECT timestamp, open, high, low, close, volume
-                        FROM market_data
-                        WHERE instrument_id = :instrument_id
-                          AND timeframe = :timeframe
-                          AND timestamp > :exit_time
-                        ORDER BY timestamp ASC
-                        LIMIT 30
-                        """
-                    ),
-                    {"instrument_id": instrument_id, "timeframe": timeframe, "exit_time": exit_time or entry_time},
-                )
-            ).mappings().all()
-
-            dedup: dict[str, dict] = {}
-            for candle_row in list(reversed(prev_rows)) + list(range_rows) + list(after_rows):
-                ts = candle_row.get("timestamp")
-                key = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
-                dedup[key] = {
-                    "timestamp": key,
-                    "open": _to_float(candle_row.get("open"), 0.0),
-                    "high": _to_float(candle_row.get("high"), 0.0),
-                    "low": _to_float(candle_row.get("low"), 0.0),
-                    "close": _to_float(candle_row.get("close"), 0.0),
-                    "volume": _to_float(candle_row.get("volume"), 0.0),
-                }
-            candles = sorted(dedup.values(), key=lambda item: item.get("timestamp") or "")
+            candles, lookup_meta = await load_trade_chart_candles(
+                db,
+                instrument_id=instrument_id,
+                timeframe=timeframe,
+                entry_time=entry_time,
+                exit_time=exit_time,
+                candles_before=50,
+                candles_after=30,
+                allow_legacy_ist_shift_fallback=True,
+            )
+            warning = lookup_meta.get("warning")
         except Exception as exc:
-            logger.warning("Unable to load chart candles for backtest %s trade %s: %s", backtest_id, trade_dict.get("id") or trade_index, exc)
+            logger.warning(
+                "Unable to load chart candles for backtest %s trade %s: %s",
+                backtest_id,
+                trade_dict.get("id") or trade_index,
+                exc,
+            )
             warning = "No candle data found for this trade context."
     else:
         warning = "No candle data found for this trade context."
 
     if not candles and warning is None:
         warning = "No candle data found for this trade context."
+
+    # If a legacy IST/UTC offset fallback was required, align visual markers to
+    # the recovered candle window while keeping the stored trade row unchanged.
+    chart_entry_time = trade_payload.get("entry_time")
+    chart_exit_time = trade_payload.get("exit_time")
+    if candles and int(lookup_meta.get("lookup_shift_minutes") or 0) != 0:
+        chart_entry_time = lookup_meta.get("lookup_entry_time") or chart_entry_time
+        chart_exit_time = lookup_meta.get("lookup_exit_time") or chart_exit_time
 
     return {
         "trade": trade_payload,
@@ -3208,8 +3460,8 @@ async def _build_trade_chart_context_payload(
             "exit_price": trade_payload.get("exit_price"),
             "stop_loss": trade_payload.get("stop_loss"),
             "target": trade_payload.get("target"),
-            "entry_time": trade_payload.get("entry_time"),
-            "exit_time": trade_payload.get("exit_time"),
+            "entry_time": chart_entry_time,
+            "exit_time": chart_exit_time,
             "exit_reason": trade_payload.get("exit_reason") or trade_payload.get("exit_type"),
             "signal_reason": trade_payload.get("signal_reason"),
             "pnl": trade_payload.get("pnl"),
@@ -3222,6 +3474,10 @@ async def _build_trade_chart_context_payload(
             "candles_before": 50,
             "candles_after": 30,
             "warning": warning,
+            "market_timestamp_storage": lookup_meta.get("market_timestamp_storage"),
+            "lookup_shift_minutes": lookup_meta.get("lookup_shift_minutes", 0),
+            "lookup_entry_time": lookup_meta.get("lookup_entry_time"),
+            "lookup_exit_time": lookup_meta.get("lookup_exit_time"),
             "source": source,
             "trade_index": trade_index,
         },
@@ -3332,7 +3588,7 @@ async def get_backtest_detail(
         trade_columns = [meta["column_name"] for meta in await _table_columns_meta(db, "trades")]
         if trade_columns:
             wanted = [
-                "id", "backtest_id", "instrument_id", "entry_time", "exit_time", "side", "quantity", "lot_size", "entry_price", "exit_price", "pnl", "exit_type", "exit_reason",
+                "id", "backtest_id", "instrument_id", "entry_time", "exit_time", "side", "quantity", "lot_size", "entry_price", "exit_price", "pnl", "final_capital_after_trade", "running_capital", "capital_after_trade", "exit_type", "exit_reason",
                 "account_currency", "currency_symbol", "asset_class", "quantity_mode",
                 "stop_loss", "target", "risk_points", "risk_ticks", "risk_pips", "reward_points", "reward_ticks",
                 "rr_ratio", "risk_amount", "actual_risk_amount", "reward_amount", "expected_reward_amount", "r_multiple",
@@ -3365,14 +3621,17 @@ async def get_backtest_detail(
                         "sequence": trade_index + 1,
                         "backtest_id": str(row_dict.get("backtest_id")) if row_dict.get("backtest_id") is not None else str(backtest_id),
                         "instrument_id": row_dict.get("instrument_id") if row_dict.get("instrument_id") is not None else getattr(row, "instrument_id", None),
-                        "entry_time": row_dict.get("entry_time").isoformat() if row_dict.get("entry_time") else None,
-                        "exit_time": row_dict.get("exit_time").isoformat() if row_dict.get("exit_time") else None,
+                        "entry_time": iso_utc(row_dict.get("entry_time")),
+                        "exit_time": iso_utc(row_dict.get("exit_time")),
                         "side": row_dict.get("side"),
                         "quantity": _to_float(row_dict.get("quantity"), None),
                         "lot_size": _to_float(row_dict.get("lot_size"), None),
                         "entry_price": _to_float(row_dict.get("entry_price")),
                         "exit_price": _to_float(row_dict.get("exit_price")),
                         "pnl": _to_float(row_dict.get("pnl")),
+                        "final_capital_after_trade": _to_float(row_dict.get("final_capital_after_trade"), None),
+                        "running_capital": _to_float(row_dict.get("running_capital"), None),
+                        "capital_after_trade": _to_float(row_dict.get("capital_after_trade"), None),
                         "exit_type": row_dict.get("exit_type") or row_dict.get("exit_reason"),
                         "exit_reason": row_dict.get("exit_reason") or row_dict.get("exit_type"),
                         "account_currency": row_dict.get("account_currency"),
@@ -3446,6 +3705,19 @@ async def get_backtest_detail(
     except Exception as exc:
         logger.warning("Unable to load pnl calendar for backtest %s: %s", backtest_id, exc)
 
+    # Rebuild daily PnL from canonical trade timestamps in Asia/Kolkata. This
+    # also corrects older pnl_calendar rows that were historically bucketed by
+    # the raw UTC date rather than the displayed IST trading day.
+    if trades_data:
+        ist_pnl: dict[str, float] = {}
+        for trade in trades_data:
+            key = _date_key_from_trade(trade)
+            if not key:
+                continue
+            ist_pnl[key] = ist_pnl.get(key, 0.0) + _to_float(trade.get("pnl"), 0.0)
+        if ist_pnl:
+            pnl_data = [{"date": key, "pnl": value} for key, value in sorted(ist_pnl.items())]
+
     debit = (await _get_backtest_debit_map(db, [str(row.id)])).get(str(row.id), {})
     summary = await _serialize_summary(
         db,
@@ -3455,6 +3727,9 @@ async def get_backtest_detail(
     )
     summary.update(await _professional_summary_overlay(db, str(backtest_id), trades_data))
     summary.update(_compute_trade_outcome_summary(trades_data))
+    _compute_running_capital(trades_data, _to_float(summary.get("initial_capital"), 0.0))
+    if _equity_dates_look_synthetic(equity_data, summary.get("start_date"), summary.get("end_date"), trades_data):
+        equity_data = _rebuild_equity_from_trades(summary, trades_data)
     currency_payload = _infer_currency_payload(
         instrument_symbol=summary.get("instrument_symbol"),
         asset_class=summary.get("asset_class"),

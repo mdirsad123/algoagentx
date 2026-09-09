@@ -27,6 +27,7 @@ from ...db.models import (
     CreditTransaction,
     CreditTransactionType,
     Instrument,
+    Timeframe,
     JobStatus,
     MarketData,
     Payment,
@@ -2185,8 +2186,21 @@ async def get_admin_market_data_supported(
 ):
     instruments = (await db.execute(select(Instrument).order_by(Instrument.symbol.asc()))).scalars().all()
     timeframes = (
-        await db.execute(select(MarketData.timeframe).distinct().order_by(MarketData.timeframe.asc()))
+        await db.execute(
+            select(Timeframe.code)
+            .where(Timeframe.is_active.is_(True))
+            .order_by(Timeframe.display_order.asc(), Timeframe.id.asc())
+        )
     ).scalars().all()
+    if not timeframes:
+        timeframes = (
+            await db.execute(
+                select(MarketData.timeframe)
+                .where(MarketData.timeframe.is_not(None))
+                .distinct()
+                .order_by(MarketData.timeframe.asc())
+            )
+        ).scalars().all()
 
     return success_response(
         {

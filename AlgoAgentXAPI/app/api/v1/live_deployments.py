@@ -13,14 +13,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import settings
 from ...core.dependencies import get_current_user, get_db
-from ...db.models import BrokerAccount, BrokerInstrument, BrokerOrderEvent, LiveEquityPoint, LiveOrder, LivePosition, LiveSignal, LiveTradeLog, StrategyDeployment
+from ...db.models import BrokerAccount, BrokerInstrument, BrokerOrderEvent, FundedLiveState, LiveEquityPoint, LiveOrder, LivePosition, LiveSignal, LiveTradeLog, StrategyDeployment
 from ...db.models.instruments import Instrument
-from ...schemas.live_trading import BrokerOrderEventOut, LiveOrderOut, LivePositionOut, LiveSignalOut, LiveTradeLogOut, ManualDeploymentSignalIn, RunStrategyOnceIn, StrategyDeploymentCreate, StrategyDeploymentOut, StrategyDeploymentUpdate
+from ...schemas.live_trading import BrokerOrderEventOut, FundedPhaseAdvanceRequest, FundedRiskPlanUpdate, LiveOrderOut, LivePositionOut, LiveSignalOut, LiveTradeLogOut, ManualDeploymentSignalIn, RunStrategyOnceIn, StrategyDeploymentCreate, StrategyDeploymentOut, StrategyDeploymentUpdate
 from ...services.brokers.factory import get_broker_adapter, get_broker_code
 from ...services.live.execution_engine import execute_signal
 from ...services.live.pnl_service import to_decimal
 from ...services.live.capital_service import get_effective_trading_capital
-from ...services.live.live_approval_service import check_broker_deployment_approval, enforce_approval_limits
+from ...services.live.funded_guard_service import (
+    add_funded_event,
+    evaluate_funded_guard,
+    funded_compatibility_preview,
+    funded_status_payload,
+    validate_funded_profile_for_user,
+    validate_risk_tiers,
+)
+from ...services.funded_backtest.snapshots import build_profile_snapshot
+from ...services.funded_backtest.rule_engine import calculate_daily_floor, calculate_max_loss_floor
 from ...services.live.broker_candle_service import get_candle_snapshot, refresh_deployment_candles
 from ...services.live.strategy_runner import run_strategy_for_deployment, run_full_dry_test_for_deployment
 from ...services.live.compatibility_service import run_live_compatibility_check, compatibility_failed
@@ -31,7 +40,11 @@ from ...services.live.trading_safety import check_platform_mode_allowed, get_pla
 from ...services.live_trading.readiness_service import build_live_deployment_readiness
 from ...services.live_trading.paper_position_manager import process_paper_positions_for_deployment
 from ...services.live_trading.final_qa_service import build_final_live_qa, run_paper_order_test, run_demo_micro_order_test
-from ...services.billing.live_subscription_gate import build_live_trading_access_status, require_active_subscription_for_live_trading
+from ...services.billing.live_subscription_gate import (
+    build_live_trading_access_status,
+    require_active_paid_subscription_for_funded_live_trading,
+    require_active_subscription_for_live_trading,
+)
 from ...utils.api_response import success_response
 from .live_common import (
     dump_list,
@@ -220,6 +233,38 @@ async def _validate_broker_for_user(db: AsyncSession, broker_account_id: UUID | 
             return
 
 
+async def _fresh_funded_broker_info(broker: BrokerAccount, db: AsyncSession, expected_currency: str) -> dict:
+    """Read fresh broker capital for a funded lifecycle action.
+
+    Funded lifecycle transitions never trust deployment fallback capital or a generic
+    database update timestamp. A real adapter account-info read must supply positive
+    balance/equity and the profile currency.
+    """
+    try:
+        adapter = get_broker_adapter(broker, db)
+        info = await adapter.get_account_info() if hasattr(adapter, "get_account_info") else {}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Funded broker compatibility check failed: {exc}") from exc
+    if not isinstance(info, dict) or not info.get("connected"):
+        message = (info or {}).get("message") if isinstance(info, dict) else None
+        raise HTTPException(status_code=400, detail=str(message or "Funded broker is not connected."))
+    balance = _dec(info.get("balance"), "0")
+    equity = _dec(info.get("equity"), "0")
+    currency = str(info.get("currency") or "").upper()
+    if balance <= 0 or equity <= 0:
+        raise HTTPException(status_code=400, detail="FUNDED deployment requires valid positive broker balance and equity. Fallback deployment capital is not allowed.")
+    expected = str(expected_currency or "USD").upper()
+    if not currency or currency != expected:
+        raise HTTPException(status_code=400, detail=f"Broker currency {currency or 'UNKNOWN'} does not match funded profile currency {expected}.")
+    now_sync = datetime.now(timezone.utc)
+    broker.last_connected_at = now_sync
+    broker.metadata_json = {**(broker.metadata_json or {}), "last_test": {
+        "connected": True, "message": info.get("message"), "account_login": info.get("account_login"),
+        "server": info.get("server"), "balance": str(info.get("balance")), "equity": str(info.get("equity")),
+        "free_margin": str(info.get("free_margin")) if info.get("free_margin") is not None else None,
+        "currency": currency, "synced_at": now_sync.isoformat(),
+    }}
+    return {"balance": balance, "equity": equity, "currency": currency, "raw": info}
 
 
 def _validate_safe_deployment_values(values: dict, current: StrategyDeployment | None = None) -> None:
@@ -338,6 +383,7 @@ async def _refresh_demo_broker_state(db: AsyncSession, row: StrategyDeployment, 
                 "used_margin": str(account_info.get("used_margin")) if account_info.get("used_margin") is not None else None,
                 "currency": account_info.get("currency"),
                 "warning": account_info.get("warning"),
+                "synced_at": datetime.now(timezone.utc).isoformat(),
             },
             "safe_message": account_info.get("warning") or account_info.get("message"),
             "provider": broker_row.broker_name,
@@ -661,6 +707,7 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
     elif latest_equity is None:
         equity = capital_snapshot.effective_capital + realized + unrealized
     currency = (capital_snapshot.account_currency or await _deployment_currency(db, row, broker) or "USD").upper()
+    funded_payload = await funded_status_payload(db, row)
 
     return {
         "deployment": {
@@ -683,6 +730,14 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
             "upstox_order_confirmed": getattr(row, "upstox_order_confirmed", False),
             "timeframe": row.timeframe,
             "mode": row.mode,
+            "account_policy_type": getattr(row, "account_policy_type", "STANDARD") or "STANDARD",
+            "funded_profile_id": str(row.funded_profile_id) if getattr(row, "funded_profile_id", None) else None,
+            "funded_phase_number": getattr(row, "funded_phase_number", None),
+            "funded_risk_mode": getattr(row, "funded_risk_mode", None),
+            "funded_fixed_risk_pct": getattr(row, "funded_fixed_risk_pct", None),
+            "funded_safety_buffer_pct": getattr(row, "funded_safety_buffer_pct", None),
+            "funded_configured_max_risk_pct": getattr(row, "funded_configured_max_risk_pct", None),
+            "funded_attach_mode": getattr(row, "funded_attach_mode", None),
             "status": row.status,
             "auto_trade_enabled": row.auto_trade_enabled,
             "auto_runner_enabled": getattr(row, "auto_runner_enabled", False),
@@ -711,6 +766,7 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
             "example_payload": row.example_payload,
         },
         "broker": broker,
+        "funded": funded_payload,
         "account": {
             "account_currency": currency,
             "balance": capital_snapshot.balance,
@@ -832,8 +888,12 @@ async def get_live_trading_access_status(db: AsyncSession = Depends(get_db), cur
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_deployment(payload: StrategyDeploymentCreate, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     payload_values = payload.model_dump()
+    policy = str(payload_values.get("account_policy_type") or "STANDARD").upper()
+    if policy == "FUNDED":
+        await require_active_paid_subscription_for_funded_live_trading(db, user_id_from(current_user))
+    else:
+        await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     mode = str(payload_values.get("mode") or "DEMO").upper()
     payload_values["mode"] = mode
     if mode == "PAPER":
@@ -852,19 +912,145 @@ async def create_deployment(payload: StrategyDeploymentCreate, db: AsyncSession 
     broker = await get_broker_account_or_404(db, payload.broker_account_id, current_user)
     await _resolve_and_validate_broker_mapping(db, payload_values, broker)
     await _validate_broker_for_user(db, payload.broker_account_id, current_user, mode, payload_values.get("instrument"), payload_values.get("broker_symbol"), payload_values.get("instrument_key"))
-    approval = await check_broker_deployment_approval(
-        db, user_id_from(current_user), payload.broker_account_id, mode,
-        instrument=payload_values.get("instrument"), exchange=payload_values.get("exchange"), segment=payload_values.get("segment"), broker_symbol=payload_values.get("broker_symbol"), instrument_key=payload_values.get("instrument_key"),
-    )
-    enforce_approval_limits(approval, payload_values)
+
+    payload_values["account_policy_type"] = policy
+    if policy == "STANDARD":
+        for key in (
+            "funded_profile_id", "funded_phase_number", "funded_risk_mode", "funded_fixed_risk_pct",
+            "funded_configured_max_risk_pct", "funded_attach_mode", "funded_initialization_json",
+        ):
+            payload_values[key] = None
+        payload_values["funded_safety_buffer_pct"] = Decimal("0")
+    else:
+        try:
+            profile, phases, risk_tiers = await validate_funded_profile_for_user(db, payload.funded_profile_id, user_id_from(current_user))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if str(profile.challenge_type or "").upper() != "INSTANT":
+            if payload.funded_phase_number is None:
+                raise HTTPException(status_code=400, detail="Current funded phase is required for challenge profiles.")
+            if not any(int(p.phase_number) == int(payload.funded_phase_number) for p in phases):
+                raise HTTPException(status_code=400, detail="Selected funded phase does not exist in this profile.")
+        else:
+            payload_values["funded_phase_number"] = None
+
+        profile_snapshot = build_profile_snapshot(profile, phases, risk_tiers)
+        payload_values["funded_profile_snapshot"] = profile_snapshot
+        payload_values["funded_risk_plan_snapshot"] = list(profile_snapshot.get("risk_tiers") or [])
+        payload_values["funded_attach_mode"] = str(payload_values.get("funded_attach_mode") or "NEW_OR_RESET_ACCOUNT").upper()
+
+        # An in-progress funded account cannot safely reconstruct today's daily-DD
+        # baseline from the current broker value. Require the provider/current-day
+        # state explicitly rather than guessing. Trailing max-DD rules also require
+        # the historical high-water value used by the provider.
+        if payload_values["funded_attach_mode"] == "EXISTING_IN_PROGRESS":
+            init_cfg = dict(payload_values.get("funded_initialization_json") or {})
+            for key, label in (("today_start_balance", "today_start_balance"), ("today_start_equity", "today_start_equity")):
+                if init_cfg.get(key) in (None, "") or _dec(init_cfg.get(key), "0") <= 0:
+                    raise HTTPException(status_code=400, detail=f"{label} is required and must be greater than 0 for an existing in-progress funded account.")
+            for key in ("completed_trading_days", "completed_qualifying_days"):
+                if init_cfg.get(key) not in (None, ""):
+                    try:
+                        count_value = int(init_cfg.get(key) or 0)
+                    except (TypeError, ValueError) as exc:
+                        raise HTTPException(status_code=400, detail=f"{key} must be a whole number.") from exc
+                    if count_value < 0:
+                        raise HTTPException(status_code=400, detail=f"{key} cannot be negative.")
+
+            if str(profile.challenge_type or "").upper() == "INSTANT":
+                profile_data = dict(profile_snapshot.get("profile") or {})
+                stage_cfg = {**dict(profile_data.get("rules_json") or {}), **dict(profile_data.get("payout_config") or {})}
+            else:
+                stage_cfg = next((dict(x) for x in (profile_snapshot.get("phases") or []) if int(x.get("phase_number") or 0) == int(payload_values.get("funded_phase_number") or 0)), {})
+            max_mode = str(stage_cfg.get("max_drawdown_mode") or "").upper()
+            if max_mode in {"TRAILING_BALANCE", "HIGH_WATER_MARK"} and (init_cfg.get("existing_high_water_balance") in (None, "") or _dec(init_cfg.get("existing_high_water_balance"), "0") <= 0):
+                raise HTTPException(status_code=400, detail="existing_high_water_balance is required for this in-progress trailing funded account.")
+            if max_mode in {"TRAILING_EQUITY", "HIGH_WATER_MARK"} and (init_cfg.get("existing_high_water_equity") in (None, "") or _dec(init_cfg.get("existing_high_water_equity"), "0") <= 0):
+                raise HTTPException(status_code=400, detail="existing_high_water_equity is required for this in-progress trailing funded account.")
+
+        if str(payload_values.get("funded_risk_mode") or "DYNAMIC").upper() == "DYNAMIC":
+            try:
+                validate_risk_tiers(payload_values["funded_risk_plan_snapshot"])
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid funded risk plan: {exc}") from exc
+
+        # Creation performs a real broker compatibility read. This does not initialize
+        # the funded runtime state; Start still performs the authoritative fresh sync.
+        try:
+            adapter = get_broker_adapter(broker, db)
+            info = await adapter.get_account_info() if hasattr(adapter, "get_account_info") else {}
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Funded broker compatibility check failed: {exc}") from exc
+        if not isinstance(info, dict) or not info.get("connected"):
+            raise HTTPException(status_code=400, detail=str(((info or {}).get("message") if isinstance(info, dict) else None) or "Funded broker is not connected."))
+        broker_balance = _dec(info.get("balance"), "0")
+        broker_equity = _dec(info.get("equity"), "0")
+        broker_currency = str(info.get("currency") or "").upper()
+        if broker_balance <= 0 or broker_equity <= 0:
+            raise HTTPException(status_code=400, detail="FUNDED deployment requires valid positive broker balance and equity. Fallback deployment capital is not allowed.")
+        if not broker_currency or broker_currency != str(profile.account_currency or "USD").upper():
+            raise HTTPException(status_code=400, detail=f"Broker currency {broker_currency or 'UNKNOWN'} does not match funded profile currency {str(profile.account_currency or 'USD').upper()}.")
+        init_cfg = dict(payload_values.get("funded_initialization_json") or {})
+        if payload_values.get("funded_attach_mode") == "EXISTING_IN_PROGRESS":
+            high_balance = init_cfg.get("existing_high_water_balance")
+            high_equity = init_cfg.get("existing_high_water_equity")
+            if high_balance not in (None, "") and _dec(high_balance, "0") < broker_balance:
+                raise HTTPException(status_code=400, detail="existing_high_water_balance cannot be below the current broker balance.")
+            if high_equity not in (None, "") and _dec(high_equity, "0") < broker_equity:
+                raise HTTPException(status_code=400, detail="existing_high_water_equity cannot be below the current broker equity.")
+
+        # Reuse the funded-backtest rule engine for creation-time compatibility.
+        # This catches accounts already below a daily/max loss floor before a live
+        # funded deployment can even be created. Start performs the same check again
+        # from a fresh broker sync, so this is an early guard rather than a substitute.
+        profile_data = dict(profile_snapshot.get("profile") or {})
+        if str(profile.challenge_type or "").upper() == "INSTANT":
+            stage_cfg = {**dict(profile_data.get("rules_json") or {}), **dict(profile_data.get("payout_config") or {})}
+        else:
+            stage_cfg = next((dict(x) for x in (profile_snapshot.get("phases") or []) if int(x.get("phase_number") or 0) == int(payload_values.get("funded_phase_number") or 0)), {})
+        try:
+            initial_size = _dec(profile.account_size, "0")
+            day_start_balance = _dec(init_cfg.get("today_start_balance"), str(broker_balance))
+            day_start_equity = _dec(init_cfg.get("today_start_equity"), str(broker_equity))
+            high_water_balance = _dec(init_cfg.get("existing_high_water_balance"), str(max(initial_size, broker_balance)))
+            high_water_equity = _dec(init_cfg.get("existing_high_water_equity"), str(max(initial_size, broker_equity)))
+            daily_floor = calculate_daily_floor(
+                stage_cfg.get("daily_drawdown_mode"), initial_balance=initial_size,
+                start_balance=day_start_balance, start_equity=day_start_equity,
+                drawdown_pct=stage_cfg.get("daily_drawdown_pct"),
+            )
+            max_floor = calculate_max_loss_floor(
+                stage_cfg.get("max_drawdown_mode"), initial_balance=initial_size,
+                high_water_balance=high_water_balance, high_water_equity=high_water_equity,
+                drawdown_pct=stage_cfg.get("max_drawdown_pct"),
+            )
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"Funded profile rule configuration is invalid for live trading: {exc}") from exc
+        if broker_equity <= _dec(daily_floor) or broker_equity <= _dec(max_floor):
+            raise HTTPException(status_code=400, detail=f"Broker equity {broker_equity} is already at/below a funded loss floor (daily {daily_floor}, max {max_floor}).")
+
+        now_sync = datetime.now(timezone.utc)
+        broker.last_connected_at = now_sync
+        broker.metadata_json = {**(broker.metadata_json or {}), "last_test": {
+            "connected": True, "message": info.get("message"), "account_login": info.get("account_login"),
+            "server": info.get("server"), "balance": str(info.get("balance")), "equity": str(info.get("equity")),
+            "free_margin": str(info.get("free_margin")) if info.get("free_margin") is not None else None,
+            "currency": broker_currency, "synced_at": now_sync.isoformat(),
+        }}
+        # Funded deployments must never be considered safe from the legacy fallback capital.
+        # Runtime activation performs a fresh broker sync and validates balance/equity/currency.
+
     row = StrategyDeployment(user_id=user_id_from(current_user), status="DRAFT", **payload_values)
-    if approval is not None:
+    if hasattr(row, "live_approved"):
         row.live_approved = True
-        row.live_approved_at = approval.approved_at if hasattr(approval, "approved_at") else datetime.now(timezone.utc)
+    if hasattr(row, "live_approved_at"):
+        row.live_approved_at = datetime.now(timezone.utc)
     _ensure_tradingview_secret(row)
     db.add(row)
     await db.flush()
-    await _write_log(db, row, "DEPLOYMENT_CREATED", f"{mode} broker deployment created", metadata={"effective_capital_source": "BROKER_ACCOUNT_ON_EXECUTION"})
+    await _write_log(db, row, "DEPLOYMENT_CREATED", f"{mode} broker deployment created using connected broker account", metadata={"effective_capital_source": "BROKER_ACCOUNT_ON_EXECUTION", "account_policy_type": policy})
+    if policy == "FUNDED":
+        await add_funded_event(db, row, "FUNDED_POLICY_ATTACHED", "Funded account policy attached to deployment", metadata={"profile_id": str(row.funded_profile_id), "phase_number": row.funded_phase_number, "risk_mode": row.funded_risk_mode, "attach_mode": row.funded_attach_mode})
     await db.commit()
     await db.refresh(row)
     return success_response(dump_one(StrategyDeploymentOut, row), "Deployment created")
@@ -1217,6 +1403,124 @@ async def get_deployment_broker_candles(deployment_id: UUID, limit: int = 300, d
     return success_response(result)
 
 
+@router.get("/{deployment_id}/funded-status")
+async def get_deployment_funded_status(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    if str(getattr(row, "account_policy_type", "STANDARD") or "STANDARD").upper() != "FUNDED":
+        return success_response({"account_policy_type": "STANDARD", "funded": None}, "Standard broker deployment")
+    payload = await funded_status_payload(db, row)
+    return success_response(payload, "Funded live status loaded")
+
+
+@router.post("/{deployment_id}/funded-refresh")
+async def refresh_deployment_funded_status(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    if str(getattr(row, "account_policy_type", "STANDARD") or "STANDARD").upper() != "FUNDED":
+        raise HTTPException(status_code=400, detail="This is not a FUNDED deployment.")
+    try:
+        sync_result = await sync_deployment_broker_state(db, row.id)
+        row = await get_deployment_or_404(db, deployment_id, current_user)
+        decision = await evaluate_funded_guard(db, row, purpose="MANUAL_REFRESH", persist_decision=False, auto_pause_on_breach=True)
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Funded refresh failed: {exc}") from exc
+    payload = await funded_status_payload(db, row)
+    return success_response({"funded": payload, "decision": decision.to_dict(), "broker_sync": sync_result}, "Funded live guard refreshed")
+
+
+@router.patch("/{deployment_id}/funded-risk-plan")
+async def update_deployment_funded_risk_plan(deployment_id: UUID, payload: FundedRiskPlanUpdate, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    if str(getattr(row, "account_policy_type", "STANDARD") or "STANDARD").upper() != "FUNDED":
+        raise HTTPException(status_code=400, detail="Funded risk plan can only be edited for FUNDED deployments.")
+    if str(row.status or "").upper() == "RUNNING":
+        raise HTTPException(status_code=400, detail="Pause or stop the deployment before changing funded risk policy.")
+    open_positions = int((await db.execute(select(func.count(LivePosition.id)).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN"))).scalar_one() or 0)
+    if open_positions:
+        raise HTTPException(status_code=400, detail="Close all open positions before changing funded risk policy.")
+    data = payload.model_dump(mode="json")
+    risk_mode = str(data.get("risk_mode") or "").upper()
+    tiers = data.get("risk_tiers") or []
+    if risk_mode == "DYNAMIC":
+        try:
+            validate_risk_tiers(tiers)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    row.funded_risk_mode = risk_mode
+    row.funded_fixed_risk_pct = payload.fixed_risk_pct if risk_mode == "FIXED" else None
+    row.funded_safety_buffer_pct = payload.safety_buffer_pct
+    row.funded_configured_max_risk_pct = payload.configured_max_risk_pct
+    if risk_mode == "DYNAMIC":
+        row.funded_risk_plan_snapshot = tiers
+    await add_funded_event(db, row, "FUNDED_RISK_PLAN_UPDATED", "Funded deployment risk plan updated", metadata={
+        "risk_mode": risk_mode,
+        "fixed_risk_pct": str(row.funded_fixed_risk_pct) if row.funded_fixed_risk_pct is not None else None,
+        "safety_buffer_pct": str(row.funded_safety_buffer_pct),
+        "configured_max_risk_pct": str(row.funded_configured_max_risk_pct) if row.funded_configured_max_risk_pct is not None else None,
+        "tier_count": len(tiers),
+    })
+    await _write_log(db, row, "FUNDED_RISK_PLAN_UPDATED", "Funded risk plan updated", metadata={"risk_mode": risk_mode, "tier_count": len(tiers)})
+    await db.commit()
+    return success_response(await funded_status_payload(db, row), "Funded risk plan updated")
+
+
+@router.post("/{deployment_id}/funded/advance-phase")
+async def advance_deployment_funded_phase(deployment_id: UUID, payload: FundedPhaseAdvanceRequest, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    if str(getattr(row, "account_policy_type", "STANDARD") or "STANDARD").upper() != "FUNDED":
+        raise HTTPException(status_code=400, detail="This is not a FUNDED deployment.")
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Explicit confirmation is required to advance a funded phase.")
+    if str(row.status or "").upper() not in {"PAUSED", "STOPPED"}:
+        raise HTTPException(status_code=400, detail="Pause or stop the deployment before advancing the funded phase.")
+    open_positions = int((await db.execute(select(func.count(LivePosition.id)).where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN"))).scalar_one() or 0)
+    if open_positions:
+        raise HTTPException(status_code=400, detail="Close all open positions before advancing the funded phase.")
+    state = (await db.execute(select(FundedLiveState).where(FundedLiveState.deployment_id == row.id))).scalar_one_or_none()
+    if state is None or state.guard_status not in {"PASS_READY", "AWAITING_PROVIDER_TRANSITION"}:
+        raise HTTPException(status_code=400, detail="Current funded phase is not PASS_READY.")
+    phases = sorted((row.funded_profile_snapshot or {}).get("phases") or [], key=lambda x: int(x.get("sequence") or x.get("phase_number") or 0))
+    current_no = int(row.funded_phase_number or state.phase_number or 0)
+    idx = next((i for i, phase in enumerate(phases) if int(phase.get("phase_number") or 0) == current_no), None)
+    if idx is None or idx + 1 >= len(phases):
+        raise HTTPException(status_code=400, detail="No next funded phase exists for this profile.")
+    next_phase = phases[idx + 1]
+    selected_broker_id = payload.broker_account_id or row.broker_account_id
+    if selected_broker_id is None:
+        raise HTTPException(status_code=400, detail="A connected broker account is required for the next funded phase.")
+    broker = await get_broker_account_or_404(db, selected_broker_id, current_user)
+    await _validate_broker_for_user(db, selected_broker_id, current_user, row.mode, row.instrument, row.broker_symbol, row.instrument_key)
+    profile_data = dict((row.funded_profile_snapshot or {}).get("profile") or {})
+    fresh_info = await _fresh_funded_broker_info(broker, db, str(profile_data.get("account_currency") or "USD"))
+    try:
+        initial_size = _dec(profile_data.get("account_size"), "0")
+        balance = _dec(fresh_info.get("balance"), "0")
+        equity = _dec(fresh_info.get("equity"), "0")
+        daily_floor = calculate_daily_floor(
+            next_phase.get("daily_drawdown_mode"), initial_balance=initial_size,
+            start_balance=balance, start_equity=equity,
+            drawdown_pct=next_phase.get("daily_drawdown_pct"),
+        )
+        max_floor = calculate_max_loss_floor(
+            next_phase.get("max_drawdown_mode"), initial_balance=initial_size,
+            high_water_balance=max(initial_size, balance), high_water_equity=max(initial_size, equity),
+            drawdown_pct=next_phase.get("max_drawdown_pct"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Next funded phase rule configuration is invalid: {exc}") from exc
+    if equity <= _dec(daily_floor) or equity <= _dec(max_floor):
+        raise HTTPException(status_code=400, detail=f"Selected next-phase broker equity {equity} is already at/below a funded loss floor (daily {daily_floor}, max {max_floor}).")
+    row.broker_account_id = broker.id
+    row.funded_phase_number = int(next_phase.get("phase_number"))
+    await db.delete(state)
+    await db.flush()
+    await add_funded_event(db, row, "FUNDED_PHASE_ADVANCED", "Funded deployment advanced to the next provider phase", metadata={"from_phase": current_no, "to_phase": row.funded_phase_number, "broker_account_id": str(row.broker_account_id) if row.broker_account_id else None})
+    await _write_log(db, row, "FUNDED_PHASE_ADVANCED", "Funded phase advanced explicitly", metadata={"from_phase": current_no, "to_phase": row.funded_phase_number})
+    await db.commit()
+    return success_response(await funded_status_payload(db, row), "Funded phase advanced; run a fresh funded readiness check before starting")
+
+
 @router.get("/{deployment_id}")
 async def get_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     row = await get_deployment_or_404(db, deployment_id, current_user)
@@ -1240,12 +1544,16 @@ async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpda
             return str(incoming or "") != str(current or "")
         return str(incoming or "").strip().upper() != str(current or "").strip().upper()
 
-    locked_fields = ["mode", "broker_account_id", "instrument", "broker_symbol", "instrument_key", "exchange", "segment", "timeframe"]
+    locked_fields = ["mode", "broker_account_id", "instrument", "broker_symbol", "instrument_key", "exchange", "segment", "timeframe", "account_policy_type", "funded_profile_id", "funded_phase_number", "funded_attach_mode"]
     if any(field in values and _locked_value_changed(field, values.get(field)) for field in locked_fields):
         raise HTTPException(
             status_code=400,
             detail="Mode, broker account, instrument, and timeframe are locked after deployment creation. Create a new deployment to change them.",
         )
+
+    funded_plan_fields = {"funded_risk_mode", "funded_fixed_risk_pct", "funded_safety_buffer_pct", "funded_configured_max_risk_pct"}
+    if str(getattr(row, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED" and funded_plan_fields.intersection(values):
+        raise HTTPException(status_code=400, detail="Use the funded-risk-plan endpoint to update funded risk controls safely.")
 
     _validate_safe_deployment_values(values, row)
     if values.get("auto_trade_enabled") is True and not bool(getattr(row, "auto_trade_enabled", False)):
@@ -1278,14 +1586,9 @@ async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpda
                 if key in values or not getattr(row, key, None):
                     values[key] = value
         await _validate_broker_for_user(db, target_broker_account_id, current_user, target_mode, values.get("instrument", row.instrument), values.get("broker_symbol", row.broker_symbol), values.get("instrument_key", row.instrument_key))
-        approval = await check_broker_deployment_approval(
-            db, row.user_id, target_broker_account_id, target_mode,
-            instrument=values.get("instrument", row.instrument), exchange=values.get("exchange", row.exchange), segment=values.get("segment", row.segment), broker_symbol=values.get("broker_symbol", row.broker_symbol), instrument_key=values.get("instrument_key", row.instrument_key),
-        )
-        merged_values = {"max_daily_loss": values.get("max_daily_loss", row.max_daily_loss), "max_trades_per_day": values.get("max_trades_per_day", row.max_trades_per_day), "max_order_value": values.get("max_order_value", row.max_order_value)}
-        enforce_approval_limits(approval, merged_values)
-        if approval is not None:
+        if hasattr(row, "live_approved"):
             row.live_approved = True
+        if hasattr(row, "live_approved_at"):
             row.live_approved_at = datetime.now(timezone.utc)
     for key, value in values.items():
         if key != "status" and hasattr(row, key):
@@ -1298,8 +1601,11 @@ async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpda
 
 @router.post("/{deployment_id}/start")
 async def start_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     row = await get_deployment_or_404(db, deployment_id, current_user)
+    if str(getattr(row, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED":
+        await require_active_paid_subscription_for_funded_live_trading(db, user_id_from(current_user))
+    else:
+        await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     if str(row.mode or "").upper() == "PAPER":
         raise HTTPException(status_code=400, detail="PAPER deployments are deprecated. Please create a DEMO or LIVE broker deployment.")
     platform_check = await check_platform_mode_allowed(db, row.mode)
@@ -1307,14 +1613,20 @@ async def start_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_d
         raise HTTPException(status_code=400, detail=platform_check.reason)
     await get_deployable_strategy_or_400(db, row.strategy_id, row.mode)
     if row.mode in {"DEMO", "LIVE"}:
-        approval = await check_broker_deployment_approval(
-            db, row.user_id, row.broker_account_id, row.mode,
-            instrument=row.instrument, exchange=row.exchange, segment=row.segment, broker_symbol=row.broker_symbol, instrument_key=row.instrument_key,
-        )
-        enforce_approval_limits(approval, {"max_daily_loss": row.max_daily_loss, "max_trades_per_day": row.max_trades_per_day, "max_order_value": row.max_order_value})
-        if approval is not None:
+        if hasattr(row, "live_approved"):
             row.live_approved = True
+        if hasattr(row, "live_approved_at"):
             row.live_approved_at = datetime.now(timezone.utc)
+    if str(getattr(row, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED":
+        try:
+            await sync_deployment_broker_state(db, row.id)
+            row = await get_deployment_or_404(db, deployment_id, current_user)
+            funded_decision = await evaluate_funded_guard(db, row, purpose="START", persist_decision=True, auto_pause_on_breach=False)
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=f"Funded guard is not ready: {exc}") from exc
+        if not funded_decision.allowed_new_entry:
+            await db.commit()
+            raise HTTPException(status_code=400, detail=funded_decision.reason or "Funded guard blocked deployment start.")
     now = datetime.now(timezone.utc)
     row.status = "RUNNING"
     row.started_at = now

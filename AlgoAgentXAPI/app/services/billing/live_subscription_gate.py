@@ -95,24 +95,44 @@ async def get_active_paid_subscription(db: AsyncSession, user_id: str) -> tuple[
 async def build_live_trading_access_status(db: AsyncSession, user_id: str) -> dict[str, Any]:
     requires_subscription = await live_trading_requires_subscription(db)
     recommended_coupon = await get_recommended_coupon_code(db)
-    sub, plan = (None, None)
-    if requires_subscription:
-        sub, plan = await get_active_paid_subscription(db, user_id)
+    # Always resolve paid-subscription state because Funded / Prop Live Trading
+    # is subscriber-only even if an admin later relaxes the generic live gate.
+    sub, plan = await get_active_paid_subscription(db, user_id)
     allowed = (not requires_subscription) or bool(sub)
+    funded_allowed = bool(sub)
+    subscription_payload = None if not sub else {
+        "id": str(sub.id),
+        "status": sub.status,
+        "plan_code": getattr(plan, "code", None),
+        "billing_period": getattr(plan, "billing_period", None),
+        "end_at": sub.end_at.isoformat() if sub.end_at else None,
+    }
     return {
         "allowed": allowed,
         "requires_subscription": requires_subscription,
         "code": None if allowed else "SUBSCRIPTION_REQUIRED",
         "message": "Live trading access enabled" if allowed else "Active subscription required to deploy live strategies.",
         "recommended_coupon": recommended_coupon,
-        "subscription": None if not sub else {
-            "id": str(sub.id),
-            "status": sub.status,
-            "plan_code": getattr(plan, "code", None),
-            "billing_period": getattr(plan, "billing_period", None),
-            "end_at": sub.end_at.isoformat() if sub.end_at else None,
+        "subscription": subscription_payload,
+        "funded_live": {
+            "allowed": funded_allowed,
+            "requires_subscription": True,
+            "code": None if funded_allowed else "FUNDED_LIVE_SUBSCRIPTION_REQUIRED",
+            "message": "Funded / Prop Live Trading access enabled" if funded_allowed else "Active paid subscription required for Funded / Prop Live Trading.",
+            "subscription": subscription_payload,
         },
     }
+
+
+async def require_active_paid_subscription_for_funded_live_trading(db: AsyncSession, user_id: str) -> None:
+    sub, _plan = await get_active_paid_subscription(db, user_id)
+    if sub is not None:
+        return
+    raise HTTPException(status_code=402, detail={
+        "code": "FUNDED_LIVE_SUBSCRIPTION_REQUIRED",
+        "message": "Active paid subscription required for Funded / Prop Live Trading.",
+        "recommended_coupon": await get_recommended_coupon_code(db),
+    })
 
 
 async def require_active_subscription_for_live_trading(db: AsyncSession, user_id: str) -> None:

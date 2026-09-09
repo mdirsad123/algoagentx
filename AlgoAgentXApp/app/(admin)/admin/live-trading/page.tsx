@@ -12,8 +12,9 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
 import type { AdminLiveDeploymentRow, AdminLiveDeploymentListResponse, DeploymentStatus, LiveMode } from "@/types/live-trading";
+import { formatDateTimeIST } from "@/lib/timezone";
 
-const date = (value?: string | null) => (value ? new Date(value).toLocaleString() : "—");
+const date = (value?: string | null) => formatDateTimeIST(value);
 const money = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
 function StatusBadge({ value }: { value?: string }) {

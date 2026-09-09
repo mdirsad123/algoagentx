@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Dispatch, SetStateAction, useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
+  BellRing,
   ChevronLeft,
   ChevronRight,
   X,
@@ -35,7 +36,7 @@ const userMenuItems = [
   { icon: Home, label: "Dashboard", href: "/dashboard" },
   { icon: Layers, label: "Brokers", href: "/brokers" },
   { icon: Activity, label: "Live Trading", href: "/live-trading" },
-  { icon: ShieldCheck, label: "Live Approval", href: "/live-approval" },
+  { icon: BellRing, label: "Alerts", href: "/alerts" },
   { icon: BarChart3, label: "Strategies", href: "/strategies" },
   { icon: PlayCircle, label: "Backtest", href: "/backtest" },
   { icon: History, label: "Backtest History", href: "/backtest-history" },
@@ -61,8 +62,9 @@ const adminMenuItems = [
   { icon: Database, label: "Market Data", href: "/admin/market-data" },
   { icon: MapPinned, label: "Market Master", href: "/admin/market-master" },
   { icon: TrendingUp, label: "Backtests", href: "/admin/backtests" },
+  { icon: PlayCircle, label: "Backtest Studio", href: "/backtest" },
+  { icon: History, label: "Backtest History", href: "/backtest-history" },
   { icon: Activity, label: "Live Trading", href: "/admin/live-trading" },
-  { icon: ShieldCheck, label: "Live Approvals", href: "/admin/live-approvals" },
   { icon: Layers, label: "Brokers", href: "/admin/brokers" },
   { icon: Shield, label: "Live Settings", href: "/admin/live-settings" },
   { icon: Shield, label: "Support Tickets", href: "/admin/support-tickets" },
@@ -201,8 +203,7 @@ export default function Sidebar({
   const brandSubtitle =
     isAdminSection || isAdminUser ? "Admin Console" : "Trading Workspace";
 
-  const getIsActive = (href: string) =>
-    pathname === href || pathname.startsWith(`${href}/`);
+  const getIsActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   const footerLinks = useMemo(() => {
     if (isAdminSection || isAdminUser) {

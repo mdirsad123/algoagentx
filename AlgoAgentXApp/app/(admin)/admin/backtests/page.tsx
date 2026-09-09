@@ -9,6 +9,7 @@ import { adminApi, type AdminBacktest } from "@/lib/api/admin";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 const fieldClass =
   "w-full rounded-xl border border-border/60 bg-card/25 px-4 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2 focus:ring-primary/35";
@@ -111,7 +112,7 @@ export default function AdminBacktestsPage() {
                       <td className="px-3 py-3">{formatPercent(row.total_return)}</td>
                       <td className="px-3 py-3">{formatPercent(row.win_rate)}</td>
                       <td className="px-3 py-3">{row.total_trades || 0}</td>
-                      <td className="px-3 py-3">{row.created_at ? new Date(row.created_at).toLocaleString() : '—'}</td>
+                      <td className="px-3 py-3">{formatDateTimeIST(row.created_at)}</td>
                       <td className="px-3 py-3">
                         <Button size="sm" variant="outline" className="rounded-xl" asChild>
                           <Link href={`/admin/backtest-report/${row.id}`}><Eye className="mr-2 h-4 w-4" />View</Link>

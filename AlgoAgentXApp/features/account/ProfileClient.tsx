@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Profile, profileSettingsApi } from "@/lib/api/profile-settings";
+import { formatDateIST } from "@/lib/timezone";
 
 function formatDate(value?: string | null) {
   if (!value) return "Not available";

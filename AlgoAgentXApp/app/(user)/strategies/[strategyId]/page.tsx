@@ -61,9 +61,16 @@ type ApiEnvelope<T> = { success?: boolean; data?: T };
 const unwrap = <T,>(payload: ApiEnvelope<T> | T): T =>
   payload && typeof payload === "object" && "success" in (payload as any) ? ((payload as ApiEnvelope<T>).data as T) : (payload as T);
 
-function metric(value: number | null | undefined, suffix = "") {
+function metric(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
-  return `${Number(value).toFixed(2)}${suffix}`;
+  return Number(value).toFixed(2);
+}
+
+function percentMetric(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  const raw = Number(value);
+  const normalized = Math.abs(raw) <= 1 ? raw * 100 : raw;
+  return `${normalized.toFixed(2)}%`;
 }
 
 
@@ -321,9 +328,9 @@ export default function StrategyDetailPage() {
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">
-          <TextBlock title="Win Rate" value={metric(item.winRate, "%")} />
+          <TextBlock title="Win Rate" value={percentMetric(item.winRate)} />
           <TextBlock title="Sharpe Ratio" value={metric(item.sharpeRatio)} />
-          <TextBlock title="Drawdown" value={metric(item.maxDrawdown, "%")} />
+          <TextBlock title="Drawdown" value={percentMetric(item.maxDrawdown)} />
           <TextBlock title="Total Trades" value={item.totalTrades == null ? "—" : String(Math.round(Number(item.totalTrades)))} />
           <TextBlock title="Profit Factor" value={metric(item.profitFactor)} />
         </div>

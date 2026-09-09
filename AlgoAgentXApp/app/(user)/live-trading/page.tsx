@@ -13,6 +13,7 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
 import type { LiveDeploymentSummary, StrategyCatalogItem, StrategyDeployment } from "@/types/live-trading";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 const formatMoney = (value: unknown, currency = "USD") => {
   const amount = Number(value || 0);
@@ -27,7 +28,7 @@ const formatMoney = (value: unknown, currency = "USD") => {
   return `${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${code}`;
 };
 
-const date = (value?: string | null) => (value ? new Date(value).toLocaleString() : "—");
+const date = (value?: string | null) => formatDateTimeIST(value);
 const canDeleteDeployment = (status?: string | null) => ["DRAFT", "STOPPED", "ERROR"].includes(String(status || "").toUpperCase());
 
 type LiveAccessStatus = {
@@ -82,6 +83,7 @@ export default function LiveTradingPage() {
   const [deleteTarget, setDeleteTarget] = useState<StrategyDeployment | null>(null);
   const [accessStatus, setAccessStatus] = useState<LiveAccessStatus | null>(null);
   const [showSubscribeModal, setShowSubscribeModal] = useState(false);
+  const [deploymentFilter, setDeploymentFilter] = useState<"ALL" | "STANDARD" | "FUNDED">("ALL");
 
   const strategyName = (id: string) => strategies.find((s) => s.id === id)?.name || summaries[id]?.deployment?.strategy_name || id;
 
@@ -151,6 +153,17 @@ export default function LiveTradingPage() {
     }
   };
 
+  const filteredDeployments = useMemo(() => {
+    if (deploymentFilter === "ALL") return deployments;
+    return deployments.filter((deployment) => String(deployment.account_policy_type || "STANDARD").toUpperCase() === deploymentFilter);
+  }, [deploymentFilter, deployments]);
+
+  const filterCounts = useMemo(() => ({
+    ALL: deployments.length,
+    STANDARD: deployments.filter((deployment) => String(deployment.account_policy_type || "STANDARD").toUpperCase() !== "FUNDED").length,
+    FUNDED: deployments.filter((deployment) => String(deployment.account_policy_type || "STANDARD").toUpperCase() === "FUNDED").length,
+  }), [deployments]);
+
   const summary = useMemo(() => {
     const rows = Object.values(summaries);
     return {
@@ -201,11 +214,31 @@ export default function LiveTradingPage() {
       </div>
 
       {loading ? <GlassCard className="p-6 text-purple-100">Loading live deployments...</GlassCard> : deployments.length === 0 ? <EmptyState title="No deployments yet" description="Create your first DEMO or approved LIVE broker deployment from a published strategy." action={accessStatus?.allowed === false ? <Button onClick={() => setShowSubscribeModal(true)} className="gap-2"><Zap className="h-4 w-4" />Create Deployment</Button> : <Link href="/live-trading/new"><Button className="gap-2"><Zap className="h-4 w-4" />Create Deployment</Button></Link>} /> : (
+        <div className="space-y-4">
+          <div className="inline-flex flex-wrap items-center gap-1 rounded-2xl border border-white/10 bg-white/5 p-1.5" aria-label="Deployment account policy filters">
+            {([
+              ["ALL", "All Deployments"],
+              ["STANDARD", "Standard"],
+              ["FUNDED", "Funded"],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setDeploymentFilter(value)}
+                className={`rounded-xl px-4 py-2 text-sm font-medium transition ${deploymentFilter === value ? "bg-lime-400 text-slate-950 shadow-lg shadow-lime-950/20" : "text-purple-100 hover:bg-white/10 hover:text-white"}`}
+              >
+                {label} <span className="ml-1 opacity-70">({filterCounts[value]})</span>
+              </button>
+            ))}
+          </div>
+          {filteredDeployments.length === 0 ? (
+            <GlassCard className="p-6 text-sm text-purple-100" hoverEffect={false}>No {deploymentFilter === "FUNDED" ? "funded" : "standard"} deployments match this filter.</GlassCard>
+          ) : (
         <GlassCard className="overflow-hidden" hoverEffect={false}>
           <div className="responsive-table-wrapper overflow-x-auto">
             <table className="w-full min-w-[1680px] text-left text-sm">
-              <thead className="border-b border-white/10 bg-white/5 text-purple-100"><tr><th className="px-4 py-3">Name</th><th className="px-4 py-3">Strategy</th><th className="px-4 py-3">Instrument</th><th className="px-4 py-3">Timeframe</th><th className="px-4 py-3">Mode</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Broker</th><th className="px-4 py-3">Today PnL</th><th className="px-4 py-3">Auto Runner</th><th className="px-4 py-3">Last Signal</th><th className="w-[420px] min-w-[420px] px-4 py-3 text-right">Actions</th></tr></thead>
-              <tbody className="divide-y divide-white/10">{deployments.map((deployment) => {
+              <thead className="border-b border-white/10 bg-white/5 text-purple-100"><tr><th className="px-4 py-3">Name</th><th className="px-4 py-3">Strategy</th><th className="px-4 py-3">Instrument</th><th className="px-4 py-3">Timeframe</th><th className="px-4 py-3">Execution / Policy</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Broker</th><th className="px-4 py-3">Today PnL</th><th className="px-4 py-3">Auto Runner</th><th className="px-4 py-3">Last Signal</th><th className="w-[420px] min-w-[420px] px-4 py-3 text-right">Actions</th></tr></thead>
+              <tbody className="divide-y divide-white/10">{filteredDeployments.map((deployment) => {
                 const sm = summaries[deployment.id];
                 const rowCurrency = sm?.metrics?.currency || sm?.broker?.currency || "USD";
                 const deleteAllowed = canDeleteDeployment(deployment.status);
@@ -214,7 +247,7 @@ export default function LiveTradingPage() {
                   <td className="px-4 py-4">{strategyName(deployment.strategy_id)}</td>
                   <td className="px-4 py-4">{deployment.instrument}</td>
                   <td className="px-4 py-4">{deployment.timeframe}</td>
-                  <td className="px-4 py-4"><Badge className={deployment.mode === "PAPER" ? "border-amber-400/30 bg-amber-400/20 text-amber-100" : "border-cyan-400/30 bg-cyan-400/20 text-cyan-100"}>{deployment.mode === "PAPER" ? "PAPER Deprecated" : deployment.mode}</Badge></td>
+                  <td className="px-4 py-4"><div className="flex flex-wrap items-center gap-1.5"><Badge className={deployment.mode === "PAPER" ? "border-amber-400/30 bg-amber-400/20 text-amber-100" : "border-cyan-400/30 bg-cyan-400/20 text-cyan-100"}>{deployment.mode === "PAPER" ? "PAPER Deprecated" : deployment.mode}</Badge>{deployment.account_policy_type === "FUNDED" ? <Badge className="border-lime-400/30 bg-lime-400/20 text-lime-100">FUNDED</Badge> : <Badge className="border-slate-400/30 bg-slate-400/15 text-slate-100">STANDARD</Badge>}</div>{deployment.account_policy_type === "FUNDED" && <div className="mt-1 text-[11px] text-lime-200">{sm?.funded?.guard?.status || "Guard pending"}{deployment.funded_phase_number ? ` · Phase ${deployment.funded_phase_number}` : ""}</div>}</td>
                   <td className="px-4 py-4"><StatusBadge status={deployment.status} /></td>
                   <td className="px-4 py-4">{sm?.broker ? `${sm.broker.account_label || "Broker"} (${sm.broker.status || "—"})` : "—"}</td>
                   <td className="px-4 py-4">{formatMoney(sm?.metrics?.today_pnl, rowCurrency)}</td>
@@ -226,6 +259,8 @@ export default function LiveTradingPage() {
             </table>
           </div>
         </GlassCard>
+          )}
+        </div>
       )}
 
       {deleteTarget && (

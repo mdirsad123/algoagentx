@@ -1,7 +1,7 @@
-# AlgoAgentX DEV PostgreSQL only
+# AlgoAgentX DEV infrastructure for local Windows API + alert worker
 # Place this file at project root beside docker-compose.yml
 # Run with:
-# docker compose --env-file .env.dev -f docker-compose.dev.yml up -d postgres
+# docker compose --env-file .env.dev -f docker-compose.dev.phase1-fixed.yml up -d postgres_dev redis_dev
 
 services:
   postgres_dev:
@@ -24,5 +24,22 @@ services:
       timeout: 5s
       retries: 10
 
+  redis_dev:
+    image: redis:7-alpine
+    container_name: algoagentx_redis_dev
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data_dev:/data
+    ports:
+      # Use 6380 on Windows so production Redis can keep 6379 if both are running.
+      - "127.0.0.1:6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres_data_dev:
+  redis_data_dev:

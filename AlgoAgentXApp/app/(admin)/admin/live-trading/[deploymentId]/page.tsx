@@ -15,8 +15,9 @@ import { LiveCompatibilityCard } from "@/components/live/LiveCompatibilityCard";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
 import type { AdminLiveDeploymentDetail, AdminLiveControlAction, LiveCompatibilityResult } from "@/types/live-trading";
+import { formatDateTimeIST } from "@/lib/timezone";
 
-const date = (value?: string | null) => (value ? new Date(value).toLocaleString() : "—");
+const date = (value?: string | null) => formatDateTimeIST(value);
 const num = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 const money = (value: unknown, currency?: string | null) => {
   const amount = Number(value || 0);

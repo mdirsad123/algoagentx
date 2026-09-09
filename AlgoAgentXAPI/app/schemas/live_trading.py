@@ -16,6 +16,9 @@ ORDER_TYPES = {"MARKET", "LIMIT", "SL", "TARGET"}
 ORDER_STATUSES = {"PENDING", "PLACED", "FILLED", "REJECTED", "CANCELLED", "ERROR"}
 POSITION_STATUSES = {"OPEN", "CLOSED", "ERROR"}
 LOG_LEVELS = {"INFO", "WARNING", "ERROR"}
+ACCOUNT_POLICY_TYPES = {"STANDARD", "FUNDED"}
+FUNDED_RISK_MODES = {"DYNAMIC", "FIXED"}
+FUNDED_ATTACH_MODES = {"NEW_OR_RESET_ACCOUNT", "EXISTING_IN_PROGRESS"}
 
 
 def _upper(value: Optional[str]) -> Optional[str]:
@@ -217,6 +220,15 @@ class StrategyDeploymentCreate(LiveBaseModel):
     segment: Optional[str] = None
     timeframe: str = Field(..., min_length=1, max_length=50)
     mode: str = Field(default="DEMO")
+    account_policy_type: str = Field(default="STANDARD")
+    funded_profile_id: Optional[UUID] = None
+    funded_phase_number: Optional[int] = None
+    funded_risk_mode: Optional[str] = None
+    funded_fixed_risk_pct: Optional[Decimal] = None
+    funded_safety_buffer_pct: Decimal = Decimal("0.05")
+    funded_configured_max_risk_pct: Optional[Decimal] = None
+    funded_attach_mode: Optional[str] = None
+    funded_initialization_json: Optional[dict[str, Any]] = None
     capital: Optional[Decimal] = None
     risk_per_trade: Decimal = Decimal("0.01")
     rr_ratio: Decimal = Decimal("2")
@@ -246,6 +258,45 @@ class StrategyDeploymentCreate(LiveBaseModel):
             raise ValueError(f"Invalid mode. Allowed: {sorted(BROKER_MODES)}")
         return value
 
+    @field_validator("account_policy_type")
+    @classmethod
+    def validate_policy(cls, value: str):
+        value = _upper(value)
+        if value not in ACCOUNT_POLICY_TYPES:
+            raise ValueError(f"Invalid account_policy_type. Allowed: {sorted(ACCOUNT_POLICY_TYPES)}")
+        return value
+
+    @field_validator("funded_risk_mode", "funded_attach_mode")
+    @classmethod
+    def validate_funded_enums(cls, value: Optional[str], info):
+        if value is None:
+            return value
+        value = _upper(value)
+        allowed = FUNDED_RISK_MODES if info.field_name == "funded_risk_mode" else FUNDED_ATTACH_MODES
+        if value not in allowed:
+            raise ValueError(f"Invalid {info.field_name}. Allowed: {sorted(allowed)}")
+        return value
+
+    @model_validator(mode="after")
+    def validate_funded_configuration(self):
+        if self.account_policy_type == "STANDARD":
+            return self
+        if self.mode not in {"DEMO", "LIVE"}:
+            raise ValueError("FUNDED deployments require DEMO or LIVE broker mode")
+        if self.funded_profile_id is None:
+            raise ValueError("funded_profile_id is required for FUNDED deployments")
+        if self.funded_risk_mode not in FUNDED_RISK_MODES:
+            raise ValueError("funded_risk_mode must be DYNAMIC or FIXED for FUNDED deployments")
+        if self.funded_risk_mode == "FIXED" and (self.funded_fixed_risk_pct is None or self.funded_fixed_risk_pct <= 0):
+            raise ValueError("funded_fixed_risk_pct must be greater than 0 for FIXED funded risk")
+        if self.funded_safety_buffer_pct < 0 or self.funded_safety_buffer_pct >= 1:
+            raise ValueError("funded_safety_buffer_pct must be >= 0 and < 1")
+        if self.funded_configured_max_risk_pct is not None and (self.funded_configured_max_risk_pct <= 0 or self.funded_configured_max_risk_pct > Decimal("0.10")):
+            raise ValueError("funded_configured_max_risk_pct must be > 0 and <= 10% when provided")
+        if self.funded_fixed_risk_pct is not None and self.funded_fixed_risk_pct > Decimal("0.10"):
+            raise ValueError("funded_fixed_risk_pct must be <= 10%")
+        return self
+
 
 class StrategyDeploymentUpdate(LiveBaseModel):
     broker_account_id: Optional[UUID] = None
@@ -258,6 +309,15 @@ class StrategyDeploymentUpdate(LiveBaseModel):
     timeframe: Optional[str] = None
     mode: Optional[str] = None
     status: Optional[str] = None
+    account_policy_type: Optional[str] = None
+    funded_profile_id: Optional[UUID] = None
+    funded_phase_number: Optional[int] = None
+    funded_risk_mode: Optional[str] = None
+    funded_fixed_risk_pct: Optional[Decimal] = None
+    funded_safety_buffer_pct: Optional[Decimal] = None
+    funded_configured_max_risk_pct: Optional[Decimal] = None
+    funded_attach_mode: Optional[str] = None
+    funded_initialization_json: Optional[dict[str, Any]] = None
     capital: Optional[Decimal] = None
     risk_per_trade: Optional[Decimal] = None
     rr_ratio: Optional[Decimal] = None
@@ -279,16 +339,76 @@ class StrategyDeploymentUpdate(LiveBaseModel):
     upstox_order_confirmed: Optional[bool] = None
     tradingview_secret: Optional[str] = None
 
-    @field_validator("mode", "status")
+    @field_validator("mode", "status", "account_policy_type", "funded_risk_mode", "funded_attach_mode")
     @classmethod
     def normalize_enums(cls, value: Optional[str], info):
         if value is None:
             return value
         value = _upper(value)
-        allowed = BROKER_MODES if info.field_name == "mode" else DEPLOYMENT_STATUSES
+        if info.field_name == "mode":
+            allowed = BROKER_MODES
+        elif info.field_name == "status":
+            allowed = DEPLOYMENT_STATUSES
+        elif info.field_name == "account_policy_type":
+            allowed = ACCOUNT_POLICY_TYPES
+        elif info.field_name == "funded_risk_mode":
+            allowed = FUNDED_RISK_MODES
+        else:
+            allowed = FUNDED_ATTACH_MODES
         if value not in allowed:
             raise ValueError(f"Invalid {info.field_name}. Allowed: {sorted(allowed)}")
         return value
+
+
+class FundedRiskTierPlanInput(LiveBaseModel):
+    id: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=120)
+    sort_order: int = Field(..., ge=1)
+    min_account_return_pct: Optional[Decimal] = None
+    max_account_return_pct: Optional[Decimal] = None
+    risk_percent: Decimal = Field(..., gt=0, le=Decimal("0.10"))
+    is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.min_account_return_pct is not None and self.max_account_return_pct is not None and self.min_account_return_pct >= self.max_account_return_pct:
+            raise ValueError("min_account_return_pct must be less than max_account_return_pct")
+        return self
+
+
+class FundedRiskPlanUpdate(LiveBaseModel):
+    risk_mode: str
+    fixed_risk_pct: Optional[Decimal] = None
+    safety_buffer_pct: Decimal = Decimal("0.05")
+    configured_max_risk_pct: Optional[Decimal] = None
+    risk_tiers: list[FundedRiskTierPlanInput] = Field(default_factory=list)
+
+    @field_validator("risk_mode")
+    @classmethod
+    def normalize_risk_mode(cls, value: str):
+        value = _upper(value)
+        if value not in FUNDED_RISK_MODES:
+            raise ValueError(f"Invalid risk_mode. Allowed: {sorted(FUNDED_RISK_MODES)}")
+        return value
+
+    @model_validator(mode="after")
+    def validate_plan(self):
+        if self.safety_buffer_pct < 0 or self.safety_buffer_pct >= 1:
+            raise ValueError("safety_buffer_pct must be >= 0 and < 1")
+        if self.risk_mode == "FIXED" and (self.fixed_risk_pct is None or self.fixed_risk_pct <= 0):
+            raise ValueError("fixed_risk_pct must be greater than 0 for FIXED mode")
+        if self.risk_mode == "DYNAMIC" and not [x for x in self.risk_tiers if x.is_active]:
+            raise ValueError("At least one active risk tier is required for DYNAMIC mode")
+        if self.fixed_risk_pct is not None and self.fixed_risk_pct > Decimal("0.10"):
+            raise ValueError("fixed_risk_pct must be <= 10%")
+        if self.configured_max_risk_pct is not None and (self.configured_max_risk_pct <= 0 or self.configured_max_risk_pct > Decimal("0.10")):
+            raise ValueError("configured_max_risk_pct must be > 0 and <= 10% when provided")
+        return self
+
+
+class FundedPhaseAdvanceRequest(LiveBaseModel):
+    broker_account_id: Optional[UUID] = None
+    confirm: bool = False
 
 
 class StrategyDeploymentOut(LiveBaseModel):
@@ -304,6 +424,17 @@ class StrategyDeploymentOut(LiveBaseModel):
     segment: Optional[str] = None
     timeframe: str
     mode: str
+    account_policy_type: str = "STANDARD"
+    funded_profile_id: Optional[UUID] = None
+    funded_profile_snapshot: Optional[dict[str, Any]] = None
+    funded_risk_plan_snapshot: Optional[dict[str, Any] | list[Any]] = None
+    funded_risk_mode: Optional[str] = None
+    funded_fixed_risk_pct: Optional[Decimal] = None
+    funded_safety_buffer_pct: Optional[Decimal] = None
+    funded_configured_max_risk_pct: Optional[Decimal] = None
+    funded_phase_number: Optional[int] = None
+    funded_attach_mode: Optional[str] = None
+    funded_initialization_json: Optional[dict[str, Any]] = None
     status: str
     capital: Decimal
     risk_per_trade: Decimal

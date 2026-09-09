@@ -22,6 +22,14 @@ from ..live.order_preview_service import build_live_order_preview, find_live_ins
 from ..trading.guardrails import validate_instrument_spec
 from ..live.trading_safety import day_start_utc, get_platform_trading_settings
 from ..live.compatibility_service import run_live_compatibility_check
+from ..live.funded_guard_service import (
+    _rule_clock,
+    broker_funded_state,
+    current_funded_trades_count,
+    evaluate_funded_guard,
+    funded_status_payload,
+    validate_risk_tiers,
+)
 
 PASS = "PASS"
 FAIL = "FAIL"
@@ -169,7 +177,27 @@ async def check_risk_preview_ready(db: AsyncSession, deployment: StrategyDeploym
     if deployment.broker_account_id:
         broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
         broker_code = get_broker_code(broker) if broker is not None else None
-    preview = await build_live_order_preview(db, deployment=deployment, broker_code=broker_code, side="BUY", preview_mode="AUTO_LATEST_PRICE", strict_instrument=True)
+    funded_decision = None
+    if str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED":
+        funded_decision = await evaluate_funded_guard(
+            db,
+            deployment,
+            purpose="READINESS_PREVIEW",
+            persist_decision=False,
+            auto_pause_on_breach=False,
+        )
+
+    preview = await build_live_order_preview(
+        db,
+        deployment=deployment,
+        broker_code=broker_code,
+        side="BUY",
+        preview_mode="AUTO_LATEST_PRICE",
+        strict_instrument=True,
+        funded_guard=funded_decision.to_dict() if funded_decision is not None else None,
+        risk_amount_override=funded_decision.effective_risk_amount if funded_decision is not None else None,
+        risk_percent_override=funded_decision.effective_risk_pct if funded_decision is not None else None,
+    )
     ok = str(preview.get("validation_status") or preview.get("status") or "").upper() == "OK"
     entry_plan = preview.get("entry_plan") or {}
     entry_ok = entry_plan.get("status") == "OK"
@@ -187,6 +215,83 @@ async def check_live_compatibility_ready(db: AsyncSession, deployment: StrategyD
     message = result.get("summary") or "Live compatibility checked."
     checks = result.get("checks") or []
     return [_check("live_compatibility_ok", "Live Compatibility", PASS if status == PASS else WARNING if status == WARNING else FAIL, message, "Open Compatibility", f"/live-trading/{deployment.id}") | {"data": {"checks": checks}}]
+
+async def check_funded_ready(db: AsyncSession, deployment: StrategyDeployment) -> list[dict[str, Any]]:
+    if str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() != "FUNDED":
+        return [_check("funded_policy_ready", "Funded policy", PASS, "Standard broker deployment; funded guard is not required.")]
+
+    checks: list[dict[str, Any]] = []
+    snapshot = getattr(deployment, "funded_profile_snapshot", None) or {}
+    checks.append(_check(
+        "funded_profile_attached", "Funded profile attached",
+        PASS if getattr(deployment, "funded_profile_id", None) and snapshot else FAIL,
+        "Funded profile snapshot is attached and immutable for this deployment." if snapshot else "Funded profile snapshot is missing.",
+        "Open Settings", f"/live-trading/{deployment.id}/settings",
+    ))
+
+    profile_snapshot = snapshot.get("profile") or {} if isinstance(snapshot, dict) else {}
+    phases = snapshot.get("phases") or [] if isinstance(snapshot, dict) else []
+    phase_number = getattr(deployment, "funded_phase_number", None)
+    challenge_type = str(profile_snapshot.get("challenge_type") or "").upper()
+    phase_ok = challenge_type == "INSTANT" or not phases or (phase_number is not None and any(int(p.get("phase_number") or 0) == int(phase_number) for p in phases))
+    checks.append(_check(
+        "funded_phase_valid", "Funded phase valid", PASS if phase_ok else FAIL,
+        f"Funded phase {phase_number} is valid." if phase_ok and phase_number is not None else ("Instant funded stage is valid." if phase_ok else "Selected funded phase is invalid or missing."),
+        "Open Settings", f"/live-trading/{deployment.id}/settings",
+    ))
+
+    risk_mode = str(getattr(deployment, "funded_risk_mode", "DYNAMIC") or "DYNAMIC").upper()
+    risk_ok = True
+    risk_message = f"Funded risk mode is {risk_mode}."
+    try:
+        if risk_mode == "DYNAMIC":
+            validate_risk_tiers(getattr(deployment, "funded_risk_plan_snapshot", None) or [])
+        elif risk_mode == "FIXED":
+            fixed = _dec(getattr(deployment, "funded_fixed_risk_pct", None), "0")
+            if fixed <= 0:
+                raise ValueError("Fixed funded risk must be greater than zero.")
+        else:
+            raise ValueError("Unsupported funded risk mode.")
+    except Exception as exc:
+        risk_ok = False
+        risk_message = str(exc)
+    checks.append(_check("funded_risk_plan_valid", "Funded risk plan valid", PASS if risk_ok else FAIL, risk_message, "Open Settings", f"/live-trading/{deployment.id}/settings"))
+
+    broker = None
+    if deployment.broker_account_id:
+        broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
+    broker_state = broker_funded_state(broker) if broker is not None else {"fresh": False, "balance": None, "equity": None, "currency": None}
+    balance_ok = broker_state.get("balance") is not None and _dec(broker_state.get("balance")) > 0
+    equity_ok = broker_state.get("equity") is not None and _dec(broker_state.get("equity")) > 0
+    fresh_ok = bool(broker_state.get("fresh"))
+    expected_currency = str(profile_snapshot.get("account_currency") or "USD").upper()
+    actual_currency = str(broker_state.get("currency") or "").upper()
+    currency_ok = bool(actual_currency) and actual_currency == expected_currency
+
+    try:
+        _, rule_timezone, daily_reset_time = _rule_clock(deployment)
+        rule_clock_ok = True
+        rule_clock_message = f"Funded rule day uses {rule_timezone} reset at {daily_reset_time}."
+    except Exception as exc:
+        rule_clock_ok = False
+        rule_clock_message = str(exc)
+
+    checks.extend([
+        _check("funded_broker_balance_fresh", "Funded broker balance fresh", PASS if (fresh_ok and balance_ok) else FAIL, f"Broker balance: {broker_state.get('balance')}." if fresh_ok and balance_ok else "Fresh positive broker balance is required. Funded fallback capital is forbidden."),
+        _check("funded_broker_equity_fresh", "Funded broker equity fresh", PASS if (fresh_ok and equity_ok) else FAIL, f"Broker equity: {broker_state.get('equity')}." if fresh_ok and equity_ok else "Fresh positive broker equity is required before funded entries."),
+        _check("funded_broker_currency_matches", "Funded broker currency matches", PASS if currency_ok else FAIL, f"Broker/profile currency: {actual_currency}." if currency_ok else f"Broker currency {actual_currency or 'UNKNOWN'} does not match funded profile currency {expected_currency}."),
+        _check("funded_rule_clock_valid", "Funded rule timezone/reset valid", PASS if rule_clock_ok else FAIL, rule_clock_message, "Open Settings", f"/live-trading/{deployment.id}/settings"),
+    ])
+
+    status = await funded_status_payload(db, deployment)
+    state = status.get("guard") or {}
+    initialized = bool(state) and str(state.get("status") or "NOT_INITIALIZED").upper() != "NOT_INITIALIZED"
+    guard_status = str(state.get("status") or "NOT_INITIALIZED").upper()
+    guard_ok = guard_status not in {"BLOCKED", "FAILED", "PASS_READY", "AWAITING_PROVIDER_TRANSITION"}
+    checks.append(_check("funded_state_initialized", "Funded state initialized", PASS if initialized else FAIL, f"Funded guard state is {guard_status}." if initialized else "Funded runtime state is not initialized. Start/refresh with a fresh broker sync."))
+    checks.append(_check("funded_guard_not_breached", "Funded DD guard not breached", PASS if (initialized and guard_ok) else FAIL, state.get("reason") or (f"Funded guard is {guard_status}." if initialized else "Funded guard is not initialized.")))
+    return checks
+
 
 async def check_runner_ready(db: AsyncSession, deployment: StrategyDeployment) -> list[dict[str, Any]]:
     auto_trade = bool(getattr(deployment, "auto_trade_enabled", False))
@@ -221,22 +326,32 @@ async def check_platform_and_limits(db: AsyncSession, deployment: StrategyDeploy
         platform_status = PASS
         platform_msg = f"{mode} mode is allowed by platform settings."
 
-    start = day_start_utc()
-    orders_today = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment.id, LiveOrder.created_at >= start))).scalar() or 0)
+    is_funded = str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED"
     max_trades = int(getattr(deployment, "max_trades_per_day", 0) or 0)
-    max_trades_ok = max_trades <= 0 or orders_today < max_trades
-
-    # Live orders do not persist realized PnL directly in all schema versions; keep this guard
-    # conservative for Phase 3A and let the execution engine enforce real PnL limits later.
-    pnl = Decimal("0")
-    max_loss = _dec(getattr(deployment, "max_daily_loss", None), "0")
-    loss_ok = max_loss <= 0 or pnl >= -max_loss
+    if is_funded:
+        # Funded max-trades/day follows the provider rule day rather than UTC midnight.
+        orders_today = await current_funded_trades_count(db, deployment)
+        max_trades_ok = max_trades <= 0 or orders_today < max_trades
+        # Prop-firm daily/max drawdown is evaluated by check_funded_ready. Do not let
+        # the legacy absolute max_daily_loss field masquerade as a funded rule.
+        loss_ok = True
+        loss_message = "Funded daily/max drawdown is checked by the funded guard using the profile rule day."
+    else:
+        start = day_start_utc()
+        orders_today = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment.id, LiveOrder.created_at >= start))).scalar() or 0)
+        max_trades_ok = max_trades <= 0 or orders_today < max_trades
+        # Live orders do not persist realized PnL directly in all schema versions; keep this guard
+        # conservative for Standard deployments and let the execution engine enforce real PnL limits later.
+        pnl = Decimal("0")
+        max_loss = _dec(getattr(deployment, "max_daily_loss", None), "0")
+        loss_ok = max_loss <= 0 or pnl >= -max_loss
+        loss_message = "Daily loss guard is OK." if loss_ok else "Daily loss guard has been exceeded."
 
     return [
         _check("platform_mode_allowed", "Platform mode allowed", platform_status, platform_msg),
         _check("global_kill_switch_off", "Global kill switch off", PASS if not getattr(settings, "global_kill_switch", False) else FAIL, "Global kill switch is OFF." if not getattr(settings, "global_kill_switch", False) else "Global kill switch is ON."),
-        _check("max_daily_loss_not_exceeded", "Max daily loss not exceeded", PASS if loss_ok else FAIL, "Daily loss guard is OK." if loss_ok else "Daily loss guard has been exceeded.", "Open Settings", f"/live-trading/{deployment.id}/settings"),
-        _check("max_trades_not_exceeded", "Max trades not exceeded", PASS if max_trades_ok else FAIL, f"Orders today: {orders_today}/{max_trades or '∞'}." if max_trades_ok else f"Max trades per day reached: {orders_today}/{max_trades}.", "Open Settings", f"/live-trading/{deployment.id}/settings"),
+        _check("max_daily_loss_not_exceeded", "Max daily loss not exceeded", PASS if loss_ok else FAIL, loss_message, "Open Settings", f"/live-trading/{deployment.id}/settings"),
+        _check("max_trades_not_exceeded", "Max trades not exceeded", PASS if max_trades_ok else FAIL, f"Trades in current {'funded rule day' if is_funded else 'UTC day'}: {orders_today}/{max_trades or '∞'}." if max_trades_ok else f"Max trades per day reached: {orders_today}/{max_trades}.", "Open Settings", f"/live-trading/{deployment.id}/settings"),
     ]
 
 
@@ -258,12 +373,13 @@ async def build_live_deployment_readiness(db: AsyncSession, deployment_id: UUID,
         ("Market data ready", lambda: check_market_data_ready(db, deployment), "latest_candles_available"),
         ("Risk preview ready", lambda: check_risk_preview_ready(db, deployment), "risk_preview_ok"),
         ("Live compatibility ready", lambda: check_live_compatibility_ready(db, deployment), "live_compatibility_ok"),
+        ("Funded guard ready", lambda: check_funded_ready(db, deployment), "funded_policy_ready"),
         ("Runner ready", lambda: check_runner_ready(db, deployment), "auto_runner_enabled"),
         ("Platform limits ready", lambda: check_platform_and_limits(db, deployment), "platform_mode_allowed"),
     ]:
         checks.extend(await _safe(label, fn, fallback))
 
-    blocking = {"deployment_exists", "deployment_status_running", "strategy_public", "strategy_deployable_for_mode", "broker_connected", "instrument_spec_exists", "instrument_spec_valid", "latest_entry_plan_ok", "risk_preview_ok", "live_compatibility_ok", "platform_mode_allowed", "global_kill_switch_off", "max_daily_loss_not_exceeded", "max_trades_not_exceeded", "no_blocking_runner_error", "no_blocking_broker_error", "duplicate_protection_enabled"}
+    blocking = {"deployment_exists", "deployment_status_running", "strategy_public", "strategy_deployable_for_mode", "broker_connected", "instrument_spec_exists", "instrument_spec_valid", "latest_entry_plan_ok", "risk_preview_ok", "live_compatibility_ok", "platform_mode_allowed", "global_kill_switch_off", "max_daily_loss_not_exceeded", "max_trades_not_exceeded", "no_blocking_runner_error", "no_blocking_broker_error", "duplicate_protection_enabled", "funded_profile_attached", "funded_phase_valid", "funded_risk_plan_valid", "funded_broker_balance_fresh", "funded_broker_equity_fresh", "funded_broker_currency_matches", "funded_rule_clock_valid", "funded_state_initialized", "funded_guard_not_breached"}
     has_blocking_fail = any(c.get("status") == FAIL and c.get("key") in blocking for c in checks)
     has_warning = any(c.get("status") == WARNING for c in checks)
     ready_to_auto_trade = not has_blocking_fail and bool(getattr(deployment, "auto_trade_enabled", False)) and bool(getattr(deployment, "auto_runner_enabled", False))

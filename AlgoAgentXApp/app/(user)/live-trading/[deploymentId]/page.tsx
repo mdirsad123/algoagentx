@@ -13,22 +13,24 @@ import { OrderCalculationAuditPanel } from "@/components/live/OrderCalculationAu
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
 import type { BrokerAccount, LiveCandleSnapshot, FullDryTestResponse, LiveDeploymentSummary, LiveReadiness, LiveReadinessCheck, StrategyDeployment } from "@/types/live-trading";
+import { formatDateTimeIST } from "@/lib/timezone";
 
-const date = (value?: string | null) => (value ? new Date(value).toLocaleString() : "—");
+const date = (value?: string | null) => formatDateTimeIST(value);
 const num = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
+const pct = (value: unknown) => value === null || value === undefined || value === "" ? "—" : `${(Number(value) * 100).toFixed(2)}%`;
 
 const openedAtDisplay = (p: { opened_at?: string | null; broker_opened_at?: string | null; broker_opened_at_raw?: string | null }) => {
   const broker = p.broker_opened_at ? date(p.broker_opened_at) : p.broker_opened_at_raw || null;
   const local = date(p.opened_at);
   if (broker) {
     return (
-      <div className="space-y-0.5 text-xs leading-5" title="MT5/broker time may differ from your browser local time.">
-        <div>MT5: {broker}</div>
-        <div className="text-purple-300">Local: {local}</div>
+      <div className="space-y-0.5 text-xs leading-5" title="Normalized display timezone: Asia/Kolkata (UTC+05:30).">
+        <div>Broker → IST: {broker}</div>
+        <div className="text-purple-300">AlgoAgentX IST: {local}</div>
       </div>
     );
   }
-  return <span title="Shown in your browser local time.">Local: {local}</span>;
+  return <span title="Shown in Asia/Kolkata (UTC+05:30).">IST: {local}</span>;
 };
 
 
@@ -78,7 +80,7 @@ function LiveFlowPanel() {
     "Refresh candles",
     "Strategy checks latest closed candle",
     "If signal is BUY/SELL, risk engine calculates lot/qty",
-    "Order is sent to the approved broker account",
+    "Order is sent to the connected broker account",
     "Position is monitored and synced",
   ];
   return (
@@ -104,7 +106,7 @@ function LiveFlowPanel() {
         <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">Broker Sync</span> reads positions/orders from broker. It does not place new orders.</div>
         <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">Dry Run</span> tests strategy signal without placing order.</div>
         <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">DEMO mode</span> sends orders to your connected demo broker.</div>
-        <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">LIVE mode</span> sends orders only after broker approval, readiness, and safety checks pass.</div>
+        <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">LIVE mode</span> sends orders only after broker connection, readiness, and safety checks pass.</div>
       </div>
     </GlassCard>
   );
@@ -417,6 +419,41 @@ export default function LiveDeploymentDetailPage() {
 
       <ReadinessChecklist readiness={readiness} onRunFullDryTest={runFullDryTest} dryTestDisabled={runnerBusy || !isRunning || isPaperDeprecated || isBrokerBlocked} />
 
+      {summary.funded && (
+        <GlassCard className="mb-6 p-6" hoverEffect={false}>
+          <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-xl font-bold text-lime-300">Funded Account Guard</h2>
+                <Badge className="border-lime-400/30 bg-lime-400/20 text-lime-100">FUNDED</Badge>
+                <StatusBadge value={summary.funded.guard?.status || "NOT_INITIALIZED"} />
+              </div>
+              <p className="mt-1 text-sm text-purple-200">Server-side prop-account protection using fresh broker balance/equity. Standard strategy logic remains unchanged.</p>
+              {summary.funded.guard?.reason && <p className="mt-2 rounded-xl border border-yellow-400/20 bg-yellow-500/10 p-3 text-xs text-yellow-100">{summary.funded.guard.reason}</p>}
+            </div>
+            <div className="text-right text-xs text-purple-200">
+              <div>{summary.funded.profile?.provider_name || "Funded profile"} · {summary.funded.profile?.challenge_type || "—"}</div>
+              <div>{summary.funded.phase_number ? `Phase ${summary.funded.phase_number}` : "Instant / payout stage"}</div>
+            </div>
+          </div>
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+            <MetricCard label="Broker Balance" value={formatOptionalMoney(summary.funded.guard?.balance ?? summary.funded.broker?.balance, summary.funded.broker?.currency || summary.funded.profile?.account_currency)} />
+            <MetricCard label="Broker Equity" value={formatOptionalMoney(summary.funded.guard?.equity ?? summary.funded.broker?.equity, summary.funded.broker?.currency || summary.funded.profile?.account_currency)} />
+            <MetricCard label="Daily DD Remaining" value={formatOptionalMoney(summary.funded.guard?.remaining_daily_capacity, summary.funded.broker?.currency || summary.funded.profile?.account_currency)} />
+            <MetricCard label="Max DD Remaining" value={formatOptionalMoney(summary.funded.guard?.remaining_max_capacity, summary.funded.broker?.currency || summary.funded.profile?.account_currency)} />
+            <MetricCard label="Risk Tier" value={summary.funded.guard?.risk_tier || (summary.funded.risk_mode === "FIXED" ? "Fixed" : "—")} />
+            <MetricCard label="Effective Risk" value={pct(summary.funded.guard?.effective_risk_pct)} />
+            <MetricCard label="Requested Risk" value={pct(summary.funded.guard?.requested_risk_pct)} />
+            <MetricCard label="Target Progress" value={pct(summary.funded.guard?.target_progress_pct)} />
+            <MetricCard label="Trading Days" value={String(summary.funded.guard?.trading_days ?? 0)} />
+            <MetricCard label="Qualifying Days" value={String(summary.funded.guard?.qualifying_days ?? 0)} />
+            <MetricCard label="Daily Floor" value={formatOptionalMoney(summary.funded.guard?.daily_floor, summary.funded.broker?.currency || summary.funded.profile?.account_currency)} />
+            <MetricCard label="Max DD Floor" value={formatOptionalMoney(summary.funded.guard?.max_floor, summary.funded.broker?.currency || summary.funded.profile?.account_currency)} />
+          </div>
+          {summary.funded.guard?.limiting_rule && <p className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3 text-sm text-cyan-100">Risk reduced by funded guard: <span className="font-semibold">{summary.funded.guard.limiting_rule}</span>. Requested {pct(summary.funded.guard.requested_risk_pct)}, effective {pct(summary.funded.guard.effective_risk_pct)}.</p>}
+        </GlassCard>
+      )}
+
       <GlassCard className="mb-6 p-6" hoverEffect={false}>
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
           <div>
@@ -444,6 +481,7 @@ export default function LiveDeploymentDetailPage() {
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <StatusBadge value={summary.deployment?.status || deployment.status} />
           <Badge className="border-cyan-400/30 bg-cyan-400/20 text-cyan-100">{mode}</Badge>
+          {summary.funded && <Badge className="border-lime-400/30 bg-lime-400/20 text-lime-100">FUNDED</Badge>}
           <Badge className={summary.deployment?.auto_runner_enabled ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : "border-yellow-400/30 bg-yellow-400/20 text-yellow-100"}>Auto Runner {summary.deployment?.auto_runner_enabled ? "ON" : "OFF"}</Badge>
           <span className="text-sm text-purple-200">Last signal: {date(summary.deployment?.last_signal_at || deployment.last_signal_at)}</span>
         </div>
@@ -565,17 +603,25 @@ export default function LiveDeploymentDetailPage() {
                 <h2 className="text-xl font-bold text-lime-300">Market Data Snapshot</h2>
                 <p className="mt-1 text-sm text-purple-200">Latest closed candles stored from MT5 or UPSTOX for the live strategy runner. No chart and no fake data.</p>
               </div>
-              <Button disabled={candleBusy || mode !== "DEMO" || !broker || broker.status !== "CONNECTED"} onClick={refreshCandles} className="gap-2 bg-cyan-500 text-slate-950 hover:bg-cyan-400"><RefreshCw className="h-4 w-4" /> Refresh Candles</Button>
+              <Button disabled={candleBusy || !["DEMO", "LIVE"].includes(mode) || !broker || broker.status !== "CONNECTED"} onClick={refreshCandles} className="gap-2 bg-cyan-500 text-slate-950 hover:bg-cyan-400"><RefreshCw className="h-4 w-4" /> Refresh Candles</Button>
             </div>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-6">
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4 xl:grid-cols-8">
               <MetricCard label="Data Source" value={candleSource} />
               <MetricCard label="Deployment Symbol" value={candleSnapshot?.symbol || summary.deployment?.instrument || deployment.instrument} />
               <MetricCard label={isUpstoxBroker ? "Instrument Key" : "Broker Symbol"} value={candleSnapshot?.instrument_key || candleSnapshot?.resolved_symbol || deployment.instrument_key || deployment.broker_symbol || candleSnapshot?.symbol || summary.deployment?.instrument || deployment.instrument} />
               <MetricCard label="Timeframe" value={candleSnapshot?.timeframe || summary.deployment?.timeframe || deployment.timeframe} />
               <MetricCard label="Candles Stored" value={String(candleSnapshot?.stored_count ?? 0)} />
               <MetricCard label="Latest Close" value={num(candleSnapshot?.latest_close)} />
+              <MetricCard label="Closed At" value={date(candleSnapshot?.latest_candle_close_time)} />
+              <MetricCard label="Ingest Latency" value={candleSnapshot?.ingestion_latency_seconds == null ? "-" : `${Number(candleSnapshot.ingestion_latency_seconds).toFixed(1)}s`} />
             </div>
-            <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-purple-100">Latest candle time: <span className="font-semibold text-white">{date(candleSnapshot?.latest_candle_time)}</span></div>
+            <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-purple-100">
+              Candle OPEN time: <span className="font-semibold text-white">{date(candleSnapshot?.latest_candle_time)}</span>
+              <span className="mx-2 text-purple-400">•</span>
+              Closed at: <span className="font-semibold text-white">{date(candleSnapshot?.latest_candle_close_time)}</span>
+              <span className="mx-2 text-purple-400">•</span>
+              Next close expected: <span className="font-semibold text-white">{date(candleSnapshot?.next_closed_candle_expected_at)}</span>
+            </div>
             {latestCandles.length === 0 ? <div className="mt-4"><NoRows label="No broker candles stored yet. For Upstox, make sure instrument_key is set. For MT5, open Market Watch → Show All and open the symbol chart once." /></div> : (
               <div className="responsive-table-wrapper mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="text-purple-200"><tr><th>Time</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody className="divide-y divide-white/10">{latestCandles.map((candle, index) => <tr key={candle.id || `${candle.candle_time}-${index}`} className="text-purple-50"><td className="py-3">{date(candle.candle_time)}</td><td>{num(candle.open)}</td><td>{num(candle.high)}</td><td>{num(candle.low)}</td><td>{num(candle.close)}</td><td>{num(candle.volume)}</td></tr>)}</tbody></table></div>
             )}

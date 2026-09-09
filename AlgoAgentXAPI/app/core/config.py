@@ -96,9 +96,17 @@ class Settings(BaseSettings):
 
     # Live auto strategy runner
     live_runner_enabled: bool = Field(default=True, description="Enable background live strategy auto runner")
-    live_runner_interval_seconds: int = Field(default=10, description="Auto runner loop interval in seconds")
+    live_runner_interval_seconds: int = Field(default=1, description="Auto runner scheduler scan interval in seconds; 1s keeps candle-close execution latency low")
     live_broker_sync_enabled: bool = Field(default=True, description="Enable background broker auto sync loop")
     live_broker_sync_loop_seconds: int = Field(default=5, description="Broker auto sync scheduler loop interval in seconds")
+
+    # Real-time alerting / Telegram (Phase 1)
+    telegram_bot_token: str = ""
+    telegram_default_chat_id: str = ""
+    telegram_timeout_seconds: int = 10
+    alert_worker_heartbeat_ttl_seconds: int = 30
+    alert_feed_stale_seconds: int = 15
+    alert_quote_poll_interval_ms: int = 250
 
     # Razorpay Payment Configuration
     razorpay_key_id: Optional[str] = None

@@ -20,6 +20,7 @@ import {
 import axiosInstance from "@/lib/axios";
 import RazorpayScript from "@/components/shared/RazorpayScript";
 import { toast } from "sonner";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 interface CreditBalance {
   user_id: string;
@@ -335,7 +336,7 @@ export default function CreditsWalletPage() {
   const formatUsdPackLabel = (pack: TopUpPack): string => formatCurrency(getPackUsdAmount(pack));
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
+    return formatDateTimeIST(dateString);
   };
 
   const getTransactionIcon = (type: string) => {
@@ -423,7 +424,7 @@ export default function CreditsWalletPage() {
                 <div className="text-right">
                   <div className="text-sm text-purple-100/60">Last updated</div>
                   <div className="text-white font-medium">
-                    {lastUpdated ? lastUpdated.toLocaleTimeString() : 'Never'}
+                    {lastUpdated ? formatDateTimeIST(lastUpdated) : 'Never'}
                   </div>
                   <Button
                     variant="outline"

@@ -13,7 +13,7 @@ class AgentApiClient:
         self.session.headers.update({
             "Authorization": f"Bearer {self.agent_token}",
             "Content-Type": "application/json",
-            "User-Agent": "AlgoAgentXMT5Agent/0.1.0",
+            "User-Agent": "AlgoAgentXMT5Agent/0.4.1-alerts-symbols",
         })
 
     def _url(self, path: str) -> str:
@@ -37,6 +37,18 @@ class AgentApiClient:
         response = self.session.get(self._url("/api/v1/mt5-agent/commands"), timeout=self.timeout)
         data = self._unwrap(response)
         return data if isinstance(data, list) else []
+
+    def get_alert_symbols(self) -> list[str]:
+        response = self.session.get(self._url("/api/v1/mt5-agent/alert-symbols"), timeout=self.timeout)
+        data = self._unwrap(response)
+        symbols = data.get("symbols") if isinstance(data, dict) else []
+        return [str(x).strip() for x in (symbols or []) if str(x).strip()]
+
+    def send_quotes(self, quotes: list[dict[str, Any]]) -> Any:
+        if not quotes:
+            return {"accepted": 0}
+        response = self.session.post(self._url("/api/v1/mt5-agent/quotes"), json={"quotes": quotes}, timeout=self.timeout)
+        return self._unwrap(response)
 
     def send_command_result(
         self,

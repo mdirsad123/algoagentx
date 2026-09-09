@@ -33,6 +33,7 @@ async def _write(db: AsyncSession, deployment: StrategyDeployment, event_type: s
 
 async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDeployment, signal: LiveSignal) -> RiskResult:
     await _write(db, deployment, "RISK_CHECK_STARTED", f"Risk check started for {signal.signal_type}", metadata={"signal_id": str(signal.id)})
+    is_funded = str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED"
 
     if deployment.status != "RUNNING":
         return RiskResult(False, f"Deployment is {deployment.status}")
@@ -49,25 +50,47 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
     if signal.price is None or to_decimal(signal.price) <= 0:
         return RiskResult(False, "Signal price is required for paper execution")
 
-    day_start = datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
-    orders_today = (await db.execute(
-        select(func.count(LiveOrder.id)).where(
-            LiveOrder.deployment_id == deployment.id,
-            LiveOrder.created_at >= day_start,
-            LiveOrder.status.in_(["FILLED", "PLACED", "PENDING_DEMO"]),
-        )
-    )).scalar() or 0
-    if int(orders_today) >= int(deployment.max_trades_per_day or 10) and signal.signal_type != "EXIT":
-        return RiskResult(False, "Max trades per day reached")
+    # Risk-reducing actions are resolved before entry-only limits. A daily loss
+    # or funded guard may block NEW risk, but must never prevent an EXIT.
+    early_open_positions = await get_open_positions(db, deployment.id)
+    if signal.signal_type == "EXIT":
+        if not early_open_positions:
+            return RiskResult(False, "No open position to close")
+        return RiskResult(True, action="CLOSE_ONLY")
+    requested_side_early = "LONG" if signal.signal_type == "BUY" else "SHORT"
+    if early_open_positions:
+        latest_early = early_open_positions[-1]
+        if latest_early.side == requested_side_early:
+            return RiskResult(False, f"Already in {requested_side_early} position")
+        if is_funded:
+            # Close first. Execution performs a fresh funded guard before the reverse entry.
+            return RiskResult(True, action="CLOSE_AND_OPEN")
 
-    realized_today = to_decimal((await db.execute(
-        select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(
-            LivePosition.deployment_id == deployment.id,
-            LivePosition.closed_at >= day_start,
-        )
-    )).scalar())
-    if realized_today <= (to_decimal(deployment.max_daily_loss, "5000") * Decimal("-1")):
-        return RiskResult(False, "Max daily loss reached")
+    # STANDARD keeps the existing UTC-day deployment safety caps unchanged.
+    # FUNDED uses its profile-defined rule day and drawdown engine later in the
+    # execution flow; applying the legacy UTC counters here could falsely block a
+    # new funded rule day. The funded execution path still enforces the configured
+    # max-trades/day using the funded daily snapshot.
+    if not is_funded:
+        day_start = datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
+        orders_today = (await db.execute(
+            select(func.count(LiveOrder.id)).where(
+                LiveOrder.deployment_id == deployment.id,
+                LiveOrder.created_at >= day_start,
+                LiveOrder.status.in_(["FILLED", "PLACED", "PENDING_DEMO"]),
+            )
+        )).scalar() or 0
+        if int(orders_today) >= int(deployment.max_trades_per_day or 10) and signal.signal_type != "EXIT":
+            return RiskResult(False, "Max trades per day reached")
+
+        realized_today = to_decimal((await db.execute(
+            select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(
+                LivePosition.deployment_id == deployment.id,
+                LivePosition.closed_at >= day_start,
+            )
+        )).scalar())
+        if realized_today <= (to_decimal(deployment.max_daily_loss, "5000") * Decimal("-1")):
+            return RiskResult(False, "Max daily loss reached")
 
     duplicate = (await db.execute(
         select(LiveOrder.id)

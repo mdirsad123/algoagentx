@@ -56,6 +56,14 @@ function optionalNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function percentInputToRatio(value: string): number | null {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.abs(parsed) > 1 ? parsed / 100 : parsed;
+}
+
 function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
     <Card className="rounded-2xl border border-border/50 bg-card/30 shadow-xl backdrop-blur-xl">
@@ -128,11 +136,16 @@ export default function AdminNewStrategyBuilderPage() {
         notes: form.notes.trim() || null,
         source_code: form.source_code || null,
         performance_metrics: {
-          winRate: optionalNumber(form.winRate),
+          winRate: percentInputToRatio(form.winRate),
+          win_rate: percentInputToRatio(form.winRate),
           sharpeRatio: optionalNumber(form.sharpeRatio),
-          maxDrawdown: optionalNumber(form.maxDrawdown),
+          sharpe_ratio: optionalNumber(form.sharpeRatio),
+          maxDrawdown: percentInputToRatio(form.maxDrawdown),
+          max_drawdown: percentInputToRatio(form.maxDrawdown),
           totalTrades: optionalNumber(form.totalTrades),
+          total_trades: optionalNumber(form.totalTrades),
           profitFactor: optionalNumber(form.profitFactor),
+          profit_factor: optionalNumber(form.profitFactor),
         },
         parameters: {
           risk_percent: optionalNumber(form.risk_percent) ?? 0.01,
@@ -236,11 +249,11 @@ export default function AdminNewStrategyBuilderPage() {
             </div>
           </Section>
 
-          <Section title="Performance Metrics">
+          <Section title="Performance Metrics" description="Marketing/performance summary shown on user strategy cards and detail pages. Percent fields can be entered as 38 for 38%.">
             <div className="grid grid-cols-2 gap-3">
-              <div><Label>Win Rate</Label><input className={fieldClass} value={form.winRate} onChange={(e) => update("winRate", e.target.value)} /></div>
+              <div><Label>Win Rate %</Label><input className={fieldClass} value={form.winRate} onChange={(e) => update("winRate", e.target.value)} /></div>
               <div><Label>Sharpe</Label><input className={fieldClass} value={form.sharpeRatio} onChange={(e) => update("sharpeRatio", e.target.value)} /></div>
-              <div><Label>Drawdown</Label><input className={fieldClass} value={form.maxDrawdown} onChange={(e) => update("maxDrawdown", e.target.value)} /></div>
+              <div><Label>Max Drawdown %</Label><input className={fieldClass} value={form.maxDrawdown} onChange={(e) => update("maxDrawdown", e.target.value)} /></div>
               <div><Label>Total Trades</Label><input className={fieldClass} value={form.totalTrades} onChange={(e) => update("totalTrades", e.target.value)} /></div>
               <div className="col-span-2"><Label>Profit Factor</Label><input className={fieldClass} value={form.profitFactor} onChange={(e) => update("profitFactor", e.target.value)} /></div>
             </div>

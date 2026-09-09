@@ -33,6 +33,7 @@ import {
   SupportStatus,
   SupportTicket,
 } from "@/lib/api/support";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 const statusOptions: Array<{ value: "" | SupportStatus; label: string }> = [
   { value: "", label: "All" },
@@ -84,12 +85,7 @@ const priorityClasses: Record<string, string> = {
 const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" ");
 const labelize = (value?: string | null) => String(value || "-").replace(/_/g, " ");
 
-const formatDate = (value?: string | null) => {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString();
-};
+const formatDate = (value?: string | null) => formatDateTimeIST(value);
 
 const formatBytes = (bytes?: number | null) => {
   const size = Number(bytes || 0);

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { RefreshCw } from "lucide-react"
 import { toast } from "sonner"
+import { formatDateTimeIST } from "@/lib/timezone";
 
 export default function AdminCreditsPage() {
   const [items, setItems] = useState<CreditTransaction[]>([])
@@ -241,7 +242,7 @@ export default function AdminCreditsPage() {
                       <div className="text-xs text-purple-200">{item.reason || '—'}</div>
                       <div className="text-xs text-purple-200/70">actor: {item.actor_user_id || '—'}</div>
                     </td>
-                    <td className="px-3 py-3">{new Date(item.created_at).toLocaleString()}</td>
+                    <td className="px-3 py-3">{formatDateTimeIST(item.created_at)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -6,7 +6,7 @@ RISK_ENGINE_VERSION = "2J-risk-engine-guardrails-v1"
 PNL_ENGINE_VERSION = "2J-pnl-engine-guardrails-v1"
 MAX_BACKTEST_RISK_PERCENT = 0.10
 WARN_BACKTEST_RISK_PERCENT = 0.03
-MAX_CANDLES_SYNC_BACKTEST = 250_000
+MAX_CANDLES_SYNC_BACKTEST = 250_000  # warning threshold; long runs are queued instead of rejected
 
 
 def _as_float(value: Any, default: float | None = None) -> float | None:
@@ -95,8 +95,8 @@ def validate_backtest_guardrails(runtime_config: dict[str, Any] | None, instrume
     warnings.extend(spec_result.get("warnings") or [])
 
     if candle_count is not None and candle_count > MAX_CANDLES_SYNC_BACKTEST:
-        errors.append(
-            f"Selected dataset has {candle_count:,} candles, which may timeout in sync mode. Use a smaller range/timeframe or queue mode."
+        warnings.append(
+            f"Large dataset selected ({candle_count:,} candles). AlgoAgentX will allow the run; long-running HTTP callers should use the background queue."
         )
 
     return {"valid": not errors, "errors": errors, "warnings": warnings}

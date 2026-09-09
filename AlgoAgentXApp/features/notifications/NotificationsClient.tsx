@@ -5,9 +5,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { notificationApi } from "@/lib/api/notifications";
 import type { NotificationResponse } from "@/types/notifications";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 function timeLabel(value: string) {
-  try { return new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); } catch { return value; }
+  const formatted = formatDateTimeIST(value);
+  return formatted === "—" ? value : formatted;
 }
 
 function iconFor(severity?: string) {

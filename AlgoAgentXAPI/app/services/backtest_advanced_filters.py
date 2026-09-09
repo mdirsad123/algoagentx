@@ -148,14 +148,15 @@ def normalize_advanced_filters(raw_filters: Any) -> NormalizedAdvancedFilters:
 
 def _datetime_series_in_timezone(df: pd.DataFrame, timezone: str) -> pd.Series:
     values = pd.to_datetime(df["Date"], errors="coerce")
-    # Backtest market data is usually stored as naive timestamps already in the
-    # project display timezone. For timezone-aware data, convert safely.
+    # AlgoAgentX market_data timestamps are canonical UTC instants. Legacy DB
+    # schemas may expose them as timezone-naive values, so interpret naive
+    # timestamps as UTC before applying the requested session/day timezone.
     try:
-        if getattr(values.dt, "tz", None) is not None:
-            return values.dt.tz_convert(timezone)
+        if getattr(values.dt, "tz", None) is None:
+            values = values.dt.tz_localize("UTC")
+        return values.dt.tz_convert(timezone)
     except Exception:
-        pass
-    return values
+        return values
 
 
 def _time_mask(series: pd.Series, start_time: time, end_time: time) -> pd.Series:

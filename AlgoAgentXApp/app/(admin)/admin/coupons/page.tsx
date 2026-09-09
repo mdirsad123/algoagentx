@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 const emptyForm: AdminCouponPayload = {
   code: "",
@@ -30,7 +31,7 @@ const emptyForm: AdminCouponPayload = {
 };
 
 const money = (value?: number | null) => value == null ? "—" : `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const compactDate = (value?: string | null) => value ? new Date(value).toLocaleString() : "—";
+const compactDate = (value?: string | null) => formatDateTimeIST(value);
 
 function normalizedForm(form: AdminCouponPayload): AdminCouponPayload {
   const blankToNull = (value: any) => value === "" || value === undefined ? null : value;

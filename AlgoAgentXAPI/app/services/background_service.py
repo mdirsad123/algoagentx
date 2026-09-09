@@ -13,6 +13,7 @@ from ..db.session import get_db_session
 from ..services.credits.calculation import CreditCalculationService
 from ..services.credits.management import CreditManagementService
 
+from ..utils.timezone import kolkata_date_key
 logger = logging.getLogger(__name__)
 
 
@@ -456,7 +457,9 @@ class BackgroundService:
             # Save PnL calendar
             pnl_data = {}
             for trade in service_response.result.trades:
-                day = trade.exit_datetime.date()
+                day = kolkata_date_key(trade.exit_datetime)
+                if not day:
+                    continue
                 if day not in pnl_data:
                     pnl_data[day] = 0
                 pnl_data[day] += trade.pnl

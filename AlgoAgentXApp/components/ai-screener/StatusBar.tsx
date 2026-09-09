@@ -6,6 +6,7 @@ import { useState, useEffect } from "react"
 import { aiScreenerApi } from "@/lib/api/ai-screener"
 import { AiScreenerStatus } from "@/types/ai-screener"
 import { toast } from "sonner"
+import { formatDateTimeIST } from "@/lib/timezone";
 
 interface StatusBarProps {
   onRefresh?: () => void
@@ -63,7 +64,7 @@ export function StatusBar({ onRefresh }: StatusBarProps) {
   const formatDate = (dateString: string | null) => {
     if (!dateString) return 'Never'
     try {
-      return format(new Date(dateString), 'MMM dd, yyyy HH:mm')
+      return formatDateTimeIST(dateString)
     } catch {
       return 'Invalid date'
     }

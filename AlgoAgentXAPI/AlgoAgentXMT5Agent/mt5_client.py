@@ -65,6 +65,21 @@ class MT5Client:
                 return MT5Status(True, "TERMINAL_CONNECTED_LOGIN_REQUIRED", metadata={"terminal": str(terminal)})
 
             trading_allowed = bool(getattr(terminal, "trade_allowed", False) or getattr(account, "trade_allowed", False))
+            trade_mode_raw = getattr(account, "trade_mode", None)
+            account_mode = None
+            try:
+                trade_mode_int = int(trade_mode_raw) if trade_mode_raw is not None else None
+                demo_const = getattr(self.mt5, "ACCOUNT_TRADE_MODE_DEMO", 0)
+                contest_const = getattr(self.mt5, "ACCOUNT_TRADE_MODE_CONTEST", 1)
+                real_const = getattr(self.mt5, "ACCOUNT_TRADE_MODE_REAL", 2)
+                if trade_mode_int == int(demo_const):
+                    account_mode = "DEMO"
+                elif trade_mode_int == int(contest_const):
+                    account_mode = "CONTEST"
+                elif trade_mode_int == int(real_const):
+                    account_mode = "LIVE"
+            except Exception:
+                trade_mode_int = None
             return MT5Status(
                 terminal_connected=True,
                 terminal_status="TERMINAL_CONNECTED",
@@ -78,6 +93,8 @@ class MT5Client:
                     "company": getattr(account, "company", None),
                     "name": getattr(account, "name", None),
                     "leverage": getattr(account, "leverage", None),
+                    "account_trade_mode": trade_mode_int,
+                    "account_mode": account_mode,
                     "terminal_build": getattr(terminal, "build", None) if terminal else None,
                     "terminal_company": getattr(terminal, "company", None) if terminal else None,
                     **self._positions_metadata_safe(),
@@ -169,6 +186,100 @@ class MT5Client:
             return {"positions": positions, "positions_count": len(positions)}
         except Exception as exc:
             return {"positions": [], "positions_count": 0, "positions_error": str(exc)}
+
+    def get_quotes(self, symbols: list[str]) -> list[dict[str, Any]]:
+        if self.mt5 is None or not symbols:
+            return []
+        if not self.initialize():
+            return []
+        rows: list[dict[str, Any]] = []
+        now = datetime.now(timezone.utc)
+        for requested in symbols:
+            symbol = str(requested or "").strip()
+            if not symbol:
+                continue
+            try:
+                if not self.mt5.symbol_select(symbol, True):
+                    # Broker suffixes are common (XAUUSDm, XAUUSD.a). Try a compact prefix match.
+                    all_symbols = self.mt5.symbols_get() or []
+                    requested_key = self._symbol_key(symbol)
+                    match = next((str(getattr(item, "name", "")) for item in all_symbols if self._symbol_key(getattr(item, "name", "")).startswith(requested_key)), None)
+                    if match and self.mt5.symbol_select(match, True):
+                        symbol = match
+                    else:
+                        continue
+                tick = self.mt5.symbol_info_tick(symbol)
+                if tick is None:
+                    continue
+                raw = self._safe_obj(tick)
+                bid = raw.get("bid")
+                ask = raw.get("ask")
+                last = raw.get("last") or bid or ask
+                if last is None:
+                    continue
+                time_msc = raw.get("time_msc")
+                market_time = None
+                if time_msc:
+                    market_time = datetime.fromtimestamp(float(time_msc) / 1000.0, tz=timezone.utc)
+                elif raw.get("time"):
+                    market_time = datetime.fromtimestamp(int(raw.get("time")), tz=timezone.utc)
+                rows.append({
+                    "symbol": str(requested).upper(),
+                    "resolved_symbol": symbol,
+                    "bid": float(bid) if bid is not None else None,
+                    "ask": float(ask) if ask is not None else None,
+                    "last": float(last),
+                    "market_timestamp": (market_time or now).isoformat(),
+                    "raw": {"resolved_symbol": symbol, "time_msc": time_msc},
+                })
+            except Exception:
+                continue
+        return rows
+
+    def fetch_symbols(self, command: dict[str, Any]) -> dict[str, Any]:
+        if self.mt5 is None:
+            return {"success": False, "message": f"MetaTrader5 Python package is not available: {self._import_error or 'not installed'}", "symbols": [], "raw": {"symbols": []}}
+        if not self.initialize():
+            last_error = None
+            try:
+                last_error = self.mt5.last_error()
+            except Exception:
+                pass
+            return {"success": False, "message": "MT5 terminal is not connected.", "symbols": [], "raw": {"symbols": [], "last_error": str(last_error)}}
+
+        payload = command.get("request_payload") or {}
+        query = str(payload.get("query") or "").strip().upper()
+        limit = max(1, min(int(payload.get("limit") or 200), 500))
+        try:
+            symbols = self.mt5.symbols_get() or []
+            rows: list[dict[str, Any]] = []
+            for item in symbols:
+                raw = self._safe_obj(item)
+                name = str(raw.get("name") or "").strip()
+                path = str(raw.get("path") or "").strip()
+                description = str(raw.get("description") or "").strip()
+                if not name:
+                    continue
+                if query and query not in name.upper() and query not in path.upper() and query not in description.upper():
+                    continue
+                rows.append({
+                    "symbol": name,
+                    "name": name,
+                    "path": path or None,
+                    "description": description or None,
+                    "visible": raw.get("visible"),
+                    "trade_mode": raw.get("trade_mode"),
+                    "volume_min": raw.get("volume_min"),
+                    "volume_max": raw.get("volume_max"),
+                    "volume_step": raw.get("volume_step"),
+                    "digits": raw.get("digits"),
+                    "point": raw.get("point"),
+                })
+                if len(rows) >= limit:
+                    break
+            return {"success": True, "message": f"Fetched {len(rows)} MT5 symbols", "symbols": rows, "raw": {"symbols": rows, "count": len(rows)}}
+        except Exception as exc:
+            return {"success": False, "message": f"MT5 FETCH_SYMBOLS failed: {exc}", "symbols": [], "raw": {"symbols": []}}
 
     def fetch_rates(self, command: dict[str, Any]) -> dict[str, Any]:
         if self.mt5 is None:

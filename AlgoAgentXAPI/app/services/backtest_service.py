@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 from sqlalchemy import select
-from sqlalchemy.orm import load_only
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Instrument, MarketData, Strategy, StrategyRuntimePreset, Timeframe
@@ -90,6 +89,7 @@ class BacktestService:
         runtime_config: dict[str, Any] | None = None,
         strategy_preset_id: str | None = None,
         timeframe_id: int | None = None,
+        opportunity_mode: bool = False,
     ) -> BacktestServiceResponse:
         if start_date >= end_date:
             raise InvalidDateRangeError(f"Start date {start_date} must be before end date {end_date}")
@@ -158,6 +158,7 @@ class BacktestService:
             use_strategy_sl_tp=bool((resolved_runtime_config.get("sl_tp") or {}).get("use_strategy_suggested_sl", False)),
             runtime_config=resolved_runtime_config,
             instrument_spec=instrument_spec,
+            opportunity_mode=opportunity_mode,
         )
 
         result = run_backtest_engine(
@@ -202,10 +203,20 @@ class BacktestService:
     ) -> pd.DataFrame:
         start_dt = datetime.combine(start_date, time.min)
         end_dt = datetime.combine(end_date, time.max)
+        # Select raw scalar columns instead of materializing 1M+ SQLAlchemy ORM
+        # MarketData objects. This substantially reduces memory and Python object
+        # overhead for multi-year intraday backtests while preserving the exact
+        # same candle values and chronological order.
         rows = (
             await db.execute(
-                select(MarketData)
-                .options(load_only(MarketData.timestamp, MarketData.open, MarketData.high, MarketData.low, MarketData.close, MarketData.volume))
+                select(
+                    MarketData.timestamp,
+                    MarketData.open,
+                    MarketData.high,
+                    MarketData.low,
+                    MarketData.close,
+                    MarketData.volume,
+                )
                 .where(
                     MarketData.instrument_id == instrument_id,
                     MarketData.timeframe == timeframe,
@@ -214,26 +225,21 @@ class BacktestService:
                 )
                 .order_by(MarketData.timestamp.asc())
             )
-        ).scalars().all()
+        ).all()
 
         if not rows:
             return pd.DataFrame()
 
-        # Preserve DB candle timestamp exactly.
-        # Do not strip tzinfo here: MT5 candles are UTC instants in DB, and
-        # frontend/report should convert/display the same instant consistently.
-        df = pd.DataFrame([
-            {
-                "Date": pd.to_datetime(row.timestamp),
-                "Open": float(row.open),
-                "High": float(row.high),
-                "Low": float(row.low),
-                "Close": float(row.close),
-                "Volume": float(row.volume or 0),
-            }
-            for row in rows
-        ])
-        return df.sort_values("Date").reset_index(drop=True)
+        # Preserve DB candle timestamps exactly; only user-facing layers convert
+        # UTC instants to Asia/Kolkata for display.
+        df = pd.DataFrame.from_records(
+            rows,
+            columns=["Date", "Open", "High", "Low", "Close", "Volume"],
+        )
+        df["Date"] = pd.to_datetime(df["Date"])
+        for column in ("Open", "High", "Low", "Close", "Volume"):
+            df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0.0).astype(float)
+        return df.reset_index(drop=True)
 
     @staticmethod
     async def _get_strategy_details(db: AsyncSession, strategy_id: str) -> Tuple[Strategy, Any, Dict[str, Any], str]:

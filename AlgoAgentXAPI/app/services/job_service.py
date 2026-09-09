@@ -15,6 +15,7 @@ from ..celery_app import celery_app, is_celery_available
 from ..core.redis_manager import redis_manager
 from ..tasks import run_backtest_task
 
+from ..utils.timezone import kolkata_date_key
 logger = logging.getLogger(__name__)
 
 
@@ -562,7 +563,9 @@ class JobService:
             # Save PnL calendar
             pnl_data = {}
             for trade in service_response.result.trades:
-                day = trade.exit_datetime.date()
+                day = kolkata_date_key(trade.exit_datetime)
+                if not day:
+                    continue
                 if day not in pnl_data:
                     pnl_data[day] = 0
                 pnl_data[day] += trade.pnl

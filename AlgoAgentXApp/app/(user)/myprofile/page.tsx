@@ -7,6 +7,7 @@ import axiosInstance from "@/lib/axios";
 import { toast } from "sonner";
 import Cookies from "js-cookie";
 import { useRouter } from "next/navigation";
+import { formatDateIST } from "@/lib/timezone";
 
 interface UserProfile {
   id: string;
@@ -297,7 +298,7 @@ export default function MyProfilePage() {
                       Member Since
                     </label>
                     <span className="text-gray-900 dark:text-white">
-                      {new Date(profile.created_at).toLocaleDateString()}
+                      {formatDateIST(profile.created_at)}
                     </span>
                   </div>
 
@@ -307,7 +308,7 @@ export default function MyProfilePage() {
                         Last Login
                       </label>
                       <span className="text-gray-900 dark:text-white">
-                        {new Date(profile.last_login).toLocaleDateString()}
+                        {formatDateIST(profile.last_login)}
                       </span>
                     </div>
                   )}

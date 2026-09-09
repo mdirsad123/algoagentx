@@ -30,6 +30,22 @@ def _floor_to_step(value: Decimal, step: Decimal | None) -> Decimal:
     return (value / step).to_integral_value(rounding=ROUND_FLOOR) * step
 
 
+def _ceil_to_step(value: Decimal, step: Decimal | None) -> Decimal:
+    if step is None or step <= 0:
+        return value
+    units = (value / step).to_integral_value(rounding=ROUND_FLOOR)
+    rounded = units * step
+    if rounded < value:
+        rounded = (units + 1) * step
+    return rounded
+
+
+def _append_warning(result: dict[str, Any], warning: str) -> None:
+    warnings = result.setdefault("warnings", [])
+    if warning not in warnings:
+        warnings.append(warning)
+
+
 def _is_step_aligned(value: Decimal, step: Decimal | None, tolerance: Decimal = Decimal("0.00000001")) -> bool:
     if step is None or step <= 0:
         return True
@@ -115,6 +131,9 @@ def _base_result(
         "min_quantity": _to_float(min_quantity),
         "max_quantity": _to_float(max_quantity),
         "quantity_step": _to_float(quantity_step),
+        "warnings": [],
+        "min_lot_fallback_applied": False,
+        "min_quantity_fallback_applied": False,
         "_decimal": {
             "risk_amount": risk_amount,
             "risk_points": risk_points,
@@ -247,7 +266,17 @@ def _calculate_lot_result(
     if cap is not None and lot > cap:
         lot = _floor_to_step(cap, d["lot_step"])
     if lot < d["min_lot"]:
-        return _reject(result, f"Calculated lot size {_to_float(lot)} is below broker minimum {_to_float(d['min_lot'])}. Increase capital, reduce SL distance, or reduce min lot.")
+        if fixed:
+            return _reject(result, f"Calculated lot size {_to_float(lot)} is below broker minimum {_to_float(d['min_lot'])}. Increase capital, reduce SL distance, or reduce min lot.")
+        if cap is not None and d["min_lot"] > cap:
+            return _reject(result, f"Broker minimum lot {_to_float(d['min_lot'])} is above configured max lot cap {_to_float(cap)}.")
+        original_lot = lot
+        lot = _ceil_to_step(d["min_lot"], d["lot_step"])
+        result["min_lot_fallback_applied"] = True
+        _append_warning(
+            result,
+            f"Risk-based lot rounded up from {_to_float(original_lot)} to broker minimum {_to_float(lot)}. Actual risk may be higher than configured risk percent.",
+        )
 
     result["final_lot_size"] = _to_float(lot)
     result["actual_risk_amount"] = _to_float(lot * loss_per_1_lot)
@@ -285,7 +314,17 @@ def _calculate_quantity_result(
     if cap is not None and qty > cap:
         qty = _floor_to_step(cap, d["quantity_step"])
     if qty < d["min_quantity"]:
-        return _reject(result, f"Calculated quantity {_to_float(qty)} is below minimum {_to_float(d['min_quantity'])}. Increase capital, reduce SL distance, or reduce minimum quantity.")
+        if fixed:
+            return _reject(result, f"Calculated quantity {_to_float(qty)} is below minimum {_to_float(d['min_quantity'])}. Increase capital, reduce SL distance, or reduce minimum quantity.")
+        if cap is not None and d["min_quantity"] > cap:
+            return _reject(result, f"Minimum quantity {_to_float(d['min_quantity'])} is above configured max quantity cap {_to_float(cap)}.")
+        original_qty = qty
+        qty = _ceil_to_step(d["min_quantity"], d["quantity_step"])
+        result["min_quantity_fallback_applied"] = True
+        _append_warning(
+            result,
+            f"Risk-based quantity rounded up from {_to_float(original_qty)} to broker minimum {_to_float(qty)}. Actual risk may be higher than configured risk percent.",
+        )
 
     result["raw_quantity"] = result.get("raw_quantity") or _to_float(qty)
     result["final_quantity"] = _to_float(qty)

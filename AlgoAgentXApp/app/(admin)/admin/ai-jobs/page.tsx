@@ -28,6 +28,7 @@ import {
 import { LoadingSkeleton } from "@/components/ui/loading-skeleton"
 import { Pagination } from "@/components/ui/pagination"
 import { withLocale } from "@/lib/route"
+import { formatDateTimeIST } from "@/lib/timezone";
 
 interface AIJob {
   id: string
@@ -356,7 +357,7 @@ export default function AdminAIJobsPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          {format(new Date(job.created_at), 'PPp', { locale: ru })}
+                          {formatDateTimeIST(job.created_at)}
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-2">

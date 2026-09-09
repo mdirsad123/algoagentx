@@ -27,8 +27,17 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     
-    # Result backend settings
-    result_expires=3600,  # 1 hour
+    # Long backtests can legitimately run for several hours. Keep Redis'
+    # visibility window longer than the supported 3-4 hour execution window so
+    # an acknowledged-late task is not redelivered while it is still running.
+    # JobStatus in PostgreSQL remains the authoritative result/progress store.
+    broker_transport_options={"visibility_timeout": 21600},  # 6 hours
+    result_backend_transport_options={"visibility_timeout": 21600},
+    visibility_timeout=21600,
+
+    # Celery result metadata is secondary to JobStatus but keeping it for 6 hours
+    # makes worker diagnostics useful for long runs.
+    result_expires=21600,
     
     # Beat scheduler settings
     beat_schedule={
@@ -80,5 +89,20 @@ def is_celery_available() -> bool:
         return False
 
 
+def is_celery_worker_available(timeout: float = 1.0) -> bool:
+    """Return True only when at least one Celery worker answers ping.
+
+    Redis being reachable does not prove a worker is running. Long backtests
+    therefore fall back to FastAPI's threaded background runner when Redis is
+    online but no Celery worker is consuming tasks.
+    """
+    try:
+        inspector = celery_app.control.inspect(timeout=timeout)
+        replies = inspector.ping() if inspector is not None else None
+        return bool(replies)
+    except Exception:
+        return False
+
+
 # Export the app
-__all__ = ["celery_app", "is_celery_available"]
+__all__ = ["celery_app", "is_celery_available", "is_celery_worker_available"]

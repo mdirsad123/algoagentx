@@ -11,8 +11,9 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
 import type { BrokerAccount, LiveTradingApproval } from "@/types/live-trading";
+import { formatDateTimeIST } from "@/lib/timezone";
 
-const date = (value?: string | null) => (value ? new Date(value).toLocaleString() : "—");
+const date = (value?: string | null) => formatDateTimeIST(value);
 const errorMessage = (error: any, fallback: string) => typeof error?.response?.data?.detail === "string" ? error.response.data.detail : error?.response?.data?.detail?.message || error?.message || fallback;
 const statusTone = (status?: string | null) => {
   const value = String(status || "").toUpperCase();

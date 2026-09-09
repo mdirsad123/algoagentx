@@ -29,6 +29,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useUser } from "@/contexts/user-context";
 import { apiGet } from "@/lib/axios";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 interface BrokerAccountItem {
   id: string;
@@ -200,18 +201,8 @@ function formatMoney(value?: number | null) {
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return "No data yet";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "No data yet";
-  return date.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return value ? formatDateTimeIST(value) : "No data yet";
 }
-
 function statusBadgeClass(status?: string) {
   const normalized = String(status || "").toUpperCase();
   if (["CONNECTED", "ACTIVE", "RUNNING", "COMPLETED", "SUCCESS", "APPROVED", "READY"].includes(normalized)) {

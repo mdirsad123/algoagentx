@@ -4,6 +4,8 @@ import ast
 import builtins
 import inspect
 import math
+import sys
+import types
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 
@@ -24,7 +26,7 @@ BANNED_IMPORTS = {
     "shutil", "pathlib", "glob", "pickle", "marshal", "ctypes", "importlib", "builtins",
 }
 
-ALLOWED_IMPORT_ROOTS = {"pandas", "numpy", "math", "datetime", "statistics"}
+ALLOWED_IMPORT_ROOTS = {"pandas", "numpy", "math", "datetime", "statistics", "__future__", "dataclasses", "typing"}
 
 BANNED_CALL_NAMES = {
     "open", "eval", "exec", "compile", "input", "help", "dir", "globals", "locals", "vars",
@@ -47,10 +49,12 @@ ALLOWED_BUILTINS: dict[str, Any] = {
     "int": int,
     "len": len,
     "list": list,
+    "map": map,
     "max": max,
     "min": min,
     "pow": pow,
     "range": range,
+    "reversed": reversed,
     "round": round,
     "set": set,
     "slice": slice,
@@ -60,6 +64,9 @@ ALLOWED_BUILTINS: dict[str, Any] = {
     "tuple": tuple,
     "zip": zip,
     "object": object,
+    "super": super,
+    "staticmethod": staticmethod,
+    "classmethod": classmethod,
     "__build_class__": builtins.__build_class__,
     "Exception": Exception,
     "ValueError": ValueError,
@@ -67,7 +74,26 @@ ALLOWED_BUILTINS: dict[str, Any] = {
 }
 
 
+class _DynamicBaseStrategy:
+    """Minimal safe BaseStrategy exposed to dynamic DB strategies."""
+
+    def __init__(self, df, **kwargs):
+        self.df = df.copy()
+
+    def generate(self):
+        raise NotImplementedError("Strategy must implement generate()")
+
+
+_SAFE_BASE_STRATEGY_MODULE = types.ModuleType("base_strategy")
+_SAFE_BASE_STRATEGY_MODULE.BaseStrategy = _DynamicBaseStrategy
+
+
 def _safe_import(name: str, globals: Any = None, locals: Any = None, fromlist: tuple[str, ...] = (), level: int = 0) -> Any:
+    # Explicitly support the project's harmless strategy base import used by static
+    # strategies when the same source is attached through the Dynamic DB editor.
+    if level == 1 and str(name) == "base_strategy":
+        return _SAFE_BASE_STRATEGY_MODULE
+
     root = str(name).split(".", 1)[0]
     if root not in ALLOWED_IMPORT_ROOTS:
         raise ImportError(f"Import '{name}' is not allowed in strategy code")
@@ -84,6 +110,14 @@ class _StrategySafetyVisitor(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
         module = node.module or ""
+        # Permit only the known, minimal project base strategy relative import.
+        if node.level == 1 and module == "base_strategy":
+            imported = {alias.name for alias in node.names}
+            if imported != {"BaseStrategy"}:
+                raise DynamicStrategySecurityError("Only BaseStrategy may be imported from .base_strategy")
+            self.generic_visit(node)
+            return
+
         root = module.split(".", 1)[0]
         if root in BANNED_IMPORTS or root not in ALLOWED_IMPORT_ROOTS:
             raise DynamicStrategySecurityError(f"Import from '{module}' is not allowed")
@@ -98,6 +132,16 @@ class _StrategySafetyVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute) -> Any:
+        # Allow the conventional super().__init__(...) call used by strategies that
+        # inherit the safe BaseStrategy shim. Other dunder attribute access remains blocked.
+        if (
+            node.attr == "__init__"
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "super"
+        ):
+            self.generic_visit(node)
+            return
         if node.attr in BANNED_ATTR_NAMES or (node.attr.startswith("__") and node.attr.endswith("__")):
             raise DynamicStrategySecurityError(f"Access to attribute '{node.attr}' is not allowed")
         self.generic_visit(node)
@@ -193,7 +237,23 @@ def load_dynamic_strategy_class(source_code: str) -> type:
         "math": math,
     }
     code = compile(source_code, "<dynamic_strategy>", "exec")
-    exec(code, namespace, namespace)
+
+    # dataclasses/typing may inspect sys.modules using the class __module__. Register
+    # a short-lived module while executing the sandboxed namespace, then restore it.
+    module_name = "dynamic_strategy"
+    previous_module = sys.modules.get(module_name)
+    dynamic_module = types.ModuleType(module_name)
+    dynamic_module.__dict__.update(namespace)
+    sys.modules[module_name] = dynamic_module
+    try:
+        exec(code, dynamic_module.__dict__, dynamic_module.__dict__)
+        namespace = dynamic_module.__dict__
+    finally:
+        if previous_module is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous_module
+
     return _find_strategy_class(namespace)
 
 

@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
 import type { BrokerAccount, BrokerConnectionResult, LiveMode } from "@/types/live-trading";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 const emptyForm = {
   account_label: "MT5 Demo",
@@ -21,7 +22,7 @@ const emptyForm = {
   encrypted_password: "",
 };
 
-const formatDate = (value?: string | null) => (value ? new Date(value).toLocaleString() : "Not connected yet");
+const formatDate = (value?: string | null) => value ? formatDateTimeIST(value) : "Not connected yet";
 const money = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
 function statusBadge(status: string) {

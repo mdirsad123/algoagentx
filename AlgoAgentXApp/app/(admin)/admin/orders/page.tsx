@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Eye, RefreshCw, RotateCcw } from "lucide-react"
+import { formatDateTimeIST } from "@/lib/timezone";
 
 const money = (amount?: number, currency = "USD") => currency === "INR"
   ? `₹${Number(amount || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
@@ -90,7 +91,7 @@ export default function AdminOrdersPage() {
         <th className="px-3 py-3">Date</th><th className="px-3 py-3">User</th><th className="px-3 py-3">Purchase</th><th className="px-3 py-3">Subtotal</th><th className="px-3 py-3">Coupon</th><th className="px-3 py-3">Discount</th><th className="px-3 py-3">Final USD</th><th className="px-3 py-3">Method</th><th className="px-3 py-3">Payable</th><th className="px-3 py-3">GST INR</th><th className="px-3 py-3">Provider</th><th className="px-3 py-3">Status</th><th className="px-3 py-3">Reference</th><th className="px-3 py-3">Action</th>
       </tr></thead><tbody>
         {loading ? <tr><td colSpan={14} className="px-3 py-8 text-muted-foreground">Loading orders...</td></tr> : items.length === 0 ? <tr><td colSpan={14} className="px-3 py-8 text-center text-muted-foreground">No data found</td></tr> : items.map(item => <tr key={item.id} className="border-b border-border/30 hover:bg-card/50 transition-colors">
-          <td className="px-3 py-3 text-muted-foreground">{item.order_date ? new Date(item.order_date).toLocaleString() : "—"}</td>
+          <td className="px-3 py-3 text-muted-foreground">{formatDateTimeIST(item.order_date)}</td>
           <td className="px-3 py-3"><div className="text-foreground">{item.user_name || item.user_email || "—"}</div><div className="text-xs text-muted-foreground">{item.user_email || ""}</div></td>
           <td className="px-3 py-3 text-foreground"><div>{item.purchase_type || "—"}</div><div className="text-xs text-muted-foreground">{item.plan_code || `${item.credit_amount || ""} credits`} {item.billing_period || ""}</div></td>
           <td className="px-3 py-3 text-foreground">{money(item.subtotal_usd)}</td>

@@ -38,9 +38,9 @@ export function middleware(request: NextRequest) {
   if (isPublic(pathname)) return NextResponse.next()
 
   const protectedPrefixes = [
-    '/dashboard', '/brokers', '/strategies', '/backtest', '/backtest-history',
+    '/dashboard', '/brokers', '/strategies', '/backtest', '/funded-backtest', '/funded-backtest-report', '/backtest-history',
     '/reports', '/pricing', '/credits', '/profile', '/myprofile', '/settings',
-    '/live-trading', '/live-approval', '/admin'
+    '/live-trading', '/admin'
   ]
   const needsAuth = protectedPrefixes.some(p => pathname === p || pathname.startsWith(p + '/'))
   if (!needsAuth) return NextResponse.next()

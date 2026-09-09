@@ -5,6 +5,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from ...utils.timezone import format_kolkata_datetime
+
 
 def safe_text(value: Any, fallback: str = "-") -> str:
     if value is None:
@@ -106,13 +108,6 @@ def format_trade_size(trade: dict[str, Any], quantity_mode: str | None = None, f
 def parse_datetime_label(value: Any, fallback: str = "-") -> str:
     if value is None:
         return fallback
-    if isinstance(value, (datetime, date)):
-        return value.strftime("%Y-%m-%d %H:%M") if isinstance(value, datetime) else value.isoformat()
-    text = str(value)
-    if not text:
-        return fallback
-    try:
-        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        return dt.strftime("%Y-%m-%d %H:%M")
-    except Exception:
-        return text[:19].replace("T", " ")
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value.isoformat()
+    return format_kolkata_datetime(value, fallback=fallback, include_timezone=True)

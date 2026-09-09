@@ -69,6 +69,28 @@ services:
       retries: 5
       start_period: 30s
 
+
+  alert_worker:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile.prod
+    container_name: algoagentx_alert_worker
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_prod:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+    command: ["python", "-m", "app.services.alerts.worker"]
+    depends_on:
+      postgres_prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   # Optional worker. Enable only if you use Celery jobs/background queues.
   celery_worker:
     build:

@@ -18,7 +18,6 @@ DEFAULT_PREFERENCES = {"default_broker": "", "default_strategy": "", "default_ti
 DEFAULT_INAPP_NOTIFICATIONS = {
     "support_replies": True,
     "trade_order_updates": True,
-    "live_approval_requests": True,
     "broker_connection_alerts": True,
     "billing_payment_updates": True,
     "strategy_request_updates": True,
@@ -30,7 +29,6 @@ DEFAULT_EMAIL_TYPES = {
     "login_alerts": False,
     "admin_login_alerts": True,
     "trade_order_updates": True,
-    "live_approval_requests": True,
     "broker_alerts": True,
     "billing_payment_updates": True,
     "subscription_updates": True,

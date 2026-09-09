@@ -1,0 +1,1 @@
+FUNDED_RULE_ENGINE_VERSION = "2.0.5-trade-level"

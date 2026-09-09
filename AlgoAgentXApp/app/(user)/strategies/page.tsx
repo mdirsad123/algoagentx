@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import apiClient from "../../../lib/axios";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 type StrategyAttachment = {
   id: string;
@@ -218,23 +219,20 @@ const apiPost = async <T,>(url: string, body?: unknown, options?: { auth?: boole
 };
 
 function formatDateTime(value?: string | null): string {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "—";
-  return parsed.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDateTimeIST(value);
 }
-
-function metricValue(value: number | null | undefined, options?: { suffix?: string; decimals?: number }): string {
+function metricValue(value: number | null | undefined, options?: { decimals?: number }): string {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
   const decimals = options?.decimals ?? 2;
-  const suffix = options?.suffix ?? "";
-  return `${Number(value).toFixed(decimals)}${suffix}`;
+  return Number(value).toFixed(decimals);
+}
+
+function percentMetricValue(value: number | null | undefined, options?: { decimals?: number }): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  const raw = Number(value);
+  const normalized = Math.abs(raw) <= 1 ? raw * 100 : raw;
+  const decimals = options?.decimals ?? 2;
+  return `${normalized.toFixed(decimals)}%`;
 }
 
 function integerMetricValue(value: number | null | undefined): string {
@@ -518,11 +516,11 @@ export default function StrategiesPage() {
           {renderDeploymentBadges(strategy)}
 
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-            {renderMetric("Win Rate", metricValue(strategy.winRate, { suffix: "%", decimals: 2 }))}
-            {renderMetric("Sharpe Ratio", metricValue(strategy.sharpeRatio, { decimals: 2 }))}
-            {renderMetric("Drawdown", metricValue(strategy.maxDrawdown, { suffix: "%", decimals: 2 }))}
+            {renderMetric("Win Rate", percentMetricValue(strategy.winRate))}
+            {renderMetric("Sharpe Ratio", metricValue(strategy.sharpeRatio))}
+            {renderMetric("Drawdown", percentMetricValue(strategy.maxDrawdown))}
             {renderMetric("Total Trades", integerMetricValue(strategy.totalTrades))}
-            {renderMetric("Profit Factor", metricValue(strategy.profitFactor, { decimals: 2 }))}
+            {renderMetric("Profit Factor", metricValue(strategy.profitFactor))}
           </div>
 
           <div className="mt-auto flex flex-col gap-4 pt-2">

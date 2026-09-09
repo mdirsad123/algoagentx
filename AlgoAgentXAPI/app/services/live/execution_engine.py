@@ -14,11 +14,12 @@ from ..brokers.factory import get_broker_adapter, get_broker_code
 from .paper_broker import fill_market_order
 from .pnl_service import create_equity_point, to_decimal
 from .position_service import close_position, get_open_positions, open_position
-from .risk_manager import validate_signal_for_execution, validate_upstox_order_rules
+from .risk_manager import RiskResult, validate_signal_for_execution, validate_upstox_order_rules
 from .trading_safety import check_execution_safety, mark_heartbeat
-from .live_approval_service import check_broker_deployment_approval, check_live_execution_gate
 from .capital_service import get_effective_trading_capital
 from .order_preview_service import build_live_order_preview
+from .funded_guard_service import current_funded_trades_count, evaluate_funded_guard, record_funded_trade_count
+from .broker_sync_service import sync_deployment_broker_state
 
 
 def _round(value: Decimal, places: str = "0.00000001") -> Decimal:
@@ -640,37 +641,46 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
         await _log(db, deployment, "PAPER_DEPRECATED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id)})
         return None
 
-    if deployment.mode == "LIVE":
-        gate = await check_live_execution_gate(db, deployment)
-        if not gate.allowed:
+    # A funded hard-rule breach may pause the deployment/disable Auto Trade.
+    # That must block NEW risk, never an explicit/risk-reducing close. Keep the
+    # existing Standard and LIVE entry gates unchanged; only funded close-only
+    # actions receive this narrow capital-protection override.
+    funded_close_only = False
+    if str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED":
+        open_for_close = await get_open_positions(db, deployment.id)
+        if str(signal.signal_type or "").upper() == "EXIT" and open_for_close and str(deployment.mode or "").upper() != "LIVE":
+            # Preserve the platform's independent LIVE execution safety block.
+            # Funded guard state may not block a DEMO/risk-reducing close, but
+            # funded support must not implicitly enable real LIVE execution.
+            funded_close_only = True
+        elif str(signal.signal_type or "").upper() in {"BUY", "SELL"} and open_for_close:
+            requested_side = "LONG" if str(signal.signal_type).upper() == "BUY" else "SHORT"
+            opposite_exists = any(str(position.side or "").upper() != requested_side for position in open_for_close)
+            new_entry_gates_closed = (
+                str(deployment.status or "").upper() != "RUNNING"
+                or not bool(deployment.auto_trade_enabled)
+            )
+            funded_close_only = opposite_exists and new_entry_gates_closed
+
+    if funded_close_only:
+        risk = RiskResult(True, action="CLOSE_ONLY")
+        await _log(db, deployment, "FUNDED_RISK_REDUCING_CLOSE_ALLOWED", "Funded guard allowed risk-reducing close while new-entry gates are closed", metadata={"signal_id": str(signal.id), "signal_type": signal.signal_type, "deployment_status": deployment.status, "auto_trade_enabled": deployment.auto_trade_enabled})
+    else:
+        safety = await check_execution_safety(db, deployment, signal)
+        if not safety.allowed:
             signal.status = "REJECTED"
-            signal.rejection_reason = gate.reason or "LIVE approval gate rejected execution."
-            await _log(db, deployment, "LIVE_EXECUTION_BLOCKED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id), "approval_gate": True})
+            signal.rejection_reason = safety.reason
+            await _log(db, deployment, "SAFETY_REJECTED", safety.reason or "Safety rejected", "WARNING", {"signal_id": str(signal.id)})
             return None
-    elif deployment.mode == "DEMO":
-        try:
-            await check_broker_deployment_approval(db, deployment.user_id, deployment.broker_account_id, deployment.mode, deployment.instrument, deployment.exchange, deployment.segment, deployment.broker_symbol, deployment.instrument_key)
-        except Exception as exc:
+
+        await mark_heartbeat(db, deployment)
+
+        risk = await validate_signal_for_execution(db, deployment, signal)
+        if not risk.allowed:
             signal.status = "REJECTED"
-            signal.rejection_reason = getattr(exc, "detail", None) or str(exc)
-            await _log(db, deployment, "DEMO_EXECUTION_BLOCKED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id), "approval_gate": True})
+            signal.rejection_reason = risk.reason
+            await _log(db, deployment, "RISK_REJECTED", risk.reason or "Risk rejected", "WARNING", {"signal_id": str(signal.id)})
             return None
-
-    safety = await check_execution_safety(db, deployment, signal)
-    if not safety.allowed:
-        signal.status = "REJECTED"
-        signal.rejection_reason = safety.reason
-        await _log(db, deployment, "SAFETY_REJECTED", safety.reason or "Safety rejected", "WARNING", {"signal_id": str(signal.id)})
-        return None
-
-    await mark_heartbeat(db, deployment)
-
-    risk = await validate_signal_for_execution(db, deployment, signal)
-    if not risk.allowed:
-        signal.status = "REJECTED"
-        signal.rejection_reason = risk.reason
-        await _log(db, deployment, "RISK_REJECTED", risk.reason or "Risk rejected", "WARNING", {"signal_id": str(signal.id)})
-        return None
 
     if risk.action == "HOLD":
         signal.status = "ACCEPTED"
@@ -709,6 +719,36 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
             return latest_order
 
     if signal.signal_type in {"BUY", "SELL"}:
+        funded_decision = None
+        if str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED":
+            # A reverse signal has already completed its close leg above. Refresh
+            # broker truth and re-run funded rules before adding any new risk.
+            try:
+                await sync_deployment_broker_state(db, deployment.id)
+                deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment.id))).scalar_one()
+                funded_decision = await evaluate_funded_guard(
+                    db, deployment, signal_id=signal.id, purpose="ENTRY", persist_decision=True, auto_pause_on_breach=True
+                )
+            except Exception as exc:
+                signal.status = "REJECTED"
+                signal.rejection_reason = f"Funded guard failed safely: {exc}"
+                await _log(db, deployment, "FUNDED_GUARD_ERROR", signal.rejection_reason, "ERROR", {"signal_id": str(signal.id)})
+                return latest_order
+            if not funded_decision.allowed_new_entry:
+                signal.status = "REJECTED"
+                signal.rejection_reason = funded_decision.reason or "Funded guard blocked new entry"
+                await _log(db, deployment, "FUNDED_ENTRY_BLOCKED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id), "funded_guard": funded_decision.to_dict()})
+                return latest_order
+
+            # Additional user safety caps remain stricter guards, but they are not
+            # the prop-firm DD calculation. Evaluate them only for the new entry.
+            funded_orders_today = await current_funded_trades_count(db, deployment)
+            if funded_orders_today >= int(deployment.max_trades_per_day or 10):
+                signal.status = "REJECTED"
+                signal.rejection_reason = "Max trades per day reached"
+                await _log(db, deployment, "MAX_TRADES_REACHED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id)})
+                return latest_order
+
         current_open_positions = await get_open_positions(db, deployment.id)
         max_open_positions = int(getattr(deployment, "max_open_positions", 1) or 1)
         if len(current_open_positions) >= max_open_positions:
@@ -730,6 +770,9 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
             runtime_config=None,
             strict_instrument=deployment.mode in {"DEMO", "LIVE"},
             preview_mode="AUTO_LIVE_SIGNAL",
+            funded_guard=funded_decision.to_dict() if funded_decision is not None else None,
+            risk_amount_override=funded_decision.effective_risk_amount if funded_decision is not None else None,
+            risk_percent_override=funded_decision.effective_risk_pct if funded_decision is not None else None,
         )
         preview_log_metadata = {
             "signal_id": str(signal.id),
@@ -761,6 +804,7 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
             "entry_plan": preview.get("entry_plan"),
             "risk_metadata": preview.get("risk_metadata"),
             "broker_payload_preview": preview.get("broker_payload_preview"),
+            "funded_guard": preview.get("funded_guard"),
         }
         await _log(db, deployment, "ORDER_PREVIEW_BUILT", "Live order preview built from signal", metadata=preview_log_metadata)
         entry_plan_snapshot = preview.get("entry_plan") if isinstance(preview.get("entry_plan"), dict) else {}
@@ -854,6 +898,12 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
                 latest_order = await _execute_ctrader_entry(db, deployment, signal, order_side, position_side, qty, price, stop_loss, target, sizing_metadata=sizing_metadata)
             else:
                 latest_order = await _execute_demo_entry(db, deployment, signal, order_side, position_side, qty, price, stop_loss, target, sizing_metadata=sizing_metadata)
+        if (
+            latest_order is not None
+            and str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED"
+            and str(getattr(latest_order, "status", "") or "").upper() in {"FILLED", "PLACED", "SUBMITTED", "PENDING", "PENDING_DEMO"}
+        ):
+            await record_funded_trade_count(db, deployment)
         await create_equity_point(db, deployment)
         return latest_order
 

@@ -105,6 +105,34 @@ SMC_RUNTIME_CONFIG_SCHEMA: dict[str, Any] = {
 }
 
 
+RESISTANCE_REJECTION_RUNTIME_CONFIG_SCHEMA: dict[str, Any] = {
+    "strategy_params": {
+        "swing_left": {"type": "number", "label": "Resistance · Swing Left", "default": 3, "min": 1, "max": 20},
+        "swing_right": {"type": "number", "label": "Resistance · Swing Right", "default": 3, "min": 1, "max": 20},
+        "zone_width": {"type": "number", "label": "Resistance · Zone Width (price)", "default": 2.5, "min": 0.01},
+        "minimum_reaction": {"type": "number", "label": "Resistance · Minimum Reaction", "default": 2.0, "min": 0},
+        "minimum_strength": {"type": "number", "label": "Resistance · Minimum Strength", "default": 1.0, "min": 0},
+        "max_zone_age": {"type": "number", "label": "Freshness · Max Zone Age (bars)", "default": 180, "min": 1},
+        "approach_distance": {"type": "number", "label": "Interaction · Approach Distance", "default": 5.0, "min": 0},
+        "minimum_body_ratio": {"type": "number", "label": "Rejection · Minimum Body Ratio", "default": 0.20, "min": 0, "max": 1},
+        "minimum_upper_wick_ratio": {"type": "number", "label": "Rejection · Minimum Upper Wick Ratio", "default": 0.25, "min": 0, "max": 1},
+        "minimum_zone_penetration": {"type": "number", "label": "Rejection · Minimum Zone Penetration", "default": 0.05, "min": 0, "max": 1},
+        "maximum_close_position": {"type": "number", "label": "Rejection · Maximum Close Position", "default": 0.55, "min": 0, "max": 1},
+        "entry_confirmation": {"type": "select", "label": "Entry · Confirmation", "default": "BREAK_REJECTION_LOW", "options": ["BREAK_REJECTION_LOW", "REJECTION_CLOSE"]},
+        "confirmation_bars": {"type": "number", "label": "Entry · Confirmation Bars", "default": 4, "min": 1, "max": 20},
+        "sl_mode": {"type": "select", "label": "SL · Mode", "default": "REJECTION_HIGH", "options": ["REJECTION_HIGH", "SWEEP_HIGH", "ZONE_HIGH", "FIXED_DISTANCE", "ATR_BUFFER"]},
+        "sl_buffer": {"type": "number", "label": "SL · Buffer", "default": 0.5, "min": 0},
+        "tp_mode": {"type": "select", "label": "TP · Mode", "default": "FIXED_RR", "options": ["FIXED_RR", "PREVIOUS_SUPPORT", "SWING_LOW", "LIQUIDITY_TARGET"]},
+        "minimum_rr": {"type": "number", "label": "Risk · Minimum RR", "default": 1.5, "min": 0.1},
+        "target_rr": {"type": "number", "label": "TP · Target RR", "default": 2.0, "min": 0.1},
+        "breakout_rule": {"type": "select", "label": "Invalidation · Breakout Rule", "default": "CLOSE_ABOVE_ZONE_BY_BUFFER", "options": ["CLOSE_ABOVE_ZONE", "CLOSE_ABOVE_ZONE_BY_BUFFER", "CONSECUTIVE_CLOSES_ABOVE"]},
+        "breakout_buffer": {"type": "number", "label": "Invalidation · Breakout Buffer", "default": 0.5, "min": 0},
+        "setup_expiry_bars": {"type": "number", "label": "Freshness · Setup Expiry Bars", "default": 12, "min": 1},
+        "debug_mode": {"type": "boolean", "label": "Debug · Detailed Setup Diagnostics", "default": False},
+    }
+}
+
+
 ALLOWED_POSITION_SIZE_MODES = {"RISK_BASED", "FIXED_LOT", "FIXED_QUANTITY"}
 ALLOWED_ENTRY_MODES = {"NEXT_CANDLE_OPEN", "SIGNAL_CANDLE_CLOSE", "MARKET_ON_SIGNAL"}
 ALLOWED_SL_MODES = {"ATR", "SWING", "FIXED_PERCENT", "FIXED_PRICE_RISK_PCT", "STRATEGY_SUGGESTED", "NONE"}
@@ -119,6 +147,8 @@ def get_system_default_runtime_config() -> dict[str, Any]:
 def get_default_runtime_config_schema(strategy_hint: str | None = None) -> dict[str, Any]:
     """Return a light default schema based on a strategy hint/name/type."""
     hint = (strategy_hint or "").lower()
+    if "resistance rejection" in hint or "xauusd 5m resistance" in hint:
+        return deepcopy(RESISTANCE_REJECTION_RUNTIME_CONFIG_SCHEMA)
     if "smc" in hint or "liquidity" in hint or "bos" in hint:
         return deepcopy(SMC_RUNTIME_CONFIG_SCHEMA)
     if "ema" in hint or "moving average" in hint or "stockburner" in hint:

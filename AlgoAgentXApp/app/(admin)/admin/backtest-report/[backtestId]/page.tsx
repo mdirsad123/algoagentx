@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { adminApi } from "@/lib/api/admin";
 import type { BacktestDetailResponse } from "@/lib/api/backtests";
 import { parseApiError, formatErrorMessage } from "@/lib/api/error";
+import { formatChartDateTimeIST, formatDateTimeIST } from "@/lib/timezone";
 
 const safeNumber = (value: unknown, fallback = 0): number => {
   const parsed = Number(value);
@@ -47,18 +48,7 @@ const formatRMultiple = (value: number | null | undefined): string => {
   return `${sign}${formatNumber(value, 2)}R`;
 };
 
-const formatDateTime = (value?: string | null): string => {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "—";
-  return parsed.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
+const formatDateTime = (value?: string | null): string => formatDateTimeIST(value);
 
 const downloadBlob = (filename: string, blob: Blob) => {
   const url = URL.createObjectURL(blob);
@@ -116,7 +106,7 @@ export default function BacktestReportPage() {
 
   const equityRows = useMemo(() => {
     return (detail?.equity_curve || []).map((point, index) => ({
-      label: point.timestamp ? new Date(point.timestamp).toLocaleDateString() : String(index + 1),
+      label: point.timestamp ? formatChartDateTimeIST(point.timestamp) : String(index + 1),
       equity: safeNumber(point.equity, 0),
     }));
   }, [detail?.equity_curve]);
@@ -141,7 +131,7 @@ export default function BacktestReportPage() {
     if (!detail?.trades?.length || !backtestId) return;
     downloadCsv(
       `backtest-${backtestId}-trades.csv`,
-      ["Entry Time", "Exit Time", "Side", "Quantity", "Entry Price", "Exit Price", "Stop Loss", "Target / TP", "Risk Points", "Reward Points", "RR Ratio", "Risk Amount", "Reward Amount", "R Multiple", "PnL", "Exit Type", "Signal Reason"],
+      ["Entry Time (IST)", "Exit Time (IST)", "Side", "Quantity", "Entry Price", "Exit Price", "Stop Loss", "Target / TP", "Risk Points", "Reward Points", "RR Ratio", "Risk Amount", "Reward Amount", "R Multiple", "PnL", "Exit Type", "Signal Reason"],
       detail.trades.map((trade) => [
         trade.entry_time || "",
         trade.exit_time || "",

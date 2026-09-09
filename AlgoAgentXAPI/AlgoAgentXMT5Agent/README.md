@@ -29,15 +29,37 @@ python main.py
 {
   "API_BASE_URL": "http://localhost:8000",
   "AGENT_TOKEN": "paste-your-agent-token-here",
-  "POLL_INTERVAL_SECONDS": 5,
+  "POLL_INTERVAL_SECONDS": 1,
+  "COMMAND_POLL_INTERVAL_SECONDS": 1,
+  "HEARTBEAT_INTERVAL_SECONDS": 5,
+  "ALERT_QUOTE_INTERVAL_MS": 250,
+  "ALERT_SYMBOL_REFRESH_SECONDS": 1,
   "ENABLE_ORDER_EXECUTION": false,
   "MT5_PATH": "",
   "DEFAULT_DEVIATION": 20,
-  "AGENT_VERSION": "0.2.0"
+  "AGENT_VERSION": "0.4.1-alerts-symbols"
 }
 ```
 
 `ENABLE_ORDER_EXECUTION` is intentionally `false` by default. Keep it disabled until you confirm heartbeat and demo testing. No withdrawal permissions are required.
+
+## Real-time alert requirements
+
+Phase 1 alerts require this updated agent to stay running with MetaTrader 5 open and logged in to the **same broker account whose Agent Token was generated in AlgoAgentX**. The agent:
+
+- polls AlgoAgentX for active alert symbols,
+- resolves exact MT5 broker symbols such as `XAUUSD.x`, `XAUUSDm`, or `BTCUSD.x`,
+- pushes live quotes to the API about every `ALERT_QUOTE_INTERVAL_MS` while alerts are active, and
+- responds to `FETCH_SYMBOLS` so the Alerts page can show the actual instruments available in that broker terminal.
+
+When working correctly, the terminal prints lines such as:
+
+```text
+Active alert symbols: ['XAUUSD.X']
+Alert quotes sent | accepted=1 | sample=XAUUSD.X resolved=XAUUSD.x price=4415.23
+```
+
+If you only see heartbeat lines and never see `Active alert symbols` / `Alert quotes sent`, verify that the alert uses the same broker account/token and that the alert is ACTIVE.
 
 ## Candle refresh troubleshooting
 

@@ -9,6 +9,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StrategyAttachmentGallery } from "@/components/strategies/StrategyAttachmentGallery";
 import apiClient from "../../../../../lib/axios";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 type ApiEnvelope<T> = { success?: boolean; data?: T };
 type StrategyRequest = {
@@ -21,7 +22,7 @@ const unwrap = <T,>(payload: ApiEnvelope<T> | T): T => payload && typeof payload
 const labels: Record<string,string> = { DRAFT:"Draft", PENDING:"Pending Review", SUBMITTED:"Pending Review", UNDER_REVIEW:"Under Review", NEEDS_CLARIFICATION:"Needs Clarification", UNDER_DEVELOPMENT:"Under Development", DEPLOYED:"Deployed", PUBLISHED:"Published", REJECTED:"Rejected" };
 const normalize = (s?: string | null) => String(s || "SUBMITTED").trim().replace(/[\s-]+/g,"_").toUpperCase();
 const editable = (s: string) => ["DRAFT","PENDING","SUBMITTED","UNDER_REVIEW","NEEDS_CLARIFICATION"].includes(s);
-const fmt = (v?: string | null) => v ? new Date(v).toLocaleString() : "—";
+const fmt = (v?: string | null) => formatDateTimeIST(v);
 function TextBlock({ title, value }: { title: string; value?: string | null }) { return <div className="rounded-xl border border-border/50 bg-card/20 p-4"><p className="text-xs uppercase tracking-wide text-muted-foreground">{title}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground">{value || "—"}</p></div>; }
 
 export default function UserStrategyRequestDetailPage() {

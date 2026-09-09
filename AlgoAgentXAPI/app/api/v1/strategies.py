@@ -310,14 +310,23 @@ def _extract_metric_from_parameters(parameters: Any) -> dict[str, Any]:
         parameters.get("metricSummary"),
         parameters.get("metric_summary"),
     ]
-    summary = next((item for item in candidates if isinstance(item, dict)), {})
+
+    def pick(camel_key: str, snake_key: str) -> Any:
+        for summary in candidates:
+            if not isinstance(summary, dict):
+                continue
+            if summary.get(camel_key) is not None:
+                return summary.get(camel_key)
+            if summary.get(snake_key) is not None:
+                return summary.get(snake_key)
+        return None
 
     return {
-        "win_rate": summary.get("winRate") if summary.get("winRate") is not None else summary.get("win_rate"),
-        "sharpe_ratio": summary.get("sharpeRatio") if summary.get("sharpeRatio") is not None else summary.get("sharpe_ratio"),
-        "max_drawdown": summary.get("maxDrawdown") if summary.get("maxDrawdown") is not None else summary.get("max_drawdown"),
-        "total_trades": summary.get("totalTrades") if summary.get("totalTrades") is not None else summary.get("total_trades"),
-        "profit_factor": summary.get("profitFactor") if summary.get("profitFactor") is not None else summary.get("profit_factor"),
+        "win_rate": pick("winRate", "win_rate"),
+        "sharpe_ratio": pick("sharpeRatio", "sharpe_ratio"),
+        "max_drawdown": pick("maxDrawdown", "max_drawdown"),
+        "total_trades": pick("totalTrades", "total_trades"),
+        "profit_factor": pick("profitFactor", "profit_factor"),
     }
 
 
@@ -388,12 +397,17 @@ async def _strategy_metrics_map(db: AsyncSession, rows: list[Strategy]) -> dict[
     for row in rows:
         parameter_metrics = _extract_metric_from_parameters(row.parameters)
         database_metrics = db_metrics.get(str(row.id), {})
+        param_win_rate = _safe_float(parameter_metrics.get("win_rate"))
+        param_sharpe_ratio = _safe_float(parameter_metrics.get("sharpe_ratio"))
+        param_max_drawdown = _safe_float(parameter_metrics.get("max_drawdown"))
+        param_total_trades = _safe_int(parameter_metrics.get("total_trades"))
+        param_profit_factor = _safe_float(parameter_metrics.get("profit_factor"))
         merged[str(row.id)] = {
-            "win_rate": database_metrics.get("win_rate") if database_metrics.get("win_rate") is not None else _safe_float(parameter_metrics.get("win_rate")),
-            "sharpe_ratio": database_metrics.get("sharpe_ratio") if database_metrics.get("sharpe_ratio") is not None else _safe_float(parameter_metrics.get("sharpe_ratio")),
-            "max_drawdown": database_metrics.get("max_drawdown") if database_metrics.get("max_drawdown") is not None else _safe_float(parameter_metrics.get("max_drawdown")),
-            "total_trades": database_metrics.get("total_trades") if database_metrics.get("total_trades") is not None else _safe_int(parameter_metrics.get("total_trades")),
-            "profit_factor": database_metrics.get("profit_factor") if database_metrics.get("profit_factor") is not None else _safe_float(parameter_metrics.get("profit_factor")),
+            "win_rate": param_win_rate if param_win_rate is not None else database_metrics.get("win_rate"),
+            "sharpe_ratio": param_sharpe_ratio if param_sharpe_ratio is not None else database_metrics.get("sharpe_ratio"),
+            "max_drawdown": param_max_drawdown if param_max_drawdown is not None else database_metrics.get("max_drawdown"),
+            "total_trades": param_total_trades if param_total_trades is not None else database_metrics.get("total_trades"),
+            "profit_factor": param_profit_factor if param_profit_factor is not None else database_metrics.get("profit_factor"),
         }
     return merged
 
@@ -412,6 +426,9 @@ def _visibility_for(row: Strategy, template_user_id: Any = None) -> str:
 
 
 def _is_user_visible_strategy(row: Strategy, user_id: Any) -> bool:
+    lifecycle = str(getattr(row, "lifecycle_status", "") or "").upper()
+    if lifecycle in {"ARCHIVED", "CANCELLED"}:
+        return False
     visibility = (getattr(row, "visibility", None) or PRIVATE_VISIBILITY).upper()
     if visibility == PUBLIC_VISIBILITY:
         return True
@@ -498,6 +515,23 @@ def _serialize_strategy(
         "totalTrades": metrics.get("total_trades"),
         "maxDrawdown": metrics.get("max_drawdown"),
         "profitFactor": metrics.get("profit_factor"),
+        "win_rate": metrics.get("win_rate"),
+        "sharpe_ratio": metrics.get("sharpe_ratio"),
+        "total_trades": metrics.get("total_trades"),
+        "max_drawdown": metrics.get("max_drawdown"),
+        "profit_factor": metrics.get("profit_factor"),
+        "performance_metrics": {
+            "winRate": metrics.get("win_rate"),
+            "win_rate": metrics.get("win_rate"),
+            "sharpeRatio": metrics.get("sharpe_ratio"),
+            "sharpe_ratio": metrics.get("sharpe_ratio"),
+            "totalTrades": metrics.get("total_trades"),
+            "total_trades": metrics.get("total_trades"),
+            "maxDrawdown": metrics.get("max_drawdown"),
+            "max_drawdown": metrics.get("max_drawdown"),
+            "profitFactor": metrics.get("profit_factor"),
+            "profit_factor": metrics.get("profit_factor"),
+        },
         "createdAt": row.created_at.isoformat() if row.created_at else None,
         "updatedAt": row.updated_at.isoformat() if getattr(row, "updated_at", None) else None,
         "lastUpdated": row.updated_at.isoformat() if getattr(row, "updated_at", None) else (row.created_at.isoformat() if row.created_at else None),
@@ -760,7 +794,11 @@ async def get_strategies(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    stmt = select(Strategy).order_by(Strategy.created_at.desc())
+    stmt = (
+        select(Strategy)
+        .where(func.upper(func.coalesce(Strategy.lifecycle_status, "")) != "ARCHIVED")
+        .order_by(Strategy.created_at.desc())
+    )
 
     if approved_only:
         user_id = _user_uuid(current_user["user_id"])

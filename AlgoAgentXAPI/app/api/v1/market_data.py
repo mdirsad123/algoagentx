@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime
 from ...core.dependencies import get_db
 from ...schemas import TimeframeResponse, MarketDataRangeResponse
-from ...db.models import MarketData, Instrument
+from ...db.models import MarketData, Instrument, Timeframe
 
 router = APIRouter()
 
@@ -16,31 +16,36 @@ async def get_timeframes(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get distinct timeframes from market_data table.
-    
-    Optionally filter by instrument_id.
+    Get active timeframes from the master timeframes table.
+
+    instrument_id is accepted for backward compatibility; if the master table is
+    empty, the endpoint falls back to existing market_data rows.
     """
     try:
-        # Build query
-        query = select(MarketData.timeframe).distinct()
-        
         if instrument_id is not None:
-            # Verify instrument exists
             instrument_result = await db.execute(
                 select(Instrument).where(Instrument.id == instrument_id)
             )
             instrument = instrument_result.scalar_one_or_none()
             if not instrument:
                 raise HTTPException(
-                    status_code=404, 
+                    status_code=404,
                     detail=f"Instrument with ID {instrument_id} not found"
                 )
-            
-            query = query.where(MarketData.instrument_id == instrument_id)
-        
-        # Execute query
-        result = await db.execute(query)
+
+        result = await db.execute(
+            select(Timeframe.code)
+            .where(Timeframe.is_active.is_(True))
+            .order_by(Timeframe.display_order.asc(), Timeframe.id.asc())
+        )
         timeframes = result.scalars().all()
+
+        if not timeframes:
+            query = select(MarketData.timeframe).where(MarketData.timeframe.is_not(None)).distinct().order_by(MarketData.timeframe.asc())
+            if instrument_id is not None:
+                query = query.where(MarketData.instrument_id == instrument_id)
+            result = await db.execute(query)
+            timeframes = result.scalars().all()
         
         # Return as list of TimeframeResponse objects
         return [{"timeframe": tf} for tf in timeframes]

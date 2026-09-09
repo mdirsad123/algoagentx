@@ -493,6 +493,9 @@ async def build_live_order_preview(
     strategy_preset_id: str | None = None,
     strict_instrument: bool = True,
     preview_mode: str = "MANUAL",
+    funded_guard: dict[str, Any] | None = None,
+    risk_amount_override: Any = None,
+    risk_percent_override: Any = None,
 ) -> dict[str, Any]:
     side = str(side or "BUY").upper()
     if side not in {"BUY", "SELL"}:
@@ -537,7 +540,13 @@ async def build_live_order_preview(
     capital_snapshot = await _safe_capital_snapshot(db, deployment)
     capital_source = _snapshot_capital_source(capital_snapshot)
     effective_capital = _snapshot_capital_value(capital_snapshot, risk_cfg=None, default=0)
-    capital_reject, capital_warning = _capital_warning_or_error(deployment, capital_snapshot, preview_mode)
+    # FUNDED deployments use the stricter funded guard as the authoritative
+    # broker-state/risk source. Do not let generic fallback-capital logic reject
+    # or size a funded preview before the funded balance override is applied.
+    if funded_guard:
+        capital_reject, capital_warning = False, None
+    else:
+        capital_reject, capital_warning = _capital_warning_or_error(deployment, capital_snapshot, preview_mode)
     if capital_reject:
         return {
             "validation_status": "REJECTED",
@@ -570,7 +579,23 @@ async def build_live_order_preview(
             "instrument_spec_snapshot": instrument_spec,
         }
 
-    risk_cfg = config.get("risk") or {}
+    risk_cfg = dict(config.get("risk") or {})
+    if funded_guard:
+        funded_balance = _dec(funded_guard.get("balance"), "0")
+        funded_effective_amount = _dec(funded_guard.get("effective_risk_amount"), "0")
+        funded_effective_pct = _dec(funded_guard.get("effective_risk_pct"), "0")
+        if funded_balance <= 0 or funded_effective_amount <= 0 or funded_effective_pct <= 0:
+            return {
+                "validation_status": "REJECTED", "status": "REJECTED",
+                "rejected_reason": funded_guard.get("reason") or "Funded guard did not provide positive broker balance/risk capacity.",
+                "symbol": resolved_symbol, "side": side, "funded_guard": funded_guard,
+                "runtime_config_snapshot": config, "instrument_spec_snapshot": instrument_spec,
+            }
+        effective_capital = float(funded_balance)
+        capital_source = "FUNDED_BROKER_BALANCE"
+        risk_cfg["risk_percent"] = float(_dec(risk_percent_override, str(funded_effective_pct)))
+    elif risk_percent_override not in (None, ""):
+        risk_cfg["risk_percent"] = float(_dec(risk_percent_override))
     if float(risk_cfg.get("risk_percent") or 0) > MAX_BACKTEST_RISK_PERCENT:
         return {
             "validation_status": "REJECTED",
@@ -641,6 +666,19 @@ async def build_live_order_preview(
     final_qty = _dec(size.get("final_quantity"), "0") if size.get("final_quantity") is not None else None
     qty_value = final_lot if quantity_mode in LOT_STYLE_MODES else final_qty
 
+    if funded_guard and size.get("status") == "OK":
+        allowed_amount = _dec(risk_amount_override, str(funded_guard.get("effective_risk_amount") or "0"))
+        actual_amount = _dec(size.get("actual_risk_amount"), str(size.get("risk_amount") or "0"))
+        # Never permit broker-size rounding or fixed sizing to exceed the funded guard.
+        if allowed_amount <= 0 or actual_amount > allowed_amount + Decimal("0.0001"):
+            return {
+                "validation_status": "REJECTED", "status": "REJECTED",
+                "rejected_reason": f"Final broker size risks {actual_amount}, above funded allowance {allowed_amount}.",
+                "symbol": resolved_symbol, "side": side, "entry_price": float(entry),
+                "stop_loss": float(sl), "target": float(target), "risk_engine": size,
+                "funded_guard": funded_guard, "runtime_config_snapshot": config, "instrument_spec_snapshot": instrument_spec,
+            }
+
     if size.get("status") != "OK" or qty_value is None or qty_value <= 0:
         rejected_risk_metadata = {
             "effective_capital": effective_capital,
@@ -693,7 +731,7 @@ async def build_live_order_preview(
             return {
                 "validation_status": "REJECTED",
                 "status": "REJECTED",
-                "rejected_reason": "Risk-based lot is below broker minimum lot.",
+                "rejected_reason": "Required funded risk is below broker minimum tradable lot." if funded_guard else "Risk-based lot is below broker minimum lot.",
                 "symbol": resolved_symbol,
                 "side": side,
                 "entry_price": float(entry),
@@ -716,7 +754,7 @@ async def build_live_order_preview(
             return {
                 "validation_status": "REJECTED",
                 "status": "REJECTED",
-                "rejected_reason": "Risk-based quantity is below broker minimum quantity.",
+                "rejected_reason": "Required funded risk is below broker minimum tradable quantity." if funded_guard else "Risk-based quantity is below broker minimum quantity.",
                 "symbol": resolved_symbol,
                 "side": side,
                 "entry_price": float(entry),
@@ -774,6 +812,9 @@ async def build_live_order_preview(
         "strategy_sltp_received": strategy_sltp_received,
         "preview_stop_loss": float(sl) if sl is not None else None,
         "preview_target": float(target) if target is not None else None,
+        "funded_guard": funded_guard,
+        "funded_effective_risk_amount": funded_guard.get("effective_risk_amount") if funded_guard else None,
+        "funded_limiting_rule": funded_guard.get("limiting_rule") if funded_guard else None,
     }
 
     return {
@@ -813,4 +854,5 @@ async def build_live_order_preview(
         "broker_symbol": order_payload.get("symbol"),
         "broker_payload_preview": order_payload,
         "broker_order_payload_preview": order_payload,
+        "funded_guard": funded_guard,
     }

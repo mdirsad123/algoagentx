@@ -30,6 +30,7 @@ class BacktestParams:
     use_strategy_sl_tp: bool = True
     runtime_config: Optional[Dict[str, Any]] = None
     instrument_spec: Optional[Dict[str, Any]] = None
+    opportunity_mode: bool = False
 
 
 @dataclass
@@ -73,6 +74,7 @@ class Trade:
     lifecycle_events: List[Dict[str, Any]] = field(default_factory=list)
 
 
+
 @dataclass
 class BacktestResult:
     trades: List[Trade]
@@ -83,6 +85,7 @@ class BacktestResult:
     win_rate: float
     max_drawdown: float
     sharpe_ratio: float
+    equity_timestamps: List[Any] = field(default_factory=list)
     account_currency: Optional[str] = None
     currency_symbol: Optional[str] = None
     quantity_mode: Optional[str] = None
@@ -217,6 +220,15 @@ def _partial_size(value: float | None, percent: float) -> float | None:
     pct = max(0.0, min(1.0, float(percent or 0)))
     return float(value) * pct
 
+
+def _equity_value(point: Any) -> float:
+    if isinstance(point, dict):
+        return float(point.get("equity", point.get("value", 0)) or 0)
+    if hasattr(point, "equity"):
+        return float(getattr(point, "equity") or 0)
+    return float(point or 0)
+
+
 def _build_summary(trades: List[Trade], equity_curve: List[float], final_capital: float, initial_capital: float, instrument_spec: dict[str, Any]) -> dict[str, Any]:
     pnls = [float(t.pnl or 0) for t in trades]
     gross_profit = sum(p for p in pnls if p > 0)
@@ -269,10 +281,17 @@ def run_backtest_engine(
 
     filtered_params = _filter_strategy_params(strategy_class, strategy_params)
     strategy = strategy_class(df, **filtered_params)
-    df = strategy.generate().copy()
+    generated_df = strategy.generate()
+    strategy_diagnostics = dict(getattr(generated_df, "attrs", {}).get("strategy_diagnostics") or {})
+    df = generated_df.copy()
 
     if "Position" not in df.columns:
         raise ValueError("Strategy must return a DataFrame with Position column.")
+
+    position_series = pd.to_numeric(df["Position"], errors="coerce").fillna(0).astype(int)
+    signal_count = int((position_series != 0).sum())
+    generated_buy_signals = int((position_series == 1).sum())
+    generated_sell_signals = int((position_series == -1).sum())
 
     runtime_config = dict(backtest_params.runtime_config or {})
     risk_cfg = runtime_config.get("risk") or {}
@@ -303,7 +322,15 @@ def run_backtest_engine(
         df = enrich_sl_tp_indicators(df, runtime_config)
 
     capital = float(backtest_params.initial_capital)
-    equity_curve = [capital]
+    first_ts = df.iloc[0]["Date"] if len(df) else None
+    equity_curve: List[float] = []
+    equity_timestamps: List[Any] = []
+
+    def append_equity(ts: Any, value: float) -> None:
+        equity_curve.append(float(value))
+        equity_timestamps.append(ts)
+
+    append_equity(first_ts, capital)
     trades: List[Trade] = []
 
     position = 0
@@ -332,6 +359,101 @@ def run_backtest_engine(
     allow_long = bool(exec_cfg.get("allow_long", True))
     allow_short = bool(exec_cfg.get("allow_short", True))
     exit_on_opposite_signal = bool(exec_cfg.get("exit_on_opposite_signal", True))
+
+    def close_active_position(exit_price_value: float, reason_value: str, current_dt_value: Any) -> None:
+        nonlocal capital, position, entry_price, entry_dt, stop_loss, target, quantity, lot_size
+        nonlocal entry_signal_reason, entry_risk_result, entry_sl_result, initial_stop_loss, initial_target
+        nonlocal initial_risk_points, lifecycle_events, breakeven_moved, partial_exit_done, partial_pnl_total
+        nonlocal original_quantity, original_lot_size
+
+        if position == 0 or entry_price is None or stop_loss is None or target is None:
+            return
+
+        if professional_mode and calculate_trade_pnl:
+            pnl_result = calculate_trade_pnl(
+                entry_price=float(entry_price),
+                exit_price=float(exit_price_value),
+                side=_normalize_side(position),
+                quantity_mode=quantity_mode,
+                quantity=quantity if quantity_mode != "LOTS" else None,
+                lot_size=lot_size,
+                instrument_spec=instrument_spec,
+            )
+            remaining_pnl = float(pnl_result.get("pnl") or 0.0) if pnl_result.get("status") == "OK" else 0.0
+        else:
+            remaining_pnl = (float(exit_price_value) - float(entry_price)) * position * quantity
+            pnl_result = {"ticks": None, "pips": None}
+        pnl = float(partial_pnl_total) + float(remaining_pnl)
+
+        risk_points = float(entry_risk_result.get("risk_points") or initial_risk_points or abs(float(entry_price) - float(initial_stop_loss or stop_loss)))
+        reward_points = float(entry_sl_result.get("reward_points") or abs(float(target) - float(entry_price)))
+        rr_ratio = (reward_points / risk_points) if risk_points > 0 else 0.0
+        risk_amount = float(entry_risk_result.get("risk_amount") or risk_points * float(original_quantity or quantity or 0))
+        actual_risk_amount = float(entry_risk_result.get("actual_risk_amount") or risk_amount or 0)
+        expected_reward_amount = actual_risk_amount * rr_ratio if actual_risk_amount else None
+        reward_amount = expected_reward_amount or (reward_points * float(original_quantity or quantity or 0))
+        r_multiple = (float(pnl) / actual_risk_amount) if actual_risk_amount > 0 else 0.0
+        capital += remaining_pnl
+        lifecycle_events.append(_event(str(reason_value), current_dt_value, old_sl=stop_loss, new_sl=stop_loss, reason="Trade closed", price=exit_price_value, r_value=r_multiple, extra={"pnl": pnl, "remaining_pnl": remaining_pnl, "partial_pnl": partial_pnl_total}))
+        trades.append(
+            Trade(
+                entry_datetime=entry_dt,
+                exit_datetime=current_dt_value,
+                direction="LONG" if position == 1 else "SHORT",
+                entry_price=float(entry_price),
+                exit_price=float(exit_price_value),
+                stop_loss=float(stop_loss),
+                target=float(target),
+                quantity=float(original_quantity if original_quantity is not None else quantity or 0),
+                pnl=float(pnl),
+                result="WIN" if pnl > 0 else "LOSS" if pnl < 0 else "BREAKEVEN",
+                capital_after_trade=float(capital),
+                exit_reason=str(reason_value),
+                risk_points=float(risk_points),
+                reward_points=float(reward_points),
+                rr_ratio=float(rr_ratio),
+                risk_amount=float(risk_amount),
+                reward_amount=float(reward_amount or 0),
+                r_multiple=float(r_multiple),
+                signal_reason=entry_signal_reason,
+                account_currency=instrument_spec.get("account_currency"),
+                currency_symbol=instrument_spec.get("currency_symbol"),
+                asset_class=instrument_spec.get("asset_class"),
+                quantity_mode=quantity_mode,
+                lot_size=float(original_lot_size) if original_lot_size is not None else lot_size,
+                actual_risk_amount=float(actual_risk_amount),
+                risk_ticks=entry_risk_result.get("risk_ticks"),
+                risk_pips=entry_risk_result.get("risk_pips"),
+                reward_ticks=(reward_points / float(instrument_spec.get("tick_size") or 0)) if float(instrument_spec.get("tick_size") or 0) > 0 else None,
+                expected_reward_amount=expected_reward_amount,
+                sl_mode=entry_sl_result.get("sl_mode") or sl_cfg.get("sl_mode"),
+                position_size_mode=risk_cfg.get("position_size_mode") or "RISK_BASED",
+                runtime_config_snapshot=runtime_config,
+                instrument_spec_snapshot=instrument_spec,
+                sizing_status=entry_risk_result.get("status"),
+                sizing_rejected_reason=entry_risk_result.get("rejected_reason"),
+                lifecycle_events=list(lifecycle_events),
+            )
+        )
+        position = 0
+        entry_price = None
+        entry_dt = None
+        stop_loss = None
+        target = None
+        quantity = 0.0
+        lot_size = None
+        entry_signal_reason = None
+        entry_risk_result = {}
+        entry_sl_result = {}
+        initial_stop_loss = None
+        initial_target = None
+        initial_risk_points = 0.0
+        lifecycle_events = []
+        breakeven_moved = False
+        partial_exit_done = False
+        partial_pnl_total = 0.0
+        original_quantity = None
+        original_lot_size = None
 
     for i in range(1, len(df)):
         row = df.iloc[i]
@@ -426,102 +548,18 @@ def run_backtest_engine(
                             lifecycle_events.append(_event("TRAILING_STOP_MOVED", current_dt, old_sl=old_sl, new_sl=stop_loss, reason=str(tm_cfg.get("trailing_mode") or "ATR_TRAIL"), price=open_price, r_value=current_r))
 
             if exit_price is not None:
-                if professional_mode and calculate_trade_pnl:
-                    pnl_result = calculate_trade_pnl(
-                        entry_price=float(entry_price),
-                        exit_price=float(exit_price),
-                        side=_normalize_side(position),
-                        quantity_mode=quantity_mode,
-                        quantity=quantity if quantity_mode != "LOTS" else None,
-                        lot_size=lot_size,
-                        instrument_spec=instrument_spec,
-                    )
-                    remaining_pnl = float(pnl_result.get("pnl") or 0.0) if pnl_result.get("status") == "OK" else 0.0
-                else:
-                    remaining_pnl = (float(exit_price) - float(entry_price)) * position * quantity
-                    pnl_result = {"ticks": None, "pips": None}
-                pnl = float(partial_pnl_total) + float(remaining_pnl)
-
-                risk_points = float(entry_risk_result.get("risk_points") or initial_risk_points or abs(float(entry_price) - float(initial_stop_loss or stop_loss)))
-                reward_points = float(entry_sl_result.get("reward_points") or abs(float(target) - float(entry_price)))
-                rr_ratio = (reward_points / risk_points) if risk_points > 0 else 0.0
-                risk_amount = float(entry_risk_result.get("risk_amount") or risk_points * float(original_quantity or quantity or 0))
-                actual_risk_amount = float(entry_risk_result.get("actual_risk_amount") or risk_amount or 0)
-                expected_reward_amount = actual_risk_amount * rr_ratio if actual_risk_amount else None
-                reward_amount = expected_reward_amount or (reward_points * float(original_quantity or quantity or 0))
-                r_multiple = (float(pnl) / actual_risk_amount) if actual_risk_amount > 0 else 0.0
-                capital += remaining_pnl
-                lifecycle_events.append(_event(str(reason), current_dt, old_sl=stop_loss, new_sl=stop_loss, reason="Trade closed", price=exit_price, r_value=r_multiple, extra={"pnl": pnl, "remaining_pnl": remaining_pnl, "partial_pnl": partial_pnl_total}))
-                trades.append(
-                    Trade(
-                        entry_datetime=entry_dt,
-                        exit_datetime=current_dt,
-                        direction="LONG" if position == 1 else "SHORT",
-                        entry_price=float(entry_price),
-                        exit_price=float(exit_price),
-                        stop_loss=float(stop_loss),
-                        target=float(target),
-                        quantity=float(original_quantity if original_quantity is not None else quantity or 0),
-                        pnl=float(pnl),
-                        result="WIN" if pnl > 0 else "LOSS" if pnl < 0 else "BREAKEVEN",
-                        capital_after_trade=float(capital),
-                        exit_reason=str(reason),
-                        risk_points=float(risk_points),
-                        reward_points=float(reward_points),
-                        rr_ratio=float(rr_ratio),
-                        risk_amount=float(risk_amount),
-                        reward_amount=float(reward_amount or 0),
-                        r_multiple=float(r_multiple),
-                        signal_reason=entry_signal_reason,
-                        account_currency=instrument_spec.get("account_currency"),
-                        currency_symbol=instrument_spec.get("currency_symbol"),
-                        asset_class=instrument_spec.get("asset_class"),
-                        quantity_mode=quantity_mode,
-                        lot_size=float(original_lot_size) if original_lot_size is not None else lot_size,
-                        actual_risk_amount=float(actual_risk_amount),
-                        risk_ticks=entry_risk_result.get("risk_ticks"),
-                        risk_pips=entry_risk_result.get("risk_pips"),
-                        reward_ticks=(reward_points / float(instrument_spec.get("tick_size") or 0)) if float(instrument_spec.get("tick_size") or 0) > 0 else None,
-                        expected_reward_amount=expected_reward_amount,
-                        sl_mode=entry_sl_result.get("sl_mode") or sl_cfg.get("sl_mode"),
-                        position_size_mode=risk_cfg.get("position_size_mode") or "RISK_BASED",
-                        runtime_config_snapshot=runtime_config,
-                        instrument_spec_snapshot=instrument_spec,
-                        sizing_status=entry_risk_result.get("status"),
-                        sizing_rejected_reason=entry_risk_result.get("rejected_reason"),
-                        lifecycle_events=list(lifecycle_events),
-                    )
-                )
-                position = 0
-                entry_price = None
-                entry_dt = None
-                stop_loss = None
-                target = None
-                quantity = 0.0
-                lot_size = None
-                entry_signal_reason = None
-                entry_risk_result = {}
-                entry_sl_result = {}
-                initial_stop_loss = None
-                initial_target = None
-                initial_risk_points = 0.0
-                lifecycle_events = []
-                breakeven_moved = False
-                partial_exit_done = False
-                partial_pnl_total = 0.0
-                original_quantity = None
-                original_lot_size = None
+                close_active_position(float(exit_price), str(reason), current_dt)
 
         if position == 0 and signal != 0:
             if signal == 1 and not allow_long:
-                equity_curve.append(capital)
+                append_equity(current_dt, capital)
                 continue
             if signal == -1 and not allow_short:
-                equity_curve.append(capital)
+                append_equity(current_dt, capital)
                 continue
             trade_day = pd.Timestamp(current_dt).date()
             if max_trades_per_day is not None and trades_by_day.get(trade_day, 0) >= int(max_trades_per_day):
-                equity_curve.append(capital)
+                append_equity(current_dt, capital)
                 continue
 
             pending_position = signal
@@ -542,7 +580,7 @@ def run_backtest_engine(
                 )
                 if entry_sl_result.get("status") != "OK":
                     reject_trade(entry_sl_result.get("rejected_reason") or "SL/TP calculation rejected trade.")
-                    equity_curve.append(capital)
+                    append_equity(current_dt, capital)
                     continue
                 pending_stop_loss = float(entry_sl_result["stop_loss"])
                 pending_target = float(entry_sl_result["target"])
@@ -561,16 +599,41 @@ def run_backtest_engine(
             if (pending_position == 1 and pending_stop_loss >= pending_entry_price) or (pending_position == -1 and pending_stop_loss <= pending_entry_price):
                 side_name = _normalize_side(pending_position)
                 reject_trade(f"Stop loss is invalid for {side_name}. SL must be below entry for BUY and above entry for SELL.")
-                equity_curve.append(capital)
+                append_equity(current_dt, capital)
                 continue
 
             risk_per_unit = abs(pending_entry_price - pending_stop_loss)
             if risk_per_unit <= 0:
                 reject_trade("Stop loss distance must be greater than 0.")
-                equity_curve.append(capital)
+                append_equity(current_dt, capital)
                 continue
 
-            if professional_mode and calculate_position_size:
+            if bool(getattr(backtest_params, "opportunity_mode", False)):
+                # Funded Backtest uses this mode only to obtain deterministic strategy
+                # opportunities/outcomes. Position size/PnL from these source trades is
+                # deliberately discarded by the funded simulator, so source generation
+                # must not lose valid signals merely because a small funded account cannot
+                # satisfy broker minimum sizing.
+                quantity_mode = str(instrument_spec.get("quantity_mode") or "SHARES").upper()
+                if quantity_mode == "LOTS":
+                    lot_size = float(instrument_spec.get("min_lot") or instrument_spec.get("lot_step") or 0.01)
+                    quantity = 0.0
+                    if lot_size <= 0:
+                        lot_size = 0.01
+                    entry_risk_result = {
+                        "status": "OK", "quantity_mode": "LOTS", "final_lot_size": lot_size,
+                        "risk_amount": 0.0, "actual_risk_amount": 0.0, "opportunity_mode": True,
+                    }
+                else:
+                    quantity = float(instrument_spec.get("min_quantity") or instrument_spec.get("quantity_step") or 1.0)
+                    lot_size = None
+                    if quantity <= 0:
+                        quantity = 1.0
+                    entry_risk_result = {
+                        "status": "OK", "quantity_mode": quantity_mode, "final_quantity": quantity,
+                        "risk_amount": 0.0, "actual_risk_amount": 0.0, "opportunity_mode": True,
+                    }
+            elif professional_mode and calculate_position_size:
                 entry_risk_result = calculate_position_size(
                     entry_price=pending_entry_price,
                     stop_loss=pending_stop_loss,
@@ -586,7 +649,7 @@ def run_backtest_engine(
                 )
                 if entry_risk_result.get("status") != "OK":
                     reject_trade(entry_risk_result.get("rejected_reason") or "Risk engine rejected trade.")
-                    equity_curve.append(capital)
+                    append_equity(current_dt, capital)
                     continue
                 quantity_mode = str(entry_risk_result.get("quantity_mode") or instrument_spec.get("quantity_mode") or "SHARES").upper()
                 if quantity_mode == "LOTS":
@@ -594,14 +657,14 @@ def run_backtest_engine(
                     quantity = 0.0
                     if lot_size <= 0:
                         reject_trade("Calculated lot size is invalid or below minimum.")
-                        equity_curve.append(capital)
+                        append_equity(current_dt, capital)
                         continue
                 else:
                     quantity = float(entry_risk_result.get("final_quantity") or 0)
                     lot_size = None
                     if quantity <= 0:
                         reject_trade("Calculated quantity is invalid or below minimum.")
-                        equity_curve.append(capital)
+                        append_equity(current_dt, capital)
                         continue
             else:
                 risk_amount = capital * backtest_params.capital_risk_pct
@@ -632,7 +695,17 @@ def run_backtest_engine(
             entry_signal_reason = pending_signal_reason
             trades_by_day[trade_day] = trades_by_day.get(trade_day, 0) + 1
 
-        equity_curve.append(capital)
+        append_equity(current_dt, capital)
+
+    forced_eod_exit_count = 0
+    if position != 0 and len(df) > 0:
+        last_row = df.iloc[-1]
+        last_dt = last_row["Date"]
+        last_exit_price = _safe_float(last_row.get("Close"), None) or _safe_float(last_row.get("Open"), None)
+        if last_exit_price is not None:
+            close_active_position(float(last_exit_price), "END_OF_BACKTEST", last_dt)
+            append_equity(last_dt, capital)
+            forced_eod_exit_count = 1
 
     wins = [trade for trade in trades if trade.pnl > 0]
     win_rate = len(wins) / len(trades) if trades else 0.0
@@ -657,12 +730,27 @@ def run_backtest_engine(
     summary["risk_engine_version"] = RISK_ENGINE_VERSION
     summary["pnl_engine_version"] = PNL_ENGINE_VERSION
     summary["warnings"] = warnings
+    if strategy_diagnostics:
+        summary["strategy_diagnostics"] = strategy_diagnostics
+        for key in ("total_zones", "zone_interactions", "rejection_setups", "confirmed_setups", "executed_trades", "rejected_setups"):
+            if key in strategy_diagnostics:
+                summary[key] = strategy_diagnostics[key]
+        if strategy_diagnostics.get("rejection_reasons"):
+            summary["strategy_rejection_reasons"] = strategy_diagnostics.get("rejection_reasons")
+    summary["signal_count"] = signal_count
+    summary["generated_buy_signals"] = generated_buy_signals
+    summary["generated_sell_signals"] = generated_sell_signals
     summary["rejected_trade_count"] = int(rejected_trade_count)
     summary["rejection_reasons"] = dict(rejection_reasons)
+    summary["forced_end_of_backtest_exits"] = int(forced_eod_exit_count)
+    if forced_eod_exit_count:
+        warnings.append("One open position was closed at the final candle so the backtest can persist a completed trade and final capital.")
+        summary["warnings"] = warnings
 
     return BacktestResult(
         trades=trades,
         equity_curve=equity_curve,
+        equity_timestamps=equity_timestamps,
         final_capital=float(capital),
         total_return=float(total_return),
         total_trades=len(trades),

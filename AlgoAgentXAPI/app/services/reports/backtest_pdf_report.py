@@ -26,6 +26,8 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from ...utils.timezone import kolkata_date_key
+
 from .report_formatters import (
     format_money,
     format_number,
@@ -314,13 +316,8 @@ def _compute_trade_outcome(summary: dict[str, Any], trades: list[dict[str, Any]]
 def _day_key(value: Any) -> str | None:
     if value is None or value == "":
         return None
-    if isinstance(value, datetime):
-        return value.date().isoformat()
-    text = str(value)
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).date().isoformat()
-    except Exception:
-        return text[:10] if len(text) >= 10 else text
+    key = kolkata_date_key(value)
+    return key or None
 
 
 def _daily_rows(pnl_calendar: list[dict[str, Any]], trades: list[dict[str, Any]], symbol: str, currency: str) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:

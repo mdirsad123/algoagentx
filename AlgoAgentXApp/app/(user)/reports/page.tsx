@@ -38,6 +38,7 @@ import {
   WalletCards,
   Zap,
 } from "lucide-react";
+import { formatDateTimeIST } from "@/lib/timezone";
 
 const orderedCards = ["today", "week", "month", "year"];
 
@@ -70,12 +71,7 @@ function formatReportDrawdown(value: number | null | undefined, currencySymbol =
 
 const formatCount = (value: unknown): string => safeNumber(value).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
-const formatDate = (value?: string | null): string => {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-};
+const formatDate = (value?: string | null): string => formatDateTimeIST(value);
 
 const toCsvSafe = (value: unknown): string => {
   if (value === null || value === undefined) return "";

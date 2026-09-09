@@ -26,6 +26,7 @@ import {
   Wifi,
   XCircle,
 } from "lucide-react"
+import { formatDateTimeIST } from "@/lib/timezone"
 
 const currency = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 })
 const numberFmt = new Intl.NumberFormat("en-IN")
@@ -82,12 +83,8 @@ const emptySummary: AdminDashboardSummary = {
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return "—"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return "—"
-  return date.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })
+  return formatDateTimeIST(value);
 }
-
 function formatNumber(value: number | string | null | undefined) {
   const num = Number(value || 0)
   return numberFmt.format(Number.isFinite(num) ? num : 0)

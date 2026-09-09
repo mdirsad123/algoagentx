@@ -13,9 +13,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_current_user, get_db
-from ...db.models import BrokerAccount, LiveOrder, MT5Agent, MT5AgentCommand
+from ...db.models import BrokerAccount, LiveOrder, MT5Agent, MT5AgentCommand, PriceAlert
 from ...schemas.mt5_agent import MT5AgentCommandOut, MT5AgentCommandResultIn, MT5AgentHeartbeatIn, MT5AgentOrderResultIn, MT5AgentOut, MT5AgentRegisterIn, MT5AgentRegisterOut
+from ...schemas.alerts import MT5QuoteBatchIn
 from ...utils.api_response import success_response
+from ...services.alerts.quote_bus import publish_quote, upsert_feed_health
 from .live_common import get_broker_account_or_404, user_id_from
 
 router = APIRouter()
@@ -122,8 +124,58 @@ async def heartbeat(payload: MT5AgentHeartbeatIn, authorization: str | None = He
         account.login_id = account_login or account.login_id
         account.server_name = payload.server_name or account.server_name
         account.metadata_json = {**(account.metadata_json or {}), "mt5_agent": {"agent_id": str(agent.id), "status": agent.status, "terminal_status": agent.terminal_status, "last_heartbeat_at": now.isoformat(), "balance": str(agent.balance) if agent.balance is not None else None, "equity": str(agent.equity) if agent.equity is not None else None, "currency": agent.currency, "algo_trading_enabled": agent.algo_trading_enabled, "agent_version": agent.agent_version}}
+    await upsert_feed_health(
+        db,
+        provider="MT5",
+        broker_account_id=str(agent.broker_account_id),
+        status="CONNECTED" if payload.terminal_connected else "DISCONNECTED",
+        last_heartbeat_at=now,
+        connection_error=None if payload.terminal_connected else (payload.terminal_status or "MT5 terminal disconnected"),
+        metadata={"agent_id": str(agent.id), "terminal_status": agent.terminal_status},
+    )
     await db.commit()
     return success_response({"status": agent.status, "terminal_status": agent.terminal_status, "last_heartbeat_at": now.isoformat()}, "Heartbeat accepted")
+
+
+@router.get("/alert-symbols")
+async def alert_symbols(authorization: str | None = Header(default=None), db: AsyncSession = Depends(get_db)):
+    agent = await _agent_from_token(db, _extract_token(None, authorization))
+    rows = (await db.execute(
+        select(PriceAlert.symbol)
+        .where(
+            PriceAlert.user_id == agent.user_id,
+            PriceAlert.provider == "MT5",
+            PriceAlert.broker_account_id == agent.broker_account_id,
+            PriceAlert.status == "ACTIVE",
+        )
+        .distinct()
+        .order_by(PriceAlert.symbol.asc())
+    )).scalars().all()
+    return success_response({"symbols": [str(x) for x in rows], "broker_account_id": str(agent.broker_account_id)})
+
+
+@router.post("/quotes")
+async def ingest_alert_quotes(payload: MT5QuoteBatchIn, authorization: str | None = Header(default=None), db: AsyncSession = Depends(get_db)):
+    agent = await _agent_from_token(db, _extract_token(None, authorization))
+    accepted = 0
+    for quote in payload.quotes:
+        price = quote.last if quote.last is not None else quote.bid if quote.bid is not None else quote.ask
+        if price is None:
+            continue
+        await publish_quote(
+            db,
+            provider="MT5",
+            broker_account_id=str(agent.broker_account_id),
+            symbol=quote.symbol,
+            price=price,
+            bid=quote.bid,
+            ask=quote.ask,
+            market_timestamp=quote.market_timestamp,
+            raw=quote.raw,
+        )
+        accepted += 1
+    await db.commit()
+    return success_response({"accepted": accepted, "broker_account_id": str(agent.broker_account_id)})
 
 
 @router.get("/commands")

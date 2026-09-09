@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.dependencies import get_current_user, get_db
 from ...db.models import BrokerAccount, StrategyDeployment
 from ...services.brokers.factory import get_broker_code
+from ...services.live.funded_guard_service import evaluate_funded_guard
 from ...services.live.order_preview_service import build_live_order_preview
 from ...utils.api_response import success_response
 from .live_common import get_deployment_or_404, is_admin, user_id_from
@@ -47,6 +48,19 @@ async def preview_live_order(payload: LiveOrderPreviewIn, db: AsyncSession = Dep
     elif not payload.strategy_id:
         raise HTTPException(status_code=400, detail="deployment_id or strategy_id is required")
 
+    funded_decision = None
+    if deployment is not None and str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED":
+        try:
+            funded_decision = await evaluate_funded_guard(
+                db,
+                deployment,
+                purpose="PREVIEW",
+                persist_decision=False,
+                auto_pause_on_breach=False,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Funded order preview blocked safely: {exc}") from exc
+
     result = await build_live_order_preview(
         db,
         deployment=deployment,
@@ -62,5 +76,8 @@ async def preview_live_order(payload: LiveOrderPreviewIn, db: AsyncSession = Dep
         strategy_id=payload.strategy_id,
         strategy_preset_id=payload.strategy_preset_id,
         strict_instrument=True,
+        funded_guard=funded_decision.to_dict() if funded_decision is not None else None,
+        risk_amount_override=funded_decision.effective_risk_amount if funded_decision is not None else None,
+        risk_percent_override=funded_decision.effective_risk_pct if funded_decision is not None else None,
     )
     return success_response(result, "Live order sizing preview generated")
