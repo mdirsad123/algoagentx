@@ -169,6 +169,15 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
         result.update(ran=True, runner=runner_result, message=runner_result.get("message"), next_run_at=deployment.next_run_at.isoformat())
         return result
     except Exception as exc:
+        # Any flush/execute failure leaves SQLAlchemy in a failed transaction.
+        # Roll back *before* issuing the recovery SELECT; otherwise the recovery
+        # path itself raises PendingRollbackError and the scheduler can keep
+        # failing even after the original transient DB error is gone.
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception("Auto runner rollback failed for deployment %s", deployment_id)
+
         deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
         if deployment is not None:
             message = str(getattr(exc, "detail", None) or exc)[:1000]

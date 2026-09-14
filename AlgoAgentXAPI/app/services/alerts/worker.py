@@ -5,7 +5,9 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import text
+from ...core.logging_config import configure_logging
+
+configure_logging()
 
 from ...core.config import settings
 from ...core.redis_manager import redis_manager
@@ -29,7 +31,7 @@ async def _heartbeat_loop() -> None:
                     ex=max(10, int(getattr(settings, "alert_worker_heartbeat_ttl_seconds", 30) or 30)),
                 )
         except Exception as exc:
-            logger.warning("Alert worker heartbeat failed: %s", exc)
+            logger.exception("Alert worker heartbeat failed: %s", exc)
         await asyncio.sleep(5)
 
 
@@ -57,7 +59,7 @@ async def _quote_loop() -> None:
         try:
             reconnect_delay = 1.0
             await pubsub.subscribe(QUOTE_CHANNEL)
-            logger.info("Alert worker subscribed to %s", QUOTE_CHANNEL)
+            logger.debug("Alert worker subscribed to %s", QUOTE_CHANNEL)
             async for message in pubsub.listen():
                 if message.get("type") != "message":
                     continue
@@ -73,7 +75,11 @@ async def _quote_loop() -> None:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.warning("Alert quote subscription disconnected: %s; reconnecting in %.0fs", exc, reconnect_delay)
+            logger.error(
+                "Alert quote subscription disconnected: %s; reconnecting in %.0fs",
+                exc,
+                reconnect_delay,
+            )
             try:
                 await redis_manager.close()
             except Exception:
@@ -88,12 +94,11 @@ async def _quote_loop() -> None:
 
 
 async def run_alert_worker() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    logger.info("Starting AlgoAgentX alert worker")
+    logger.debug("Starting AlgoAgentX alert worker")
     await check_db_connection()
     await redis_manager.initialize()
     if not redis_manager.is_available:
-        logger.warning("Redis unavailable at startup; worker will keep reconnecting")
+        logger.error("Redis unavailable at startup; worker will keep reconnecting")
     await asyncio.gather(_heartbeat_loop(), _delivery_loop(), _quote_loop())
 
 
@@ -102,6 +107,9 @@ def main() -> None:
         asyncio.run(run_alert_worker())
     except KeyboardInterrupt:
         pass
+    except Exception:
+        logger.critical("Alert worker crashed", exc_info=True)
+        raise
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ async def check_db_connection() -> None:
             # Simple connectivity test
             result = await conn.execute(text("SELECT 1"))
             result.fetchone()  # fetchone() is synchronous, don't await
-            logger.info("Database connection check: SUCCESS")
+            logger.debug("Database connection check: SUCCESS")
     except Exception as e:
         logger.error(f"Database connection check: FAILED - {str(e)}")
         raise
@@ -37,7 +37,7 @@ async def ensure_tables_created() -> None:
         
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-            logger.info("Database tables creation: SUCCESS")
+            logger.debug("Database tables creation: SUCCESS")
     except Exception as e:
         logger.error(f"Database tables creation: FAILED - {str(e)}")
         raise
@@ -59,13 +59,13 @@ async def init_db() -> None:
         if settings.is_development:
             try:
                 await ensure_tables_created()
-                logger.info("Development mode: Tables ensured to exist")
+                logger.debug("Development mode: Tables ensured to exist")
             except Exception as e:
                 logger.error(f"Failed to create tables in development: {str(e)}")
                 # In development, we continue but log the issue
                 logger.warning("Continuing startup despite table creation failure")
         else:
-            logger.info("Production mode: Skipping auto table creation")
+            logger.debug("Production mode: Skipping auto table creation")
             
     except Exception as e:
         error_msg = f"Database initialization failed: {str(e)}"

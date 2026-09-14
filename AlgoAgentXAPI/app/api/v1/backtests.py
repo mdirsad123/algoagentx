@@ -51,6 +51,15 @@ from ...utils.timezone import ensure_utc, iso_utc, format_kolkata_datetime, kolk
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# Large backtests can generate tens of thousands of trades. Persisting the full
+# trade payload twice (dedicated trades rows + performance_metrics.trade_details)
+# can create 100MB+ single INSERT parameters and cause asyncpg/Postgres connections
+# to be closed mid-operation. Keep the legacy JSON fallback only for modest runs.
+TRADE_DETAILS_FALLBACK_MAX_TRADES = 2000
+TRADE_INSERT_BATCH_SIZE = 500
+JOB_EQUITY_PREVIEW_MAX_POINTS = 5000
+
+
 
 def _to_float(value, default: float = 0.0) -> float:
     try:
@@ -68,6 +77,19 @@ def _to_int(value, default: int = 0) -> int:
         return int(value)
     except Exception:
         return default
+
+
+def _is_connection_closed_error(exc: Exception) -> bool:
+    text_value = f"{exc.__class__.__name__}: {exc}".lower()
+    markers = (
+        "connectiondoesnotexisterror",
+        "connection was closed",
+        "underlying connection is closed",
+        "connection is closed",
+        "connection reset",
+        "connection terminated",
+    )
+    return any(marker in text_value for marker in markers)
 
 
 def _equity_point_value(point, default: float = 0.0) -> float:
@@ -829,6 +851,21 @@ def _equity_json_from_service(service_response, start_date: date) -> list[dict]:
     return _service_equity_rows(service_response, start_date)
 
 
+def _downsample_rows(rows: list[dict], max_points: int = JOB_EQUITY_PREVIEW_MAX_POINTS) -> list[dict]:
+    """Return an evenly sampled preview while preserving first/last points.
+
+    Full equity data is still persisted in equity_curve. This only keeps the
+    background job payload small enough for reliable polling and final commit.
+    """
+    if max_points <= 0 or len(rows) <= max_points:
+        return rows
+    if max_points == 1:
+        return [rows[-1]]
+    last = len(rows) - 1
+    indexes = sorted({round(i * last / (max_points - 1)) for i in range(max_points)})
+    return [rows[i] for i in indexes]
+
+
 def _equity_df_from_service(service_response, start_date: date) -> pd.DataFrame:
     rows = _service_equity_rows(service_response, start_date)
     if not rows:
@@ -1330,7 +1367,11 @@ async def _save_backtest_payload(
         "warnings": json.dumps(service_response.warnings or []),
         "rejected_trade_count": int(getattr(service_response, "rejected_trade_count", 0) or 0),
         "rejection_reasons": json.dumps(getattr(service_response, "rejection_reasons", {}) or {}),
-        "trade_details": json.dumps(_trade_json_from_service(service_response)),
+        "trade_details": (
+            json.dumps(_trade_json_from_service(service_response))
+            if total_trades <= TRADE_DETAILS_FALLBACK_MAX_TRADES
+            else json.dumps([])
+        ),
         "status": "completed",
     }
 
@@ -1432,6 +1473,22 @@ async def _save_backtest_payload(
             async with db.begin_nested():
                 trade_columns_meta = await _table_columns_meta(db, "trades")
                 trade_columns = {meta["column_name"] for meta in trade_columns_meta}
+                pending_rows: list[dict] = []
+                pending_keys: tuple[str, ...] | None = None
+
+                async def flush_trade_batch() -> None:
+                    nonlocal pending_rows, pending_keys
+                    if not pending_rows or not pending_keys:
+                        return
+                    columns_sql = ", ".join(pending_keys)
+                    values_sql = ", ".join(f":{column}" for column in pending_keys)
+                    await db.execute(
+                        text(f"INSERT INTO trades ({columns_sql}) VALUES ({values_sql})"),
+                        pending_rows,
+                    )
+                    pending_rows = []
+                    pending_keys = None
+
                 for trade in service_response.result.trades:
                     base_values = {
                         "id": _uuid_or_bigint_for_column(next((meta for meta in trade_columns_meta if meta["column_name"] == "id"), {"data_type": "bigint", "udt_name": "int8"})),
@@ -1477,10 +1534,25 @@ async def _save_backtest_payload(
                     )
                     if not insert_trade_values:
                         continue
-                    columns_sql = ", ".join(insert_trade_values.keys())
-                    values_sql = ", ".join(f":{column}" for column in insert_trade_values.keys())
-                    await db.execute(text(f"INSERT INTO trades ({columns_sql}) VALUES ({values_sql})"), insert_trade_values)
+
+                    row_keys = tuple(insert_trade_values.keys())
+                    if pending_keys is not None and row_keys != pending_keys:
+                        await flush_trade_batch()
+                    if pending_keys is None:
+                        pending_keys = row_keys
+                    pending_rows.append(insert_trade_values)
+                    if len(pending_rows) >= TRADE_INSERT_BATCH_SIZE:
+                        await flush_trade_batch()
+
+                await flush_trade_batch()
         except Exception as exc:
+            if total_trades > TRADE_DETAILS_FALLBACK_MAX_TRADES:
+                logger.exception(
+                    "Failed to persist trades for large backtest %s. The legacy JSON fallback was intentionally skipped to avoid an oversized DB payload. Error: %s",
+                    backtest_id,
+                    exc,
+                )
+                raise
             logger.exception("Failed to persist trades for backtest %s. Report will use performance_metrics.trade_details fallback when available. Error: %s", backtest_id, exc)
 
     equity_rows = _service_equity_rows(service_response, payload.start_date)
@@ -2404,6 +2476,7 @@ async def _execute_backtest_sync(
     current_user: dict,
     entitlements: dict,
     execution_job_id: str | None = None,
+    progress_callback=None,
 ):
     strategy = await db.get(Strategy, payload.strategy_id)
     if not strategy:
@@ -2544,8 +2617,12 @@ async def _execute_backtest_sync(
             job.debit_txn_id = str(debit_txn.id)
         elif included_txn is not None:
             job.debit_txn_id = str(included_txn.id)
-        job.progress = 30
-        job.message = "Loading candles and executing strategy. Large ranges may take a long time."
+        progress_message = "Loading candles and executing strategy. Large ranges may take a long time."
+        if progress_callback is not None:
+            await progress_callback(30, progress_message)
+        else:
+            job.progress = 30
+            job.message = progress_message
 
         service_response = await BacktestService.run_backtest(
             db=db,
@@ -2561,8 +2638,12 @@ async def _execute_backtest_sync(
             timeframe_id=payload.timeframe_id,
         )
 
-        job.progress = 75
-        job.message = "Strategy execution finished. Calculating metrics."
+        progress_message = "Strategy execution finished. Calculating metrics."
+        if progress_callback is not None:
+            await progress_callback(75, progress_message)
+        else:
+            job.progress = 75
+            job.message = progress_message
 
         trade_df = _trade_df_from_service(service_response)
         equity_df = _equity_df_from_service(service_response, payload.start_date)
@@ -2572,8 +2653,12 @@ async def _execute_backtest_sync(
             initial_capital=_to_float(payload.capital),
         )
 
-        job.progress = 90
-        job.message = "Saving backtest result and trade history."
+        progress_message = "Saving backtest result and trade history."
+        if progress_callback is not None:
+            await progress_callback(90, progress_message)
+        else:
+            job.progress = 90
+            job.message = progress_message
 
         backtest_id = await _save_backtest_payload(
             db,
@@ -2653,7 +2738,7 @@ async def _execute_backtest_sync(
             "avg_lot_size": result_summary.get("avg_lot_size"),
             "avg_quantity": result_summary.get("avg_quantity"),
             "professional_summary": result_summary,
-            "equity_curve": _equity_json_from_service(service_response, payload.start_date),
+            "equity_curve": _downsample_rows(_equity_json_from_service(service_response, payload.start_date)),
             "saved": True,
         }
 
@@ -2788,7 +2873,16 @@ async def _execute_backtest_sync(
             logger.exception("Failed to persist failed job status for job %s", job_id)
 
         detail = str(exc)
-        if "performance_metrics" in detail:
+        lowered_detail = detail.lower()
+        schema_error_markers = (
+            "undefinedcolumn",
+            "undefinedtable",
+            "notnullviolation",
+            "null value in column",
+            "column does not exist",
+            "relation does not exist",
+        )
+        if "performance_metrics" in lowered_detail and any(marker in lowered_detail for marker in schema_error_markers):
             detail = (
                 "Backtest execution failed because performance_metrics schema is outdated or has legacy NOT NULL columns. "
                 "Run scripts/backtest_performance_metrics_safe_migration.sql and retry."
@@ -2837,7 +2931,30 @@ async def run_backtest(
         max_retries=0,
     )
     db.add(job)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception as exc:
+        if not _is_connection_closed_error(exc):
+            raise
+        # A dependency may have checked out a connection before the request and
+        # the server/network can close it while a previous heavy DB operation is
+        # in flight. Roll back so SQLAlchemy discards the broken connection, then
+        # retry the tiny JobStatus write on a fresh pooled connection.
+        logger.warning("Backtest queue JobStatus commit lost its DB connection; retrying once for job %s", job_id)
+        await db.rollback()
+        existing_job = await db.get(JobStatus, job_id)
+        if existing_job is None:
+            db.add(JobStatus(
+                id=job_id,
+                user_id=as_uuid_or_str(current_user["user_id"]),
+                job_type="backtest",
+                status="queued",
+                progress=0,
+                message="Backtest queued. You can leave this page; the job will continue in the background.",
+                job_data=json.dumps(job_payload),
+                max_retries=0,
+            ))
+        await db.commit()
 
     dispatch_mode = "background"
     try:

@@ -1,7 +1,12 @@
 import asyncio
 import logging
-import sys
 from contextlib import asynccontextmanager
+
+from .core.logging_config import configure_logging
+
+# Configure logging before importing the rest of the application so modules
+# inherit the same quiet production policy.
+configure_logging()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,57 +22,47 @@ from .middleware.security import (
 
 logger = logging.getLogger(__name__)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("=" * 60)
-    logger.info("Starting AlgoAgentX API...")
-    logger.info("=" * 60)
-    logger.info("[DIAGNOSTIC] Database Configuration:")
-    logger.info(f"  - Masked URL: {settings.masked_database_url}")
-    logger.info(f"  - Database: {settings.database_name}")
-    logger.info(f"  - Host: {settings.database_host}")
-    logger.info(f"  - Port: {settings.database_port}")
-    logger.info(f"  - Environment: {settings.env}")
-    logger.info("-" * 60)
+    logger.debug("Starting AlgoAgentX API")
+    logger.debug(
+        "Database configuration | url=%s | database=%s | host=%s | port=%s | environment=%s",
+        settings.masked_database_url,
+        settings.database_name,
+        settings.database_host,
+        settings.database_port,
+        settings.env,
+    )
 
     from .db.init_db import init_db
     await init_db()
 
     redis_available = await redis_manager.initialize()
     if redis_available:
-        logger.info("[REDIS] Connection established successfully")
+        logger.debug("Redis connection established successfully")
     else:
-        logger.warning("[REDIS] Unavailable - using fallback background execution")
+        logger.error("Redis unavailable; using fallback background execution")
 
     runner_task = None
     broker_sync_task = None
     # Always start the lightweight auto-runner loop. Per-deployment switches
-    # (status, Auto Runner, Auto Trade and platform kill-switch) still decide
-    # whether anything runs. This avoids a hidden .env flag making the UI show
-    # "Auto Runner ON" while no background runner is actually active.
+    # still decide whether any strategy work executes.
     from .services.live.auto_runner_service import auto_runner_loop
     runner_task = asyncio.create_task(auto_runner_loop())
-    logger.info("[LIVE_RUNNER] Background auto runner loop started")
+    logger.debug("Live auto runner background loop started")
 
     if getattr(settings, "live_broker_sync_enabled", True):
         from .services.live.broker_sync_service import broker_sync_loop
         broker_sync_task = asyncio.create_task(broker_sync_loop())
-        logger.info("[BROKER_SYNC] Background live broker sync loop enabled")
+        logger.debug("Live broker sync background loop enabled")
     else:
-        logger.info("[BROKER_SYNC] Background live broker sync loop disabled")
+        logger.debug("Live broker sync background loop disabled")
 
-    logger.info("=" * 60)
     try:
         yield
     finally:
-        logger.info("Shutting down AlgoAgentX API...")
+        logger.debug("Shutting down AlgoAgentX API")
         if runner_task is not None:
             runner_task.cancel()
             try:
@@ -134,6 +129,7 @@ async def redis_health_check():
     try:
         return await redis_manager.health_check()
     except Exception as exc:
+        logger.exception("Redis health check failed")
         return {
             "redis_available": False,
             "error": str(exc),
@@ -149,6 +145,7 @@ async def database_health_check():
         await check_db_connection()
         return {"db_available": True}
     except Exception as exc:
+        logger.exception("Database health check failed")
         return {"db_available": False, "error": str(exc)}
 
 
@@ -173,6 +170,7 @@ async def readiness_check():
             "message": "Redis is required for production deployment",
         }
     except Exception as exc:
+        logger.exception("Readiness check failed")
         return {
             "status": "error",
             "service": "AlgoAgentX API",

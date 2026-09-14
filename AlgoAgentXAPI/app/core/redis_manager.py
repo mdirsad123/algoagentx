@@ -29,7 +29,7 @@ class RedisManager:
         try:
             # Parse Redis URL from environment
             redis_url = self._get_redis_url()
-            logger.info(f"Initializing Redis connection with URL: {redis_url}")
+            logger.debug("Initializing Redis connection")
             
             # Create Redis client
             self._redis_client = aioredis.from_url(
@@ -44,14 +44,14 @@ class RedisManager:
             await self._redis_client.ping()
             self._is_connected = True
             self._connection_error = None
-            logger.info("Redis connection established successfully")
+            logger.debug("Redis connection established successfully")
             return True
             
         except Exception as e:
             self._is_connected = False
             self._connection_error = str(e)
-            logger.warning(f"Redis connection failed: {e}")
-            logger.warning("Redis is unavailable - will use fallback background execution")
+            logger.error(f"Redis connection failed: {e}")
+            logger.error("Redis is unavailable - will use fallback background execution")
             return False
 
     def _get_redis_url(self) -> str:

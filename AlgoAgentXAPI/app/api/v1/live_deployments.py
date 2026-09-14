@@ -652,7 +652,7 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
                 await db.rollback()
                 # Summary must not hard-fail because one broker is offline. Avoid full
                 # traceback noise for disconnected MT5 agents on normal list/detail loads.
-                logger.warning("Live deployment broker refresh failed for %s: %s", deployment_id, exc)
+                logger.error("Live deployment broker refresh failed for %s: %s", deployment_id, exc)
                 broker_sync_warning = str(exc)
                 row = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none() or row
                 broker_row = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment_broker_account_id))).scalar_one_or_none()

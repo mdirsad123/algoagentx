@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import settings
 from ...core.redis_manager import redis_manager
-from ...db.models import AlertFeedHealth, BrokerAccount
+from ...db.models import AlertFeedHealth, BrokerAccount, PriceAlert
 from .telegram import telegram_configured
+from .whatsapp import whatsapp_configured
 from .worker import WORKER_HEARTBEAT_KEY
 
 
@@ -48,6 +49,13 @@ async def alert_health(db: AsyncSession, user_id: str) -> dict:
         await db.execute(text("SELECT 1"))
     except Exception:
         db_ok = False
+
+    active_alert_count = int((await db.execute(
+        select(func.count(PriceAlert.id)).where(
+            PriceAlert.user_id == user_id,
+            PriceAlert.status == "ACTIVE",
+        )
+    )).scalar_one() or 0)
 
     account_ids = select(BrokerAccount.id).where(BrokerAccount.user_id == user_id)
     feed_rows = (await db.execute(
@@ -95,7 +103,10 @@ async def alert_health(db: AsyncSession, user_id: str) -> dict:
             "last_heartbeat_at": row.last_heartbeat_at.isoformat() if row.last_heartbeat_at else None,
             "connection_error": computed_error,
         })
-    market_feed = "connected" if any(x["status"] == "CONNECTED" for x in feeds) else ("degraded" if any(x["status"] == "DEGRADED" for x in feeds) else "disconnected")
+    if active_alert_count == 0:
+        market_feed = "idle"
+    else:
+        market_feed = "connected" if any(x["status"] == "CONNECTED" for x in feeds) else ("degraded" if any(x["status"] == "DEGRADED" for x in feeds) else "disconnected")
     last_tick = next((x["last_tick_at"] for x in feeds if x["last_tick_at"]), None)
     return {
         "worker": worker,
@@ -103,7 +114,9 @@ async def alert_health(db: AsyncSession, user_id: str) -> dict:
         "redis": "healthy" if redis_ok else "unhealthy",
         "database": "healthy" if db_ok else "unhealthy",
         "market_feed": market_feed,
+        "active_alert_count": active_alert_count,
         "last_tick": last_tick,
         "telegram": "configured" if telegram_configured() else "not_configured",
+        "whatsapp": "configured" if whatsapp_configured() else "not_configured",
         "feeds": feeds,
     }

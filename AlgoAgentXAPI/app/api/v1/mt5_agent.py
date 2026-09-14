@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from datetime import datetime, timezone
 from uuid import UUID
@@ -19,6 +20,8 @@ from ...schemas.alerts import MT5QuoteBatchIn
 from ...utils.api_response import success_response
 from ...services.alerts.quote_bus import publish_quote, upsert_feed_health
 from .live_common import get_broker_account_or_404, user_id_from
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -205,6 +208,13 @@ async def _store_command_result(payload: MT5AgentCommandResultIn, authorization:
     else:
         cmd.status = requested_status if requested_status in {"ERROR", "TIMEOUT"} else "ERROR"
         cmd.error_message = payload.message or f"MT5 {cmd.command_type} command failed"
+        logger.error(
+            "MT5 agent command failed | command_id=%s | type=%s | status=%s | message=%s",
+            cmd.id,
+            cmd.command_type,
+            cmd.status,
+            cmd.error_message,
+        )
     cmd.result_payload = payload.model_dump(mode="json")
     cmd.completed_at = datetime.now(timezone.utc)
 

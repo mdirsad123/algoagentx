@@ -1,9 +1,8 @@
 #!/bin/bash
 
-# Script to run Celery worker for background tasks
+# Script to run Celery worker for background tasks.
+# Keep production quiet by default; set CELERY_LOG_LEVEL=debug when diagnosing.
 
-# Set environment variables
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
-# Run Celery worker
-celery -A app.celery_app worker --loglevel=info --concurrency=2
+celery -A app.celery_app worker --loglevel="${CELERY_LOG_LEVEL:-error}" --concurrency=2

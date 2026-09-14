@@ -18,11 +18,15 @@ from ...schemas.alerts import (
     AlertOut,
     AlertTestNotificationIn,
     AlertUpdate,
+    AlertWhatsAppTestIn,
     TelegramChannelIn,
     TelegramChannelOut,
+    WhatsAppChannelIn,
+    WhatsAppChannelOut,
 )
 from ...services.alerts.health import alert_health
 from ...services.alerts.telegram import resolve_chat_id, send_telegram
+from ...services.alerts.whatsapp import build_test_template_dispatch, resolve_whatsapp_recipient, send_whatsapp, whatsapp_configured, whatsapp_template_status
 from ...utils.api_response import success_response
 
 router = APIRouter()
@@ -43,6 +47,11 @@ def _validate_full_alert(alert: PriceAlert) -> None:
         raise HTTPException(status_code=422, detail="Unsupported alert_type")
     if alert.trigger_mode not in {"ONCE", "RECURRING"}:
         raise HTTPException(status_code=422, detail="Unsupported trigger_mode")
+    if bool(alert.approach_enabled):
+        if alert.alert_type == "LEAVING_ZONE":
+            raise HTTPException(status_code=422, detail="Approach Alert is not supported for Leaving Zone in Phase 2A")
+        if alert.approach_distance is None or Decimal(alert.approach_distance) <= 0:
+            raise HTTPException(status_code=422, detail="approach_distance must be greater than 0 when Approach Alert is enabled")
 
 
 async def _validate_broker_account(db: AsyncSession, *, user_id: str, provider: str, broker_account_id: UUID | None) -> None:
@@ -74,6 +83,12 @@ async def create_alert(
 ):
     user_id = _user_id(current_user)
     await _validate_broker_account(db, user_id=user_id, provider=payload.provider, broker_account_id=payload.broker_account_id)
+    if payload.whatsapp_enabled:
+        if not whatsapp_configured():
+            raise HTTPException(status_code=422, detail="Twilio WhatsApp is not configured on the API/alert worker")
+        recipient, _ = await resolve_whatsapp_recipient(db, user_id)
+        if not recipient:
+            raise HTTPException(status_code=422, detail="Save a WhatsApp destination number before enabling WhatsApp on an alert")
     row = PriceAlert(
         user_id=user_id,
         broker_account_id=payload.broker_account_id,
@@ -92,7 +107,11 @@ async def create_alert(
         expires_at=payload.expires_at,
         telegram_enabled=payload.telegram_enabled,
         browser_enabled=False,
-        whatsapp_enabled=False,
+        whatsapp_enabled=payload.whatsapp_enabled,
+        approach_enabled=payload.approach_enabled,
+        approach_distance=payload.approach_distance if payload.approach_enabled else None,
+        approach_state="WAITING" if payload.approach_enabled else "DISABLED",
+        approach_trigger_count=0,
         metadata_json=payload.metadata,
     )
     db.add(row)
@@ -212,6 +231,113 @@ async def test_notification(
     return success_response({"status": "SENT", "telegram_api_accepted": True, "message_id": result.message_id, "using_global_fallback": using_fallback}, "Telegram API accepted the test notification")
 
 
+@router.get("/whatsapp-channel", response_model=dict)
+async def get_whatsapp_channel(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    user_id = _user_id(current_user)
+    row = (await db.execute(select(UserNotificationChannel).where(
+        UserNotificationChannel.user_id == user_id,
+        UserNotificationChannel.channel == "WHATSAPP",
+    ))).scalar_one_or_none()
+    fallback = str(getattr(settings, "twilio_to_whatsapp_number", "") or "").strip()
+    templates = whatsapp_template_status()
+    data = WhatsAppChannelOut(
+        configured=bool(whatsapp_configured() and ((row and row.external_recipient_id) or fallback)),
+        phone_number=str(row.external_recipient_id) if row else None,
+        enabled=bool(row.enabled) if row else bool(fallback),
+        verified=bool(row.verified) if row else False,
+        using_global_fallback=bool(not row and fallback),
+        content_template_configured=templates["any"],
+        approaching_template_configured=templates["approaching"],
+        triggered_template_configured=templates["triggered"],
+    )
+    return success_response(data.model_dump(mode="json"))
+
+
+@router.put("/whatsapp-channel", response_model=dict)
+async def put_whatsapp_channel(
+    payload: WhatsAppChannelIn,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    raw = payload.phone_number.strip()
+    if raw.lower().startswith("whatsapp:"):
+        raw = raw.split(":", 1)[1].strip()
+    if not raw.startswith("+") or not raw[1:].isdigit():
+        raise HTTPException(status_code=422, detail="Use an E.164 WhatsApp number such as +919876543210")
+    user_id = _user_id(current_user)
+    row = (await db.execute(select(UserNotificationChannel).where(
+        UserNotificationChannel.user_id == user_id,
+        UserNotificationChannel.channel == "WHATSAPP",
+    ))).scalar_one_or_none()
+    if row is None:
+        row = UserNotificationChannel(
+            user_id=user_id,
+            channel="WHATSAPP",
+            external_recipient_id=raw,
+            enabled=payload.enabled,
+            verified=False,
+        )
+        db.add(row)
+    else:
+        changed = str(row.external_recipient_id) != raw
+        row.external_recipient_id = raw
+        row.enabled = payload.enabled
+        if changed:
+            row.verified = False
+    await db.commit()
+    templates = whatsapp_template_status()
+    return success_response({
+        "configured": bool(whatsapp_configured()),
+        "phone_number": row.external_recipient_id,
+        "enabled": row.enabled,
+        "verified": row.verified,
+        "using_global_fallback": False,
+        "content_template_configured": templates["any"],
+        "approaching_template_configured": templates["approaching"],
+        "triggered_template_configured": templates["triggered"],
+    }, "WhatsApp channel saved")
+
+
+@router.post("/test-whatsapp", response_model=dict)
+async def test_whatsapp(
+    payload: AlertWhatsAppTestIn,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    if not whatsapp_configured():
+        raise HTTPException(status_code=400, detail="Configure Twilio WhatsApp credentials first")
+    user_id = _user_id(current_user)
+    recipient, using_fallback = await resolve_whatsapp_recipient(db, user_id, payload.phone_number)
+    if not recipient:
+        raise HTTPException(status_code=400, detail="Configure a WhatsApp destination number first")
+    template = build_test_template_dispatch()
+    result = await send_whatsapp(
+        recipient,
+        "AlgoAgentX WhatsApp Test\n\nTwilio WhatsApp alert delivery is configured successfully.",
+        content_sid=template.content_sid,
+        content_variables=template.variables,
+    )
+    if not result.ok:
+        raise HTTPException(status_code=502, detail=f"WhatsApp test failed: {result.error}")
+    row = (await db.execute(select(UserNotificationChannel).where(
+        UserNotificationChannel.user_id == user_id,
+        UserNotificationChannel.channel == "WHATSAPP",
+    ))).scalar_one_or_none()
+    if row and str(row.external_recipient_id) in {str(payload.phone_number or "").strip(), str(recipient).replace("whatsapp:", "")}:
+        row.verified = True
+        await db.commit()
+    return success_response({
+        "status": "SENT",
+        "twilio_api_accepted": True,
+        "message_sid": result.message_id,
+        "using_global_fallback": using_fallback,
+        "template_kind": template.kind,
+    }, "Twilio API accepted the WhatsApp test notification")
+
+
 @router.get("/{alert_id}", response_model=dict)
 async def get_alert(
     alert_id: UUID,
@@ -234,11 +360,21 @@ async def update_alert(
     next_provider = str(changes.get("provider") or row.provider)
     next_broker_account_id = changes.get("broker_account_id", row.broker_account_id)
     await _validate_broker_account(db, user_id=_user_id(current_user), provider=next_provider, broker_account_id=next_broker_account_id)
+    next_whatsapp_enabled = bool(changes.get("whatsapp_enabled", row.whatsapp_enabled))
+    if next_whatsapp_enabled:
+        if not whatsapp_configured():
+            raise HTTPException(status_code=422, detail="Twilio WhatsApp is not configured on the API/alert worker")
+        recipient, _ = await resolve_whatsapp_recipient(db, _user_id(current_user))
+        if not recipient:
+            raise HTTPException(status_code=422, detail="Save a WhatsApp destination number before enabling WhatsApp on an alert")
     if "metadata" in changes:
         changes["metadata_json"] = changes.pop("metadata")
     condition_changed = any(k in changes for k in {"symbol", "provider", "broker_account_id", "alert_type", "target_price", "zone_low", "zone_high"})
+    approach_changed = any(k in changes for k in {"approach_enabled", "approach_distance"})
     for key, value in changes.items():
         setattr(row, key, value)
+    if not row.approach_enabled:
+        row.approach_distance = None
     if row.alert_type in {"CROSSING_UP", "CROSSING_DOWN"}:
         row.zone_low = None
         row.zone_high = None
@@ -251,6 +387,8 @@ async def update_alert(
         row.runtime_state = "ARMED"
         if row.status in {"COMPLETED", "EXPIRED"}:
             row.status = "ACTIVE"
+    if condition_changed or approach_changed:
+        row.approach_state = "WAITING" if row.approach_enabled else "DISABLED"
     await db.commit()
     await db.refresh(row)
     return success_response(AlertOut.model_validate(row).model_dump(mode="json"), "Alert updated")
@@ -267,6 +405,7 @@ async def enable_alert(
     row.runtime_state = "ARMED"
     row.last_price = None
     row.rearm_eligible_at = None
+    row.approach_state = "WAITING" if row.approach_enabled else "DISABLED"
     await db.commit()
     return success_response(AlertOut.model_validate(row).model_dump(mode="json"), "Alert enabled")
 
@@ -280,6 +419,7 @@ async def disable_alert(
     row = await _owned_alert(db, alert_id, _user_id(current_user))
     row.status = "DISABLED"
     row.runtime_state = "DISABLED"
+    row.approach_state = "DISABLED"
     await db.commit()
     return success_response(AlertOut.model_validate(row).model_dump(mode="json"), "Alert disabled")
 
@@ -293,6 +433,7 @@ async def delete_alert(
     row = await _owned_alert(db, alert_id, _user_id(current_user))
     row.status = "DELETED"
     row.runtime_state = "DISABLED"
+    row.approach_state = "DISABLED"
     meta = dict(row.metadata_json or {})
     meta["deleted_at"] = datetime.now(timezone.utc).isoformat()
     row.metadata_json = meta

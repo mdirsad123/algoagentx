@@ -59,13 +59,46 @@ def _money(value: Decimal | float | str | None) -> str:
 
 def build_alert_message(event, alert) -> str:
     ts = (event.condition_detected_at or datetime.now(tz=IST)).astimezone(IST)
-    condition = str(event.condition_type or "").replace("_", " ").title()
+    condition_type = str(event.condition_type or "").upper()
+    condition = condition_type.replace("_", " ").title()
     event_id = f"AAX-{str(event.id).split('-')[0].upper()}"
-    snapshot = ((event.payload or {}).get("alert_snapshot") or {}) if isinstance(event.payload, dict) else {}
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    snapshot = (payload.get("alert_snapshot") or {}) if isinstance(payload, dict) else {}
+    approach = (payload.get("approach") or {}) if isinstance(payload, dict) else {}
     alert_type = str(snapshot.get("alert_type") or alert.alert_type or "").upper()
     target_price = snapshot.get("target_price", alert.target_price)
     zone_low = snapshot.get("zone_low", alert.zone_low)
     zone_high = snapshot.get("zone_high", alert.zone_high)
+
+    if condition_type == "APPROACHING_ZONE":
+        side = str(approach.get("side") or "").upper()
+        side_text = " from below" if side == "BELOW" else (" from above" if side == "ABOVE" else "")
+        distance = approach.get("distance_to_boundary")
+        return (
+            "🟡 AlgoAgentX Approaching Zone\n\n"
+            f"{event.symbol} is approaching your configured zone{side_text}\n\n"
+            f"Zone: {_money(zone_low)} - {_money(zone_high)}\n"
+            f"Current: {_money(event.trigger_price)}\n"
+            f"Distance to Zone: {_money(distance)}\n\n"
+            f"Time: {ts.strftime('%d-%b-%Y %I:%M:%S %p')} IST\n"
+            f"Alert ID: {event_id}"
+        )
+
+    if condition_type == "APPROACHING_TARGET":
+        distance = approach.get("distance_to_boundary")
+        direction_text = " from below" if str(approach.get("side") or "").upper() == "BELOW" else (
+            " from above" if str(approach.get("side") or "").upper() == "ABOVE" else ""
+        )
+        return (
+            "🟡 AlgoAgentX Approaching Alert\n\n"
+            f"{event.symbol} is approaching your target{direction_text}\n\n"
+            f"Target: {_money(target_price)}\n"
+            f"Current: {_money(event.trigger_price)}\n"
+            f"Distance: {_money(distance)}\n\n"
+            f"Time: {ts.strftime('%d-%b-%Y %I:%M:%S %p')} IST\n"
+            f"Alert ID: {event_id}"
+        )
+
     if alert_type in {"ENTERING_ZONE", "LEAVING_ZONE"}:
         verb = "entered" if alert_type == "ENTERING_ZONE" else "left"
         return (

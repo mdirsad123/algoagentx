@@ -1,5 +1,6 @@
 export type AlertType = "CROSSING_UP" | "CROSSING_DOWN" | "ENTERING_ZONE" | "LEAVING_ZONE";
 export type AlertTriggerMode = "ONCE" | "RECURRING";
+export type AlertEventType = AlertType | "APPROACHING_TARGET" | "APPROACHING_ZONE";
 
 export interface PriceAlert {
   id: string;
@@ -21,6 +22,11 @@ export interface PriceAlert {
   telegram_enabled: boolean;
   browser_enabled: boolean;
   whatsapp_enabled: boolean;
+  approach_enabled: boolean;
+  approach_distance?: string | number | null;
+  approach_state: string;
+  last_approach_triggered_at?: string | null;
+  approach_trigger_count: number;
   last_price?: string | number | null;
   last_market_timestamp?: string | null;
   last_triggered_at?: string | null;
@@ -37,7 +43,7 @@ export interface AlertEvent {
   user_id: string;
   symbol: string;
   provider: string;
-  condition_type: AlertType;
+  condition_type: AlertEventType;
   trigger_price: string | number;
   previous_price?: string | number | null;
   market_timestamp?: string | null;
@@ -47,6 +53,8 @@ export interface AlertEvent {
   notification_sent_at?: string | null;
   notification_response_at?: string | null;
   telegram_status: string;
+  browser_status: string;
+  whatsapp_status: string;
   feed_to_server_latency_ms?: number | null;
   evaluation_latency_ms?: number | null;
   notification_api_latency_ms?: number | null;
@@ -61,8 +69,10 @@ export interface AlertHealth {
   redis: string;
   database: string;
   market_feed: string;
+  active_alert_count?: number;
   last_tick?: string | null;
   telegram: string;
+  whatsapp: string;
   feeds: Array<{
     provider: string;
     broker_account_id?: string | null;
@@ -81,6 +91,17 @@ export interface TelegramChannel {
   using_global_fallback: boolean;
 }
 
+export interface WhatsAppChannel {
+  configured: boolean;
+  phone_number?: string | null;
+  enabled: boolean;
+  verified: boolean;
+  using_global_fallback: boolean;
+  content_template_configured: boolean;
+  approaching_template_configured?: boolean;
+  triggered_template_configured?: boolean;
+}
+
 export interface AlertPayload {
   symbol: string;
   provider: string;
@@ -96,5 +117,7 @@ export interface AlertPayload {
   expires_at?: string | null;
   telegram_enabled: boolean;
   browser_enabled: false;
-  whatsapp_enabled: false;
+  whatsapp_enabled: boolean;
+  approach_enabled: boolean;
+  approach_distance?: number | null;
 }

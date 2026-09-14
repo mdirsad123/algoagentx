@@ -7,6 +7,7 @@ from decimal import Decimal
 from uuid import uuid4
 from pydantic import BaseModel
 import json
+import logging
 
 from ...core.dependencies import get_current_user, get_db, check_ai_screener_limits, get_admin_user, get_user_entitlements
 from ...services.ai_screener.service import AIScreenerService
@@ -14,6 +15,8 @@ from ...services.credits.management import CreditManagementService
 from ...schemas.credits import InsufficientCreditsError
 from ...db.models import JobStatus, Instrument, ScreenerNews, ScreenerAnnouncements, ScreenerRuns
 from ...schemas.backtests import PerformanceMetric as PerformanceMetricOut
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -130,7 +133,7 @@ async def run_ai_screener(
             )
             
             # Log the credit policy decision
-            print(f"AI Screener credit policy applied: {credit_policy}")
+            logger.debug("AI Screener credit policy applied: %s", credit_policy)
             
         except ValueError as e:
             raise HTTPException(

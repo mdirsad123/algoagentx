@@ -28,6 +28,8 @@ class AlertBase(BaseModel):
     telegram_enabled: bool = True
     browser_enabled: bool = False
     whatsapp_enabled: bool = False
+    approach_enabled: bool = False
+    approach_distance: Decimal | None = Field(default=None, gt=0)
     metadata: dict[str, Any] | None = None
 
     @field_validator("symbol")
@@ -59,8 +61,14 @@ class AlertBase(BaseModel):
             if self.zone_low >= self.zone_high:
                 raise ValueError("zone_low must be less than zone_high")
             self.target_price = None
-        if self.browser_enabled or self.whatsapp_enabled:
-            raise ValueError("Browser and WhatsApp channels are not enabled in Phase 1")
+        if self.browser_enabled:
+            raise ValueError("Browser Push is not enabled in this alerting release")
+        if self.alert_type == "LEAVING_ZONE" and self.approach_enabled:
+            raise ValueError("Approach Alert is not supported for Leaving Zone in Phase 2A")
+        if self.approach_enabled and self.approach_distance is None:
+            raise ValueError("approach_distance is required when Approach Alert is enabled")
+        if not self.approach_enabled:
+            self.approach_distance = None
         return self
 
 
@@ -82,6 +90,9 @@ class AlertUpdate(BaseModel):
     rearm_type: str | None = None
     expires_at: datetime | None = None
     telegram_enabled: bool | None = None
+    whatsapp_enabled: bool | None = None
+    approach_enabled: bool | None = None
+    approach_distance: Decimal | None = Field(default=None, gt=0)
     metadata: dict[str, Any] | None = None
 
     @field_validator("symbol")
@@ -115,6 +126,11 @@ class AlertOut(BaseModel):
     telegram_enabled: bool
     browser_enabled: bool
     whatsapp_enabled: bool
+    approach_enabled: bool
+    approach_distance: Decimal | None = None
+    approach_state: str
+    last_approach_triggered_at: datetime | None = None
+    approach_trigger_count: int
     last_price: Decimal | None = None
     last_market_timestamp: datetime | None = None
     last_triggered_at: datetime | None = None
@@ -145,6 +161,8 @@ class AlertEventOut(BaseModel):
     notification_sent_at: datetime | None = None
     notification_response_at: datetime | None = None
     telegram_status: str
+    browser_status: str
+    whatsapp_status: str
     feed_to_server_latency_ms: int | None = None
     evaluation_latency_ms: int | None = None
     notification_api_latency_ms: int | None = None
@@ -171,6 +189,26 @@ class TelegramChannelOut(BaseModel):
 
 class AlertTestNotificationIn(BaseModel):
     chat_id: str | None = None
+
+
+class WhatsAppChannelIn(BaseModel):
+    phone_number: str = Field(..., min_length=7, max_length=255)
+    enabled: bool = True
+
+
+class WhatsAppChannelOut(BaseModel):
+    configured: bool
+    phone_number: str | None = None
+    enabled: bool = False
+    verified: bool = False
+    using_global_fallback: bool = False
+    content_template_configured: bool = False
+    approaching_template_configured: bool = False
+    triggered_template_configured: bool = False
+
+
+class AlertWhatsAppTestIn(BaseModel):
+    phone_number: str | None = None
 
 
 class MT5QuoteIn(BaseModel):

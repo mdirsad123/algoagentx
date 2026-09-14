@@ -104,6 +104,20 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_default_chat_id: str = ""
     telegram_timeout_seconds: int = 10
+
+    # Twilio WhatsApp alert delivery (small post-Phase-2A enhancement).
+    # Values are loaded from environment variables; never hard-code production credentials.
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from_whatsapp_number: str = ""
+    twilio_to_whatsapp_number: str = ""
+    # Legacy single template SID (kept for backwards compatibility).
+    twilio_content_sid: str = ""
+    # Recommended Phase 2B templates: one for approach alerts and one for reached/triggered alerts.
+    twilio_content_sid_approaching: str = ""
+    twilio_content_sid_triggered: str = ""
+    twilio_timeout_seconds: int = 10
+
     alert_worker_heartbeat_ttl_seconds: int = 30
     alert_feed_stale_seconds: int = 15
     alert_quote_poll_interval_ms: int = 250

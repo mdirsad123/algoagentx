@@ -65,8 +65,8 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         if hasattr(request, "path_params") and "job_id" in request.path_params:
             job_id = request.path_params["job_id"]
         
-        # Log request start
-        logger.info(
+        # Routine request traces are DEBUG-only so high-frequency polling stays silent.
+        logger.debug(
             f"REQUEST_START - ID: {request_id} | "
             f"Method: {request.method} | "
             f"Path: {request.url.path} | "
@@ -81,14 +81,26 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             # Calculate response time
             duration = time.time() - start_time
             
-            # Log successful response
-            logger.info(
-                f"REQUEST_END - ID: {request_id} | "
-                f"Status: {response.status_code} | "
-                f"Duration: {duration:.3f}s | "
-                f"User: {user_id} | "
-                f"Job: {job_id}"
-            )
+            # Keep normal 2xx/4xx traffic at DEBUG. Only server-side request
+            # failures are promoted to ERROR in production.
+            if response.status_code >= 500:
+                logger.error(
+                    f"REQUEST_FAILED - ID: {request_id} | "
+                    f"Method: {request.method} | "
+                    f"Path: {request.url.path} | "
+                    f"Status: {response.status_code} | "
+                    f"Duration: {duration:.3f}s | "
+                    f"User: {user_id} | "
+                    f"Job: {job_id}"
+                )
+            else:
+                logger.debug(
+                    f"REQUEST_END - ID: {request_id} | "
+                    f"Status: {response.status_code} | "
+                    f"Duration: {duration:.3f}s | "
+                    f"User: {user_id} | "
+                    f"Job: {job_id}"
+                )
             
             # Add request ID to response headers
             response.headers["X-Request-ID"] = request_id

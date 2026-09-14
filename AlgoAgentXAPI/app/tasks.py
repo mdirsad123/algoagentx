@@ -623,6 +623,23 @@ async def _run_backtest_v2_async(job_id: str, user_id: str, payload_dict: Dict[s
         from .schemas.backtests import BacktestRunRequest
 
         payload = BacktestRunRequest.model_validate(payload_dict)
+
+        async def publish_progress(progress: int, message: str) -> None:
+            # Use a separate short transaction for status updates so the browser
+            # can see real progress without committing the main billing/result
+            # transaction early. This also avoids holding the JobStatus row lock
+            # throughout a long strategy run.
+            try:
+                async with session_factory() as progress_db:
+                    await progress_db.execute(
+                        update(JobStatus)
+                        .where(JobStatus.id == str(job_id))
+                        .values(status="running", progress=int(progress), message=str(message)[:4000])
+                    )
+                    await progress_db.commit()
+            except Exception:
+                logger.exception("Failed to publish progress for queued backtest %s", job_id)
+
         async with session_factory() as db:
             return await _execute_backtest_sync(
                 payload=payload,
@@ -630,6 +647,7 @@ async def _run_backtest_v2_async(job_id: str, user_id: str, payload_dict: Dict[s
                 current_user={"user_id": user_id},
                 entitlements={"plan_code": plan_code} if plan_code else {},
                 execution_job_id=str(job_id),
+                progress_callback=publish_progress,
             )
     except Exception as exc:
         await _mark_background_job_failed(session_factory, job_id, exc)

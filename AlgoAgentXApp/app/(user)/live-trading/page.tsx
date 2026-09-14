@@ -12,6 +12,7 @@ import { PageShell } from "@/components/ui/PageShell";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
+import axiosInstance from "@/lib/axios";
 import type { LiveDeploymentSummary, StrategyCatalogItem, StrategyDeployment } from "@/types/live-trading";
 import { formatDateTimeIST } from "@/lib/timezone";
 
@@ -142,7 +143,10 @@ export default function LiveTradingPage() {
     if (!deleteTarget) return;
     try {
       setBusyId(deleteTarget.id);
-      await liveTradingApi.deleteDeployment(deleteTarget.id);
+      // Call the endpoint directly here instead of relying on a method that may
+      // be missing from a stale client bundle. The shared API helper still
+      // exposes deleteDeployment for other callers.
+      await axiosInstance.delete(`/api/v1/live/deployments/${deleteTarget.id}`);
       showToast("Deployment deleted", "success");
       setDeleteTarget(null);
       await load();

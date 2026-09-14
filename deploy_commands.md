@@ -46,6 +46,9 @@ Do **not** use `down -v` unless you intentionally want to delete database volume
 ## 3.1 Production rebuild/deploy API + Web
 
 Use this when code changed in backend/API or frontend/Web.
+# all service build of prod
+docker compose --env-file .env.prod -f docker-compose.yml up -d --build
+
 
 ```powershell
 cd D:\Stock_market\algoagentx
