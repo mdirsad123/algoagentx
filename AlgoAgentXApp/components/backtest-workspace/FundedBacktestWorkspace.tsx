@@ -61,6 +61,13 @@ const mergeRuntime = (incoming?: Record<string, unknown> | null): RuntimeConfig 
 const challengeLabel = (value: string) => ({ ONE_STEP: "1-Step", TWO_STEP: "2-Step", INSTANT: "Instant", CUSTOM: "Custom" }[value] || value);
 const dailyDdLabel = (value: string) => ({ STATIC_INITIAL_BALANCE: "Static Initial Balance", START_OF_DAY_BALANCE: "Start-of-Day Balance", START_OF_DAY_EQUITY: "Start-of-Day Equity" }[value] || value);
 const maxDdLabel = (value: string) => ({ STATIC_INITIAL_BALANCE: "Static Initial Balance", TRAILING_BALANCE: "Trailing Balance", TRAILING_EQUITY: "Trailing Equity", HIGH_WATER_MARK: "High-Water Mark" }[value] || value);
+const formatElapsed = (seconds: number): string => {
+  const total = Math.max(0, Math.floor(seconds || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  return [hours, minutes, secs].map((value) => String(value).padStart(2, "0")).join(":");
+};
 
 const defaultPhase = (phaseNumber: number): FundedAccountPhase => ({
   phase_number: phaseNumber,
@@ -320,12 +327,22 @@ export default function FundedBacktestWorkspace() {
   const [runId, setRunId] = useState("");
   const [runStatus, setRunStatus] = useState<FundedRunStatus | null>(null);
   const [runDetail, setRunDetail] = useState<FundedRunDetail | null>(null);
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [runElapsedSeconds, setRunElapsedSeconds] = useState(0);
   const [rerunSeed, setRerunSeed] = useState<FundedRunDetail | null>(null);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
   const [profileDialogMode, setProfileDialogMode] = useState<"create" | "edit" | "duplicate">("create");
   const [profileDialogInitial, setProfileDialogInitial] = useState<FundedAccountProfile | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!running || !runStartedAt) return;
+    const updateElapsed = () => setRunElapsedSeconds(Math.max(0, Math.floor((Date.now() - runStartedAt) / 1000)));
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [running, runStartedAt]);
 
   const selectedProfile = useMemo(() => profiles.find((p) => p.id === selectedProfileId) || null, [profiles, selectedProfileId]);
   const selectedInstrument = useMemo(() => instruments.find((i) => String(i.id) === instrumentId) || null, [instruments, instrumentId]);
@@ -449,11 +466,15 @@ export default function FundedBacktestWorkspace() {
   const refreshRun = useCallback(async (id: string) => {
     try {
       const status = await fundedBacktestsApi.getStatus(id); setRunStatus(status);
+      if (!runStartedAt && status.started_at) {
+        const parsedStart = Date.parse(status.started_at);
+        if (Number.isFinite(parsedStart)) setRunStartedAt(parsedStart);
+      }
       if (isFundedRunTerminal(status.status)) {
         stopPolling(); setRunning(false); const detail = await fundedBacktestsApi.getRun(id); setRunDetail(detail);
       }
     } catch (err) { stopPolling(); setRunning(false); toast.error(parseApiError(err).message); }
-  }, [stopPolling]);
+  }, [stopPolling, runStartedAt]);
   useEffect(() => () => stopPolling(), [stopPolling]);
 
   const doPreview = async () => {
@@ -488,7 +509,9 @@ export default function FundedBacktestWorkspace() {
 
   const doRun = async () => {
     if (!requestPayload || !canRun) return;
-    setRunning(true); setRunDetail(null); setRunStatus({ id: "", status: "PENDING" });
+    const localStartedAt = Date.now();
+    setRunStartedAt(localStartedAt); setRunElapsedSeconds(0);
+    setRunning(true); setRunDetail(null); setRunStatus({ id: "", status: "PENDING", progress: 0, message: "Queueing funded backtest..." });
     try {
       const result = await fundedBacktestsApi.run(requestPayload); const id = result.funded_backtest_id; setRunId(id);
       if (result.credits) {
@@ -500,7 +523,8 @@ export default function FundedBacktestWorkspace() {
           subscriptionState: result.credits?.subscription_state ?? prev.subscriptionState,
         }));
       }
-      const initialStatus: FundedRunStatus = { id, status: result.status, current_phase: result.current_phase, trades_processed: result.trades_processed, current_balance: result.final_balance, current_equity: result.final_equity };
+      const initialStatus: FundedRunStatus = { id, status: result.status, progress: result.progress ?? 5, message: result.message || "Funded backtest started.", started_at: result.started_at, current_phase: result.current_phase, trades_processed: result.trades_processed, current_balance: result.final_balance, current_equity: result.final_equity };
+      if (result.started_at) { const parsedStart = Date.parse(result.started_at); if (Number.isFinite(parsedStart)) setRunStartedAt(parsedStart); }
       setRunStatus(initialStatus);
       if (isFundedRunTerminal(result.status)) { setRunning(false); setRunDetail(await fundedBacktestsApi.getRun(id)); }
       else { stopPolling(); pollRef.current = setInterval(() => refreshRun(id), 2500); await refreshRun(id); }
@@ -609,6 +633,13 @@ export default function FundedBacktestWorkspace() {
     </div>
 
     {(runStatus || runDetail) && <Card className={`${resultTone === "failure" ? "border-red-400/50" : resultTone === "success" ? "border-emerald-400/50" : resultTone === "incomplete" ? "border-amber-400/50" : resultTone === "error" ? "border-orange-400/50" : "border-blue-400/30"} overflow-hidden`}><div className={`${resultTone === "failure" ? "bg-red-500/15" : resultTone === "success" ? "bg-emerald-500/15" : resultTone === "incomplete" ? "bg-amber-500/15" : resultTone === "error" ? "bg-orange-500/15" : "bg-blue-500/10"} border-b border-white/10 px-5 py-4 sm:px-6`}><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-start gap-3">{running ? <Loader2 className="mt-0.5 h-6 w-6 animate-spin text-blue-300" /> : resultTone === "failure" ? <XCircle className="mt-0.5 h-6 w-6 text-red-300" /> : resultTone === "success" ? <CheckCircle2 className="mt-0.5 h-6 w-6 text-emerald-300" /> : resultTone === "incomplete" ? <AlertTriangle className="mt-0.5 h-6 w-6 text-amber-300" /> : <AlertTriangle className="mt-0.5 h-6 w-6 text-orange-300" />}<div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Funded Result</p><h2 className="text-xl font-bold sm:text-2xl">{resultHeadline}</h2><p className="mt-1 text-sm text-muted-foreground">{resultTone === "incomplete" ? incompleteMessage : resultTone === "failure" ? (runDetail?.failure_reason || runStatus?.failure_reason || "A funded-account rule was breached.") : resultTone === "success" ? "Backend funded rules confirm the terminal success state shown below." : "The backend is processing or reporting this simulation state."}</p></div></div><div className="flex gap-2">{runId && <Button variant="outline" onClick={() => refreshRun(runId)}><RefreshCcw className="mr-2 h-4 w-4" />Refresh</Button>}{runId && isFundedRunTerminal(resultStatus) && <Button asChild><Link href={`/funded-backtest-report/${runId}`}>View Funded Report</Link></Button>}</div></div>{runId && <p className="mt-3 break-all text-[11px] text-muted-foreground">Run ID: {runId}</p>}</div><CardContent className="space-y-5 p-5 sm:p-6">
+      {running && <div className="rounded-xl border border-blue-400/25 bg-blue-400/10 p-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+          <div><span className="font-semibold">Background Funded Backtest · {Math.round(Number(runStatus?.progress || 0))}%</span><p className="mt-1 text-xs text-muted-foreground">{runStatus?.message || "Funded simulation is running in the background."}</p></div>
+          <span className="rounded-md border border-blue-200/20 bg-black/10 px-2 py-1 font-mono text-xs">Elapsed {formatElapsed(runElapsedSeconds)}</span>
+        </div>
+        <Progress value={Math.max(2, Math.min(100, Number(runStatus?.progress || 0)))} />
+      </div>}
       <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">{[
         ["Current Phase", runStatus?.current_phase ?? runDetail?.current_phase ?? "—"],
         ["Funded Trades", executedFundedCount],

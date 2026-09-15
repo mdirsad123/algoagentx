@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
 from ...core.redis_manager import redis_manager
+from ...core.logging_config import get_activity_logger
 from ...db.models import AlertEvent, NotificationDelivery, PriceAlert
+
+activity_logger = get_activity_logger()
 
 
 def _dt(value: Any, fallback: datetime) -> datetime:
@@ -380,6 +383,10 @@ async def evaluate_quote(db: AsyncSession, quote: dict[str, Any]) -> list[str]:
                 alert.last_approach_triggered_at = detected_at
                 alert.approach_state = "APPROACH_SENT"
                 triggered.append(str(approach_event.id))
+                activity_logger.info(
+                    "ALERT approach | alert=%s | symbol=%s | type=%s | price=%s",
+                    alert.id, getattr(alert, "symbol", None) or quote.get("symbol"), approach_event.event_type, current,
+                )
 
             if main_match and alert.runtime_state == "ARMED":
                 alert.trigger_sequence = int(alert.trigger_sequence or 0) + 1
@@ -418,6 +425,10 @@ async def evaluate_quote(db: AsyncSession, quote: dict[str, Any]) -> list[str]:
                     alert.runtime_state = "COOLDOWN"
                     alert.rearm_eligible_at = detected_at + timedelta(seconds=int(alert.cooldown_seconds or 0))
                 triggered.append(str(event.id))
+                activity_logger.info(
+                    "ALERT triggered | alert=%s | symbol=%s | type=%s | price=%s",
+                    alert.id, getattr(alert, "symbol", None) or quote.get("symbol"), alert.alert_type, current,
+                )
         finally:
             if client is not None:
                 try:

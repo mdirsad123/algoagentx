@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
+import time as time_module
+
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -16,6 +21,10 @@ from ..services.backtest_advanced_filters import apply_advanced_filters, build_f
 from engine.backtest_engine import BacktestParams, BacktestResult, run_backtest_engine
 from .trading.runtime_config_service import resolve_runtime_config, validate_runtime_config
 from .trading.guardrails import validate_backtest_guardrails, RISK_ENGINE_VERSION, PNL_ENGINE_VERSION
+from ..core.logging_config import get_activity_logger
+
+logger = logging.getLogger(__name__)
+activity_logger = get_activity_logger()
 
 
 class BacktestError(Exception):
@@ -90,12 +99,32 @@ class BacktestService:
         strategy_preset_id: str | None = None,
         timeframe_id: int | None = None,
         opportunity_mode: bool = False,
+        progress_callback=None,
+        activity_label: str = "BACKTEST",
     ) -> BacktestServiceResponse:
         if start_date >= end_date:
             raise InvalidDateRangeError(f"Start date {start_date} must be before end date {end_date}")
 
+        async def emit_progress(progress: int, message: str) -> None:
+            if progress_callback is None:
+                return
+            try:
+                await progress_callback(int(progress), str(message))
+            except Exception:
+                # Progress visibility must never make a valid backtest fail.
+                logger.exception("Backtest progress callback failed")
+
+        run_started = time_module.perf_counter()
         resolved_timeframe = await BacktestService._resolve_timeframe(db, timeframe_id, timeframe)
+        await emit_progress(35, "Loading market candles from database.")
+        fetch_started = time_module.perf_counter()
         market_data_df = await BacktestService._fetch_market_data(db, instrument_id, resolved_timeframe, start_date, end_date)
+        fetch_seconds = time_module.perf_counter() - fetch_started
+        await emit_progress(45, f"Loaded {len(market_data_df):,} candles. Preparing strategy.")
+        activity_logger.info(
+            "%s | candles loaded=%s | timeframe=%s | range=%s..%s | %.2fs",
+            activity_label, len(market_data_df), resolved_timeframe, start_date, end_date, fetch_seconds,
+        )
         if market_data_df.empty:
             raise MarketDataNotFoundError(
                 f"No market data found for instrument {instrument_id}, timeframe {resolved_timeframe}, period {start_date} to {end_date}"
@@ -161,11 +190,44 @@ class BacktestService:
             opportunity_mode=opportunity_mode,
         )
 
-        result = run_backtest_engine(
-            market_data=market_data_df,
-            strategy_class=strategy_class,
-            strategy_params=merged_strategy_params,
-            backtest_params=backtest_params,
+        await emit_progress(55, f"Executing {strategy_name} on {len(market_data_df):,} candles.")
+        engine_started = time_module.perf_counter()
+        heartbeat_seconds = max(30, int(os.getenv("BACKTEST_HEARTBEAT_LOG_SECONDS", "60") or 60))
+
+        async def engine_heartbeat() -> None:
+            while True:
+                await asyncio.sleep(heartbeat_seconds)
+                elapsed = time_module.perf_counter() - engine_started
+                activity_logger.info(
+                    "%s | strategy still running | strategy=%s | candles=%s | elapsed=%.0fs",
+                    activity_label, strategy_name, len(market_data_df), elapsed,
+                )
+
+        heartbeat_task = asyncio.create_task(engine_heartbeat())
+        try:
+            # Strategy generation and candle-by-candle execution are CPU-bound.
+            # Offloading them keeps the async worker responsive so progress/status
+            # polling, timers and other API work do not look frozen.
+            result = await asyncio.to_thread(
+                run_backtest_engine,
+                market_data_df,
+                strategy_class,
+                merged_strategy_params,
+                backtest_params,
+            )
+        finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
+        engine_seconds = time_module.perf_counter() - engine_started
+        await emit_progress(75, f"Strategy execution finished in {engine_seconds:.1f}s. Calculating metrics.")
+        activity_logger.info(
+            "%s | strategy finished | strategy=%s | candles=%s | trades=%s | engine=%.2fs | total=%.2fs",
+            activity_label, strategy_name, len(market_data_df), int(getattr(result, "total_trades", 0) or 0),
+            engine_seconds, time_module.perf_counter() - run_started,
         )
         result.warnings = list(dict.fromkeys([*(getattr(result, "warnings", []) or []), *guardrail_warnings]))
         result.summary = getattr(result, "summary", {}) or {}

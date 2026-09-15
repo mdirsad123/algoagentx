@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import csv
 import io
+import logging
+import os
+import time as time_module
 from decimal import Decimal
 from uuid import UUID
 from typing import Any
@@ -15,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from ...core.dependencies import get_current_user, get_db
+from ...core.logging_config import get_activity_logger
 from ...db.models import (
     FundedAccountPhase,
     FundedAccountProfile,
@@ -40,6 +45,8 @@ from ...utils.api_response import success_response
 from ...utils.timezone import format_kolkata_datetime, iso_utc
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+activity_logger = get_activity_logger()
 
 
 def _is_admin(current_user: dict) -> bool:
@@ -349,6 +356,11 @@ async def run_funded_backtest(
         status="PENDING", current_phase=(profile.phases[0].phase_number if profile.phases else None),
         runtime_config_snapshot=initial_snapshots["runtime_config_snapshot"], instrument_spec_snapshot=initial_snapshots["instrument_spec_snapshot"],
         funded_profile_snapshot=initial_snapshots["funded_profile_snapshot"], risk_plan_snapshot=risk_plan, rule_engine_version=FUNDED_RULE_ENGINE_VERSION,
+        summary_json={
+            "execution_progress": 5,
+            "execution_message": "Funded backtest queued.",
+            "execution_started_at": datetime.now(timezone.utc).isoformat(),
+        },
     )
     db.add(run)
     await db.flush()
@@ -384,9 +396,17 @@ async def run_funded_backtest(
         )
         dispatch_mode = "background"
 
+    activity_logger.info(
+        "FUNDED BACKTEST queued | run=%s | mode=%s | strategy=%s | instrument=%s | timeframe=%s | range=%s..%s",
+        run.id, dispatch_mode, getattr(strategy, "name", payload.strategy_id),
+        getattr(instrument, "symbol", payload.instrument_id), payload.timeframe, payload.start_date, payload.end_date,
+    )
+
     return success_response({
         "funded_backtest_id": str(run.id),
         "status": "RUNNING",
+        "progress": 5,
+        "started_at": (run.summary_json or {}).get("execution_started_at"),
         "current_phase": run.current_phase,
         "final_balance": run.final_balance,
         "final_equity": run.final_equity,
@@ -402,10 +422,27 @@ async def _execute_funded_backtest_run(
     payload: FundedRunRequest,
     user_id: str,
     user_role: str = "",
+    progress_callback=None,
 ):
     """Execute a previously-created funded run outside the HTTP request."""
+    execution_started = time_module.perf_counter()
+
+    async def emit_progress(progress: int, message: str) -> None:
+        if progress_callback is None:
+            return
+        try:
+            await progress_callback(int(progress), str(message))
+        except Exception:
+            logger.exception("Funded backtest progress callback failed for %s", run_id)
+
     current_user = {"user_id": user_id, "role": user_role}
     profile, strategy, instrument = await _validate_run_references(db, payload, current_user)
+    activity_logger.info(
+        "FUNDED BACKTEST start | run=%s | strategy=%s | instrument=%s | timeframe=%s | range=%s..%s",
+        run_id, getattr(strategy, "name", payload.strategy_id), getattr(instrument, "symbol", payload.instrument_id),
+        payload.timeframe, payload.start_date, payload.end_date,
+    )
+    await emit_progress(10, "Validating funded rules and billing.")
     billing, _ = await build_funded_credit_quote(
         db,
         payload=payload,
@@ -457,12 +494,20 @@ async def _execute_funded_backtest_run(
             }) from exc
 
         source_runtime_capital = Decimal(str((((payload.runtime_config or {}).get("risk") or {}).get("initial_capital") or 100000)))
+        await emit_progress(20, "Generating strategy opportunities for funded simulation.")
+
+        async def source_progress(progress: int, message: str) -> None:
+            # Map the ordinary source-engine stages into the funded 20-70% band.
+            mapped = 20 + int(max(0, min(100, progress)) * 0.5)
+            await emit_progress(min(70, mapped), message)
+
         source = await BacktestService.run_backtest(
             db=db, strategy_id=payload.strategy_id, instrument_id=payload.instrument_id, timeframe=payload.timeframe,
             start_date=payload.start_date, end_date=payload.end_date, initial_capital=source_runtime_capital,
             advanced_filters=payload.advanced_filters, runtime_config=payload.runtime_config, strategy_preset_id=payload.strategy_preset_id,
-            opportunity_mode=True,
+            opportunity_mode=True, progress_callback=source_progress, activity_label=f"FUNDED SOURCE run={run_id}",
         )
+        await emit_progress(75, f"Generated {len(source.result.trades):,} strategy opportunities. Running funded rules.")
         run.runtime_config_snapshot = _json_safe(source.runtime_config or {})
         run.instrument_spec_snapshot = _json_safe(source.instrument_spec or instrument_spec)
         opportunities = [FundedOpportunity.from_source_trade(t, i) for i, t in enumerate(source.result.trades, start=1)]
@@ -473,16 +518,48 @@ async def _execute_funded_backtest_run(
         for key in ("daily_drawdown_pct", "daily_drawdown_mode", "max_drawdown_pct", "max_drawdown_mode"):
             if key in profile_rules and key not in payout_rules:
                 payout_rules[key] = profile_rules[key]
-        output = FundedBacktestSimulator().simulate(
-            initial_balance=run.initial_capital,
-            challenge_type=profile_snapshot.get("challenge_type") or profile.challenge_type,
-            phases=snapshot.get("phases") or [], payout_config=payout_rules,
-            risk_tiers=snapshot.get("risk_tiers") or [], instrument_spec=run.instrument_spec_snapshot,
-            opportunities=opportunities, risk_mode=payload.risk_mode, fixed_risk_pct=payload.fixed_risk_pct,
-            safety_buffer_pct=payload.safety_buffer_pct, configured_max_risk_pct=payload.configured_max_risk_pct,
-            rule_timezone=((profile_snapshot.get("rules_json") or {}).get("rule_timezone") or "UTC"),
-            historical_end_date=payload.end_date,
+        simulation_started = time_module.perf_counter()
+        activity_logger.info(
+            "FUNDED BACKTEST simulation | run=%s | opportunities=%s",
+            run_id,
+            len(opportunities),
         )
+        heartbeat_seconds = max(30, int(os.getenv("BACKTEST_HEARTBEAT_LOG_SECONDS", "60") or 60))
+
+        async def funded_simulator_heartbeat() -> None:
+            while True:
+                await asyncio.sleep(heartbeat_seconds)
+                activity_logger.info(
+                    "FUNDED BACKTEST still running | run=%s | stage=rule-simulation | opportunities=%s | elapsed=%.0fs",
+                    run_id,
+                    len(opportunities),
+                    time_module.perf_counter() - simulation_started,
+                )
+
+        simulator_heartbeat_task = asyncio.create_task(funded_simulator_heartbeat())
+        try:
+            # The funded rule simulator is CPU-bound. Run it off the async event
+            # loop so status polling and the rest of the API remain responsive.
+            output = await asyncio.to_thread(
+                FundedBacktestSimulator().simulate,
+                initial_balance=run.initial_capital,
+                challenge_type=profile_snapshot.get("challenge_type") or profile.challenge_type,
+                phases=snapshot.get("phases") or [], payout_config=payout_rules,
+                risk_tiers=snapshot.get("risk_tiers") or [], instrument_spec=run.instrument_spec_snapshot,
+                opportunities=opportunities, risk_mode=payload.risk_mode, fixed_risk_pct=payload.fixed_risk_pct,
+                safety_buffer_pct=payload.safety_buffer_pct, configured_max_risk_pct=payload.configured_max_risk_pct,
+                rule_timezone=((profile_snapshot.get("rules_json") or {}).get("rule_timezone") or "UTC"),
+                historical_end_date=payload.end_date,
+            )
+        finally:
+            simulator_heartbeat_task.cancel()
+            try:
+                await simulator_heartbeat_task
+            except asyncio.CancelledError:
+                pass
+        simulation_seconds = time_module.perf_counter() - simulation_started
+        await emit_progress(85, f"Funded rule simulation finished in {simulation_seconds:.1f}s. Preparing funded history save.")
+        await emit_progress(92, "Saving funded trades, phases, snapshots and summary.")
         await _persist_output(db, run, output)
         run.status = output.status
         run.final_balance = output.final_balance
@@ -513,8 +590,17 @@ async def _execute_funded_backtest_run(
             "included_credits_used": int((consumption or {}).get("included_debited") or 0),
             "wallet_credits_used": int((consumption or {}).get("wallet_debited") or 0),
         }
+        output.summary["execution_progress"] = 100
+        output.summary["execution_message"] = "Funded backtest completed."
+        output.summary["execution_started_at"] = (run.summary_json or {}).get("execution_started_at") or (run.created_at.isoformat() if run.created_at else datetime.now(timezone.utc).isoformat())
+        output.summary["execution_duration_seconds"] = round(time_module.perf_counter() - execution_started, 3)
         run.summary_json = _json_safe(output.summary)
         await db.commit()
+        await emit_progress(100, "Funded backtest completed.")
+        activity_logger.info(
+            "FUNDED BACKTEST completed | run=%s | status=%s | source_trades=%s | funded_trades=%s | total=%.2fs",
+            run.id, run.status, len(source.result.trades), len(output.trades), time_module.perf_counter() - execution_started,
+        )
         return success_response({
             "funded_backtest_id": str(run.id),
             "status": run.status,
@@ -615,7 +701,25 @@ async def get_run(run_id: UUID, current_user: dict = Depends(get_current_user), 
 async def get_run_status(run_id: UUID, current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     run = await _load_owned_run(db, run_id, current_user)
     summary = run.summary_json or {}
-    return success_response({"id": str(run.id), "status": run.status, "current_phase": run.current_phase, "trades_processed": summary.get("total_trades", 0), "current_balance": run.final_balance, "current_equity": run.final_equity, "target_progress": (summary.get("progress") or {}).get("target"), "trading_days": run.trading_days, "qualifying_days": run.qualifying_days, "failure_reason": run.failure_reason, "payout": summary.get("payout"), "technical_error": summary.get("technical_error")})
+    terminal = str(run.status or "").upper() not in {"PENDING", "RUNNING"}
+    return success_response({
+        "id": str(run.id),
+        "status": run.status,
+        "progress": 100 if terminal else int(summary.get("execution_progress") or 0),
+        "message": summary.get("execution_message") or ("Funded backtest completed." if terminal else "Funded backtest is running."),
+        "started_at": summary.get("execution_started_at") or (run.created_at.isoformat() if run.created_at else None),
+        "duration_seconds": summary.get("execution_duration_seconds"),
+        "current_phase": run.current_phase,
+        "trades_processed": summary.get("total_trades", 0),
+        "current_balance": run.final_balance,
+        "current_equity": run.final_equity,
+        "target_progress": (summary.get("progress") or {}).get("target"),
+        "trading_days": run.trading_days,
+        "qualifying_days": run.qualifying_days,
+        "failure_reason": run.failure_reason,
+        "payout": summary.get("payout"),
+        "technical_error": summary.get("technical_error"),
+    })
 
 
 @router.get("/{run_id}/trades")

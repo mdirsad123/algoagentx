@@ -1,60 +1,26 @@
 # AlgoAgentX Deploy Commands
 
 # 2. Production commands
-
 ## 2.1 Start all production services
-
-Use this when you want to start production API, web, postgres, redis, and other services defined in `docker-compose.yml`.
-
-```powershell
-cd D:\Stock_market\algoagentx
 docker compose --env-file .env.prod -f docker-compose.yml up -d
-```
-
-Check status:
-
-```powershell
-docker compose --env-file .env.prod -f docker-compose.yml ps
-```
-
----
 
 ## 2.2 Stop all production services
-
-```powershell
-cd D:\Stock_market\algoagentx
 docker compose --env-file .env.prod -f docker-compose.yml stop
-```
-
 ---
 
 ## 2.3 Stop and remove all production services
-
-This stops and removes containers, but keeps Docker volumes unless you add `-v`.
-
-```powershell
-cd D:\Stock_market\algoagentx
 docker compose --env-file .env.prod -f docker-compose.yml down -v
-```
-
-Do **not** use `down -v` unless you intentionally want to delete database volume data.
-
----
 
 # 3. Production API/Web deploy and rebuild
-
-## 3.1 Production rebuild/deploy API + Web
-
-Use this when code changed in backend/API or frontend/Web.
 # all service build of prod
 docker compose --env-file .env.prod -f docker-compose.yml up -d --build
 
 
 ```powershell
 cd D:\Stock_market\algoagentx
-docker compose --env-file .env.prod stop api web
-docker compose --env-file .env.prod rm -sf api web
-docker compose --env-file .env.prod up -d --build api web
+docker compose --env-file .env.prod stop api web          # stop only app or api
+docker compose --env-file .env.prod up -d api web         # only up app or api
+docker compose --env-file .env.prod up -d --build api web # if changes app or api then build again
 ```
 
 Use this especially when:

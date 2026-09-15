@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { backtestsApi, type BacktestHistoryItem } from "@/lib/api/backtests";
-import { fundedReportingApi, type FundedHistoryItem } from "@/lib/api/funded-backtests";
+import type { FundedHistoryItem } from "@/lib/api/funded-backtests";
+import { apiGet } from "@/lib/axios";
 import { parseApiError } from "@/lib/api/error";
 import { formatDateTimeIST } from "@/lib/timezone";
 import { dateText, statusClass, statusLabel } from "@/components/funded-backtest/report-utils";
@@ -23,6 +24,17 @@ const standardStatusClass = (status?: string | null) => {
 };
 
 const humanize = (value?: string | null) => String(value || "Unknown").replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase());
+
+type FundedHistoryPage = {
+  items?: FundedHistoryItem[];
+  page?: number;
+  page_size?: number;
+  total?: number;
+  status_counts?: Record<string, number>;
+};
+
+const fetchFundedRuns = (params: Record<string, string | number | undefined>) =>
+  apiGet<FundedHistoryPage>("/api/v1/funded-backtests", { params });
 
 export default function AllBacktestHistoryOverview() {
   const [standard, setStandard] = useState<BacktestHistoryItem[]>([]);
@@ -39,7 +51,7 @@ export default function AllBacktestHistoryOverview() {
     try {
       const [standardResult, fundedResult] = await Promise.all([
         backtestsApi.getHistory({ page: 1, page_size: 5 }),
-        fundedReportingApi.listRuns({ page: 1, page_size: 5 }),
+        fetchFundedRuns({ page: 1, page_size: 5 }),
       ]);
       setStandard(standardResult.backtests || []);
       setStandardTotal(standardResult.pagination?.total_count || 0);

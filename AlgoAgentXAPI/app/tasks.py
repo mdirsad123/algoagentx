@@ -13,13 +13,15 @@ from sqlalchemy import select, update, delete, and_
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 from .celery_app import celery_app, is_celery_available
+from .core.logging_config import configure_logging
 from .db.session import async_session, engine
-from .db.models import JobStatus, PerformanceMetric, Trade, EquityCurve, PnLCalendar
+from .db.models import JobStatus, PerformanceMetric, Trade, EquityCurve, PnLCalendar, FundedBacktestRun
 from .services.backtest_service import BacktestService
 from .services.metrics import MetricsCalculator
 from .services.credits.management import CreditManagementService
 from .services.ai_screener.job_handlers import AIScreenerJobService
 
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -729,6 +731,22 @@ async def _run_funded_backtest_v2_async(run_id: str, user_id: str, payload_dict:
         from .schemas.funded_backtests import FundedRunRequest
 
         payload = FundedRunRequest.model_validate(payload_dict)
+
+        async def publish_progress(progress: int, message: str) -> None:
+            try:
+                async with session_factory() as progress_db:
+                    run = await progress_db.get(FundedBacktestRun, UUID(str(run_id)))
+                    if run is None:
+                        return
+                    summary = dict(run.summary_json or {})
+                    summary["execution_progress"] = int(progress)
+                    summary["execution_message"] = str(message)[:1000]
+                    summary.setdefault("execution_started_at", datetime.utcnow().isoformat() + "Z")
+                    run.summary_json = summary
+                    await progress_db.commit()
+            except Exception:
+                logger.exception("Failed to publish funded progress for run %s", run_id)
+
         async with session_factory() as db:
             return await _execute_funded_backtest_run(
                 db=db,
@@ -736,6 +754,7 @@ async def _run_funded_backtest_v2_async(run_id: str, user_id: str, payload_dict:
                 payload=payload,
                 user_id=str(user_id),
                 user_role=str(user_role or ""),
+                progress_callback=publish_progress,
             )
     except Exception as exc:
         logger.exception("Queued funded backtest run %s failed", run_id)

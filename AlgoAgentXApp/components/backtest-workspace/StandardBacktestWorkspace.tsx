@@ -342,6 +342,14 @@ const formatNumber = (value: number | null | undefined, fractionDigits = 2): str
 
 const formatCurrency = (value: number | null | undefined, symbol = "₹"): string => formatMoney(value, symbol);
 
+const formatElapsed = (seconds: number): string => {
+  const total = Math.max(0, Math.floor(seconds || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  return [hours, minutes, secs].map((value) => String(value).padStart(2, "0")).join(":");
+};
+
 const formatPercent = (value: number | null | undefined, multiplyBy100 = false): string => {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   const display = multiplyBy100 ? value * 100 : value;
@@ -577,6 +585,16 @@ export default function StandardBacktestWorkspace() {
   const [resultDetail, setResultDetail] = useState<BacktestDetailResponse | null>(null);
   const [runProgress, setRunProgress] = useState<number>(0);
   const [runStatusMessage, setRunStatusMessage] = useState<string>("");
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [runElapsedSeconds, setRunElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!isRunning || !runStartedAt) return;
+    const updateElapsed = () => setRunElapsedSeconds(Math.max(0, Math.floor((Date.now() - runStartedAt) / 1000)));
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [isRunning, runStartedAt]);
 
   const selectedStrategy = useMemo(
     () => strategies.find((strategy) => strategy.id === selectedStrategyId) || null,
@@ -1147,6 +1165,8 @@ export default function StandardBacktestWorkspace() {
       return;
     }
 
+    setRunStartedAt(Date.now());
+    setRunElapsedSeconds(0);
     setIsRunning(true);
     try {
       const response = await backtestsApi.run({
@@ -2178,7 +2198,12 @@ const FieldLabel = ({ label, help }: { label: string; help?: string }) => (
         <div className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-4 py-3 text-sm text-sky-100">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="font-medium">Background Backtest · {Math.round(runProgress)}%</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-medium">Background Backtest · {Math.round(runProgress)}%</p>
+                <span className="rounded-md border border-sky-200/20 bg-black/10 px-2 py-0.5 font-mono text-[11px] text-sky-100/90">
+                  Elapsed {formatElapsed(runElapsedSeconds)}
+                </span>
+              </div>
               <p className="mt-1 text-xs text-sky-100/80">{runStatusMessage || "Queued for execution..."}</p>
             </div>
             <Loader2 className="h-5 w-5 animate-spin" />

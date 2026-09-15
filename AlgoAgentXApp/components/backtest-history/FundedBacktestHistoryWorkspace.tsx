@@ -7,13 +7,25 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { fundedBacktestsApi, fundedReportingApi, type FundedHistoryItem, type FundedAccountProfile } from "@/lib/api/funded-backtests";
+import { fundedBacktestsApi, type FundedHistoryItem, type FundedAccountProfile } from "@/lib/api/funded-backtests";
+import { apiGet } from "@/lib/axios";
 import { backtestsApi, type StrategyOption, type InstrumentOption } from "@/lib/api/backtests";
 import { dateText, money, percent, statusClass, statusLabel } from "@/components/funded-backtest/report-utils";
 import { parseApiError } from "@/lib/api/error";
 
 const PAGE_SIZE = 20;
 const statuses = ["ALL", "PASSED", "FAILED_DAILY_DD", "FAILED_MAX_DD", "FAILED_OTHER_RULE", "INCOMPLETE", "PAYOUT_ELIGIBLE", "PAYOUT_READY", "SIMULATION_ERROR"];
+
+type FundedHistoryPage = {
+  items?: FundedHistoryItem[];
+  page?: number;
+  page_size?: number;
+  total?: number;
+  status_counts?: Record<string, number>;
+};
+
+const fetchFundedRuns = (params: Record<string, string | number | undefined>) =>
+  apiGet<FundedHistoryPage>("/api/v1/funded-backtests", { params });
 
 export default function FundedBacktestHistoryWorkspace() {
   const [items, setItems] = useState<FundedHistoryItem[]>([]);
@@ -29,7 +41,7 @@ export default function FundedBacktestHistoryWorkspace() {
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const data = await fundedReportingApi.listRuns({ page, page_size: PAGE_SIZE, status: status === "ALL" ? undefined : status, profile_id: profileId === "ALL" ? undefined : profileId, strategy_id: strategyId === "ALL" ? undefined : strategyId, instrument_id: instrumentId === "ALL" ? undefined : Number(instrumentId) });
+      const data = await fetchFundedRuns({ page, page_size: PAGE_SIZE, status: status === "ALL" ? undefined : status, profile_id: profileId === "ALL" ? undefined : profileId, strategy_id: strategyId === "ALL" ? undefined : strategyId, instrument_id: instrumentId === "ALL" ? undefined : Number(instrumentId) });
       setItems(data.items || []); setTotal(data.total || 0); setCounts(data.status_counts || {});
     } catch (err) { setError(parseApiError(err).message); }
     finally { setLoading(false); }

@@ -6,7 +6,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,9 +57,7 @@ class AdminLiveActionOut(BaseModel):
     metadata_json: Optional[dict[str, Any]] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 def _dec(value: Any, default: str = "0") -> Decimal:

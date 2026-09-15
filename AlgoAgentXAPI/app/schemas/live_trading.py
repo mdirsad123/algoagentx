@@ -2,8 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
-
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 BROKER_MODES = {"PAPER", "DEMO", "LIVE"}
 BROKER_STATUSES = {"CONNECTED", "DISCONNECTED", "ERROR", "PENDING_AUTH", "PENDING_ACCOUNT_SYNC", "AGENT_OFFLINE", "COMING_SOON", "EXPIRED"}
@@ -24,13 +23,8 @@ FUNDED_ATTACH_MODES = {"NEW_OR_RESET_ACCOUNT", "EXISTING_IN_PROGRESS"}
 def _upper(value: Optional[str]) -> Optional[str]:
     return value.upper().strip() if isinstance(value, str) else value
 
-
 class LiveBaseModel(BaseModel):
-    class Config:
-        from_attributes = True
-        orm_mode = True
-
-
+    model_config = ConfigDict(from_attributes=True)
 
 class BrokerProviderBase(LiveBaseModel):
     code: str = Field(..., min_length=2, max_length=50)

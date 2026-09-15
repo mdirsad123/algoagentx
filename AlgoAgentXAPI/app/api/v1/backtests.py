@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time as time_module
 from io import BytesIO
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
@@ -21,6 +22,7 @@ from sqlalchemy.orm import load_only
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_current_user, get_db, get_user_entitlements
+from ...core.logging_config import get_activity_logger
 from ...db.compat import as_uuid_or_str
 from ...db.models import (
     CreditTransaction,
@@ -50,6 +52,7 @@ from ...utils.timezone import ensure_utc, iso_utc, format_kolkata_datetime, kolk
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+activity_logger = get_activity_logger()
 
 # Large backtests can generate tens of thousands of trades. Persisting the full
 # trade payload twice (dedicated trades rows + performance_metrics.trade_details)
@@ -2478,6 +2481,7 @@ async def _execute_backtest_sync(
     execution_job_id: str | None = None,
     progress_callback=None,
 ):
+    execution_started = time_module.perf_counter()
     strategy = await db.get(Strategy, payload.strategy_id)
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found")
@@ -2485,6 +2489,16 @@ async def _execute_backtest_sync(
     instrument = await db.get(Instrument, payload.instrument_id)
     if not instrument:
         raise HTTPException(status_code=404, detail="Instrument not found")
+
+    activity_logger.info(
+        "STANDARD BACKTEST start | job=%s | strategy=%s | instrument=%s | timeframe=%s | range=%s..%s",
+        str(execution_job_id or "direct"),
+        getattr(strategy, "name", payload.strategy_id),
+        getattr(instrument, "symbol", payload.instrument_id),
+        payload.timeframe,
+        payload.start_date,
+        payload.end_date,
+    )
 
     availability = await _get_market_data_availability_guard(
         db,
@@ -2613,10 +2627,11 @@ async def _execute_backtest_sync(
         included_txn = consumption.get("included_transaction")
         debit_txn = consumption.get("wallet_transaction")
 
-        if debit_txn is not None:
-            job.debit_txn_id = str(debit_txn.id)
-        elif included_txn is not None:
-            job.debit_txn_id = str(included_txn.id)
+        # IMPORTANT: do not dirty/flush the JobStatus row before the long engine
+        # run. Progress is published from a separate short-lived DB session. If
+        # this session updates JobStatus first, PostgreSQL holds a row lock and
+        # the progress session blocks forever while this coroutine awaits it.
+        # Link the debit transaction only after strategy execution/persistence.
         progress_message = "Loading candles and executing strategy. Large ranges may take a long time."
         if progress_callback is not None:
             await progress_callback(30, progress_message)
@@ -2636,13 +2651,15 @@ async def _execute_backtest_sync(
             runtime_config=payload.runtime_config,
             strategy_preset_id=payload.strategy_preset_id,
             timeframe_id=payload.timeframe_id,
+            progress_callback=progress_callback,
+            activity_label=f"STANDARD BACKTEST job={job_id}",
         )
 
         progress_message = "Strategy execution finished. Calculating metrics."
         if progress_callback is not None:
-            await progress_callback(75, progress_message)
+            await progress_callback(80, progress_message)
         else:
-            job.progress = 75
+            job.progress = 80
             job.message = progress_message
 
         trade_df = _trade_df_from_service(service_response)
@@ -2660,6 +2677,12 @@ async def _execute_backtest_sync(
             job.progress = 90
             job.message = progress_message
 
+        save_started = time_module.perf_counter()
+        activity_logger.info(
+            "STANDARD BACKTEST saving | job=%s | trades=%s",
+            job_id,
+            _to_int(service_response.total_trades),
+        )
         backtest_id = await _save_backtest_payload(
             db,
             user_id=str(current_user["user_id"]),
@@ -2667,6 +2690,19 @@ async def _execute_backtest_sync(
             service_response=service_response,
             metrics=metrics,
         )
+        activity_logger.info(
+            "STANDARD BACKTEST saved | job=%s | backtest=%s | %.2fs",
+            job_id,
+            backtest_id,
+            time_module.perf_counter() - save_started,
+        )
+
+        # The long-running phase is finished, so it is now safe to update the
+        # JobStatus row in this transaction without blocking progress updates.
+        if debit_txn is not None:
+            job.debit_txn_id = str(debit_txn.id)
+        elif included_txn is not None:
+            job.debit_txn_id = str(included_txn.id)
 
         for txn in [included_txn, debit_txn]:
             if txn is None:
@@ -2766,6 +2802,14 @@ async def _execute_backtest_sync(
         except Exception:
             await db.rollback()
             logger.exception("Failed to create backtest completion notification for %s", backtest_id)
+
+        activity_logger.info(
+            "STANDARD BACKTEST completed | job=%s | backtest=%s | trades=%s | total=%.2fs",
+            job_id,
+            backtest_id,
+            _to_int(service_response.total_trades),
+            time_module.perf_counter() - execution_started,
+        )
 
         return success_response(
             {
@@ -2985,6 +3029,12 @@ async def run_backtest(
             plan_code,
         )
         dispatch_mode = "background"
+
+    activity_logger.info(
+        "STANDARD BACKTEST queued | job=%s | mode=%s | strategy=%s | instrument=%s | timeframe=%s | range=%s..%s",
+        job_id, dispatch_mode, getattr(strategy, "name", payload.strategy_id),
+        getattr(instrument, "symbol", payload.instrument_id), payload.timeframe, payload.start_date, payload.end_date,
+    )
 
     return success_response({
         "job_id": job_id,

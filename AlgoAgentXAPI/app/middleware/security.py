@@ -4,11 +4,49 @@ from starlette.responses import JSONResponse
 import time
 import logging
 import uuid
+import os
+import threading
 from typing import Optional
 
 from ..core.config import settings
+from ..core.logging_config import get_activity_logger
 
 logger = logging.getLogger(__name__)
+activity_logger = get_activity_logger()
+_ACTIVITY_LAST_SEEN: dict[str, float] = {}
+_ACTIVITY_LOCK = threading.Lock()
+_ACTIVITY_TTL_SECONDS = max(5, int(os.getenv("ACTIVITY_REQUEST_TTL_SECONDS", "60") or 60))
+_ACTIVITY_MIN_GAP_SECONDS = max(0.0, float(os.getenv("ACTIVITY_REQUEST_MIN_GAP_SECONDS", "2") or 2))
+_ACTIVITY_EXCLUDED_PREFIXES = (
+    "/api/v1/mt5-agent/quotes",
+    "/api/v1/mt5-agent/heartbeat",
+    "/api/v1/mt5-agent/commands",
+    "/api/v1/mt5-agent/alert-symbols",
+    "/api/v1/jobs/",
+)
+
+def _should_log_activity_request(method: str, path: str, now: float) -> bool:
+    if any(path.startswith(prefix) for prefix in _ACTIVITY_EXCLUDED_PREFIXES):
+        return False
+    if path.endswith("/status") and "/funded-backtests/" in path:
+        return False
+    key = f"{method.upper()} {path}"
+    with _ACTIVITY_LOCK:
+        last_any = _ACTIVITY_LAST_SEEN.get("__ANY__", 0.0)
+        if now - last_any < _ACTIVITY_MIN_GAP_SECONDS:
+            return False
+        last = _ACTIVITY_LAST_SEEN.get(key, 0.0)
+        if now - last < _ACTIVITY_TTL_SECONDS:
+            return False
+        _ACTIVITY_LAST_SEEN[key] = now
+        _ACTIVITY_LAST_SEEN["__ANY__"] = now
+        # Prevent an unbounded cache if dynamic URLs create many unique keys.
+        if len(_ACTIVITY_LAST_SEEN) > 2000:
+            cutoff = now - (_ACTIVITY_TTL_SECONDS * 2)
+            stale = [k for k, ts in _ACTIVITY_LAST_SEEN.items() if ts < cutoff]
+            for stale_key in stale[:1000]:
+                _ACTIVITY_LAST_SEEN.pop(stale_key, None)
+    return True
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Middleware to add security headers to all responses."""
@@ -102,6 +140,17 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
                     f"Job: {job_id}"
                 )
             
+            # Emit one concise activity line per route per TTL window. This gives
+            # a useful sign of page/API activity without bringing back request spam.
+            if response.status_code < 500 and _should_log_activity_request(request.method, request.url.path, time.time()):
+                activity_logger.info(
+                    "API %s %s | status=%s | %.3fs",
+                    request.method,
+                    request.url.path,
+                    response.status_code,
+                    duration,
+                )
+
             # Add request ID to response headers
             response.headers["X-Request-ID"] = request_id
             response.headers["X-Response-Time"] = f"{duration:.3f}s"
