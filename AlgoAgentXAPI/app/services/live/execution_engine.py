@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_DOWN
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
@@ -470,8 +471,11 @@ async def _execute_ctrader_entry(
         return order
     executed_price = result.executed_price or price
     signal.status = "EXECUTED"
-    await open_position(db, deployment, broker_symbol, position_side, actual_qty, executed_price, stop_loss, target)
-    await _log(db, deployment, "CTRADER_ORDER_PLACED", "cTrader DEMO order placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id, "broker_response": result.raw_response or {}, "sizing": sizing_metadata or {}})
+    live_position = await open_position(db, deployment, broker_symbol, position_side, actual_qty, executed_price, stop_loss, target)
+    broker_position_id = (result.raw_response or {}).get("position_id")
+    if broker_position_id:
+        live_position.broker_position_id = str(broker_position_id)
+    await _log(db, deployment, "CTRADER_ORDER_PLACED", "cTrader DEMO order placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id, "broker_position_id": broker_position_id, "broker_response": result.raw_response or {}, "sizing": sizing_metadata or {}})
     return order
 
 
@@ -490,7 +494,44 @@ async def _execute_ctrader_close(db: AsyncSession, deployment: StrategyDeploymen
         return await _create_error_order(db, deployment, signal, close_side, to_decimal(position.qty), price, msg)
     adapter = get_broker_adapter(broker, db)
     await _log(db, deployment, "CTRADER_CLOSE_STARTED", "cTrader DEMO close order requested", metadata={"signal_id": str(signal.id), "position_id": str(position.id), "symbol": position.symbol})
-    result = await adapter.place_market_order(BrokerOrderRequest(symbol=position.symbol, side=close_side, qty=to_decimal(position.qty), price=price, comment="AlgoAgentX cTrader DEMO close", tag=f"AAX-CTR-EXIT-{str(deployment.id)[:8]}"))
+    broker_position_id = getattr(position, "broker_position_id", None)
+    if not broker_position_id:
+        try:
+            broker_positions = await adapter.get_positions(position.symbol)
+            wanted_side = "LONG" if position.side == "LONG" else "SHORT"
+            matched = next((p for p in broker_positions if str(p.get("side") or "").upper() == wanted_side and p.get("broker_position_id")), None)
+            broker_position_id = (matched or {}).get("broker_position_id")
+            if broker_position_id:
+                position.broker_position_id = str(broker_position_id)
+        except Exception:
+            broker_position_id = None
+    if not broker_position_id:
+        msg = "cTrader broker position id is unavailable. Sync Broker before closing this position."
+        signal.status = "REJECTED"
+        signal.rejection_reason = msg
+        return await _create_error_order(db, deployment, signal, close_side, to_decimal(position.qty), price, msg)
+    result = await adapter.close_position(str(broker_position_id), close_side, to_decimal(position.qty))
+    if not result.success and "not found" in str(result.message or "").lower():
+        # A broker-side SL/TP or manual close can win the race after the pre-trade
+        # sync. This is an idempotent close: broker truth already says the position
+        # is gone, so reconcile the local row instead of turning the strategy
+        # signal into an execution error.
+        position.status = "CLOSED"
+        position.closed_at = position.closed_at or datetime.now(timezone.utc)
+        position.current_price = price
+        position.unrealized_pnl = Decimal("0")
+        reconciled = LiveOrder(
+            deployment_id=deployment.id, signal_id=signal.id, user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
+            broker_order_id=None, symbol=position.symbol, side=close_side, order_type="MARKET", qty=to_decimal(position.qty),
+            entry_price=price, executed_price=None, status="RECONCILED", error_message=None,
+            raw_response={"provider": "CTRADER", "broker_already_closed": True, "broker_position_id": str(broker_position_id), "message": result.message},
+        )
+        db.add(reconciled)
+        await db.flush()
+        signal.status = "EXECUTED"
+        signal.rejection_reason = None
+        await _log(db, deployment, "CTRADER_POSITION_ALREADY_CLOSED", "cTrader position was already closed at broker; local position reconciled", "INFO", {"signal_id": str(signal.id), "position_id": str(position.id), "broker_position_id": str(broker_position_id)})
+        return reconciled
     order = LiveOrder(
         deployment_id=deployment.id, signal_id=signal.id, user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
         broker_order_id=result.broker_order_id, symbol=position.symbol, side=close_side, order_type="MARKET", qty=to_decimal(position.qty),
@@ -640,6 +681,21 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
         signal.rejection_reason = "PAPER deployments are deprecated. Please create a DEMO or LIVE broker deployment."
         await _log(db, deployment, "PAPER_DEPRECATED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id)})
         return None
+
+    # Broker state is execution truth. Refresh it immediately before risk checks
+    # so a position that was closed by broker SL/TP/manual action cannot remain
+    # locally OPEN and incorrectly reject the next signal. Background sync still
+    # runs independently; this pre-trade sync is the final race-safe guard.
+    if deployment.broker_account_id and str(deployment.mode or "").upper() in {"DEMO", "LIVE"}:
+        try:
+            await sync_deployment_broker_state(db, deployment.id)
+            deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment.id))).scalar_one()
+            await _log(db, deployment, "PRE_TRADE_BROKER_SYNC", "Broker state refreshed before execution risk checks", metadata={"signal_id": str(signal.id)})
+        except Exception as exc:
+            signal.status = "REJECTED"
+            signal.rejection_reason = f"Broker state refresh failed safely before execution: {exc}"
+            await _log(db, deployment, "PRE_TRADE_BROKER_SYNC_FAILED", signal.rejection_reason, "ERROR", {"signal_id": str(signal.id)})
+            return None
 
     # A funded hard-rule breach may pause the deployment/disable Auto Trade.
     # That must block NEW risk, never an explicit/risk-reducing close. Keep the

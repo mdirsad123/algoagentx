@@ -14,3 +14,8 @@ alembic revision --autogenerate -m "Initial migration"
 test login:
 test@example.com
 password123
+## 2026-09-20 cTrader live sync fix
+- Fixed stale cTrader positions after broker SL/TP/manual close.
+- Added pre-trade broker sync and automatic sync for running/auto-runner deployments.
+- Fixed multiple same-side positions up to max_open_positions.
+- Fixed cTrader broker-position-id reconciliation and not-found close race.

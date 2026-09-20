@@ -6,8 +6,8 @@ from uuid import UUID
 from decimal import Decimal
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +35,8 @@ BROKER_STATUS_COMING_SOON = "COMING_SOON"
 CRYPTO_BROKER_CODES = {"BINANCE", "BYBIT", "OKX"}
 OAUTH_BROKER_CODES = {"UPSTOX", "CTRADER", "CTRADER_API"}
 ACTIVE_DEPLOYMENT_STATUSES = {"RUNNING", "PAUSED", "DRAFT", "PENDING", "APPROVED"}
+CTRADER_OAUTH_STATE_COOKIE = "algoagentx_ctrader_oauth_state"
+CTRADER_OAUTH_STATE_TTL_SECONDS = 15 * 60
 
 
 def _safe_message(message: str | None) -> str:
@@ -114,6 +116,44 @@ def _oauth_redirect(path: str, broker: str, connected: bool, error: str | None =
         params["error"] = _safe_oauth_callback_error(error)
     sep = "&" if "?" in path else "?"
     return RedirectResponse(_frontend_url(f"{path}{sep}{urlencode(params)}"), status_code=302)
+
+
+def _ctrader_oauth_cookie_secure() -> bool:
+    """Use Secure cookies whenever the public cTrader callback is HTTPS."""
+    try:
+        return _broker_callback_uri("CTRADER").lower().startswith("https://")
+    except Exception:
+        return False
+
+
+def _set_ctrader_oauth_state_cookie(response: JSONResponse, state_value: str) -> None:
+    """Persist our CSRF/session nonce across cTrader's authorization page.
+
+    cTrader's documented authorization callback returns `code` but does not
+    promise to echo arbitrary OAuth `state`. A short-lived HttpOnly cookie
+    therefore binds the callback to the Browser session that initiated OAuth.
+    """
+    response.set_cookie(
+        key=CTRADER_OAUTH_STATE_COOKIE,
+        value=state_value,
+        max_age=CTRADER_OAUTH_STATE_TTL_SECONDS,
+        httponly=True,
+        secure=_ctrader_oauth_cookie_secure(),
+        samesite="lax",
+        path="/api/v1/broker-accounts/ctrader/callback",
+    )
+
+
+def _ctrader_oauth_redirect(path: str, connected: bool, error: str | None = None) -> RedirectResponse:
+    response = _oauth_redirect(path, "ctrader", connected, error)
+    response.delete_cookie(
+        CTRADER_OAUTH_STATE_COOKIE,
+        path="/api/v1/broker-accounts/ctrader/callback",
+        secure=_ctrader_oauth_cookie_secure(),
+        httponly=True,
+        samesite="lax",
+    )
+    return response
 
 
 def _safe_oauth_callback_error(error: str | None) -> str:
@@ -379,7 +419,7 @@ async def initiate_broker_oauth(
         if code == "UPSTOX":
             auth_url = UpstoxAdapter(account).build_login_url(state_value)
         elif code == "CTRADER":
-            auth_url = CTraderAdapter(account).build_login_url(state_value, scope="accounts")
+            auth_url = CTraderAdapter(account).build_login_url(state_value, scope="trading")
         else:
             raise ValueError("OAuth provider is not implemented yet")
     except ValueError as exc:
@@ -394,7 +434,12 @@ async def initiate_broker_oauth(
     )
     db.add(state_row)
     await db.commit()
-    return success_response({"auth_url": auth_url, "state": state_value, "broker_account_id": str(account.id) if account else None})
+    payload_out = success_response({"auth_url": auth_url, "state": state_value, "broker_account_id": str(account.id) if account else None})
+    if code == "CTRADER":
+        response = JSONResponse(payload_out)
+        _set_ctrader_oauth_state_cookie(response, state_value)
+        return response
+    return payload_out
 
 
 @router.post("/ctrader/connect")
@@ -452,7 +497,7 @@ async def connect_ctrader_oauth(
 
     state_value = secrets.token_urlsafe(32)
     try:
-        auth_url = CTraderAdapter(account).build_login_url(state_value, scope="accounts")
+        auth_url = CTraderAdapter(account).build_login_url(state_value, scope="trading")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     state_row = BrokerOAuthState(
@@ -466,7 +511,14 @@ async def connect_ctrader_oauth(
     db.add(state_row)
     await db.commit()
     await db.refresh(account)
-    return success_response({"auth_url": auth_url, "state": state_value, "broker_account_id": str(account.id), "redirect_uri": redirect_uri}, "Open cTrader OAuth to finish connection")
+    response = JSONResponse(
+        success_response(
+            {"auth_url": auth_url, "state": state_value, "broker_account_id": str(account.id), "redirect_uri": redirect_uri},
+            "Open cTrader OAuth to finish connection",
+        )
+    )
+    _set_ctrader_oauth_state_cookie(response, state_value)
+    return response
 
 
 @router.post("/upstox", status_code=status.HTTP_201_CREATED)
@@ -583,38 +635,106 @@ async def upstox_oauth_callback(code: str | None = None, state: str | None = Non
 
 
 @router.get("/ctrader/callback")
-async def ctrader_oauth_callback(code: str | None = None, state: str | None = None, error: str | None = None, db: AsyncSession = Depends(get_db)):
+async def ctrader_oauth_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Complete cTrader OAuth.
+
+    cTrader currently documents returning `code` to the registered redirect URI,
+    but its authorization page does not reliably echo an arbitrary `state`
+    parameter. We therefore recover the server-generated state nonce from the
+    short-lived HttpOnly callback cookie set when the flow was initiated.
+    """
     redirect_base = "/brokers"
     if error:
-        return _oauth_redirect(redirect_base, "ctrader", False, error)
-    if not code or not state:
-        return _oauth_redirect(redirect_base, "ctrader", False, "Missing OAuth code or state. Please start the cTrader connection again.")
-    state_row = (await db.execute(select(BrokerOAuthState).where(BrokerOAuthState.state == state))).scalar_one_or_none()
+        return _ctrader_oauth_redirect(redirect_base, False, error)
+
+    if not code:
+        return _ctrader_oauth_redirect(
+            redirect_base,
+            False,
+            "Missing OAuth authorization code. Please start the cTrader connection again.",
+        )
+
+    resolved_state = (state or request.cookies.get(CTRADER_OAUTH_STATE_COOKIE) or "").strip()
+    if not resolved_state:
+        return _ctrader_oauth_redirect(
+            redirect_base,
+            False,
+            "Missing cTrader OAuth session. Please start the cTrader connection again.",
+        )
+
+    state_row = (
+        await db.execute(select(BrokerOAuthState).where(BrokerOAuthState.state == resolved_state))
+    ).scalar_one_or_none()
     if not state_row or state_row.broker_provider_code not in {"CTRADER", "CTRADER_API"}:
-        return _oauth_redirect(redirect_base, "ctrader", False, "Invalid OAuth state. Please reconnect cTrader from AlgoAgentX.")
+        return _ctrader_oauth_redirect(
+            redirect_base,
+            False,
+            "Invalid OAuth session. Please reconnect cTrader from AlgoAgentX.",
+        )
+
     redirect_base = state_row.redirect_after or "/brokers"
     now = datetime.now(timezone.utc)
     expires_at = state_row.expires_at.replace(tzinfo=timezone.utc) if state_row.expires_at.tzinfo is None else state_row.expires_at
     if state_row.consumed_at is not None or expires_at < now:
-        return _oauth_redirect(redirect_base, "ctrader", False, "The cTrader OAuth session expired. Please reconnect and approve again.")
+        return _ctrader_oauth_redirect(
+            redirect_base,
+            False,
+            "The cTrader OAuth session expired. Please reconnect and approve again.",
+        )
+
     provider = (await db.execute(select(BrokerProvider).where(BrokerProvider.code == "CTRADER"))).scalar_one_or_none()
     if not provider or not provider.is_enabled:
-        return _oauth_redirect(redirect_base, "ctrader", False, "cTrader provider is disabled")
+        return _ctrader_oauth_redirect(redirect_base, False, "cTrader provider is disabled")
+
     try:
         account = None
         if state_row.broker_account_id:
-            account = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == state_row.broker_account_id))).scalar_one_or_none()
+            account = (
+                await db.execute(select(BrokerAccount).where(BrokerAccount.id == state_row.broker_account_id))
+            ).scalar_one_or_none()
             if not account:
-                return _oauth_redirect(redirect_base, "ctrader", False, "cTrader broker account was not found. Please reconnect.")
+                return _ctrader_oauth_redirect(
+                    redirect_base,
+                    False,
+                    "cTrader broker account was not found. Please reconnect.",
+                )
+
         adapter = CTraderAdapter(account)
         token_payload = await adapter.exchange_code_for_token(code)
         access_token = token_payload.get("accessToken") or token_payload.get("access_token")
         refresh_token = token_payload.get("refreshToken") or token_payload.get("refresh_token")
         token_expires_at = CTraderAdapter.token_expiry_from_payload(token_payload)
+        if not access_token:
+            raise ValueError("cTrader token exchange did not return an access token.")
+
         if not account:
-            account = (await db.execute(select(BrokerAccount).where(BrokerAccount.user_id == state_row.user_id, BrokerAccount.broker_code == "CTRADER").order_by(BrokerAccount.created_at.desc()))).scalars().first()
+            account = (
+                await db.execute(
+                    select(BrokerAccount)
+                    .where(
+                        BrokerAccount.user_id == state_row.user_id,
+                        BrokerAccount.broker_code == "CTRADER",
+                    )
+                    .order_by(BrokerAccount.created_at.desc())
+                )
+            ).scalars().first()
         if not account:
-            account = BrokerAccount(user_id=state_row.user_id, broker_provider_id=provider.id, broker_name="CTRADER", broker_code="CTRADER", auth_type="OAUTH2", account_label="cTrader Open API", mode="DEMO")
+            account = BrokerAccount(
+                user_id=state_row.user_id,
+                broker_provider_id=provider.id,
+                broker_name="CTRADER",
+                broker_code="CTRADER",
+                auth_type="OAUTH2",
+                account_label="cTrader Open API",
+                mode="DEMO",
+            )
+
         account.broker_provider_id = provider.id
         account.broker_name = "CTRADER"
         account.broker_code = "CTRADER"
@@ -623,18 +743,34 @@ async def ctrader_oauth_callback(code: str | None = None, state: str | None = No
         account.server_name = f"cTrader Open API ({str(settings.ctrader_env or 'demo').lower()})"
         account.login_id = "cTrader ID"
         account.encrypted_token = encrypt_credential(str(access_token))
-        account.encrypted_refresh_token = encrypt_credential(str(refresh_token)) if refresh_token else account.encrypted_refresh_token
+        account.encrypted_refresh_token = (
+            encrypt_credential(str(refresh_token)) if refresh_token else account.encrypted_refresh_token
+        )
         account.token_expires_at = token_expires_at
         account.last_connected_at = now
-        account.metadata_json = {**(account.metadata_json or {}), "provider": "CTRADER", "market": "FOREX_CFD", "setup_mode": "OAUTH", "orders_enabled": False, "token_type": token_payload.get("tokenType") or token_payload.get("token_type"), "connected_at": now.isoformat(), "sync_status": "PENDING_ACCOUNT_SYNC", "safe_message": "cTrader OAuth connected. Click Sync to fetch trading account, balance, and symbols; order execution disabled in this phase."}
+        account.metadata_json = {
+            **(account.metadata_json or {}),
+            "provider": "CTRADER",
+            "market": "FOREX_CFD",
+            "setup_mode": "OAUTH",
+            "orders_enabled": True,
+            "oauth_scope": "trading",
+            "token_type": token_payload.get("tokenType") or token_payload.get("token_type"),
+            "connected_at": now.isoformat(),
+            "sync_status": "PENDING_ACCOUNT_SYNC",
+            "oauth_status": "CONNECTED",
+            "safe_message": "cTrader OAuth connected with Trading permission. Click Sync to fetch trading account, balance, and symbols.",
+        }
         db.add(account)
         state_row.consumed_at = now
         await db.commit()
-        return _oauth_redirect(redirect_base, "ctrader", True)
+        return _ctrader_oauth_redirect(redirect_base, True)
     except Exception as exc:
+        # Consume this authorization attempt: cTrader auth codes are one-time
+        # and short-lived, so retrying should start a fresh authorization.
         state_row.consumed_at = now
         await db.commit()
-        return _oauth_redirect(redirect_base, "ctrader", False, str(exc))
+        return _ctrader_oauth_redirect(redirect_base, False, str(exc))
 
 
 @router.get("")
@@ -919,9 +1055,11 @@ async def sync_broker_account(broker_account_id: UUID, db: AsyncSession = Depend
             "ctrader_selected_account": selected,
             "ctrader_symbols_synced": saved_symbols,
             "ctrader_symbols_preview": symbols[:25],
+            "orders_enabled": bool(selected.get("trading_enabled", meta.get("orders_enabled", False))),
+            "oauth_scope": "trading" if bool(selected.get("trading_enabled", meta.get("orders_enabled", False))) else meta.get("oauth_scope", "accounts"),
             "sync_status": "ACCOUNT_SYNCED",
             "last_sync_at": datetime.now(timezone.utc).isoformat(),
-            "safe_message": "cTrader account, balance, and symbols synced." if saved_symbols else "cTrader account synced. Symbol sync bridge is not configured yet.",
+            "safe_message": "cTrader account, balance, and symbols synced." if saved_symbols else "cTrader account synced. No symbols were returned for the selected account.",
         }
         if hasattr(row, "last_connection_result"):
             row.last_connection_result = _ctrader_connection_from_selected(row, selected)

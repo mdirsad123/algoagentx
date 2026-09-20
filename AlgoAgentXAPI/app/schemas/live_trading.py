@@ -244,6 +244,13 @@ class StrategyDeploymentCreate(LiveBaseModel):
     upstox_order_confirmed: bool = False
     tradingview_secret: Optional[str] = None
 
+    @field_validator("broker_account_id", "funded_profile_id", mode="before")
+    @classmethod
+    def empty_uuid_to_none(cls, value):
+        if value is None or str(value).strip() == "":
+            return None
+        return value
+
     @field_validator("mode")
     @classmethod
     def validate_mode(cls, value: str):
@@ -445,8 +452,8 @@ class StrategyDeploymentOut(LiveBaseModel):
     last_runner_wakeup_at: Optional[datetime] = None
     last_processed_candle_time: Optional[datetime] = None
     runner_interval_mode: Optional[str] = "CANDLE_CLOSE"
-    broker_delay_seconds: Optional[int] = 3
-    missed_candle_retry_seconds: Optional[int] = 10
+    broker_delay_seconds: Optional[int] = 1
+    missed_candle_retry_seconds: Optional[int] = 1
     last_broker_sync_at: Optional[datetime] = None
     live_sync_enabled: bool = False
     live_sync_interval_seconds: int = 10

@@ -2,7 +2,7 @@
   "API_BASE_URL": "http://localhost:8000",
   "AGENT_TOKEN": "aax_mt5_gHv1Sh9t7nRgAvkgeOeqtyRGZtiYFT3aCW1yKAvbukXBBkjg9zfi5g",
   "POLL_INTERVAL_SECONDS": 1,
-  "ENABLE_ORDER_EXECUTION": false,
+  "ENABLE_ORDER_EXECUTION": true,
   "MT5_PATH": "",
   "DEFAULT_DEVIATION": 20,
   "AGENT_VERSION": "0.4.1-alerts-symbols",

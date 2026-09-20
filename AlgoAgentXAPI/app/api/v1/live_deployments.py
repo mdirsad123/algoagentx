@@ -294,7 +294,7 @@ def _validate_safe_deployment_values(values: dict, current: StrategyDeployment |
     if "max_open_positions" in merged and int(merged.get("max_open_positions") or 0) < 1:
         raise HTTPException(status_code=400, detail="Max open positions must be at least 1.")
     if merged.get("mt5_demo_max_lot") is not None and dec("mt5_demo_max_lot") <= 0:
-        raise HTTPException(status_code=400, detail="MT5 demo max lot must be greater than 0.")
+        raise HTTPException(status_code=400, detail="Broker max lot must be greater than 0.")
 
 
 async def _guard_running_deployment_update(db: AsyncSession, row: StrategyDeployment, values: dict) -> None:
@@ -645,9 +645,23 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
         broker = _broker_safe(broker_row)
         if refresh_broker:
             try:
-                broker_metrics = await _refresh_demo_broker_state(db, row, broker_row)
-                if broker_metrics is not None and broker_row is not None:
+                broker_code = get_broker_code(broker_row) if broker_row is not None else ""
+                if broker_code in {"CTRADER", "CTRADER_API"}:
+                    sync_result = await sync_deployment_broker_state(db, row.id)
+                    row = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none() or row
+                    broker_row = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment_broker_account_id))).scalar_one_or_none()
                     broker = _broker_safe(broker_row)
+                    broker_metrics = {
+                        "open_positions_count": int(sync_result.get("open_positions_count") or 0),
+                        "unrealized_pnl": sync_result.get("unrealized_pnl") or "0",
+                        "realized_pnl": sync_result.get("realized_pnl") or "0",
+                        "today_pnl": str(_dec(sync_result.get("realized_pnl"), "0") + _dec(sync_result.get("unrealized_pnl"), "0")),
+                        "broker_pnl_source": "CTRADER_OPEN_API_POSITIONS",
+                    }
+                else:
+                    broker_metrics = await _refresh_demo_broker_state(db, row, broker_row)
+                    if broker_metrics is not None and broker_row is not None:
+                        broker = _broker_safe(broker_row)
             except Exception as exc:
                 await db.rollback()
                 # Summary must not hard-fail because one broker is offline. Avoid full
@@ -746,8 +760,8 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
             "last_runner_wakeup_at": getattr(row, "last_runner_wakeup_at", None),
             "last_processed_candle_time": getattr(row, "last_processed_candle_time", None),
             "runner_interval_mode": getattr(row, "runner_interval_mode", "CANDLE_CLOSE"),
-            "broker_delay_seconds": getattr(row, "broker_delay_seconds", 3),
-            "missed_candle_retry_seconds": getattr(row, "missed_candle_retry_seconds", 10),
+            "broker_delay_seconds": getattr(row, "broker_delay_seconds", 1),
+            "missed_candle_retry_seconds": getattr(row, "missed_candle_retry_seconds", 1),
             "last_broker_sync_at": getattr(row, "last_broker_sync_at", None),
             "live_sync_enabled": getattr(row, "live_sync_enabled", False),
             "live_sync_interval_seconds": getattr(row, "live_sync_interval_seconds", 10),
@@ -825,8 +839,8 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
             "last_runner_wakeup_at": getattr(row, "last_runner_wakeup_at", None),
             "last_processed_candle_time": getattr(row, "last_processed_candle_time", None),
             "runner_interval_mode": getattr(row, "runner_interval_mode", "CANDLE_CLOSE"),
-            "broker_delay_seconds": getattr(row, "broker_delay_seconds", 3),
-            "missed_candle_retry_seconds": getattr(row, "missed_candle_retry_seconds", 10),
+            "broker_delay_seconds": getattr(row, "broker_delay_seconds", 1),
+            "missed_candle_retry_seconds": getattr(row, "missed_candle_retry_seconds", 1),
             "last_broker_sync_at": getattr(row, "last_broker_sync_at", None),
             "live_sync_enabled": getattr(row, "live_sync_enabled", False),
             "live_sync_interval_seconds": getattr(row, "live_sync_interval_seconds", 10),
@@ -1040,6 +1054,9 @@ async def create_deployment(payload: StrategyDeploymentCreate, db: AsyncSession 
         # Funded deployments must never be considered safe from the legacy fallback capital.
         # Runtime activation performs a fresh broker sync and validates balance/equity/currency.
 
+    # Broker-backed deployments should continuously reconcile positions/orders.
+    # This keeps local state correct when SL/TP or a manual broker close happens.
+    payload_values["live_sync_enabled"] = True
     row = StrategyDeployment(user_id=user_id_from(current_user), status="DRAFT", **payload_values)
     if hasattr(row, "live_approved"):
         row.live_approved = True
@@ -1361,10 +1378,13 @@ async def enable_deployment_auto_runner(deployment_id: UUID, db: AsyncSession = 
     await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     row = await get_deployment_or_404(db, deployment_id, current_user)
     row.auto_runner_enabled = True
+    row.live_sync_enabled = True
+    row.live_sync_error_count = 0
+    row.live_sync_last_error = None
     row.runner_error_count = 0
     row.runner_last_error = None
     now = datetime.now(timezone.utc)
-    row.next_run_at = calculate_next_runner_at(now, row.timeframe, int(getattr(row, "broker_delay_seconds", None) or 3))
+    row.next_run_at = calculate_next_runner_at(now, row.timeframe, 1)
     await _write_log(db, row, "AUTO_RUNNER_ENABLED", "Auto runner enabled", metadata={"next_run_at": row.next_run_at.isoformat() if row.next_run_at else None})
     await db.commit()
     await db.refresh(row)
@@ -1629,11 +1649,14 @@ async def start_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_d
             raise HTTPException(status_code=400, detail=funded_decision.reason or "Funded guard blocked deployment start.")
     now = datetime.now(timezone.utc)
     row.status = "RUNNING"
+    row.live_sync_enabled = True
+    row.live_sync_error_count = 0
+    row.live_sync_last_error = None
     row.started_at = now
     row.stopped_at = None
     row.last_heartbeat_at = now
     if bool(getattr(row, "auto_runner_enabled", False)) or getattr(row, "next_run_at", None) is None:
-        row.next_run_at = calculate_next_runner_at(now, row.timeframe, int(getattr(row, "broker_delay_seconds", None) or 3))
+        row.next_run_at = calculate_next_runner_at(now, row.timeframe, 1)
     await _write_log(db, row, "DEPLOYMENT_STARTED", "Deployment started", metadata={"next_run_at": row.next_run_at.isoformat() if row.next_run_at else None})
     await db.commit()
     await db.refresh(row)

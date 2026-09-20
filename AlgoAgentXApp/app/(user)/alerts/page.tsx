@@ -125,7 +125,15 @@ export default function AlertsPage() {
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState<AlertEvent | null>(null);
 
-  const mt5Accounts = useMemo(() => accounts.filter((a) => String(a.broker_code || a.broker_name || "").toUpperCase() === "MT5"), [accounts]);
+  const normalizeProvider = (account: BrokerAccount) => {
+    const raw = String(account.broker_code || account.broker_name || "").toUpperCase().trim();
+    if (["MT5_AGENT", "METATRADER5", "METATRADER 5"].includes(raw)) return "MT5";
+    if (["CTRADER_API", "CTRADER OPEN API", "CTRADER"].includes(raw)) return "CTRADER";
+    return raw;
+  };
+  const connectedAccounts = useMemo(() => accounts.filter((a) => String(a.status || "").toUpperCase() === "CONNECTED"), [accounts]);
+  const providerOptions = useMemo(() => Array.from(new Set(connectedAccounts.map(normalizeProvider).filter(Boolean))), [connectedAccounts]);
+  const providerAccounts = useMemo(() => connectedAccounts.filter((a) => normalizeProvider(a) === String(form.provider || "").toUpperCase()), [connectedAccounts, form.provider]);
   const activeMarketInstruments = useMemo(() => {
     const active = marketInstruments.filter((item) => item.is_active !== false);
     return active.length ? active : marketInstruments;
@@ -227,6 +235,13 @@ export default function AlertsPage() {
   }, []);
 
   useEffect(() => {
+    if (!providerOptions.length) return;
+    if (!providerOptions.includes(String(form.provider || "").toUpperCase())) {
+      setForm((current) => ({ ...current, provider: providerOptions[0], broker_account_id: null, symbol: "" }));
+    }
+  }, [providerOptions, form.provider]);
+
+  useEffect(() => {
     let cancelled = false;
     void liveTradingApi.listMarketInstruments().then((rows) => {
       if (!cancelled) setMarketInstruments(rows || []);
@@ -238,7 +253,7 @@ export default function AlertsPage() {
 
   useEffect(() => {
     const accountId = form.broker_account_id;
-    if (!accountId || form.provider !== "MT5") {
+    if (!accountId) {
       setBrokerSymbols([]);
       setSymbolLoadError(null);
       setSymbolsLoading(false);
@@ -252,7 +267,7 @@ export default function AlertsPage() {
       const usable = (rows || []).filter((row) => row?.symbol && row.success !== false);
       setBrokerSymbols(usable);
       const errorRow = (rows || []).find((row) => row?.success === false);
-      if (errorRow && !usable.length) setSymbolLoadError(String(errorRow.message || "Unable to load MT5 broker symbols."));
+      if (errorRow && !usable.length) setSymbolLoadError(String(errorRow.message || "Unable to load broker symbols."));
       if (form.symbol && usable.length && !usable.some((row) => String(row.symbol).toUpperCase() === String(form.symbol).toUpperCase())) {
         const mapped = usable.find((row) => matchesCanonicalSymbol(String(row.symbol), form.symbol));
         if (mapped?.symbol) setForm((current) => current.broker_account_id === accountId ? { ...current, symbol: String(mapped.symbol) } : current);
@@ -260,7 +275,7 @@ export default function AlertsPage() {
     }).catch((error: any) => {
       if (!cancelled) {
         setBrokerSymbols([]);
-        setSymbolLoadError(error?.message || "Unable to load symbols from the MT5 Agent. Make sure the updated agent is running.");
+        setSymbolLoadError(error?.message || "Unable to load symbols from the selected broker account. Sync/reconnect the broker and try again.");
       }
     }).finally(() => {
       if (!cancelled) setSymbolsLoading(false);
@@ -275,7 +290,7 @@ export default function AlertsPage() {
 
   const saveAlert = async () => {
     if (!form.symbol.trim()) return showToast("Symbol is required", "error");
-    if (!form.broker_account_id && form.provider === "MT5") return showToast("Select the MT5 broker account that supplies live ticks", "error");
+    if (!form.broker_account_id) return showToast("Select the connected broker account that supplies live prices", "error");
     if (!isZone && (!form.target_price || Number(form.target_price) <= 0)) return showToast("Enter a valid target price", "error");
     if (isZone && (!(Number(form.zone_low) < Number(form.zone_high)))) return showToast("Zone Low must be below Zone High", "error");
     if (form.approach_enabled && (!approachSupported || !form.approach_distance || Number(form.approach_distance) <= 0)) {
@@ -425,7 +440,7 @@ export default function AlertsPage() {
       {!protectionHealthy && (
         <div className="mt-4 flex gap-3 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm text-amber-100">
           <WifiOff className="mt-0.5 h-5 w-5 shrink-0" />
-          <div><strong>Real-time alert protection is not fully healthy.</strong> Alerts remain stored, but active protection requires the alert worker, Redis, database and a recent live market tick. Start/verify the updated MT5 Agent on the same broker account used by the alert. {health?.last_tick ? `Last alert tick: ${formatDateTimeIST(health.last_tick, { seconds: true })}.` : "No alert quote tick has reached AlgoAgentX yet."}</div>
+          <div><strong>Real-time alert protection is not fully healthy.</strong> Alerts remain stored, but active protection requires the alert worker, Redis, database and a recent live market tick. Verify the selected broker market-data connection. MT5 uses the Agent feed; cloud brokers such as cTrader use the alert worker market-data adapter. {health?.last_tick ? `Last alert tick: ${formatDateTimeIST(health.last_tick, { seconds: true })}.` : "No alert quote tick has reached AlgoAgentX yet."}</div>
         </div>
       )}
 
@@ -484,10 +499,10 @@ export default function AlertsPage() {
                   </Command>
                 </PopoverContent>
               </Popover>
-              <p className={`mt-1 text-xs ${symbolLoadError ? "text-amber-200" : "text-muted-foreground"}`}>{symbolLoadError || (brokerSymbols.length ? "Exact symbols are loaded from this MT5 broker account and preserved exactly, including broker suffixes such as XAUUSDm, XAUUSD.x or XAUUSD.a." : form.broker_account_id ? "Using Market Master as fallback until broker symbols are available." : "Select the same MT5 account whose Agent token is running.")}</p>
+              <p className={`mt-1 text-xs ${symbolLoadError ? "text-amber-200" : "text-muted-foreground"}`}>{symbolLoadError || (brokerSymbols.length ? `Exact symbols are loaded from the selected ${form.provider} broker account and preserved exactly.` : form.broker_account_id ? "Using Market Master as fallback until broker symbols are available." : "Select a connected broker account first.")}</p>
             </div>
-            <div><Label>Feed / Provider</Label><Select value={form.provider} onValueChange={(v) => setForm({ ...form, provider: v })}><SelectTrigger className={alertSelectTriggerClass}><SelectValue /></SelectTrigger><SelectContent className={alertSelectContentClass}><SelectItem className={alertSelectItemClass} value="MT5">MT5 Agent — Live Ticks</SelectItem></SelectContent></Select></div>
-            <div><Label>MT5 Broker Account</Label><Select value={form.broker_account_id || ""} onValueChange={(v) => setForm((current) => ({ ...current, broker_account_id: v || null, symbol: current.broker_account_id === v ? current.symbol : "" }))}><SelectTrigger className={alertSelectTriggerClass}><SelectValue placeholder="Select account" /></SelectTrigger><SelectContent className={alertSelectContentClass}>{mt5Accounts.map((a) => <SelectItem className={alertSelectItemClass} key={a.id} value={a.id}>{a.account_label} · {a.status}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label>Feed / Provider</Label><Select value={form.provider} onValueChange={(v) => setForm((current) => ({ ...current, provider: v, broker_account_id: null, symbol: "" }))}><SelectTrigger className={alertSelectTriggerClass}><SelectValue /></SelectTrigger><SelectContent className={alertSelectContentClass}>{providerOptions.map((provider) => <SelectItem className={alertSelectItemClass} key={provider} value={provider}>{provider === "MT5" ? "MT5 Agent — Live Ticks" : provider === "CTRADER" ? "cTrader Open API — Cloud Prices" : `${provider} — Broker Prices`}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label>Broker Account</Label><Select value={form.broker_account_id || ""} onValueChange={(v) => { const account = connectedAccounts.find((a) => a.id === v); setForm((current) => ({ ...current, provider: account ? normalizeProvider(account) : current.provider, broker_account_id: v || null, symbol: current.broker_account_id === v ? current.symbol : "" })); }}><SelectTrigger className={alertSelectTriggerClass}><SelectValue placeholder="Select connected account" /></SelectTrigger><SelectContent className={alertSelectContentClass}>{providerAccounts.map((a) => <SelectItem className={alertSelectItemClass} key={a.id} value={a.id}>{normalizeProvider(a)} · {a.account_label} · {a.login_id || (a.metadata_json as any)?.ctrader_selected_account?.account_number || ""} · {a.status}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Condition</Label><Select value={form.alert_type} onValueChange={(v) => setForm((current) => ({ ...current, alert_type: v as AlertType, ...(v === "LEAVING_ZONE" ? { approach_enabled: false, approach_distance: null } : {}) }))}><SelectTrigger className={alertSelectTriggerClass}><SelectValue /></SelectTrigger><SelectContent className={alertSelectContentClass}>{conditions.map((x) => <SelectItem className={alertSelectItemClass} key={x.value} value={x.value}>{x.label}</SelectItem>)}</SelectContent></Select></div>
             {!isZone ? <div><Label>Target Price</Label><Input className="mt-2" type="number" step="any" value={form.target_price ?? ""} onChange={(e) => setForm({ ...form, target_price: e.target.value === "" ? null : Number(e.target.value) })} /></div> : <><div><Label>Zone Low</Label><Input className="mt-2" type="number" step="any" value={form.zone_low ?? ""} onChange={(e) => setForm({ ...form, zone_low: e.target.value === "" ? null : Number(e.target.value) })} /></div><div><Label>Zone High</Label><Input className="mt-2" type="number" step="any" value={form.zone_high ?? ""} onChange={(e) => setForm({ ...form, zone_high: e.target.value === "" ? null : Number(e.target.value) })} /></div></>}
             <div><Label>Frequency</Label><Select value={form.trigger_mode} onValueChange={(v) => setForm({ ...form, trigger_mode: v as "ONCE" | "RECURRING" })}><SelectTrigger className={alertSelectTriggerClass}><SelectValue /></SelectTrigger><SelectContent className={alertSelectContentClass}><SelectItem className={alertSelectItemClass} value="ONCE">Trigger Once</SelectItem><SelectItem className={alertSelectItemClass} value="RECURRING">Recurring / Rearm</SelectItem></SelectContent></Select></div>

@@ -16,6 +16,7 @@ import type { BrokerAccount, LiveCandleSnapshot, FullDryTestResponse, LiveDeploy
 import { formatDateTimeIST } from "@/lib/timezone";
 
 const date = (value?: string | null) => formatDateTimeIST(value);
+const dateWithSeconds = (value?: string | null) => formatDateTimeIST(value, { seconds: true });
 const num = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 const pct = (value: unknown) => value === null || value === undefined || value === "" ? "—" : `${(Number(value) * 100).toFixed(2)}%`;
 
@@ -304,7 +305,7 @@ export default function LiveDeploymentDetailPage() {
 
   useEffect(() => {
     if (!deploymentId) return;
-    const timer = setInterval(() => loadSummary(true), 15000);
+    const timer = setInterval(() => loadSummary(true), 5000);
     return () => clearInterval(timer);
   }, [deploymentId]);
 
@@ -471,9 +472,9 @@ export default function LiveDeploymentDetailPage() {
         </div>
         <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
           <MetricCard label="Strategy" value={summary.deployment?.strategy_name || deployment.strategy_id || "—"} />
-          <MetricCard label="Last Run" value={date(summary.deployment?.last_runner_at || deployment.last_runner_at)} />
+          <MetricCard label="Last Run" value={dateWithSeconds(summary.deployment?.last_runner_at || deployment.last_runner_at)} />
           <MetricCard label="Last Processed Candle" value={date(summary.deployment?.last_processed_candle_time || deployment.last_processed_candle_time)} />
-          <MetricCard label="Next Scheduled Run" value={date(summary.deployment?.next_run_at || deployment.next_run_at)} />
+          <MetricCard label="Next Scheduled Run" value={dateWithSeconds(summary.deployment?.next_run_at || deployment.next_run_at)} />
           <MetricCard label="Auto Runner" value={summary.deployment?.auto_runner_enabled ? "ON" : "OFF"} />
           <MetricCard label="Last Signal" value={recentSignals[0]?.signal_type || "—"} />
           <MetricCard label="Latest Order" value={recentOrders[0]?.status || "—"} />
@@ -485,7 +486,7 @@ export default function LiveDeploymentDetailPage() {
           <Badge className={summary.deployment?.auto_runner_enabled ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : "border-yellow-400/30 bg-yellow-400/20 text-yellow-100"}>Auto Runner {summary.deployment?.auto_runner_enabled ? "ON" : "OFF"}</Badge>
           <span className="text-sm text-purple-200">Last signal: {date(summary.deployment?.last_signal_at || deployment.last_signal_at)}</span>
         </div>
-        <p className="mt-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3 text-xs text-cyan-100">Runner wakes just after the selected timeframe candle close. If the broker delays candle publication, it retries shortly instead of waiting a full candle.</p>
+        <p className="mt-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3 text-xs text-cyan-100">Auto Runner starts fetching the just-closed broker candle at about +1s, retries every 1s for up to 20 broker refresh attempts, and runs the strategy immediately when that exact closed candle is available.</p>
         {runnerResult && <p className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-purple-100">Latest runner log: {runnerResult}</p>}
       </GlassCard>
 
@@ -504,7 +505,7 @@ export default function LiveDeploymentDetailPage() {
 
       <GlassCard className="mb-6 p-6" hoverEffect={false}>
         <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
-          <div><h2 className="text-xl font-bold text-lime-300">Broker Summary</h2><p className="mt-1 text-sm text-purple-200">DEMO and approved LIVE deployments use a connected broker account. Broker Sync reads positions/orders; it does not place new orders.</p><p className="mt-1 text-xs text-purple-300">{pnlSourceLabel}</p></div>
+          <div><h2 className="text-xl font-bold text-lime-300">Broker Summary</h2><p className="mt-1 text-sm text-purple-200">DEMO and approved LIVE deployments use a connected broker account. Broker Sync reads positions/orders; it does not place new orders.</p><p className="mt-1 text-xs text-lime-200">Broker Auto-Sync: {(summary?.deployment?.live_sync_enabled || summary?.deployment?.auto_runner_enabled) ? "ON" : "OFF"} · every {summary?.deployment?.live_sync_interval_seconds ?? 10}s · last sync {date(summary?.deployment?.last_broker_sync_at)}</p><p className="mt-1 text-xs text-purple-300">{pnlSourceLabel}</p></div>
           <div className="flex flex-wrap gap-2">
             {!broker && connectedMt5Broker && <Button disabled={brokerBusy} onClick={attachConnectedBroker} className="gap-2 bg-emerald-500 text-slate-950 hover:bg-emerald-400"><Link2 className="h-4 w-4" />Attach Broker</Button>}
             <Button disabled={brokerBusy || !deployment.broker_account_id} onClick={() => refreshBroker()} className="gap-2 bg-blue-500 text-white hover:bg-blue-400"><RefreshCw className="h-4 w-4" />Refresh Broker</Button>
@@ -601,7 +602,7 @@ export default function LiveDeploymentDetailPage() {
             <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
               <div>
                 <h2 className="text-xl font-bold text-lime-300">Market Data Snapshot</h2>
-                <p className="mt-1 text-sm text-purple-200">Latest closed candles stored from MT5 or UPSTOX for the live strategy runner. No chart and no fake data.</p>
+                <p className="mt-1 text-sm text-purple-200">Latest closed candles stored from the connected broker for the live strategy runner. No chart and no fake data.</p>
               </div>
               <Button disabled={candleBusy || !["DEMO", "LIVE"].includes(mode) || !broker || broker.status !== "CONNECTED"} onClick={refreshCandles} className="gap-2 bg-cyan-500 text-slate-950 hover:bg-cyan-400"><RefreshCw className="h-4 w-4" /> Refresh Candles</Button>
             </div>
@@ -622,7 +623,7 @@ export default function LiveDeploymentDetailPage() {
               <span className="mx-2 text-purple-400">•</span>
               Next close expected: <span className="font-semibold text-white">{date(candleSnapshot?.next_closed_candle_expected_at)}</span>
             </div>
-            {latestCandles.length === 0 ? <div className="mt-4"><NoRows label="No broker candles stored yet. For Upstox, make sure instrument_key is set. For MT5, open Market Watch → Show All and open the symbol chart once." /></div> : (
+            {latestCandles.length === 0 ? <div className="mt-4"><NoRows label="No broker candles stored yet. Check the selected broker symbol/account and refresh candles. MT5 users may also need Market Watch → Show All and the symbol chart opened once." /></div> : (
               <div className="responsive-table-wrapper mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="text-purple-200"><tr><th>Time</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody className="divide-y divide-white/10">{latestCandles.map((candle, index) => <tr key={candle.id || `${candle.candle_time}-${index}`} className="text-purple-50"><td className="py-3">{date(candle.candle_time)}</td><td>{num(candle.open)}</td><td>{num(candle.high)}</td><td>{num(candle.low)}</td><td>{num(candle.close)}</td><td>{num(candle.volume)}</td></tr>)}</tbody></table></div>
             )}
           </GlassCard>

@@ -35,7 +35,7 @@ const FIELD_HELP: Record<string, string> = {
   "Max Daily Loss": "Daily loss guardrail for this deployment. If losses reach this amount, trading should stop according to backend safety rules.",
   "Max Trades / Day": "Limits number of trades per day to avoid overtrading. Example: 3 trades/day.",
   "Max Open Positions": "Limits simultaneous open positions. Example: 1 keeps live risk controlled.",
-  "MT5 DEMO Max Lot": "Maximum lot allowed for MT5 demo orders from this deployment. Example: 0.02. Keep this low while testing.",
+  "MT5 DEMO Max Lot": "Maximum lot allowed for lot-based brokers such as MT5 and cTrader. Example: 0.02. Keep this low while testing.",
   "Quantity Mode": "Risk Based calculates size from stop loss and risk percent. Fixed Quantity uses the same quantity for each trade.",
   "Fixed Qty": "Manual quantity used when Quantity Mode is Fixed Quantity. High values can place oversized orders.",
   "Max Qty": "Maximum quantity cap for non-lot instruments. This protects from oversized live orders.",
@@ -402,7 +402,7 @@ export default function LiveDeploymentSettingsPage() {
     if (form.max_daily_loss < 0) return "Max daily loss cannot be negative.";
     if (form.max_trades_per_day < 1) return "Max trades per day must be at least 1.";
     if (form.max_open_positions < 1) return "Max open positions must be at least 1.";
-    if (form.mt5_demo_max_lot <= 0) return "MT5 demo max lot must be greater than 0.";
+    if (form.mt5_demo_max_lot <= 0) return "Broker max lot must be greater than 0.";
     if ((form.mode === "DEMO" || form.mode === "LIVE") && !form.broker_account_id) return "Broker account is required for DEMO and LIVE.";
     return null;
   };
@@ -598,7 +598,7 @@ export default function LiveDeploymentSettingsPage() {
                 <FieldShell label="SL Mode"><SelectBox value={liveSlMode} onChange={(e) => setForm({ ...form, sl_mode: e.target.value })}>{SL_MODES.map((value) => <option key={value} value={value}>{value.replace(/_/g, " ")}</option>)}</SelectBox></FieldShell>
                 {!isFunded && <FieldShell label="Max Daily Loss"><SelectBox value={selectValue(form.max_daily_loss, dailyLossOptions)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, max_daily_loss: Number(e.target.value) }) : setAdvancedMode(true)}>{dailyLossOptions.map((value) => <option key={value} value={value}>{money(value, currency)}</option>)}<option value="CUSTOM">Custom</option></SelectBox>{advancedMode && selectValue(form.max_daily_loss, dailyLossOptions) === "CUSTOM" && <InputBox type="number" min="0" value={form.max_daily_loss} onChange={(e) => setForm({ ...form, max_daily_loss: Number(e.target.value) })} />}</FieldShell>}
                 <FieldShell label="Max Trades / Day"><SelectBox value={form.max_trades_per_day} onChange={(e) => setForm({ ...form, max_trades_per_day: Number(e.target.value) })}>{MAX_TRADES.map((value) => <option key={value} value={value}>{value}</option>)}</SelectBox></FieldShell>
-                <FieldShell label="MT5 DEMO Max Lot"><SelectBox value={selectValue(form.mt5_demo_max_lot, MT5_LOT_CAPS)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, mt5_demo_max_lot: Number(e.target.value) }) : setAdvancedMode(true)}>{MT5_LOT_CAPS.map((value) => <option key={value} value={value}>{value.toFixed(2)}</option>)}<option value="CUSTOM">Custom Advanced</option></SelectBox>{advancedMode && selectValue(form.mt5_demo_max_lot, MT5_LOT_CAPS) === "CUSTOM" && <InputBox type="number" step="0.01" min="0.01" value={form.mt5_demo_max_lot} onChange={(e) => setForm({ ...form, mt5_demo_max_lot: Number(e.target.value) })} />}</FieldShell>
+                <FieldShell label="Broker Max Lot (MT5/cTrader)"><SelectBox value={selectValue(form.mt5_demo_max_lot, MT5_LOT_CAPS)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, mt5_demo_max_lot: Number(e.target.value) }) : setAdvancedMode(true)}>{MT5_LOT_CAPS.map((value) => <option key={value} value={value}>{value.toFixed(2)}</option>)}<option value="CUSTOM">Custom Advanced</option></SelectBox>{advancedMode && selectValue(form.mt5_demo_max_lot, MT5_LOT_CAPS) === "CUSTOM" && <InputBox type="number" step="0.01" min="0.01" value={form.mt5_demo_max_lot} onChange={(e) => setForm({ ...form, mt5_demo_max_lot: Number(e.target.value) })} />}</FieldShell>
               </div>
             </div>
 
@@ -625,7 +625,7 @@ export default function LiveDeploymentSettingsPage() {
                 {isUpstox && <><FieldShell label="Upstox Instrument Key"><InputBox disabled value={form.instrument_key} placeholder="NSE_EQ|INE040A01034" /></FieldShell><FieldShell label="Exchange"><InputBox disabled value={form.exchange} /></FieldShell><FieldShell label="Segment"><InputBox disabled value={form.segment} /></FieldShell></>}
                 <FieldShell label="Product Type"><SelectBox value={form.product_type} onChange={(e) => setForm({ ...form, product_type: e.target.value })}><option value="MIS">MIS / Intraday</option><option value="CNC">CNC / Delivery</option></SelectBox></FieldShell>
               </div>}
-              <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-500/10 p-3 text-xs text-amber-100">{isFunded ? "Funded hard rules, broker balance/equity, safety buffer and deployment risk plan remain authoritative. Runtime UI cannot bypass the funded guard." : "Live safety remains enforced by broker readiness, MT5_DEMO_MAX_LOT, max lot/quantity caps and daily loss guardrails. Runtime UI cannot bypass backend caps."}</div>
+              <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-500/10 p-3 text-xs text-amber-100">{isFunded ? "Funded hard rules, broker balance/equity, safety buffer and deployment risk plan remain authoritative. Runtime UI cannot bypass the funded guard." : "Live safety remains enforced by broker readiness, broker max-lot/quantity caps and daily loss guardrails. Runtime UI cannot bypass backend caps."}</div>
             </div>}
 
             <div className="flex flex-wrap gap-4 rounded-xl border border-white/10 bg-white/5 p-4"><label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={form.allow_short} onChange={(e) => setForm({ ...form, allow_short: e.target.checked })} />Allow short</label><label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={form.auto_trade_enabled} onChange={(e) => setForm({ ...form, auto_trade_enabled: e.target.checked })} />Auto trade enabled</label><label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={form.auto_runner_enabled} onChange={(e) => setForm({ ...form, auto_runner_enabled: e.target.checked })} />Auto runner enabled</label>{isUpstox && <label className="flex items-center gap-2 text-sm text-yellow-100"><input type="checkbox" checked={form.upstox_order_confirmed} onChange={(e) => setForm({ ...form, upstox_order_confirmed: e.target.checked })} />I understand Upstox orders may place real trades</label>}</div>

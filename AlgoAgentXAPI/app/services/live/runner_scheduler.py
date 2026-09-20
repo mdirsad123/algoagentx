@@ -33,6 +33,27 @@ def parse_timeframe_to_seconds(timeframe: str) -> int:
     raise ValueError(f'Unsupported live runner timeframe: {timeframe}')
 
 
+def latest_expected_closed_candle_open(now_utc: datetime, timeframe: str) -> datetime:
+    """Return the OPEN timestamp of the candle that should already be closed.
+
+    Example for M5:
+      now = 21:00:01  -> expected closed candle opened at 20:55:00
+      now = 21:04:59  -> expected closed candle opened at 20:55:00
+      now = 21:05:00  -> expected closed candle opened at 21:00:00
+
+    LiveMarketCandle.candle_time stores candle OPEN time.
+    """
+    now = ensure_utc(now_utc) or utc_now()
+    seconds = parse_timeframe_to_seconds(timeframe)
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elapsed = int((now - midnight).total_seconds())
+    current_bucket = (elapsed // seconds) * seconds
+    expected_open = current_bucket - seconds
+    if expected_open < 0:
+        expected_open += 86400
+        midnight = midnight - timedelta(days=1)
+    return midnight + timedelta(seconds=expected_open)
+
 def calculate_next_candle_close(now_utc: datetime, timeframe: str) -> datetime:
     now = ensure_utc(now_utc) or utc_now()
     seconds = parse_timeframe_to_seconds(timeframe)
@@ -54,9 +75,19 @@ def calculate_next_runner_after_candle(
     *,
     now_utc: datetime | None = None,
 ) -> datetime:
-    latest = ensure_utc(latest_closed_candle_at) or utc_now()
+    """Return the wake-up for the candle *after* the one just processed.
+
+    LiveMarketCandle.candle_time stores broker candle OPEN time. If an M5 row
+    has candle_time=19:10, that candle closes at 19:15. After processing it,
+    the next new closed candle is the 19:15 row, which closes at 19:20. The
+    old implementation added only one timeframe and therefore woke again at
+    19:15, one full candle too early, creating a retry storm.
+    """
+    latest_open = ensure_utc(latest_closed_candle_at) or utc_now()
     now = ensure_utc(now_utc) or utc_now()
-    next_run = latest + timedelta(seconds=parse_timeframe_to_seconds(timeframe) + max(0, int(delay_seconds if delay_seconds is not None else 3)))
+    seconds = parse_timeframe_to_seconds(timeframe)
+    delay = max(0, int(delay_seconds if delay_seconds is not None else 3))
+    next_run = latest_open + timedelta(seconds=(seconds * 2) + delay)
     if next_run <= now:
         return calculate_next_runner_at(now, timeframe, delay_seconds)
     return next_run

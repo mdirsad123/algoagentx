@@ -12,7 +12,7 @@ import FieldHelpTooltip from "@/components/common/FieldHelpTooltip";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
 import { fundedBacktestsApi, type FundedAccountProfile } from "@/lib/api/funded-backtests";
-import type { AccountPolicyType, BrokerAccount, FundedAttachMode, FundedLiveRiskMode, LiveMode, MarketInstrument, StrategyCatalogItem } from "@/types/live-trading";
+import type { AccountPolicyType, BrokerAccount, BrokerSymbol, FundedAttachMode, FundedLiveRiskMode, LiveMode, MarketInstrument, StrategyCatalogItem } from "@/types/live-trading";
 
 const riskOptions = [
   { label: "0.25%", value: 0.0025 },
@@ -152,6 +152,9 @@ export default function NewLiveDeploymentPage() {
   const [strategies, setStrategies] = useState<StrategyCatalogItem[]>([]);
   const [brokers, setBrokers] = useState<BrokerAccount[]>([]);
   const [marketInstruments, setMarketInstruments] = useState<MarketInstrument[]>([]);
+  const [brokerSymbols, setBrokerSymbols] = useState<BrokerSymbol[]>([]);
+  const [brokerSymbolsLoading, setBrokerSymbolsLoading] = useState(false);
+  const [brokerSymbolsError, setBrokerSymbolsError] = useState<string | null>(null);
   const [fundedProfiles, setFundedProfiles] = useState<FundedAccountProfile[]>([]);
   const [instrumentSearch, setInstrumentSearch] = useState("");
   const [instrumentOpen, setInstrumentOpen] = useState(false);
@@ -211,14 +214,35 @@ export default function NewLiveDeploymentPage() {
     const active = marketInstruments.filter((item) => item.is_active !== false);
     return active.length ? active : marketInstruments;
   }, [marketInstruments]);
+  const brokerInstrumentChoices = useMemo<MarketInstrument[]>(() => {
+    const usable = brokerSymbols.filter((item) => item?.symbol && item.success !== false);
+    if (!usable.length) return activeInstruments;
+    return usable.map((item) => {
+      const exact = String(item.symbol).trim();
+      const canonical = activeInstruments.find((candidate) => {
+        const a = String(candidate.symbol || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+        const b = exact.toUpperCase().replace(/[^A-Z0-9]/g, "");
+        return a === b || b.startsWith(a) || a.startsWith(b);
+      });
+      return {
+        ...(canonical || {}),
+        symbol: exact,
+        name: item.description || item.name || canonical?.name || exact,
+        broker_symbol: exact,
+        instrument_key: exact,
+        market: selectedProvider || canonical?.market || canonical?.asset_class || "BROKER",
+        asset_class: canonical?.asset_class || canonical?.market || undefined,
+      } as MarketInstrument;
+    });
+  }, [brokerSymbols, activeInstruments, selectedProvider]);
   const filteredInstruments = useMemo(() => {
     const q = instrumentSearch.trim().toUpperCase();
     const rows = q
-      ? activeInstruments.filter((item) => [item.symbol, item.name, item.asset_class, item.market, item.exchange, item.broker_symbol, (item as any).instrument_key].some((value) => String(value || "").toUpperCase().includes(q)))
-      : activeInstruments;
-    return rows.slice(0, 30);
-  }, [activeInstruments, instrumentSearch]);
-  const selectedInstrument = useMemo(() => activeInstruments.find((item) => String(item.symbol).toUpperCase() === form.instrument.toUpperCase()), [activeInstruments, form.instrument]);
+      ? brokerInstrumentChoices.filter((item) => [item.symbol, item.name, item.asset_class, item.market, item.exchange, item.broker_symbol, (item as any).instrument_key].some((value) => String(value || "").toUpperCase().includes(q)))
+      : brokerInstrumentChoices;
+    return rows.slice(0, 500);
+  }, [brokerInstrumentChoices, instrumentSearch]);
+  const selectedInstrument = useMemo(() => brokerInstrumentChoices.find((item) => String(item.symbol).toUpperCase() === form.instrument.toUpperCase()), [brokerInstrumentChoices, form.instrument]);
   const selectedInstrumentDisplay = selectedInstrument ? instrumentLabel(selectedInstrument) : form.instrument;
   const selectedMarket = String(selectedInstrument?.market || selectedInstrument?.asset_class || (selectedInstrument as any)?.segment || "").toUpperCase();
   const selectedExchange = String(selectedInstrument?.exchange || form.exchange || "").toUpperCase();
@@ -276,6 +300,31 @@ export default function NewLiveDeploymentPage() {
   }, [connectedDemoBrokers, connectedLiveBrokers, form.mode, form.broker_account_id]);
 
   useEffect(() => {
+    const accountId = form.broker_account_id;
+    if (!accountId) {
+      setBrokerSymbols([]);
+      setBrokerSymbolsError(null);
+      return;
+    }
+    let cancelled = false;
+    setBrokerSymbolsLoading(true);
+    setBrokerSymbolsError(null);
+    void liveTradingApi.listBrokerSymbols(accountId, "", 2000).then((rows) => {
+      if (cancelled) return;
+      const usable = (rows || []).filter((row) => row?.symbol && row.success !== false);
+      setBrokerSymbols(usable);
+      const failed = (rows || []).find((row) => row?.success === false);
+      if (failed && !usable.length) setBrokerSymbolsError(String(failed.message || "Unable to load symbols from selected broker."));
+    }).catch((error: any) => {
+      if (!cancelled) {
+        setBrokerSymbols([]);
+        setBrokerSymbolsError(errorMessage(error, "Unable to load symbols from selected broker."));
+      }
+    }).finally(() => { if (!cancelled) setBrokerSymbolsLoading(false); });
+    return () => { cancelled = true; };
+  }, [form.broker_account_id]);
+
+  useEffect(() => {
     const first = deployableStrategies[0];
     if (!deployableStrategies.some((strategy) => strategy.id === form.strategy_id)) {
       setForm((prev) => ({
@@ -287,15 +336,15 @@ export default function NewLiveDeploymentPage() {
   }, [deployableStrategies, form.strategy_id]);
 
   useEffect(() => {
-    if (!activeInstruments.length) return;
-    const preferred = activeInstruments.find((item) => String(item.symbol).toUpperCase() === "XAUUSD") || activeInstruments[0];
-    if (activeInstruments.some((item) => String(item.symbol).toUpperCase() === form.instrument.toUpperCase())) return;
+    if (!brokerInstrumentChoices.length) return;
+    const preferred = brokerInstrumentChoices.find((item) => String(item.symbol).toUpperCase() === "XAUUSD") || brokerInstrumentChoices.find((item) => String(item.symbol).toUpperCase().startsWith("XAUUSD")) || brokerInstrumentChoices[0];
+    if (brokerInstrumentChoices.some((item) => String(item.symbol).toUpperCase() === form.instrument.toUpperCase())) return;
     selectInstrument(preferred.symbol);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeInstruments, form.instrument]);
+  }, [brokerInstrumentChoices, form.instrument]);
 
   const selectInstrument = (symbol: string) => {
-    const instrument = activeInstruments.find((item) => String(item.symbol).toUpperCase() === symbol.toUpperCase());
+    const instrument = brokerInstrumentChoices.find((item) => String(item.symbol).toUpperCase() === symbol.toUpperCase());
     if (!instrument) {
       setForm((prev) => ({ ...prev, instrument: symbol.toUpperCase() }));
       setInstrumentSearch(symbol.toUpperCase());
@@ -418,7 +467,8 @@ export default function NewLiveDeploymentPage() {
       const resolvedKey = form.instrument_key || instrumentKeyValue(selectedInstrument) || resolvedInstrument;
       const created = await liveTradingApi.createDeployment({
         ...form,
-        broker_account_id: form.broker_account_id,
+        broker_account_id: form.broker_account_id || null,
+        funded_profile_id: form.account_policy_type === "FUNDED" && form.funded_profile_id ? form.funded_profile_id : null,
         instrument: resolvedInstrument,
         broker_symbol: form.broker_symbol || resolvedKey || resolvedInstrument,
         instrument_key: resolvedKey || null,
@@ -567,7 +617,7 @@ export default function NewLiveDeploymentPage() {
               <Field label="Deployment name" help="A friendly name to identify this broker deployment in your workspace."><input required className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
               <Field label="Deployable strategy" help="Only strategies approved for the selected mode are shown here."><select required className={selectClass} value={form.strategy_id} onChange={(e) => setForm({ ...form, strategy_id: e.target.value })}>{deployableStrategies.length === 0 && <option value="">No deployable strategy found</option>}{deployableStrategies.map((strategy) => <option key={strategy.id} value={strategy.id}>{strategy.name} • {form.mode === "LIVE" ? "Live Approved" : "Demo Ready"}</option>)}</select></Field>
 
-              <Field label="Instrument" help="Search and select one active instrument from Market Master. The selected symbol is sent to the deployment engine.">
+              <Field label="Instrument" help="Search symbols from the selected connected broker. Broker naming/suffixes are preserved exactly; Market Master is only a fallback.">
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-purple-200/70" />
                   <input
@@ -580,8 +630,9 @@ export default function NewLiveDeploymentPage() {
                   <ChevronDown className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 text-purple-200/70" />
                   {instrumentOpen && (
                     <div className="absolute z-30 mt-2 max-h-72 w-full overflow-y-auto rounded-xl border border-white/10 bg-slate-950/95 p-1 shadow-2xl backdrop-blur-xl">
-                      {!activeInstruments.length && <div className="px-3 py-2 text-xs text-amber-200">No instruments found in Market Master. Ask admin to add instruments.</div>}
-                      {activeInstruments.length > 0 && filteredInstruments.length === 0 && <div className="px-3 py-2 text-xs text-amber-200">No matching instruments found.</div>}
+                      {brokerSymbolsLoading && <div className="px-3 py-2 text-xs text-purple-200">Loading exact symbols from selected broker…</div>}
+                      {!brokerSymbolsLoading && !brokerInstrumentChoices.length && <div className="px-3 py-2 text-xs text-amber-200">No instruments returned by the selected broker or Market Master.</div>}
+                      {!brokerSymbolsLoading && brokerInstrumentChoices.length > 0 && filteredInstruments.length === 0 && <div className="px-3 py-2 text-xs text-amber-200">No matching instruments found.</div>}
                       {filteredInstruments.map((instrument) => (
                         <button
                           key={String(instrument.id || instrument.symbol)}
@@ -596,6 +647,7 @@ export default function NewLiveDeploymentPage() {
                     </div>
                   )}
                 </div>
+                <p className={`mt-1 text-xs ${brokerSymbolsError ? "text-amber-200" : "text-purple-300"}`}>{brokerSymbolsError || (brokerSymbols.length ? `Loaded ${brokerSymbols.length} exact symbols from ${selectedProvider || "broker"}. ${instrumentOpen && instrumentSearch.trim() ? `Showing ${filteredInstruments.length} matching result(s); clear the search box to see all.` : `Showing up to ${Math.min(500, brokerInstrumentChoices.length)} instruments in the dropdown.`}` : form.broker_account_id ? "Using Market Master fallback until broker symbols are available." : "Select a broker account first.")}</p>
               </Field>
 
               <Field label="Timeframe" help="The candle timeframe used by the live strategy runner."><select className={selectClass} value={form.timeframe} onChange={(e) => setForm({ ...form, timeframe: e.target.value })}>{["M5", "M15", "M30", "H1", "H4", "D1"].map((tf) => <option key={tf} value={tf}>{tf}</option>)}</select></Field>

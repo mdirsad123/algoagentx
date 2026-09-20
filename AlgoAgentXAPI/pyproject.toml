@@ -34,7 +34,7 @@ cryptography = "^42.0.0"
 google-auth = "^2.35.0"
 
 # Payments
-razorpay = "1.4.2"
+razorpay = "2.0.1"
 
 # Broker / MT5 live trading
 metatrader5 = { version = "^5.0.5735", markers = "sys_platform == 'win32'" }
@@ -55,6 +55,7 @@ redis = { extras = ["hiredis"], version = "^7.1.0" }
 
 # Utilities
 requests = "^2.31.0"
+websockets = "^15.0.1"
 orjson = "^3.10.0"
 pytz = "^2024.1"
 loguru = "^0.7.3"

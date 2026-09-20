@@ -28,6 +28,7 @@ import {
   adminApi,
   AdminStrategyCreatePayload,
   AdminStrategyUpdatePayload,
+  duplicateAdminStrategyById,
   ImplementedStrategy,
   StrategyRequest,
   StrategyVisibility,
@@ -414,7 +415,7 @@ export default function AdminStrategyRequestsPage() {
 
     setSaving(true);
     try {
-      const duplicated = await adminApi.duplicateAdminStrategyById(strategy.id);
+      const duplicated = await duplicateAdminStrategyById(strategy.id);
       toast.success(`Strategy duplicated as ${duplicated?.name || "new version"}`);
       await loadData(requestSkip, strategySkip);
     } catch (err: any) {

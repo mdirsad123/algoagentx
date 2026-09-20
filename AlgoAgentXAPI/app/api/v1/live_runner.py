@@ -24,7 +24,7 @@ async def _set_auto_runner(db: AsyncSession, deployment: StrategyDeployment, ena
         deployment.runner_error_count = 0
         deployment.runner_last_error = None
         now = datetime.now(timezone.utc)
-        deployment.next_run_at = calculate_next_runner_at(now, deployment.timeframe, int(getattr(deployment, "broker_delay_seconds", None) or 3))
+        deployment.next_run_at = calculate_next_runner_at(now, deployment.timeframe, 1)
     db.add(LiveTradeLog(
         deployment_id=deployment.id,
         user_id=deployment.user_id,

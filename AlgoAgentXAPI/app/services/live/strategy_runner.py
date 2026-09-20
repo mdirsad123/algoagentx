@@ -228,7 +228,7 @@ def _validate_strategy_gate(strategy: Strategy, mode: str) -> None:
     if mode == "PAPER" and not bool(getattr(strategy, "is_deployable_paper", False)):
         raise HTTPException(status_code=400, detail="Strategy is not enabled for PAPER deployment")
     if mode == "DEMO" and not bool(getattr(strategy, "is_deployable_demo", False)):
-        raise HTTPException(status_code=400, detail="Strategy is not enabled for MT5 DEMO deployment")
+        raise HTTPException(status_code=400, detail="Strategy is not enabled for DEMO broker deployment")
 
 
 def _candles_to_dataframe(candles: list[dict[str, Any]]) -> pd.DataFrame:
@@ -433,9 +433,9 @@ def _message_for_result(signal_type: str, execute: bool, auto_trade: bool, order
     if order is None:
         return f"Strategy generated {signal_type}, but no order was placed"
     if order.status in {"FILLED", "PLACED"}:
-        return f"Strategy generated {signal_type} and MT5 demo order placed" if order.broker_order_id else f"Strategy generated {signal_type} and paper order placed"
+        return f"Strategy generated {signal_type} and broker demo order placed" if order.broker_order_id else f"Strategy generated {signal_type}; local order recorded"
     if order.status == "ERROR":
-        return f"MT5 order failed: {order.error_message or 'Check execution logs'}"
+        return f"Broker order failed: {order.error_message or 'Check execution logs'}"
     return f"Strategy generated {signal_type}; order status {order.status}"
 
 
@@ -583,7 +583,7 @@ async def run_full_dry_test_for_deployment(db: AsyncSession, deployment_id: UUID
     return {"success": True, "deployment_id": str(deployment.id), "strategy_name": canonical_name, "latest_candle_time": latest_candle_time.isoformat(), "signal": signal_type, "steps": steps, "entry_plan": entry_plan, "risk_preview": preview, "final_action": final_action, "message": f"Full dry test completed: {final_action.replace('_', ' ').title()}"}
 
 
-async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, execute: bool = True) -> dict[str, Any]:
+async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, execute: bool = True, *, refresh_broker_candles: bool = True) -> dict[str, Any]:
     deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
     if deployment is None:
         raise HTTPException(status_code=404, detail="Deployment not found")
@@ -638,7 +638,7 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
         _validate_strategy_gate(strategy, mode)
 
         refresh_warning = None
-        if mode in {"DEMO", "LIVE"}:
+        if mode in {"DEMO", "LIVE"} and refresh_broker_candles:
             await _log(db, deployment, "RUNNER_CANDLE_REFRESH_STARTED", "Refreshing latest broker closed candles before strategy run")
             try:
                 await refresh_deployment_candles(db, deployment.id, count=300)
@@ -661,7 +661,7 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
             }
             deployment.last_runner_at = datetime.now(timezone.utc)
             try:
-                deployment.next_run_at = calculate_next_runner_at(datetime.now(timezone.utc), deployment.timeframe, int(getattr(deployment, "broker_delay_seconds", None) or 3))
+                deployment.next_run_at = calculate_next_runner_at(datetime.now(timezone.utc), deployment.timeframe, 1)
             except Exception:
                 pass
             await _log(db, deployment, "RUNNER_NOT_ENOUGH_CANDLES", detail["message"], "WARNING", detail)
@@ -673,7 +673,7 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
         latest_close = to_decimal(latest_candle.get("close"))
         latest_symbol = str(latest_candle.get("symbol") or deployment.instrument)
         df = _candles_to_dataframe(candles)
-        delay_seconds = int(getattr(deployment, "broker_delay_seconds", None) or 3)
+        delay_seconds = 1
         deployment.last_runner_at = datetime.now(timezone.utc)
         deployment.last_processed_candle_time = latest_candle_time
         deployment.next_run_at = calculate_next_runner_after_candle(latest_candle_time, deployment.timeframe, delay_seconds, now_utc=datetime.now(timezone.utc))

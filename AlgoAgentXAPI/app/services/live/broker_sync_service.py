@@ -163,6 +163,38 @@ def _mt5_position_values(position: dict[str, Any], deployment: StrategyDeploymen
     }
 
 
+def _ctrader_position_values(position: dict[str, Any], deployment: StrategyDeployment) -> dict[str, Any] | None:
+    qty = _dec(position.get("volume") or position.get("lot_volume") or 0)
+    if qty <= 0:
+        return None
+    side = str(position.get("side") or "").upper()
+    if side not in {"LONG", "SHORT"}:
+        side = "LONG" if str(position.get("tradeSide") or "1") in {"1", "BUY"} else "SHORT"
+    avg = _dec(position.get("price_open") or position.get("price") or 0)
+    current = _dec(position.get("price_current") or avg, str(avg))
+    opened = position.get("time") or position.get("openTimestamp")
+    opened_at = datetime.now(timezone.utc)
+    try:
+        if opened not in (None, ""):
+            iv = int(opened)
+            opened_at = datetime.fromtimestamp(iv / 1000 if iv > 10_000_000_000 else iv, tz=timezone.utc)
+    except Exception:
+        pass
+    return {
+        "broker_position_id": str(position.get("broker_position_id") or position.get("position_id") or "") or None,
+        "symbol": str(position.get("symbol") or deployment.broker_symbol or deployment.instrument),
+        "side": side,
+        "qty": qty,
+        "avg": avg,
+        "current": current,
+        "unrealized": _dec(position.get("profit") or position.get("unrealized_pnl") or 0),
+        "realized": _dec(position.get("realized_pnl") or 0),
+        "opened_at": opened_at,
+        "stop_loss": _dec(position.get("sl")) if position.get("sl") not in (None, "", 0) else None,
+        "target": _dec(position.get("tp")) if position.get("tp") not in (None, "", 0) else None,
+    }
+
+
 async def _write_log(db: AsyncSession, deployment: StrategyDeployment, event_type: str, message: str, level: str = "INFO", metadata: dict[str, Any] | None = None) -> None:
     db.add(LiveTradeLog(
         deployment_id=deployment.id,
@@ -242,7 +274,8 @@ async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, 
     closed = 0
     total_unrealized = Decimal("0")
     total_realized = Decimal("0")
-    normalizer = _mt5_position_values if provider_code.upper() == "MT5" else _upstox_position_values
+    provider_upper = provider_code.upper()
+    normalizer = _mt5_position_values if provider_upper == "MT5" else (_ctrader_position_values if provider_upper in {"CTRADER", "CTRADER_API"} else _upstox_position_values)
 
     for raw in broker_positions or []:
         if not isinstance(raw, dict) or raw.get("success") is False:
@@ -252,12 +285,32 @@ async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, 
             continue
         total_unrealized += _dec(values.get("unrealized"))
         total_realized += _dec(values.get("realized"))
-        existing = next((p for p in open_rows if str(p.id) not in matched and p.side == values["side"] and _symbols_match(p.symbol, values["symbol"])), None)
+        broker_position_id = str(values.get("broker_position_id") or "").strip() or None
+        existing = None
+        # cTrader/hedging accounts can hold multiple positions with the same
+        # symbol and side. Broker position id is therefore the authoritative
+        # reconciliation key whenever it exists. Falling back to symbol+side is
+        # reserved for legacy/local rows that do not yet have a broker id.
+        if broker_position_id:
+            existing = next((
+                p for p in open_rows
+                if str(p.id) not in matched
+                and str(getattr(p, "broker_position_id", None) or "") == broker_position_id
+            ), None)
+        if existing is None:
+            existing = next((
+                p for p in open_rows
+                if str(p.id) not in matched
+                and not getattr(p, "broker_position_id", None)
+                and p.side == values["side"]
+                and _symbols_match(p.symbol, values["symbol"])
+            ), None)
         if existing is None:
             existing = LivePosition(
                 deployment_id=deployment.id,
                 user_id=deployment.user_id,
                 broker_account_id=deployment.broker_account_id,
+                broker_position_id=values.get("broker_position_id"),
                 symbol=values["symbol"],
                 side=values["side"],
                 qty=values["qty"],
@@ -276,6 +329,8 @@ async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, 
             created += 1
         else:
             existing.broker_account_id = deployment.broker_account_id
+            if values.get("broker_position_id"):
+                existing.broker_position_id = values.get("broker_position_id")
             existing.symbol = values["symbol"]
             existing.qty = values["qty"]
             existing.avg_entry_price = values["avg"]
@@ -355,11 +410,39 @@ async def sync_deployment_broker_state(db: AsyncSession, deployment_id: UUID | s
                     "balance": str(account_info.get("balance")) if account_info.get("balance") is not None else None,
                     "equity": str(account_info.get("equity")) if account_info.get("equity") is not None else None,
                     "free_margin": str(account_info.get("free_margin")) if account_info.get("free_margin") is not None else None,
+                    "unrealized_pnl": str(account_info.get("unrealized_pnl")) if account_info.get("unrealized_pnl") is not None else None,
                     "currency": account_info.get("currency"),
                     "warning": account_info.get("warning"),
                     "synced_at": now.isoformat(),
                 }
+                # Keep cTrader's selected-account snapshot current as well. Several
+                # UI/readiness surfaces use this object, so stale OAuth-time balance
+                # must not survive after a live broker sync.
+                selected = meta.get("ctrader_selected_account")
+                if isinstance(selected, dict):
+                    selected = dict(selected)
+                    if account_info.get("balance") is not None:
+                        selected["balance"] = account_info.get("balance")
+                    if account_info.get("equity") is not None:
+                        selected["equity"] = account_info.get("equity")
+                    if account_info.get("currency"):
+                        selected["currency"] = account_info.get("currency")
+                    selected["financial_synced_at"] = now.isoformat()
+                    meta["ctrader_selected_account"] = selected
                 broker.metadata_json = meta
+                if hasattr(broker, "last_connection_result"):
+                    broker.last_connection_result = {
+                        "connected": True,
+                        "message": account_info.get("message"),
+                        "account_login": account_info.get("account_login"),
+                        "server": account_info.get("server"),
+                        "balance": str(account_info.get("balance")) if account_info.get("balance") is not None else None,
+                        "equity": str(account_info.get("equity")) if account_info.get("equity") is not None else None,
+                        "free_margin": str(account_info.get("free_margin")) if account_info.get("free_margin") is not None else None,
+                        "unrealized_pnl": str(account_info.get("unrealized_pnl")) if account_info.get("unrealized_pnl") is not None else None,
+                        "currency": account_info.get("currency"),
+                        "synced_at": now.isoformat(),
+                    }
             elif isinstance(account_info, dict):
                 warnings.append(str(account_info.get("message") or "Broker account-info refresh failed"))
         except Exception as exc:
@@ -441,8 +524,12 @@ async def should_auto_sync_deployment(db: AsyncSession, deployment: StrategyDepl
         return False, "Platform broker auto sync is disabled", interval
     if deployment.status != "RUNNING":
         return False, f"Deployment is {deployment.status}", interval
-    if not bool(getattr(deployment, "live_sync_enabled", False)):
-        return False, "Deployment live sync is OFF", interval
+    # Auto Runner depends on fresh broker truth for position/risk decisions.
+    # Treat an active auto-runner as an implicit broker-sync request so older
+    # deployments created before live_sync_enabled defaulted ON do not remain stale.
+    sync_requested = bool(getattr(deployment, "live_sync_enabled", False)) or bool(getattr(deployment, "auto_runner_enabled", False))
+    if not sync_requested:
+        return False, "Deployment live sync and auto runner are OFF", interval
     if not deployment.broker_account_id:
         return False, "No broker account", interval
     broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
@@ -457,31 +544,55 @@ async def should_auto_sync_deployment(db: AsyncSession, deployment: StrategyDepl
 
 
 async def auto_sync_deployment_if_due(db: AsyncSession, deployment: StrategyDeployment) -> dict[str, Any]:
+    # Cache scalar identifiers before any awaited broker call. SQLAlchemy rollback()
+    # expires ORM state, and touching deployment.id afterwards can trigger an
+    # implicit lazy-load outside greenlet_spawn (MissingGreenlet).
+    deployment_id = deployment.id
+    deployment_id_text = str(deployment_id)
+
     settings = await get_platform_trading_settings(db)
     due, reason, interval = await should_auto_sync_deployment(db, deployment, settings)
     deployment.live_sync_interval_seconds = interval
     if not due:
-        return {"deployment_id": str(deployment.id), "synced": False, "reason": reason, "interval_seconds": interval}
+        return {"deployment_id": deployment_id_text, "synced": False, "reason": reason, "interval_seconds": interval}
+
     try:
-        result = await sync_deployment_broker_state(db, deployment.id)
+        result = await sync_deployment_broker_state(db, deployment_id)
         result["auto_sync"] = True
         return result
     except Exception as exc:
+        # cTrader/WebSocket timeouts are transient. Roll back first, then query by
+        # the cached UUID rather than touching an expired ORM object.
         await db.rollback()
-        fresh = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment.id))).scalar_one_or_none()
+        error_text = str(exc) or exc.__class__.__name__
+        fresh = (await db.execute(
+            select(StrategyDeployment).where(StrategyDeployment.id == deployment_id)
+        )).scalar_one_or_none()
         if fresh is not None:
             fresh.live_sync_error_count = int(getattr(fresh, "live_sync_error_count", 0) or 0) + 1
-            fresh.live_sync_last_error = str(exc)[:2000]
-            if fresh.live_sync_error_count >= 5:
-                fresh.live_sync_enabled = False
-                level = "WARNING"
-                message = "Live broker auto-sync disabled after repeated errors"
-            else:
-                level = "ERROR"
-                message = "Live broker auto-sync failed"
-            await _write_log(db, fresh, "AUTO_BROKER_SYNC_FAILED", message, level, {"error": str(exc), "error_count": fresh.live_sync_error_count})
+            fresh.live_sync_last_error = error_text[:2000]
+            # Do not silently disable synchronization because of temporary broker
+            # transport timeouts. Keep it enabled and let the next loop retry.
+            level = "WARNING"
+            message = "Live broker auto-sync transient failure; retrying on next sync cycle"
+            await _write_log(
+                db,
+                fresh,
+                "AUTO_BROKER_SYNC_RETRY",
+                message,
+                level,
+                {"error": error_text, "error_count": fresh.live_sync_error_count},
+            )
             await db.commit()
-        raise
+
+        return {
+            "deployment_id": deployment_id_text,
+            "synced": False,
+            "success": False,
+            "transient_error": True,
+            "reason": error_text,
+            "interval_seconds": interval,
+        }
 
 
 async def sync_all_running_deployments(db: AsyncSession) -> dict[str, Any]:
@@ -491,14 +602,20 @@ async def sync_all_running_deployments(db: AsyncSession) -> dict[str, Any]:
     errors = []
     skipped = []
     for row in rows:
+        # Cache ID before calls that may roll back/expire ORM state.
+        row_id = row.id
+        row_id_text = str(row_id)
         try:
             result = await auto_sync_deployment_if_due(db, row)
             if result.get("success") or result.get("synced"):
                 results.append(result)
+            elif result.get("transient_error"):
+                errors.append({"deployment_id": row_id_text, "error": result.get("reason")})
             else:
                 skipped.append(result)
         except Exception as exc:
-            errors.append({"deployment_id": str(row.id), "error": str(exc)})
+            # Never access row.id here after a failed transaction/rollback.
+            errors.append({"deployment_id": row_id_text, "error": str(exc) or exc.__class__.__name__})
     return {"checked": len(rows), "synced": len(results), "skipped": skipped, "errors": errors, "platform_auto_sync_enabled": bool(getattr(settings, "broker_auto_sync_enabled", True)), "results": results}
 
 

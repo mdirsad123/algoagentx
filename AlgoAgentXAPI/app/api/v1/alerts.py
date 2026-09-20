@@ -54,17 +54,27 @@ def _validate_full_alert(alert: PriceAlert) -> None:
             raise HTTPException(status_code=422, detail="approach_distance must be greater than 0 when Approach Alert is enabled")
 
 
+def _normalized_provider(value: str | None) -> str:
+    code = str(value or "").upper().strip()
+    if code in {"MT5_AGENT", "METATRADER5", "METATRADER 5"}:
+        return "MT5"
+    if code in {"CTRADER_API", "CTRADER OPEN API", "CTRADER"}:
+        return "CTRADER"
+    return code
+
+
 async def _validate_broker_account(db: AsyncSession, *, user_id: str, provider: str, broker_account_id: UUID | None) -> None:
-    if str(provider or "").upper() != "MT5":
-        raise HTTPException(status_code=422, detail="Phase 1 live price alerts currently support the MT5 Agent feed. Additional providers are planned for later phases.")
     if broker_account_id is None:
-        raise HTTPException(status_code=422, detail="broker_account_id is required for MT5 live price alerts")
+        raise HTTPException(status_code=422, detail="broker_account_id is required for broker live price alerts")
     account = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == broker_account_id, BrokerAccount.user_id == user_id))).scalar_one_or_none()
     if account is None:
         raise HTTPException(status_code=404, detail="Broker account not found")
-    code = str(account.broker_code or account.broker_name or "").upper().strip()
-    if code != "MT5":
-        raise HTTPException(status_code=422, detail="Selected broker account is not an MT5 account")
+    if str(account.status or "").upper() != "CONNECTED":
+        raise HTTPException(status_code=422, detail="Selected broker account must be CONNECTED before creating a live price alert")
+    requested = _normalized_provider(provider)
+    actual = _normalized_provider(str(account.broker_code or account.broker_name or ""))
+    if requested != actual:
+        raise HTTPException(status_code=422, detail=f"Selected broker account provider is {actual or 'UNKNOWN'}, not {requested or 'UNKNOWN'}")
 
 
 async def _owned_alert(db: AsyncSession, alert_id: UUID, user_id: str) -> PriceAlert:

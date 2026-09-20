@@ -59,11 +59,11 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
         return RiskResult(True, action="CLOSE_ONLY")
     requested_side_early = "LONG" if signal.signal_type == "BUY" else "SHORT"
     if early_open_positions:
-        latest_early = early_open_positions[-1]
-        if latest_early.side == requested_side_early:
-            return RiskResult(False, f"Already in {requested_side_early} position")
-        if is_funded:
-            # Close first. Execution performs a fresh funded guard before the reverse entry.
+        opposite_early = [p for p in early_open_positions if str(p.side or "").upper() != requested_side_early]
+        if opposite_early:
+            # Reversal semantics stay unchanged: flatten existing opposite exposure
+            # before opening the requested side. Same-side pyramiding is allowed
+            # up to max_open_positions and is checked below.
             return RiskResult(True, action="CLOSE_AND_OPEN")
 
     # STANDARD keeps the existing UTC-day deployment safety caps unchanged.
@@ -114,10 +114,9 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
 
     requested_side = "LONG" if signal.signal_type == "BUY" else "SHORT"
     if open_positions:
-        latest = open_positions[-1]
-        if latest.side == requested_side:
-            return RiskResult(False, f"Already in {requested_side} position")
-        return RiskResult(True, action="CLOSE_AND_OPEN")
+        opposite = [p for p in open_positions if str(p.side or "").upper() != requested_side]
+        if opposite:
+            return RiskResult(True, action="CLOSE_AND_OPEN")
 
     if len(open_positions) >= int(deployment.max_open_positions or 1):
         return RiskResult(False, "Max open positions reached")
