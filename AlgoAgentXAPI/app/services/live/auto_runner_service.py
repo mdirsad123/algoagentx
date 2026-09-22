@@ -24,8 +24,12 @@ _RUNNER_SCAN_LOCK = asyncio.Lock()
 # It limits active broker refreshes to 20 one-second attempts per candle while
 # still allowing the scheduler to notice a candle already ingested by another path.
 _CANDLE_RETRY_ATTEMPTS: dict[tuple[str, str], int] = {}
-MAX_CANDLE_RETRY_ATTEMPTS = 20
 
+# Live timing knobs — change these values only when you want to tune timing.
+MARKET_DATA_FETCH_DELAY_SECONDS = 1   # start fetching closed candle after +1s
+STRATEGY_RUN_DELAY_SECONDS = 2        # first strategy run eligibility after +2s
+CANDLE_RETRY_DELAY_SECONDS = 1        # retry missing candle every 1s
+MAX_CANDLE_RETRY_ATTEMPTS = 20
 
 def _normalize_dt(value: Any):
     if value is None:
@@ -57,32 +61,48 @@ async def _write_log(db: AsyncSession, deployment: StrategyDeployment, event_typ
 
 
 def _broker_delay(deployment: StrategyDeployment) -> int:
-    # Start looking for the just-closed broker candle almost immediately.
-    # Example M5: 01:20:00 candle closes -> first fetch at ~01:20:01.
-    return 1
+    # Market-data fetch starts shortly after candle close.
+    return MARKET_DATA_FETCH_DELAY_SECONDS
+
+
+def _strategy_run_delay(deployment: StrategyDeployment) -> int:
+    # Strategy execution is intentionally delayed separately from candle fetching.
+    # Change STRATEGY_RUN_DELAY_SECONDS above (for example 5 -> 10 or 5 -> 1).
+    return STRATEGY_RUN_DELAY_SECONDS
 
 
 def _retry_delay(deployment: StrategyDeployment) -> int:
-    # Retry once per second until the expected closed candle is available.
-    return 1
+    # Retry missing candle data independently of strategy delay.
+    return CANDLE_RETRY_DELAY_SECONDS
 
 
 def _eligible_expected_closed_candle_open(deployment: StrategyDeployment, now):
-    """Return (expected_open, eligible_at).
+    """Return (expected_open, fetch_eligible_at, strategy_eligible_at).
 
-    Example M5:
+    Example M5 with defaults:
       candle 11:55 closes at 12:00
-      first candle fetch may start at 12:00:01
+      market-data fetch may start at 12:00:01
+      strategy may run from 12:00:05
     """
     expected_open = latest_expected_closed_candle_open(now, str(deployment.timeframe or "M5"))
-    timeframe_seconds = __import__("app.services.live.runner_scheduler", fromlist=["parse_timeframe_to_seconds"]).parse_timeframe_to_seconds(
-        str(deployment.timeframe or "M5")
-    )
-    eligible_at = expected_open + timedelta(seconds=timeframe_seconds + _broker_delay(deployment))
-    return expected_open, eligible_at
+    timeframe_seconds = __import__(
+        "app.services.live.runner_scheduler",
+        fromlist=["parse_timeframe_to_seconds"],
+    ).parse_timeframe_to_seconds(str(deployment.timeframe or "M5"))
+
+    candle_close_at = expected_open + timedelta(seconds=timeframe_seconds)
+    fetch_eligible_at = candle_close_at + timedelta(seconds=_broker_delay(deployment))
+    strategy_eligible_at = candle_close_at + timedelta(seconds=_strategy_run_delay(deployment))
+    return expected_open, fetch_eligible_at, strategy_eligible_at
+
 
 def _next_scheduled_run(deployment: StrategyDeployment, now):
-    return calculate_next_runner_at(now, str(deployment.timeframe or "M5"), _broker_delay(deployment))
+    # UI/strategy schedule refers to strategy execution time, not first market-data fetch.
+    return calculate_next_runner_at(
+        now,
+        str(deployment.timeframe or "M5"),
+        _strategy_run_delay(deployment),
+    )
 
 
 async def _schedule_retry(db: AsyncSession, deployment: StrategyDeployment, now, reason: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -121,17 +141,20 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
     # The candle itself is authoritative. next_run_at is now display/diagnostic
     # metadata only; it must never delay a candle that is already closed.
     due_at = _normalize_dt(getattr(deployment, "next_run_at", None))
-    expected_closed_open, eligible_at = _eligible_expected_closed_candle_open(deployment, now)
+    expected_closed_open, fetch_eligible_at, strategy_eligible_at = _eligible_expected_closed_candle_open(
+        deployment,
+        now,
+    )
     last_processed = _normalize_dt(getattr(deployment, "last_processed_candle_time", None))
 
-    # Do not fetch/process the new timeframe candle before boundary +1 second.
-    # Keep next_run_at strictly in the future for UI/diagnostics.
-    if not force and now < eligible_at:
-        deployment.next_run_at = eligible_at
+    # Market-data path starts early (+1s by default).
+    # This does NOT delay candle ingestion until the strategy execution time.
+    if not force and now < fetch_eligible_at:
+        deployment.next_run_at = strategy_eligible_at
         result.update(
             skipped=True,
-            reason="Waiting for boundary +1s candle-fetch window",
-            next_run_at=eligible_at.isoformat(),
+            reason=f"Waiting for market-data fetch window (+{_broker_delay(deployment)}s)",
+            next_run_at=strategy_eligible_at.isoformat(),
         )
         await db.commit()
         return result
@@ -149,7 +172,11 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
     # exactly on M1/M5/M15/etc boundaries.
     if not force and last_processed is not None and last_processed >= expected_closed_open:
         _CANDLE_RETRY_ATTEMPTS.pop(retry_key, None)
-        next_boundary = calculate_next_runner_at(now, str(deployment.timeframe or "M5"), 1)
+        next_boundary = calculate_next_runner_at(
+            now,
+            str(deployment.timeframe or "M5"),
+            _strategy_run_delay(deployment),
+        )
         deployment.next_run_at = next_boundary
         result.update(
             skipped=True,
@@ -182,8 +209,8 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
         await _write_log(db, deployment, "AUTO_RUNNER_WAKEUP", "Auto runner woke after candle close", metadata={"timeframe": deployment.timeframe, "scheduled_at": due_at.isoformat() if due_at else None})
 
         # First inspect the database. If another fast candle-ingestion path already
-        # stored the bar (as shown by Market Data Snapshot latency), run the strategy
-        # immediately without waiting for another cTrader request.
+        # stored the bar (as shown by Market Data Snapshot latency), use it immediately
+        # for market-data readiness; strategy timing is gated separately below.
         candles = await get_latest_closed_candles(db, deployment.id, limit=1)
         latest = candles[0] if candles else None
         latest_closed_candle_time = _normalize_dt(latest.get("candle_time") if latest else None)
@@ -192,7 +219,7 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
         # present locally. Do at most 20 broker refresh attempts, one every 1 second.
         # After attempt 20 we stop hammering cTrader, but the 1-second scheduler still
         # checks the local DB; if another ingestion path stores the candle, strategy
-        # execution starts immediately.
+        # execution becomes eligible according to STRATEGY_RUN_DELAY_SECONDS.
         if latest_closed_candle_time is None or latest_closed_candle_time < expected_closed_open:
             attempts = int(_CANDLE_RETRY_ATTEMPTS.get(retry_key, 0))
             if attempts < MAX_CANDLE_RETRY_ATTEMPTS:
@@ -250,8 +277,24 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
                 result,
             )
 
-        # A newer candle is present. Process it immediately. This also handles recovery
-        # after API restart: if one or more bars were missed, the latest closed bar wins.
+        # A newer candle is present. Market data may arrive before the strategy's
+        # configured execution delay. Keep the candle stored, but do not run the
+        # strategy until STRATEGY_RUN_DELAY_SECONDS has elapsed after candle close.
+        if not force and now < strategy_eligible_at:
+            deployment.next_run_at = strategy_eligible_at
+            result.update(
+                skipped=True,
+                reason=(
+                    f"Closed candle is ready; waiting for strategy delay "
+                    f"(+{_strategy_run_delay(deployment)}s)"
+                ),
+                next_run_at=strategy_eligible_at.isoformat(),
+            )
+            await db.commit()
+            return result
+
+        # A newer candle is present and strategy delay has elapsed.
+        # Process it immediately. This also handles recovery after API restart.
         if last_processed is not None and latest_closed_candle_time <= last_processed:
             return await _schedule_retry(
                 db,
@@ -275,7 +318,11 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
         deployment.last_processed_candle_time = latest_closed_candle_time
         deployment.last_runner_at = now
         deployment.last_heartbeat_at = now
-        deployment.next_run_at = calculate_next_runner_at(utc_now(), deployment.timeframe, 1)
+        deployment.next_run_at = calculate_next_runner_at(
+            utc_now(),
+            deployment.timeframe,
+            _strategy_run_delay(deployment),
+        )
         deployment.runner_error_count = 0
         deployment.runner_last_error = None
         await _write_log(db, deployment, "AUTO_RUNNER_COMPLETED", runner_result.get("message") or "Auto runner completed", metadata={"runner": runner_result, "latest_closed_candle_time": latest_closed_candle_time.isoformat(), "next_run_at": deployment.next_run_at.isoformat()})
@@ -305,7 +352,7 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
             # Scheduler/network/candle errors must not silently pause a running
             # deployment. Safety pauses remain the responsibility of explicit
             # user controls, kill switch, and funded-risk guard.
-            error_retry_seconds = 1
+            error_retry_seconds = _retry_delay(deployment)
             deployment.next_run_at = now + timedelta(seconds=error_retry_seconds)
             message = f"{message} Auto runner remains RUNNING and will retry in {error_retry_seconds}s."
             await _write_log(db, deployment, event_type, message, level, {"error_count": deployment.runner_error_count, "next_run_at": deployment.next_run_at.isoformat()})

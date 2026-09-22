@@ -596,27 +596,72 @@ async def auto_sync_deployment_if_due(db: AsyncSession, deployment: StrategyDepl
 
 
 async def sync_all_running_deployments(db: AsyncSession) -> dict[str, Any]:
+    # IMPORTANT: never keep ORM instances alive across per-deployment sync attempts.
+    # A transient broker failure can call db.rollback() inside
+    # auto_sync_deployment_if_due(). SQLAlchemy expires *all* ORM state attached to
+    # that session on rollback. Touching an expired settings/deployment attribute
+    # afterwards can perform implicit async I/O and raise MissingGreenlet.
+    #
+    # Cache only primitive values/UUIDs up front, then reload each deployment just
+    # before processing it. This makes a rollback for one deployment unable to
+    # poison the settings object or the remaining deployment objects in the loop.
     settings = await get_platform_trading_settings(db)
-    rows = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.status == "RUNNING", StrategyDeployment.broker_account_id.is_not(None)))).scalars().all()
-    results = []
-    errors = []
-    skipped = []
-    for row in rows:
-        # Cache ID before calls that may roll back/expire ORM state.
-        row_id = row.id
-        row_id_text = str(row_id)
+    platform_auto_sync_enabled = bool(getattr(settings, "broker_auto_sync_enabled", True))
+
+    deployment_ids = list((await db.execute(
+        select(StrategyDeployment.id).where(
+            StrategyDeployment.status == "RUNNING",
+            StrategyDeployment.broker_account_id.is_not(None),
+        )
+    )).scalars().all())
+
+    results: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+
+    for deployment_id in deployment_ids:
+        deployment_id_text = str(deployment_id)
         try:
+            # Reload on every iteration. If a previous sync rolled back, this query
+            # obtains a fresh ORM instance instead of touching expired session state.
+            row = (await db.execute(
+                select(StrategyDeployment).where(StrategyDeployment.id == deployment_id)
+            )).scalar_one_or_none()
+            if row is None:
+                skipped.append({
+                    "deployment_id": deployment_id_text,
+                    "synced": False,
+                    "reason": "Deployment no longer exists",
+                })
+                continue
+
             result = await auto_sync_deployment_if_due(db, row)
             if result.get("success") or result.get("synced"):
                 results.append(result)
             elif result.get("transient_error"):
-                errors.append({"deployment_id": row_id_text, "error": result.get("reason")})
+                errors.append({"deployment_id": deployment_id_text, "error": result.get("reason")})
             else:
                 skipped.append(result)
         except Exception as exc:
-            # Never access row.id here after a failed transaction/rollback.
-            errors.append({"deployment_id": row_id_text, "error": str(exc) or exc.__class__.__name__})
-    return {"checked": len(rows), "synced": len(results), "skipped": skipped, "errors": errors, "platform_auto_sync_enabled": bool(getattr(settings, "broker_auto_sync_enabled", True)), "results": results}
+            # Put the session back into a clean transaction state before the next
+            # deployment. Use only the cached primitive UUID after rollback.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            errors.append({
+                "deployment_id": deployment_id_text,
+                "error": str(exc) or exc.__class__.__name__,
+            })
+
+    return {
+        "checked": len(deployment_ids),
+        "synced": len(results),
+        "skipped": skipped,
+        "errors": errors,
+        "platform_auto_sync_enabled": platform_auto_sync_enabled,
+        "results": results,
+    }
 
 
 async def apply_broker_order_webhook(db: AsyncSession, provider_code: str, payload: dict[str, Any], headers: dict[str, str] | None = None) -> dict[str, Any]:

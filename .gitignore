@@ -228,3 +228,4 @@ AlgoAgentXAPI/.env
 AlgoAgentXAPI/.env.*
 !AlgoAgentXAPI/.env.example
 !AlgoAgentXAPI/.env.prod.example
+**/docs/oracle_cloud_keys

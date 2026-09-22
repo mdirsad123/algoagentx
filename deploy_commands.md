@@ -15,7 +15,6 @@ docker compose --env-file .env.prod -f docker-compose.yml down -v
 # all service build of prod
 docker compose --env-file .env.prod -f docker-compose.yml up -d --build
 
-
 ```powershell
 cd D:\Stock_market\algoagentx
 docker compose --env-file .env.prod stop api web          # stop only app or api

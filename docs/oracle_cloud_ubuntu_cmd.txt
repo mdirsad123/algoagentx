@@ -1,0 +1,32 @@
+go to key folder or run cmd
+
+# login ssh ubuntu
+ssh -i ".\ssh-key-private.key" ubuntu@130.210.58.143
+
+# copy my full project zip to ubuntu 
+scp -i ".\ssh-key-private.key" ".\algoagentx.zip" ubuntu@130.210.58.143:/home/ubuntu/algoagentx/
+
+# unzip file
+unzip algoagentx.zip -d project
+
+# ssh tunnel. connect local port to ubuntu port and run localhost:3000 on local machine
+ssh -i ".\ssh-key-private.key" -L 3000:127.0.0.1:3000 -L 8000:127.0.0.1:8000 ubuntu@130.210.58.143
+
+# Now delete only the extracted project and ZIP:
+rm -rf project
+rm -f algoagentx.zip
+
+ls -la
+
+-------------------------------------
+# ssh key for github on ubuntu
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL2GzRSr+7arB8zXP8P1qSpqCoiyuTxl6bG8gVl1vND+ algoagentx-oracle
+
+-----------------------------------
+# copy 4 .env file on my ubuntu below command if private key under the download
+scp -i "C:\Users\mdsah\Downloads\ssh-key-private.key" "D:\Stock_market\algoagentx\.env.dev" ubuntu@130.210.58.143:/home/ubuntu/stock_market/algoagentx/.env.dev
+scp -i "C:\Users\mdsah\Downloads\ssh-key-private.key" "D:\Stock_market\algoagentx\.env.prod" ubuntu@130.210.58.143:/home/ubuntu/stock_market/algoagentx/.env.prod
+scp -i "C:\Users\mdsah\Downloads\ssh-key-private.key" "D:\Stock_market\algoagentx\AlgoAgentXAPI\.env" ubuntu@130.210.58.143:/home/ubuntu/stock_market/algoagentx/AlgoAgentXAPI/.env
+scp -i "C:\Users\mdsah\Downloads\ssh-key-private.key" "D:\Stock_market\algoagentx\AlgoAgentXApp\.env.local" ubuntu@130.210.58.143:/home/ubuntu/stock_market/algoagentx/AlgoAgentXApp/.env.local
+
+tommow add database backup on my ubuntu then conatainer
