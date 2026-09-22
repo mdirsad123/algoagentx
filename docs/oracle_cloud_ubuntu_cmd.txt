@@ -29,4 +29,5 @@ scp -i "C:\Users\mdsah\Downloads\ssh-key-private.key" "D:\Stock_market\algoagent
 scp -i "C:\Users\mdsah\Downloads\ssh-key-private.key" "D:\Stock_market\algoagentx\AlgoAgentXAPI\.env" ubuntu@130.210.58.143:/home/ubuntu/stock_market/algoagentx/AlgoAgentXAPI/.env
 scp -i "C:\Users\mdsah\Downloads\ssh-key-private.key" "D:\Stock_market\algoagentx\AlgoAgentXApp\.env.local" ubuntu@130.210.58.143:/home/ubuntu/stock_market/algoagentx/AlgoAgentXApp/.env.local
 
-tommow add database backup on my ubuntu then conatainer
+# tommow add database backup on my ubuntu then conatainer
+scp -i "C:\Users\mdsah\Downloads\ssh-key-private.key" "D:\Stock_market\algoagentx\AlgoAgentXAPI\backup_db\algoagentx_prod_23_sep_backup.dump" ubuntu@130.210.58.143:/home/ubuntu/stock_market/algoagentx/AlgoAgentXAPI/backup_db/algoagentx_prod_23_sep_backup.dump
