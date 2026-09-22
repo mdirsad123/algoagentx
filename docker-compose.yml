@@ -91,6 +91,92 @@ services:
       redis:
         condition: service_healthy
 
+  live_market_worker:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile.prod
+    container_name: algoagentx_live_market_worker
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_prod:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+    command: ["python", "-m", "app.services.live.live_market_worker"]
+    depends_on:
+      postgres_prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, redis; r=redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')); assert r.exists('live:worker_health:live_market_worker')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  live_strategy_worker:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile.prod
+    container_name: algoagentx_live_strategy_worker
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_prod:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+    command: ["python", "-m", "app.services.live.live_strategy_worker"]
+    depends_on:
+      postgres_prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, redis; r=redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')); assert r.exists('live:worker_health:live_strategy_worker')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  live_reconcile_worker:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile.prod
+    container_name: algoagentx_live_reconcile_worker
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_prod:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+    command: ["python", "-m", "app.services.live.live_reconcile_worker"]
+    depends_on:
+      postgres_prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      live_market_worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, redis; r=redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')); assert r.exists('live:worker_health:live_reconcile_worker')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   # Optional worker. Enable only if you use Celery jobs/background queues.
   celery_worker:
     build:

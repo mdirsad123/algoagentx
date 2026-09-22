@@ -252,7 +252,13 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
     }
 
 
-async def load_live_candles_for_runner(db: AsyncSession, deployment: StrategyDeployment, limit: int = 300) -> list[dict[str, Any]]:
+async def load_live_candles_for_runner(
+    db: AsyncSession,
+    deployment: StrategyDeployment,
+    limit: int = 300,
+    *,
+    through_candle_time: datetime | None = None,
+) -> list[dict[str, Any]]:
     """Load closed candles for the live runner by deployment_id only.
 
     Broker display symbols and execution symbols can differ (for example
@@ -261,12 +267,15 @@ async def load_live_candles_for_runner(db: AsyncSession, deployment: StrategyDep
     compatibility with get_latest_closed_candles/_candles_to_dataframe.
     """
     safe_limit = max(1, min(int(limit or 300), 1000))
+    filters = [
+        LiveMarketCandle.deployment_id == deployment.id,
+        LiveMarketCandle.is_closed.is_(True),
+    ]
+    if through_candle_time is not None:
+        filters.append(LiveMarketCandle.candle_time <= through_candle_time)
     rows = (await db.execute(
         select(LiveMarketCandle)
-        .where(
-            LiveMarketCandle.deployment_id == deployment.id,
-            LiveMarketCandle.is_closed.is_(True),
-        )
+        .where(*filters)
         .order_by(LiveMarketCandle.candle_time.desc())
         .limit(safe_limit)
     )).scalars().all()

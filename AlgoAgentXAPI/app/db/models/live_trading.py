@@ -318,6 +318,7 @@ class LiveSignal(Base):
     )
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    trace_id = Column(String(160), nullable=True, index=True)
     deployment_id = Column(PG_UUID(as_uuid=True), ForeignKey("strategy_deployments.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     strategy_id = Column(String(64), ForeignKey("strategies.id", ondelete="RESTRICT"), nullable=False, index=True)
@@ -371,6 +372,7 @@ class LiveOrder(Base):
     )
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    trace_id = Column(String(160), nullable=True, index=True)
     deployment_id = Column(PG_UUID(as_uuid=True), ForeignKey("strategy_deployments.id", ondelete="CASCADE"), nullable=False, index=True)
     signal_id = Column(PG_UUID(as_uuid=True), ForeignKey("live_signals.id", ondelete="SET NULL"), nullable=True, index=True)
     user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -498,6 +500,85 @@ class LiveMarketCandle(Base):
 
     deployment = relationship("StrategyDeployment", lazy="joined")
     broker_account = relationship("BrokerAccount", lazy="joined")
+
+
+class LiveExecutionTrace(Base):
+    """End-to-end T0-T17 timing for one deployment/candle cycle."""
+
+    __tablename__ = "live_execution_traces"
+    __table_args__ = (
+        UniqueConstraint("deployment_id", "candle_open_time", name="uq_live_execution_trace_deployment_candle"),
+        UniqueConstraint("trace_id", name="uq_live_execution_traces_trace_id"),
+        Index("idx_live_execution_traces_deployment_created", "deployment_id", "created_at"),
+        Index("idx_live_execution_traces_deployment_close", "deployment_id", "expected_close_at"),
+        Index("idx_live_execution_traces_status", "status"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    trace_id = Column(String(160), nullable=False)
+    deployment_id = Column(PG_UUID(as_uuid=True), ForeignKey("strategy_deployments.id", ondelete="CASCADE"), nullable=False)
+    broker_account_id = Column(PG_UUID(as_uuid=True), ForeignKey("broker_accounts.id", ondelete="SET NULL"), nullable=True)
+    signal_id = Column(PG_UUID(as_uuid=True), ForeignKey("live_signals.id", ondelete="SET NULL"), nullable=True)
+    order_id = Column(PG_UUID(as_uuid=True), ForeignKey("live_orders.id", ondelete="SET NULL"), nullable=True)
+    candle_open_time = Column(DateTime(timezone=True), nullable=False)
+    expected_close_at = Column(DateTime(timezone=True), nullable=False)
+    provider = Column(String(50), nullable=False, server_default="CTRADER")
+    environment = Column(String(20), nullable=True)
+    symbol = Column(String(100), nullable=False)
+    timeframe = Column(String(50), nullable=False)
+    source = Column(String(80), nullable=True)
+    status = Column(String(40), nullable=False, server_default="STARTED")
+    signal_type = Column(String(20), nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    t0_expected_close_at = Column(DateTime(timezone=True), nullable=False)
+    t1_broker_event_received_at = Column(DateTime(timezone=True), nullable=True)
+    t2_candle_normalized_at = Column(DateTime(timezone=True), nullable=True)
+    t3_candle_db_commit_at = Column(DateTime(timezone=True), nullable=True)
+    t4_redis_event_published_at = Column(DateTime(timezone=True), nullable=True)
+    t5_strategy_event_received_at = Column(DateTime(timezone=True), nullable=True)
+    t6_strategy_started_at = Column(DateTime(timezone=True), nullable=True)
+    t7_strategy_finished_at = Column(DateTime(timezone=True), nullable=True)
+    t8_signal_persisted_at = Column(DateTime(timezone=True), nullable=True)
+    t9_execution_started_at = Column(DateTime(timezone=True), nullable=True)
+    t10_risk_checks_finished_at = Column(DateTime(timezone=True), nullable=True)
+    t11_order_request_queued_at = Column(DateTime(timezone=True), nullable=True)
+    t12_order_request_sent_at = Column(DateTime(timezone=True), nullable=True)
+    t13_broker_order_accepted_at = Column(DateTime(timezone=True), nullable=True)
+    t14_broker_fill_received_at = Column(DateTime(timezone=True), nullable=True)
+    t15_local_order_updated_at = Column(DateTime(timezone=True), nullable=True)
+    t16_local_position_updated_at = Column(DateTime(timezone=True), nullable=True)
+    t17_ui_event_published_at = Column(DateTime(timezone=True), nullable=True)
+
+    metrics_json = Column(JSONB, nullable=False, server_default="{}")
+    perf_json = Column(JSONB, nullable=False, server_default="{}")
+    metadata_json = Column(JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    deployment = relationship("StrategyDeployment", lazy="joined")
+    broker_account = relationship("BrokerAccount", lazy="joined")
+
+
+class LiveBrokerOrderIntent(Base):
+    """Committed cTrader send reservation; protects ambiguous crash/retry cases."""
+
+    __tablename__ = "live_broker_order_intents"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_live_broker_order_intents_key"),
+        Index("idx_live_broker_order_intents_deployment_created", "deployment_id", "created_at"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    idempotency_key = Column(String(128), nullable=False)
+    client_order_id = Column(String(50), nullable=False)
+    deployment_id = Column(PG_UUID(as_uuid=True), ForeignKey("strategy_deployments.id", ondelete="CASCADE"), nullable=False)
+    broker_account_id = Column(PG_UUID(as_uuid=True), ForeignKey("broker_accounts.id", ondelete="SET NULL"), nullable=True)
+    action = Column(String(30), nullable=False)
+    status = Column(String(30), nullable=False, server_default="RESERVED")
+    result_json = Column(JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class AdminLiveAction(Base):

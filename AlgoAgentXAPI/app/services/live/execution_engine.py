@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime, timezone
+import hashlib
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import settings
+from ...core.redis_manager import redis_manager
 
 from ...db.models import BrokerAccount, LiveOrder, LiveSignal, LiveTradeLog, StrategyDeployment
 from ..brokers.base import BrokerOrderRequest
@@ -20,7 +22,10 @@ from .trading_safety import check_execution_safety, mark_heartbeat
 from .capital_service import get_effective_trading_capital
 from .order_preview_service import build_live_order_preview
 from .funded_guard_service import current_funded_trades_count, evaluate_funded_guard, record_funded_trade_count
-from .broker_sync_service import sync_deployment_broker_state
+from .broker_sync_service import sync_ctrader_deployment_via_gateway, sync_deployment_broker_state
+from .live_latency_trace_service import LiveLatencyTraceService
+from .live_event_bus import LiveEventBus
+from ..brokers.ctrader_order_gateway import submit_close_position, submit_market_order
 
 
 def _round(value: Decimal, places: str = "0.00000001") -> Decimal:
@@ -49,6 +54,40 @@ def _client_order_id(deployment: StrategyDeployment, signal: LiveSignal, action:
     candle_time = getattr(signal, "candle_time", None)
     candle_key = candle_time.isoformat() if hasattr(candle_time, "isoformat") else str(candle_time or "manual")
     return f"AX:{deployment.id}:{signal.id}:{candle_key}:{signal.signal_type}:{action}"
+
+
+def _ctrader_client_order_id(
+    deployment: StrategyDeployment,
+    signal: LiveSignal,
+    action: str = "ENTRY",
+    *,
+    scope: str | None = None,
+) -> str:
+    """Stable external id independent of a retry-created signal row UUID."""
+    candle_time = getattr(signal, "candle_time", None)
+    candle_key = candle_time.isoformat() if hasattr(candle_time, "isoformat") else str(candle_time or "manual")
+    strategy_id = getattr(signal, "strategy_id", None) or getattr(deployment, "strategy_id", None) or "unknown"
+    full = f"AX:{deployment.id}:{strategy_id}:{candle_key}:{signal.signal_type}:{action}:{scope or ''}"
+    digest = hashlib.sha256(full.encode("utf-8")).hexdigest()[:24]
+    return f"AX-{str(deployment.id)[:8]}-{action[:1]}-{digest}"[:50]
+
+
+def _trace_service() -> LiveLatencyTraceService:
+    return LiveLatencyTraceService(redis_manager.client if redis_manager.is_available else None)
+
+
+async def _persistent_ctrader_connection_healthy(broker: BrokerAccount) -> bool:
+    if not redis_manager.is_available or redis_manager.client is None:
+        return False
+    try:
+        state = await LiveEventBus(redis_manager.client).get_health("live_market_worker")
+        selected = _selected_ctrader_account(broker) or {}
+        environment = "LIVE" if bool(selected.get("is_live")) or str(selected.get("account_type") or "").upper() == "LIVE" else "DEMO"
+        connections = state.get("connections") if isinstance(state, dict) else None
+        connection = connections.get(environment) if isinstance(connections, dict) else None
+        return bool(isinstance(connection, dict) and connection.get("connected"))
+    except Exception:
+        return False
 
 
 def _short_order_comment(client_order_id: str, prefix: str = "AX") -> str:
@@ -196,6 +235,7 @@ async def _create_error_order(
     sizing_metadata: Optional[dict] = None,
 ) -> LiveOrder:
     order = LiveOrder(
+        trace_id=getattr(signal, "trace_id", None),
         deployment_id=deployment.id,
         signal_id=signal.id,
         user_id=deployment.user_id,
@@ -229,6 +269,7 @@ async def _create_error_order(
     db.add(order)
     await _log(db, deployment, "ORDER_ERROR", message, "ERROR", {"signal_id": str(signal.id), "symbol": signal.symbol, "side": side, "sizing": sizing_metadata or {}})
     await db.flush()
+    await _trace_service().mark(getattr(signal, "trace_id", None), "t15", status="LOCAL_ERROR_ORDER_UPDATED", order_id=str(order.id))
     return order
 
 
@@ -417,9 +458,16 @@ async def _execute_ctrader_entry(
         return await _create_error_order(db, deployment, signal, order_side, qty, price, msg, stop_loss=stop_loss, target=target)
 
     broker_symbol = getattr(deployment, "broker_symbol", None) or getattr(deployment, "instrument_key", None) or signal.symbol
-    adapter = get_broker_adapter(broker, db)
-    await _log(db, deployment, "CTRADER_SIGNAL_ROUTED", "cTrader DEMO signal routed to order service", metadata={"signal_id": str(signal.id), "symbol": broker_symbol, "side": order_side, "qty": str(qty), "sizing": sizing_metadata or {}})
-    result = await adapter.place_market_order(BrokerOrderRequest(
+    trace_id = str(getattr(signal, "trace_id", None) or "") or None
+    client_order_id = _ctrader_client_order_id(deployment, signal, "ENTRY")
+    idempotency_key = hashlib.sha256(f"CTRADER:{client_order_id}".encode()).hexdigest()
+    existing = await _existing_order_for_client_id(db, client_order_id)
+    if existing is not None:
+        signal.status = "EXECUTED" if existing.status in {"FILLED", "PLACED", "ACCEPTED"} else signal.status
+        await _log(db, deployment, "DUPLICATE_ORDER_BLOCKED", "Existing cTrader client order id reused; broker send skipped", "WARNING", {"signal_id": str(signal.id), "order_id": str(existing.id), "client_order_id": client_order_id})
+        return existing
+
+    order_request = BrokerOrderRequest(
         symbol=broker_symbol,
         side=order_side,
         qty=qty,
@@ -427,15 +475,32 @@ async def _execute_ctrader_entry(
         stop_loss=stop_loss,
         target=target,
         comment="AlgoAgentX cTrader DEMO deployment",
-        tag=f"AAX-CTR-{str(deployment.id)[:8]}",
-    ))
+        tag=client_order_id,
+        idempotency_key=idempotency_key,
+    )
+    await _log(db, deployment, "CTRADER_SIGNAL_ROUTED", "cTrader DEMO signal routed to order service", metadata={"signal_id": str(signal.id), "symbol": broker_symbol, "side": order_side, "qty": str(qty), "client_order_id": client_order_id, "trace_id": trace_id, "sizing": sizing_metadata or {}})
+    if settings.live_event_pipeline_enabled and settings.ctrader_persistent_connection_enabled:
+        result = await submit_market_order(
+            broker_account_id=str(broker.id),
+            deployment_id=str(deployment.id),
+            order_request=order_request,
+            client_order_id=client_order_id,
+            idempotency_key=idempotency_key,
+            trace_id=trace_id,
+        )
+    else:
+        adapter = get_broker_adapter(broker, db)
+        result = await adapter.place_market_order(order_request)
     actual_qty = _result_volume(result, qty)
     order = LiveOrder(
+        trace_id=trace_id,
         deployment_id=deployment.id,
         signal_id=signal.id,
         user_id=deployment.user_id,
         broker_account_id=deployment.broker_account_id,
         broker_order_id=result.broker_order_id,
+        client_order_id=client_order_id,
+        idempotency_key=idempotency_key,
         symbol=broker_symbol,
         side=order_side,
         order_type="MARKET",
@@ -444,7 +509,7 @@ async def _execute_ctrader_entry(
         executed_price=result.executed_price if result.success else None,
         stop_loss=stop_loss,
         target=target,
-        status="FILLED" if result.success else "ERROR",
+        status=("FILLED" if result.status == "FILLED" else "PLACED") if result.success else "ERROR",
         error_message=None if result.success else result.message,
         raw_response={**(result.raw_response or {}), **({"provider": "CTRADER", "sizing": sizing_metadata} if sizing_metadata else {"provider": "CTRADER"})},
     )
@@ -464,10 +529,15 @@ async def _execute_ctrader_entry(
                 setattr(order, field, sizing_metadata.get(key))
     db.add(order)
     await db.flush()
+    await _trace_service().mark(trace_id, "t15", status="LOCAL_ORDER_UPDATED", order_id=str(order.id))
     if not result.success:
         signal.status = "ERROR"
         signal.rejection_reason = result.message
         await _log(db, deployment, "CTRADER_ORDER_ERROR", result.message, "ERROR", {"signal_id": str(signal.id), "order_id": str(order.id), "broker_response": result.raw_response or {}})
+        return order
+    if result.status != "FILLED":
+        signal.status = "ACCEPTED"
+        await _log(db, deployment, "CTRADER_ORDER_AWAITING_FILL", "Broker accepted cTrader order; awaiting execution event and reconciliation", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id})
         return order
     executed_price = result.executed_price or price
     signal.status = "EXECUTED"
@@ -475,6 +545,7 @@ async def _execute_ctrader_entry(
     broker_position_id = (result.raw_response or {}).get("position_id")
     if broker_position_id:
         live_position.broker_position_id = str(broker_position_id)
+    await _trace_service().mark(trace_id, "t16", status="LOCAL_POSITION_UPDATED", order_id=str(order.id))
     await _log(db, deployment, "CTRADER_ORDER_PLACED", "cTrader DEMO order placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id, "broker_position_id": broker_position_id, "broker_response": result.raw_response or {}, "sizing": sizing_metadata or {}})
     return order
 
@@ -493,14 +564,29 @@ async def _execute_ctrader_close(db: AsyncSession, deployment: StrategyDeploymen
         signal.rejection_reason = msg
         return await _create_error_order(db, deployment, signal, close_side, to_decimal(position.qty), price, msg)
     adapter = get_broker_adapter(broker, db)
+    trace_id = str(getattr(signal, "trace_id", None) or "") or None
+    # One reversal may close several broker positions. Each close must have its
+    # own stable id; a single candle-level id would silently skip later legs.
+    client_order_id = _ctrader_client_order_id(deployment, signal, "EXIT", scope=str(position.id))
+    idempotency_key = hashlib.sha256(f"CTRADER:{client_order_id}".encode()).hexdigest()
+    existing = await _existing_order_for_client_id(db, client_order_id)
+    if existing is not None:
+        signal.status = "EXECUTED" if existing.status in {"FILLED", "PLACED", "ACCEPTED", "RECONCILED"} else signal.status
+        await _log(db, deployment, "DUPLICATE_ORDER_BLOCKED", "Existing cTrader close client order id reused; broker send skipped", "WARNING", {"signal_id": str(signal.id), "order_id": str(existing.id), "client_order_id": client_order_id})
+        return existing
     await _log(db, deployment, "CTRADER_CLOSE_STARTED", "cTrader DEMO close order requested", metadata={"signal_id": str(signal.id), "position_id": str(position.id), "symbol": position.symbol})
     broker_position_id = getattr(position, "broker_position_id", None)
     if not broker_position_id:
         try:
-            broker_positions = await adapter.get_positions(position.symbol)
-            wanted_side = "LONG" if position.side == "LONG" else "SHORT"
-            matched = next((p for p in broker_positions if str(p.get("side") or "").upper() == wanted_side and p.get("broker_position_id")), None)
-            broker_position_id = (matched or {}).get("broker_position_id")
+            if settings.live_event_pipeline_enabled and settings.ctrader_persistent_connection_enabled:
+                await sync_ctrader_deployment_via_gateway(db, deployment.id, commit=False)
+                await db.refresh(position)
+                broker_position_id = getattr(position, "broker_position_id", None)
+            else:
+                broker_positions = await adapter.get_positions(position.symbol)
+                wanted_side = "LONG" if position.side == "LONG" else "SHORT"
+                matched = next((p for p in broker_positions if str(p.get("side") or "").upper() == wanted_side and p.get("broker_position_id")), None)
+                broker_position_id = (matched or {}).get("broker_position_id")
             if broker_position_id:
                 position.broker_position_id = str(broker_position_id)
         except Exception:
@@ -510,7 +596,18 @@ async def _execute_ctrader_close(db: AsyncSession, deployment: StrategyDeploymen
         signal.status = "REJECTED"
         signal.rejection_reason = msg
         return await _create_error_order(db, deployment, signal, close_side, to_decimal(position.qty), price, msg)
-    result = await adapter.close_position(str(broker_position_id), close_side, to_decimal(position.qty))
+    if settings.live_event_pipeline_enabled and settings.ctrader_persistent_connection_enabled:
+        result = await submit_close_position(
+            broker_account_id=str(broker.id),
+            deployment_id=str(deployment.id),
+            broker_position_id=str(broker_position_id),
+            qty=to_decimal(position.qty),
+            client_order_id=client_order_id,
+            idempotency_key=idempotency_key,
+            trace_id=trace_id,
+        )
+    else:
+        result = await adapter.close_position(str(broker_position_id), close_side, to_decimal(position.qty))
     if not result.success and "not found" in str(result.message or "").lower():
         # A broker-side SL/TP or manual close can win the race after the pre-trade
         # sync. This is an idempotent close: broker truth already says the position
@@ -521,29 +618,38 @@ async def _execute_ctrader_close(db: AsyncSession, deployment: StrategyDeploymen
         position.current_price = price
         position.unrealized_pnl = Decimal("0")
         reconciled = LiveOrder(
+            trace_id=trace_id,
             deployment_id=deployment.id, signal_id=signal.id, user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
-            broker_order_id=None, symbol=position.symbol, side=close_side, order_type="MARKET", qty=to_decimal(position.qty),
+            broker_order_id=None, client_order_id=client_order_id, idempotency_key=idempotency_key, symbol=position.symbol, side=close_side, order_type="MARKET", qty=to_decimal(position.qty),
             entry_price=price, executed_price=None, status="RECONCILED", error_message=None,
             raw_response={"provider": "CTRADER", "broker_already_closed": True, "broker_position_id": str(broker_position_id), "message": result.message},
         )
         db.add(reconciled)
         await db.flush()
+        await _trace_service().mark(trace_id, "t15", status="LOCAL_ORDER_RECONCILED", order_id=str(reconciled.id))
+        await _trace_service().mark(trace_id, "t16", status="LOCAL_POSITION_RECONCILED", order_id=str(reconciled.id))
         signal.status = "EXECUTED"
         signal.rejection_reason = None
         await _log(db, deployment, "CTRADER_POSITION_ALREADY_CLOSED", "cTrader position was already closed at broker; local position reconciled", "INFO", {"signal_id": str(signal.id), "position_id": str(position.id), "broker_position_id": str(broker_position_id)})
         return reconciled
     order = LiveOrder(
+        trace_id=trace_id,
         deployment_id=deployment.id, signal_id=signal.id, user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
-        broker_order_id=result.broker_order_id, symbol=position.symbol, side=close_side, order_type="MARKET", qty=to_decimal(position.qty),
-        entry_price=price, executed_price=result.executed_price if result.success else None, status="FILLED" if result.success else "ERROR",
+        broker_order_id=result.broker_order_id, client_order_id=client_order_id, idempotency_key=idempotency_key, symbol=position.symbol, side=close_side, order_type="MARKET", qty=to_decimal(position.qty),
+        entry_price=price, executed_price=result.executed_price if result.success else None, status=("FILLED" if result.status == "FILLED" else "PLACED") if result.success else "ERROR",
         error_message=None if result.success else result.message, raw_response={**(result.raw_response or {}), "provider": "CTRADER"},
     )
     db.add(order)
     await db.flush()
-    if result.success:
+    await _trace_service().mark(trace_id, "t15", status="LOCAL_ORDER_UPDATED", order_id=str(order.id))
+    if result.success and result.status == "FILLED":
         await close_position(db, deployment, position, result.executed_price or price, reason=f"{signal.signal_type} signal")
+        await _trace_service().mark(trace_id, "t16", status="LOCAL_POSITION_UPDATED", order_id=str(order.id))
         signal.status = "EXECUTED"
         await _log(db, deployment, "CTRADER_POSITION_CLOSED", "cTrader DEMO position close order placed", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id})
+    elif result.success:
+        signal.status = "ACCEPTED"
+        await _log(db, deployment, "CTRADER_CLOSE_AWAITING_FILL", "Broker accepted cTrader close; awaiting fill and reconciliation", metadata={"signal_id": str(signal.id), "order_id": str(order.id), "broker_order_id": result.broker_order_id})
     else:
         signal.status = "ERROR"
         signal.rejection_reason = result.message
@@ -673,6 +779,9 @@ async def _execute_upstox_close(db: AsyncSession, deployment: StrategyDeployment
 
 
 async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signal: LiveSignal) -> Optional[LiveOrder]:
+    trace_id = str(getattr(signal, "trace_id", None) or "") or None
+    latency_trace = _trace_service()
+    await latency_trace.mark(trace_id, "t9", status="EXECUTION_STARTED", signal_id=str(signal.id))
     await _log(db, deployment, "EXECUTION_STARTED", f"{deployment.mode} execution started for {signal.signal_type}", metadata={"signal_id": str(signal.id)})
     await _log(db, deployment, "LIVE_ENGINE_QA_STARTED", "Live engine final QA execution started", metadata={"context": "execute_signal", "signal_id": str(signal.id), "mode": deployment.mode, "signal_type": signal.signal_type})
 
@@ -686,11 +795,37 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
     # so a position that was closed by broker SL/TP/manual action cannot remain
     # locally OPEN and incorrectly reject the next signal. Background sync still
     # runs independently; this pre-trade sync is the final race-safe guard.
+    broker_for_sync = None
+    if deployment.broker_account_id:
+        broker_for_sync = (
+            await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))
+        ).scalar_one_or_none()
     if deployment.broker_account_id and str(deployment.mode or "").upper() in {"DEMO", "LIVE"}:
         try:
-            await sync_deployment_broker_state(db, deployment.id)
+            persistent_ctrader = bool(
+                broker_for_sync is not None
+                and _is_ctrader_broker(broker_for_sync)
+                and settings.live_event_pipeline_enabled
+                and settings.ctrader_persistent_connection_enabled
+            )
+            last_sync = getattr(deployment, "last_broker_sync_at", None)
+            if last_sync is not None and last_sync.tzinfo is None:
+                last_sync = last_sync.replace(tzinfo=timezone.utc)
+            age_seconds = (datetime.now(timezone.utc) - last_sync).total_seconds() if last_sync else None
+            cached_state_fresh = bool(
+                persistent_ctrader
+                and age_seconds is not None
+                and age_seconds <= max(0, int(settings.broker_state_max_age_seconds))
+                and await _persistent_ctrader_connection_healthy(broker_for_sync)
+            )
+            if cached_state_fresh:
+                await _log(db, deployment, "PRE_TRADE_BROKER_CACHE", "Fresh continuously reconciled cTrader state used for risk checks", metadata={"signal_id": str(signal.id), "age_seconds": round(age_seconds or 0, 3)})
+            elif persistent_ctrader:
+                await sync_ctrader_deployment_via_gateway(db, deployment.id, commit=False)
+            else:
+                await sync_deployment_broker_state(db, deployment.id)
             deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment.id))).scalar_one()
-            await _log(db, deployment, "PRE_TRADE_BROKER_SYNC", "Broker state refreshed before execution risk checks", metadata={"signal_id": str(signal.id)})
+            await _log(db, deployment, "PRE_TRADE_BROKER_SYNC", "Broker state verified before execution risk checks", metadata={"signal_id": str(signal.id), "persistent_ctrader": persistent_ctrader, "cached_state_fresh": cached_state_fresh})
         except Exception as exc:
             signal.status = "REJECTED"
             signal.rejection_reason = f"Broker state refresh failed safely before execution: {exc}"
@@ -737,6 +872,7 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
             signal.rejection_reason = risk.reason
             await _log(db, deployment, "RISK_REJECTED", risk.reason or "Risk rejected", "WARNING", {"signal_id": str(signal.id)})
             return None
+        await latency_trace.mark(trace_id, "t10", status="BASE_RISK_CHECKS_FINISHED")
 
     if risk.action == "HOLD":
         signal.status = "ACCEPTED"
@@ -765,12 +901,18 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
                     latest_order = await _execute_ctrader_close(db, deployment, signal, position, price)
                 else:
                     latest_order = await _execute_demo_close(db, deployment, signal, position, price)
+            if latest_order is not None and (
+                latest_order.status == "ERROR"
+                or (risk.action == "CLOSE_AND_OPEN" and latest_order.status not in {"FILLED", "RECONCILED"})
+            ):
+                # Check every close leg, not just the last position in a
+                # multi-position reversal. Never open new risk on an ACK.
+                await create_equity_point(db, deployment)
+                await _log(db, deployment, "EXECUTION_ABORTED", "Entry skipped until every broker position close is confirmed filled" if latest_order.status != "ERROR" else "Broker position close failed", "WARNING" if latest_order.status != "ERROR" else "ERROR", {"signal_id": str(signal.id), "order_id": str(latest_order.id), "close_status": latest_order.status})
+                return latest_order
         await create_equity_point(db, deployment)
-        if latest_order is not None and latest_order.status == "ERROR":
-            await _log(db, deployment, "EXECUTION_ABORTED", "Entry skipped because broker position close failed", "ERROR", {"signal_id": str(signal.id), "order_id": str(latest_order.id)})
-            return latest_order
         if risk.action == "CLOSE_ONLY":
-            if signal.status not in {"ERROR", "REJECTED"}:
+            if signal.status not in {"ERROR", "REJECTED", "ACCEPTED"}:
                 signal.status = "EXECUTED"
             return latest_order
 
@@ -780,7 +922,15 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
             # A reverse signal has already completed its close leg above. Refresh
             # broker truth and re-run funded rules before adding any new risk.
             try:
-                await sync_deployment_broker_state(db, deployment.id)
+                if (
+                    broker_for_sync is not None
+                    and _is_ctrader_broker(broker_for_sync)
+                    and settings.live_event_pipeline_enabled
+                    and settings.ctrader_persistent_connection_enabled
+                ):
+                    await sync_ctrader_deployment_via_gateway(db, deployment.id, commit=False)
+                else:
+                    await sync_deployment_broker_state(db, deployment.id)
                 deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment.id))).scalar_one()
                 funded_decision = await evaluate_funded_guard(
                     db, deployment, signal_id=signal.id, purpose="ENTRY", persist_decision=True, auto_pause_on_breach=True
@@ -926,6 +1076,7 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
                 signal.rejection_reason = sltp_error
                 await _log(db, deployment, "LIVE_SLTP_SAFETY_BLOCKED", sltp_error or "SL/TP safety blocked order", "ERROR", {"signal_id": str(signal.id), "side": order_side, "entry_price": str(price), "stop_loss": str(stop_loss), "target": str(target), "sizing": sizing_metadata})
                 return await _create_error_order(db, deployment, signal, order_side, qty, price, sltp_error or "SL/TP safety blocked order", stop_loss=stop_loss, target=target, sizing_metadata=sizing_metadata)
+        await latency_trace.mark(trace_id, "t10", status="RISK_CHECKS_FINISHED")
         if deployment.mode == "PAPER":
             latest_order = await fill_market_order(db, deployment, signal, order_side, qty, price, stop_loss, target, action="ENTRY")
             if latest_order is not None:

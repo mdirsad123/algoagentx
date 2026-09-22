@@ -6,15 +6,17 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...core.config import settings as runtime_settings
 from ...db.models import (
     PlatformTradingSettings,
     BrokerAccount,
     BrokerOrderEvent,
     LiveOrder,
     LivePosition,
+    LiveSignal,
     LiveTradeLog,
     StrategyDeployment,
 )
@@ -507,6 +509,214 @@ async def sync_deployment_broker_state(db: AsyncSession, deployment_id: UUID | s
     }
 
 
+async def replay_pending_ctrader_execution_events(db: AsyncSession, deployment: StrategyDeployment) -> int:
+    """Apply broker fills that arrived before the local order was committed.
+
+    The market worker saves every execution event independently of the strategy
+    transaction. A fast broker fill can precede that transaction's commit; the
+    ordinary position snapshot repairs exposure, and this pass repairs the
+    associated order and signal state without re-sending an external action.
+    """
+    pending = (
+        await db.execute(
+            select(BrokerOrderEvent)
+            .where(
+                BrokerOrderEvent.deployment_id == deployment.id,
+                BrokerOrderEvent.event_type == "CTRADER_EXECUTION_EVENT",
+                BrokerOrderEvent.processed.is_(False),
+            )
+            .order_by(BrokerOrderEvent.created_at, BrokerOrderEvent.id)
+            .limit(100)
+        )
+    ).scalars().all()
+    replayed = 0
+    for event in pending:
+        payload = event.raw_payload if isinstance(event.raw_payload, dict) else {}
+        order_data = payload.get("order") if isinstance(payload.get("order"), dict) else {}
+        trade_data = order_data.get("tradeData") if isinstance(order_data.get("tradeData"), dict) else {}
+        client_id = order_data.get("clientOrderId") or trade_data.get("label")
+        identifiers = []
+        if event.broker_order_id:
+            identifiers.append(LiveOrder.broker_order_id == event.broker_order_id)
+        if client_id:
+            identifiers.append(LiveOrder.client_order_id == str(client_id))
+        if not identifiers:
+            continue
+        local_order = (
+            await db.execute(
+                select(LiveOrder).where(LiveOrder.deployment_id == deployment.id, or_(*identifiers)).limit(1)
+            )
+        ).scalar_one_or_none()
+        if local_order is None:
+            continue
+        execution_type = int(payload.get("executionType") or 0)
+        status = {2: "PLACED", 3: "FILLED", 5: "CANCELLED", 7: "REJECTED", 11: "PARTIAL"}.get(execution_type)
+        if status and (local_order.status not in {"FILLED", "RECONCILED"} or status == "FILLED"):
+            local_order.status = status
+        deal_data = payload.get("deal") if isinstance(payload.get("deal"), dict) else {}
+        price = deal_data.get("executionPrice") or order_data.get("executionPrice")
+        if price not in (None, ""):
+            local_order.executed_price = _dec(price)
+        if event.broker_order_id:
+            local_order.broker_order_id = event.broker_order_id
+        if local_order.status == "FILLED" and local_order.signal_id:
+            signal = (
+                await db.execute(select(LiveSignal).where(LiveSignal.id == local_order.signal_id))
+            ).scalar_one_or_none()
+            if signal is not None:
+                signal.status = "EXECUTED"
+        local_order.raw_response = {
+            **(local_order.raw_response or {}),
+            "replayed_execution_event_id": str(event.id),
+        }
+        if status == "FILLED" and local_order.trace_id:
+            from ...core.redis_manager import redis_manager
+            from .live_latency_trace_service import LiveLatencyTraceService
+
+            trace = LiveLatencyTraceService(redis_manager.client if redis_manager.is_available else None)
+            snapshot = await trace.snapshot(local_order.trace_id)
+            if snapshot and not snapshot.get("t14_broker_fill_received_at"):
+                try:
+                    received_at = datetime.fromisoformat(str(payload.get("_received_at")))
+                except (TypeError, ValueError):
+                    received_at = datetime.now(timezone.utc)
+                await trace.mark(local_order.trace_id, "t14", at=received_at, status="BROKER_FILLED")
+            if snapshot:
+                await trace.mark(local_order.trace_id, "t15", status="LOCAL_ORDER_UPDATED")
+                position_data = payload.get("position") if isinstance(payload.get("position"), dict) else {}
+                position_id = position_data.get("positionId")
+                if position_id not in (None, ""):
+                    local_position = (
+                        await db.execute(select(LivePosition).where(
+                            LivePosition.deployment_id == deployment.id,
+                            LivePosition.broker_position_id == str(position_id),
+                        ).limit(1))
+                    ).scalar_one_or_none()
+                    if local_position is not None:
+                        await trace.mark(local_order.trace_id, "t16", status="LOCAL_POSITION_UPDATED")
+                await trace.persist(db, local_order.trace_id)
+        event.processed = True
+        replayed += 1
+    return replayed
+
+
+async def sync_ctrader_deployment_via_gateway(
+    db: AsyncSession,
+    deployment_id: UUID | str,
+    *,
+    commit: bool = True,
+) -> dict[str, Any]:
+    """Reconcile cTrader without opening another WebSocket in this process."""
+    from ..brokers.ctrader_order_gateway import request_account_snapshot
+
+    deployment = (
+        await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))
+    ).scalar_one_or_none()
+    if deployment is None or not deployment.broker_account_id:
+        raise ValueError("Deployment/broker account not found")
+    broker = (
+        await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))
+    ).scalar_one_or_none()
+    if broker is None or get_broker_code(broker) not in {"CTRADER", "CTRADER_API"}:
+        raise ValueError("Persistent reconciliation is only available for cTrader")
+
+    response = await request_account_snapshot(
+        broker_account_id=str(broker.id),
+        deployment_id=str(deployment.id),
+    )
+    orders = response.get("orders") if isinstance(response.get("orders"), list) else []
+    positions = response.get("positions") if isinstance(response.get("positions"), list) else []
+    account_info = response.get("account_info") if isinstance(response.get("account_info"), dict) else {}
+    now = datetime.now(timezone.utc)
+
+    if account_info.get("connected"):
+        broker.status = "CONNECTED"
+        broker.last_connected_at = now
+        meta = dict(broker.metadata_json or {})
+        last_test = {
+            "connected": True,
+            "message": account_info.get("message"),
+            "account_login": account_info.get("account_login"),
+            "server": account_info.get("server"),
+            "balance": str(account_info.get("balance")) if account_info.get("balance") is not None else None,
+            "equity": str(account_info.get("equity")) if account_info.get("equity") is not None else None,
+            "unrealized_pnl": str(account_info.get("unrealized_pnl")) if account_info.get("unrealized_pnl") is not None else None,
+            "currency": account_info.get("currency"),
+            "synced_at": now.isoformat(),
+            "transport": "PERSISTENT_SESSION",
+        }
+        meta["last_test"] = last_test
+        selected = meta.get("ctrader_selected_account")
+        if isinstance(selected, dict):
+            selected = dict(selected)
+            for key in ("balance", "equity", "currency"):
+                if account_info.get(key) is not None:
+                    selected[key] = account_info.get(key)
+            selected["financial_synced_at"] = now.isoformat()
+            meta["ctrader_selected_account"] = selected
+        broker.metadata_json = meta
+        broker.last_connection_result = last_test
+
+    order_result = await reconcile_orders(db, deployment, orders, "CTRADER")
+    position_result = await reconcile_positions(db, deployment, positions, "CTRADER")
+    execution_events_replayed = await replay_pending_ctrader_execution_events(db, deployment)
+    deployment.last_broker_sync_at = now
+    deployment.last_live_sync_at = now
+    deployment.live_sync_error_count = 0
+    deployment.live_sync_last_error = None
+    deployment.last_heartbeat_at = now
+
+    funded_guard = None
+    if str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED":
+        from .funded_guard_service import evaluate_funded_guard
+        funded_guard = (
+            await evaluate_funded_guard(
+                db,
+                deployment,
+                purpose="SYNC",
+                persist_decision=False,
+                auto_pause_on_breach=True,
+            )
+        ).to_dict()
+
+    await _write_log(
+        db,
+        deployment,
+        "BROKER_STATE_SYNCED",
+        "CTRADER broker sync completed over persistent session",
+        metadata={
+            "transport": "PERSISTENT_SESSION",
+            "orders_count": len(orders),
+            "positions_count": len(positions),
+            "execution_events_replayed": execution_events_replayed,
+            "account_info": _safe_payload(account_info),
+            "funded_guard": funded_guard,
+            **order_result,
+            **position_result,
+        },
+    )
+    if commit:
+        await db.commit()
+    else:
+        # Strategy execution keeps its transaction-scoped advisory lock and
+        # signal/position state until the final order outcome is recorded.
+        await db.flush()
+    return {
+        "success": True,
+        "deployment_id": str(deployment.id),
+        "provider_code": "CTRADER",
+        "transport": "PERSISTENT_SESSION",
+        "last_broker_sync_at": now.isoformat(),
+        "orders_count": len(orders),
+        "positions_count": len(positions),
+        "execution_events_replayed": execution_events_replayed,
+        "account_info": _safe_payload(account_info),
+        "funded_guard": funded_guard,
+        **order_result,
+        **position_result,
+    }
+
+
 def clamp_live_sync_interval(settings: PlatformTradingSettings, value: int | None) -> int:
     min_s = int(getattr(settings, "min_broker_sync_interval_seconds", 5) or 5)
     max_s = int(getattr(settings, "max_broker_sync_interval_seconds", 300) or 300)
@@ -535,6 +745,12 @@ async def should_auto_sync_deployment(db: AsyncSession, deployment: StrategyDepl
     broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
     if broker is None or broker.status != "CONNECTED":
         return False, "Broker is not CONNECTED", interval
+    if (
+        runtime_settings.live_event_pipeline_enabled
+        and runtime_settings.live_market_worker_enabled
+        and get_broker_code(broker) in {"CTRADER", "CTRADER_API"}
+    ):
+        return False, "cTrader synchronization is owned by the persistent worker", interval
     last_sync = getattr(deployment, "last_live_sync_at", None) or getattr(deployment, "last_broker_sync_at", None)
     if last_sync is not None:
         elapsed = (datetime.now(timezone.utc) - last_sync).total_seconds()

@@ -46,16 +46,31 @@ async def lifespan(app: FastAPI):
 
     runner_task = None
     broker_sync_task = None
-    # Always start the lightweight auto-runner loop. Per-deployment switches
-    # still decide whether any strategy work executes.
-    from .services.live.auto_runner_service import auto_runner_loop
-    runner_task = asyncio.create_task(auto_runner_loop())
-    logger.debug("Live auto runner background loop started")
+    event_strategy_active = bool(
+        settings.live_event_pipeline_enabled and settings.live_strategy_stream_enabled
+    )
+    legacy_runner_active = bool(
+        settings.live_runner_enabled
+        and settings.live_legacy_runner_enabled
+    )
+    if legacy_runner_active:
+        from .services.live.auto_runner_service import auto_runner_loop
+        runner_task = asyncio.create_task(auto_runner_loop())
+        logger.debug("Legacy live auto runner started for deployments outside the cTrader event pipeline")
+    elif event_strategy_active:
+        logger.info("Legacy live runner disabled by flag; dedicated Redis strategy worker owns cTrader execution")
+    else:
+        logger.info("Live auto runner is disabled")
 
-    if getattr(settings, "live_broker_sync_enabled", True):
+    dedicated_reconcile_active = bool(
+        settings.live_event_pipeline_enabled and settings.live_reconcile_worker_enabled
+    )
+    if getattr(settings, "live_broker_sync_enabled", True) and not dedicated_reconcile_active:
         from .services.live.broker_sync_service import broker_sync_loop
         broker_sync_task = asyncio.create_task(broker_sync_loop())
         logger.debug("Live broker sync background loop enabled")
+    elif dedicated_reconcile_active:
+        logger.info("API broker sync loop disabled; dedicated reconcile worker owns synchronization")
     else:
         logger.debug("Live broker sync background loop disabled")
 

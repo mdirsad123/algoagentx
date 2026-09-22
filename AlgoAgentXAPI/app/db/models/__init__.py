@@ -59,6 +59,8 @@ from .live_trading import (
     LiveTradeLog,
     LiveEquityPoint,
     LiveMarketCandle,
+    LiveExecutionTrace,
+    LiveBrokerOrderIntent,
     AdminLiveAction,
     PlatformTradingSettings,
 )
@@ -131,6 +133,8 @@ __all__ = [
     "LiveTradeLog",
     "LiveEquityPoint",
     "LiveMarketCandle",
+    "LiveExecutionTrace",
+    "LiveBrokerOrderIntent",
     "AdminLiveAction",
     "PlatformTradingSettings",
     "PriceAlert",
@@ -139,4 +143,3 @@ __all__ = [
     "UserNotificationChannel",
     "AlertFeedHealth",
 ]
-

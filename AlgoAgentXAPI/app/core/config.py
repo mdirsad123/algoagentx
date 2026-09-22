@@ -100,6 +100,43 @@ class Settings(BaseSettings):
     live_broker_sync_enabled: bool = Field(default=True, description="Enable background broker auto sync loop")
     live_broker_sync_loop_seconds: int = Field(default=5, description="Broker auto sync scheduler loop interval in seconds")
 
+    # Event-driven live trading pipeline. These flags default to the legacy
+    # scheduler so a deployment can be rolled forward (or back) without a code
+    # change. Dedicated Docker workers refuse to do work unless their matching
+    # flag is enabled.
+    live_event_pipeline_enabled: bool = Field(default=False, description="Enable the Redis-stream live trading pipeline")
+    live_market_worker_enabled: bool = Field(default=False, description="Enable persistent cTrader market-data worker")
+    live_strategy_stream_enabled: bool = Field(default=False, description="Enable Redis Stream strategy worker")
+    live_reconcile_worker_enabled: bool = Field(default=False, description="Enable dedicated slow broker reconciliation worker")
+    ctrader_persistent_connection_enabled: bool = Field(default=False, description="Route cTrader market/order traffic through persistent sessions")
+    live_legacy_runner_enabled: bool = Field(default=True, description="Keep the legacy scheduler available for rollback")
+
+    live_candle_stream: str = Field(default="live:candle_closed", description="Redis Stream for closed-candle events")
+    live_order_request_stream: str = Field(default="live:ctrader_order_requests", description="Redis Stream for persistent cTrader order requests")
+    live_strategy_consumer_group: str = Field(default="live-strategy-runners", description="Closed-candle strategy consumer group")
+    live_order_consumer_group: str = Field(default="live-ctrader-order-gateway", description="cTrader order gateway consumer group")
+    live_stream_maxlen: int = Field(default=100000, description="Approximate max Redis Stream length")
+    live_worker_concurrency: int = Field(default=8, description="Maximum concurrently processed deployment events")
+    live_pending_reclaim_idle_ms: int = Field(default=30000, description="Minimum idle time before reclaiming pending stream entries")
+    live_worker_health_ttl_seconds: int = Field(default=30, description="Worker health heartbeat TTL")
+    live_order_dedupe_ttl_seconds: int = Field(default=86400, description="TTL for atomic external-order claims/results")
+
+    live_candle_fallback_first_seconds: int = Field(default=3, description="First missing-candle recovery delay")
+    live_candle_fallback_second_seconds: int = Field(default=8, description="Second missing-candle recovery delay")
+    live_market_deployment_scan_seconds: int = Field(default=15, description="Seconds between active deployment registry refreshes")
+    live_market_bootstrap_candles: int = Field(default=300, description="Initial cTrader closed-candle bootstrap count")
+    live_market_backfill_candles: int = Field(default=5, description="Small reconnect/watchdog backfill count")
+
+    ctrader_heartbeat_seconds: int = Field(default=8, description="Persistent cTrader application heartbeat interval")
+    ctrader_request_timeout_seconds: int = Field(default=15, description="Persistent cTrader request timeout")
+    ctrader_order_timeout_seconds: int = Field(default=15, description="Persistent cTrader order acknowledgement/fill timeout")
+    ctrader_metadata_cache_seconds: int = Field(default=3600, description="cTrader full-symbol metadata cache TTL")
+
+    broker_state_max_age_seconds: int = Field(default=3, description="Maximum cached broker-state age on the cTrader hot path")
+    live_reconcile_interval_seconds: int = Field(default=30, description="Dedicated broker reconciliation interval")
+    live_latency_trace_enabled: bool = Field(default=True, description="Collect and persist T0-T17 live execution traces")
+    live_latency_trace_retention_days: int = Field(default=30, description="Detailed live trace retention window")
+
     # Real-time alerting / Telegram (Phase 1)
     telegram_bot_token: str = ""
     telegram_default_chat_id: str = ""
@@ -316,8 +353,6 @@ if settings.is_development:
 
 # Validate production requirements on import
 settings.validate_production_requirements()
-
-
 
 
 

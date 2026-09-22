@@ -1,37 +1,46 @@
 # ============================================
-# AlgoAgentX - Comprehensive .gitignore
+# AlgoAgentX - Production-safe .gitignore
 # ============================================
 
-# ============================================
-# DEPENDENCIES
-# ============================================
-
-# Node.js dependencies (AlgoAgentXApp)
+# ----------------------------
+# Node / Next.js dependencies
+# ----------------------------
 **/node_modules/
-**/node_modules/**/*
-.npm
-.yarn-integrity
-package-lock.json
+.npm/
+.yarn/
+.pnpm-store/
 
-# Python dependencies (AlgoAgentXAPI)
+# IMPORTANT:
+# Keep lock files in Git for reproducible Docker builds.
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# ----------------------------
+# Python environments / cache
+# ----------------------------
 **/venv/
 **/.venv/
 **/env/
-**/.env/
 __pycache__/
-**/__pycache__/**/*
+**/__pycache__/
 *.py[cod]
 *$py.class
-*.so
 .Python
+.pytest_cache/
+.mypy_cache/
+.pyre/
+.hypothesis/
+.tox/
+.nox/
+
+# Python packaging/build artifacts
 build/
-develop-eggs/
 dist/
+develop-eggs/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
 parts/
 sdist/
 var/
@@ -44,121 +53,83 @@ wheels/
 pip-log.txt
 pip-delete-this-directory.txt
 
-# ============================================
-# ENVIRONMENT VARIABLES
-# ============================================
+# IMPORTANT:
+# Do NOT ignore generic "lib/" or "lib64/" directories.
+# AlgoAgentXApp/lib contains application source code.
 
-# Environment files (keep .env.example, ignore actual .env files)
+# ----------------------------
+# Environment / secrets
+# ----------------------------
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.env.prod
-.env.production
+.env.*
 *.env
+
+# Keep safe templates/examples
+!.env.example
+!.env.local.example
+!.env.prod.example
+!.env.dev.example
 !*.env.example
 
-# ============================================
-# DATABASE FILES
-# ============================================
+# Explicit application env files
+AlgoAgentXAPI/.env
+AlgoAgentXAPI/.env.*
+AlgoAgentXApp/.env
+AlgoAgentXApp/.env.*
+!AlgoAgentXAPI/.env.example
+!AlgoAgentXAPI/.env.prod.example
+!AlgoAgentXApp/.env.example
+!AlgoAgentXApp/.env.local.example
 
-# SQLite databases
+# ----------------------------
+# Next.js generated output
+# ----------------------------
+**/.next/
+**/out/
+
+# ----------------------------
+# Database / runtime data
+# ----------------------------
 *.db
 *.sqlite
 *.sqlite3
-
-# Database backups
 **/backup_db/
 **/*.sql.gz
 **/*.dump
+dump.rdb
 
-# ============================================
-# IDE AND EDITOR FILES
-# ============================================
+# Runtime-generated uploads/output
+**/scripts/output/
 
-# VS Code
+# ----------------------------
+# Logs / cache / coverage
+# ----------------------------
+*.log
+logs/
+**/*.log
+.cache/
+**/.cache/
+*.cache
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+*.py,cover
+
+# ----------------------------
+# IDE / editor / OS files
+# ----------------------------
 .vscode/
 *.code-workspace
 *.code-profile
-
-# JetBrains IDEs (PyCharm, WebStorm, etc.)
 .idea/
 *.iml
 *.iws
 *.ipr
-out/
-
-# Other editors
 *.swp
 *.swo
 *~
-.DS_Store
-Thumbs.db
-
-# ============================================
-# BUILD ARTIFACTS AND OUTPUT
-# ============================================
-
-# Next.js build
-**/.next/
-**/out/
-**/build/
-
-# Python build
-build/
-dist/
-*.egg-info/
-
-# ============================================
-# LOGS AND CACHE
-# ============================================
-
-# Log files
-*.log
-logs/
-**/*.log
-
-# Cache files
-.cache/
-**/.cache/
-*.cache
-
-# Coverage reports
-htmlcov/
-.coverage
-.coverage.*
-.coveragerc
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-
-# ============================================
-# TESTING
-# ============================================
-
-# Test artifacts
-.tox/
-.nox/
-htmlcov/
-
-# ============================================
-# DOCKER AND CONTAINERS
-# ============================================
-
-# Docker volumes
-**/docker-volumes/
-
-# Docker compose overrides
-docker-compose.override.yml
-
-# ============================================
-# MISCELLANEOUS
-# ============================================
-
-# OS generated files
 .DS_Store
 .DS_Store?
 ._*
@@ -167,65 +138,39 @@ docker-compose.override.yml
 ehthumbs.db
 [Tt]humbs.db
 
-# Temporary files
+# ----------------------------
+# Docker local runtime data
+# ----------------------------
+**/docker-volumes/
+docker-compose.override.yml
+
+# ----------------------------
+# Misc temporary files
+# ----------------------------
 tmp/
 temp/
 *.tmp
 *.temp
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
+.ipynb_checkpoints/
 
 # Celery
 celerybeat-schedule
 celerybeat.pid
 
-# Redis dump
-dump.rdb
-
-# ============================================
-# SENSITIVE FILES
-# ============================================
-
-# Private keys
+# ----------------------------
+# Sensitive files
+# ----------------------------
 *.pem
 *.key
 *.cert
-
-# Credentials
 credentials
 *.credentials
 
-# ============================================
-# PROJECT SPECIFIC
-# ============================================
-
-# Migration logs
+# ----------------------------
+# Project-specific generated files
+# ----------------------------
 migration.log
 
-# Test scripts output
-**/test_*.py
-!test_*.py
-
-# Scripts output directory
-**/scripts/output/
-# Environment secrets
-.env
-.env.*
-!.env.example
-!.env.local.example
-!.env.prod.example
-
-AlgoAgentXAPI/.env
-AlgoAgentXAPI/.env.*
-!AlgoAgentXAPI/.env.example
-!AlgoAgentXAPI/.env.prod.example
-**/docs/oracle_cloud_keys
+# IMPORTANT:
+# Do NOT ignore test_*.py globally.
+# Tests are source code and should normally be committed.

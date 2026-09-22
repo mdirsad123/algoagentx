@@ -4,6 +4,7 @@ import logging
 import secrets
 from datetime import datetime, time, timezone
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -12,8 +13,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import settings
+from ...core.redis_manager import redis_manager
 from ...core.dependencies import get_current_user, get_db
-from ...db.models import BrokerAccount, BrokerInstrument, BrokerOrderEvent, FundedLiveState, LiveEquityPoint, LiveOrder, LivePosition, LiveSignal, LiveTradeLog, StrategyDeployment
+from ...db.models import BrokerAccount, BrokerInstrument, BrokerOrderEvent, FundedLiveState, LiveEquityPoint, LiveExecutionTrace, LiveMarketCandle, LiveOrder, LivePosition, LiveSignal, LiveTradeLog, StrategyDeployment
 from ...db.models.instruments import Instrument
 from ...schemas.live_trading import BrokerOrderEventOut, FundedPhaseAdvanceRequest, FundedRiskPlanUpdate, LiveOrderOut, LivePositionOut, LiveSignalOut, LiveTradeLogOut, ManualDeploymentSignalIn, RunStrategyOnceIn, StrategyDeploymentCreate, StrategyDeploymentOut, StrategyDeploymentUpdate
 from ...services.brokers.factory import get_broker_adapter, get_broker_code
@@ -35,11 +37,13 @@ from ...services.live.strategy_runner import run_strategy_for_deployment, run_fu
 from ...services.live.compatibility_service import run_live_compatibility_check, compatibility_failed
 from ...services.live.auto_runner_service import run_deployment_if_due
 from ...services.live.runner_scheduler import calculate_next_runner_at
-from ...services.live.broker_sync_service import clamp_live_sync_interval, sync_deployment_broker_state
+from ...services.live.broker_sync_service import clamp_live_sync_interval, sync_ctrader_deployment_via_gateway, sync_deployment_broker_state
 from ...services.live.trading_safety import check_platform_mode_allowed, get_platform_trading_settings, mark_heartbeat
 from ...services.live_trading.readiness_service import build_live_deployment_readiness
 from ...services.live_trading.paper_position_manager import process_paper_positions_for_deployment
 from ...services.live_trading.final_qa_service import build_final_live_qa, run_paper_order_test, run_demo_micro_order_test
+from ...services.live.live_event_bus import LiveEventBus
+from ...services.live.deployment_lock import try_deployment_xact_lock
 from ...services.billing.live_subscription_gate import (
     build_live_trading_access_status,
     require_active_paid_subscription_for_funded_live_trading,
@@ -68,6 +72,98 @@ class LiveSyncSettingsIn(BaseModel):
 class QaOrderTestIn(BaseModel):
     side: str | None = Field(default="BUY")
     confirm_demo_micro_order: bool | None = Field(default=False)
+
+
+def _execution_trace_payload(row: LiveExecutionTrace) -> dict:
+    stage_fields = [
+        "t0_expected_close_at", "t1_broker_event_received_at", "t2_candle_normalized_at",
+        "t3_candle_db_commit_at", "t4_redis_event_published_at", "t5_strategy_event_received_at",
+        "t6_strategy_started_at", "t7_strategy_finished_at", "t8_signal_persisted_at",
+        "t9_execution_started_at", "t10_risk_checks_finished_at", "t11_order_request_queued_at",
+        "t12_order_request_sent_at", "t13_broker_order_accepted_at", "t14_broker_fill_received_at",
+        "t15_local_order_updated_at", "t16_local_position_updated_at", "t17_ui_event_published_at",
+    ]
+    return {
+        "id": str(row.id),
+        "trace_id": row.trace_id,
+        "deployment_id": str(row.deployment_id),
+        "broker_account_id": str(row.broker_account_id) if row.broker_account_id else None,
+        "signal_id": str(row.signal_id) if row.signal_id else None,
+        "order_id": str(row.order_id) if row.order_id else None,
+        "candle_open_time": row.candle_open_time,
+        "expected_close_at": row.expected_close_at,
+        "provider": row.provider,
+        "environment": row.environment,
+        "symbol": row.symbol,
+        "timeframe": row.timeframe,
+        "source": row.source,
+        "status": row.status,
+        "signal_type": row.signal_type,
+        "error_message": row.error_message,
+        "timeline": {field: getattr(row, field) for field in stage_fields},
+        "metrics": row.metrics_json or {},
+        "metadata": row.metadata_json or {},
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+def _percentile(values: list[float], percentile: float) -> float | None:
+    clean = sorted(float(value) for value in values)
+    if not clean:
+        return None
+    if len(clean) == 1:
+        return round(clean[0], 3)
+    index = (len(clean) - 1) * percentile
+    lower = int(index)
+    upper = min(lower + 1, len(clean) - 1)
+    weight = index - lower
+    return round(clean[lower] * (1 - weight) + clean[upper] * weight, 3)
+
+
+async def _persistent_ctrader_gateway_ready() -> bool:
+    """Return quickly when the dedicated cTrader market worker is not alive.
+
+    Worker health uses a short Redis TTL, so a missing heartbeat means there is no
+    consumer available for the persistent order/snapshot gateway.  Checking it
+    before publishing avoids making normal page loads wait for the full cTrader
+    request timeout when the live-event containers are stopped or flags are off.
+    """
+    if not redis_manager.is_available or redis_manager.client is None:
+        return False
+    try:
+        health = await LiveEventBus(redis_manager.client).get_health("live_market_worker")
+    except Exception:
+        return False
+    return bool(health and str(health.get("status") or "").upper() in {"HEALTHY", "DEGRADED"})
+
+
+async def _sync_deployment_using_configured_transport(db: AsyncSession, deployment: StrategyDeployment) -> dict:
+    broker = None
+    if deployment.broker_account_id:
+        broker = (
+            await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))
+        ).scalar_one_or_none()
+    if (
+        broker is not None
+        and get_broker_code(broker) in {"CTRADER", "CTRADER_API"}
+        and settings.live_event_pipeline_enabled
+        and settings.ctrader_persistent_connection_enabled
+    ):
+        if not await _persistent_ctrader_gateway_ready():
+            raise RuntimeError(
+                "Persistent cTrader market worker is offline; start live_market_worker "
+                "before requesting broker refresh/reconciliation."
+            )
+        # Manual/summary reconciliation touches the same deployment, order and
+        # position rows as the strategy worker. Use the shared deployment lock so
+        # an API refresh cannot recreate the three-way deadlock seen between the
+        # market event task, strategy worker and broker reconciliation. The lock is
+        # non-blocking: callers can retry after the current candle cycle commits.
+        if not await try_deployment_xact_lock(db, deployment.id):
+            raise RuntimeError("Deployment is busy processing a live candle; retry broker sync shortly.")
+        return await sync_ctrader_deployment_via_gateway(db, deployment.id)
+    return await sync_deployment_broker_state(db, deployment.id)
 
 
 
@@ -647,7 +743,7 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
             try:
                 broker_code = get_broker_code(broker_row) if broker_row is not None else ""
                 if broker_code in {"CTRADER", "CTRADER_API"}:
-                    sync_result = await sync_deployment_broker_state(db, row.id)
+                    sync_result = await _sync_deployment_using_configured_transport(db, row)
                     row = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none() or row
                     broker_row = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment_broker_account_id))).scalar_one_or_none()
                     broker = _broker_safe(broker_row)
@@ -664,12 +760,20 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
                         broker = _broker_safe(broker_row)
             except Exception as exc:
                 await db.rollback()
-                # Summary must not hard-fail because one broker is offline. Avoid full
-                # traceback noise for disconnected MT5 agents on normal list/detail loads.
-                logger.error("Live deployment broker refresh failed for %s: %s", deployment_id, exc)
+                # A broker refresh is best-effort for the page summary.  Rollback expires
+                # ORM objects; always re-load them explicitly before reading attributes.
+                # This also closes the delete-vs-refresh race that previously produced
+                # SQLAlchemy MissingGreenlet from an expired/deleted deployment object.
+                logger.warning("Live deployment broker refresh skipped for %s: %s", deployment_id, exc)
                 broker_sync_warning = str(exc)
-                row = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none() or row
-                broker_row = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment_broker_account_id))).scalar_one_or_none()
+                row = (
+                    await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))
+                ).scalar_one_or_none()
+                if row is None:
+                    raise HTTPException(status_code=404, detail="Live deployment not found")
+                broker_row = (
+                    await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment_broker_account_id))
+                ).scalar_one_or_none()
                 broker = _broker_safe(broker_row)
 
     realized = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == deployment_id))).scalar())
@@ -685,7 +789,7 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
     total_signals = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == deployment_id, tradeable_signal_filter))).scalar() or 0)
 
     latest_equity = (await db.execute(select(LiveEquityPoint.equity).where(LiveEquityPoint.deployment_id == deployment_id).order_by(LiveEquityPoint.timestamp.desc()).limit(1))).scalar_one_or_none()
-    equity = _dec(latest_equity, str(_dec(row.capital, "100000") + realized + unrealized))
+    equity = _dec(latest_equity, str(_dec(deployment_capital, "100000") + realized + unrealized))
 
     latest_signal = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == deployment_id, tradeable_signal_filter).order_by(LiveSignal.created_at.desc()).limit(1))).scalar_one_or_none()
     latest_order = (await db.execute(select(LiveOrder).where(LiveOrder.deployment_id == deployment_id).order_by(LiveOrder.created_at.desc()).limit(1))).scalar_one_or_none()
@@ -1163,6 +1267,158 @@ async def get_deployment_summary(
     return success_response(await _summary(db, row, refresh_broker=refresh_broker))
 
 
+@router.get("/{deployment_id}/latency")
+async def get_deployment_latency(
+    deployment_id: UUID,
+    limit: int = Query(default=50, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    rows = (
+        await db.execute(
+            select(LiveExecutionTrace)
+            .where(LiveExecutionTrace.deployment_id == deployment_id)
+            .order_by(LiveExecutionTrace.candle_open_time.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    metric_names = [
+        "broker_candle_latency_ms", "candle_persist_latency_ms", "event_bus_latency_ms",
+        "strategy_queue_latency_ms", "strategy_compute_latency_ms", "pretrade_latency_ms",
+        "order_send_latency_ms", "broker_ack_latency_ms", "broker_fill_latency_ms",
+        "close_to_strategy_ms", "close_to_order_send_ms", "close_to_broker_ack_ms", "close_to_fill_ms",
+    ]
+    rollup: dict[str, dict[str, float | int | None]] = {}
+    for metric in metric_names:
+        values = [
+            float(row.metrics_json[metric])
+            for row in rows
+            if isinstance(row.metrics_json, dict) and row.metrics_json.get(metric) is not None
+        ]
+        rollup[metric] = {
+            "count": len(values),
+            "p50": _percentile(values, 0.50),
+            "p95": _percentile(values, 0.95),
+            "min": round(min(values), 3) if values else None,
+            "max": round(max(values), 3) if values else None,
+        }
+    return success_response({
+        "latest": _execution_trace_payload(rows[0]) if rows else None,
+        "recent": [_execution_trace_payload(row) for row in rows],
+        "rollup": rollup,
+        "sample_size": len(rows),
+    }, "Live execution latency loaded")
+
+
+@router.get("/{deployment_id}/latency/latest")
+async def get_deployment_latest_latency(
+    deployment_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    row = (
+        await db.execute(
+            select(LiveExecutionTrace)
+            .where(LiveExecutionTrace.deployment_id == deployment_id)
+            .order_by(LiveExecutionTrace.candle_open_time.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return success_response(_execution_trace_payload(row) if row else None, "Latest live execution latency loaded")
+
+
+@router.get("/{deployment_id}/pipeline-health")
+async def get_deployment_pipeline_health(
+    deployment_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    deployment = await get_deployment_or_404(db, deployment_id, current_user)
+    health: dict[str, Any] = {
+        "event_pipeline_enabled": settings.live_event_pipeline_enabled,
+        "market_worker_enabled": settings.live_market_worker_enabled,
+        "strategy_stream_enabled": settings.live_strategy_stream_enabled,
+        "reconcile_worker_enabled": settings.live_reconcile_worker_enabled,
+        "persistent_ctrader_enabled": settings.ctrader_persistent_connection_enabled,
+        "legacy_runner_enabled": settings.live_legacy_runner_enabled,
+        "deployment_running": deployment.status == "RUNNING",
+        "auto_runner_enabled": bool(deployment.auto_runner_enabled),
+        "auto_trade_enabled": bool(deployment.auto_trade_enabled),
+        "workers": {},
+        "redis_available": bool(redis_manager.is_available and redis_manager.client is not None),
+        "disabled_flags": [
+            name
+            for name, enabled in (
+                ("LIVE_EVENT_PIPELINE_ENABLED", settings.live_event_pipeline_enabled),
+                ("LIVE_MARKET_WORKER_ENABLED", settings.live_market_worker_enabled),
+                ("LIVE_STRATEGY_STREAM_ENABLED", settings.live_strategy_stream_enabled),
+                ("LIVE_RECONCILE_WORKER_ENABLED", settings.live_reconcile_worker_enabled),
+                ("CTRADER_PERSISTENT_CONNECTION_ENABLED", settings.ctrader_persistent_connection_enabled),
+            )
+            if not enabled
+        ],
+    }
+    deployment_environment = str(deployment.mode or "DEMO").upper()
+    if deployment.broker_account_id:
+        linked_broker = (
+            await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))
+        ).scalar_one_or_none()
+        metadata = linked_broker.metadata_json if linked_broker and isinstance(linked_broker.metadata_json, dict) else {}
+        selected = metadata.get("ctrader_selected_account") if isinstance(metadata, dict) else None
+        if isinstance(selected, dict):
+            deployment_environment = "LIVE" if bool(selected.get("is_live")) or str(selected.get("account_type") or "").upper() == "LIVE" else "DEMO"
+    health["deployment_environment"] = deployment_environment
+
+    # Include a cheap DB-side market-data diagnostic in the same response. This
+    # lets the UI distinguish "worker health endpoint failed" from "worker is up
+    # but this deployment truly has no stored candles" without depending on the
+    # separate candles request completing first.
+    candle_row = (
+        await db.execute(
+            select(LiveMarketCandle)
+            .where(
+                LiveMarketCandle.deployment_id == deployment.id,
+                LiveMarketCandle.is_closed.is_(True),
+            )
+            .order_by(LiveMarketCandle.candle_time.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    candle_count = int((await db.execute(
+        select(func.count(LiveMarketCandle.id)).where(
+            LiveMarketCandle.deployment_id == deployment.id,
+            LiveMarketCandle.is_closed.is_(True),
+        )
+    )).scalar() or 0)
+    health["market_data"] = {
+        "stored_count": candle_count,
+        "latest_candle_time": candle_row.candle_time if candle_row else None,
+        "latest_source": candle_row.source if candle_row else None,
+    }
+
+    if redis_manager.is_available and redis_manager.client is not None:
+        bus = LiveEventBus(redis_manager.client)
+        try:
+            for role in ("live_market_worker", "live_strategy_worker", "live_reconcile_worker"):
+                health["workers"][role] = await bus.get_health(role)
+            market_health = health["workers"].get("live_market_worker") or {}
+            connections = market_health.get("connections") if isinstance(market_health, dict) else {}
+            health["connection"] = (connections or {}).get(deployment_environment) if isinstance(connections, dict) else None
+        except Exception as exc:
+            # Health is observer-only. A transient Redis read must not turn the
+            # entire live page into a 500/eternal CHECKING state. Return DB/flag
+            # diagnostics and expose the Redis error explicitly instead.
+            for role in ("live_market_worker", "live_strategy_worker", "live_reconcile_worker"):
+                health["workers"].setdefault(role, None)
+            health["connection"] = None
+            health["redis_error"] = str(exc) or exc.__class__.__name__
+    else:
+        health["redis_error"] = "Redis is unavailable"
+    return success_response(health, "Live pipeline health loaded")
+
+
 @router.get("/{deployment_id}/broker-status")
 async def get_deployment_broker_status(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     row = await get_deployment_or_404(db, deployment_id, current_user)
@@ -1199,9 +1455,9 @@ async def get_deployment_broker_status(deployment_id: UUID, db: AsyncSession = D
 
 @router.post("/{deployment_id}/sync-broker")
 async def sync_deployment_broker(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    await get_deployment_or_404(db, deployment_id, current_user)
+    deployment = await get_deployment_or_404(db, deployment_id, current_user)
     try:
-        result = await sync_deployment_broker_state(db, deployment_id)
+        result = await _sync_deployment_using_configured_transport(db, deployment)
         return success_response(result, f"{result.get('provider_code', 'Broker')} broker synced")
     except ValueError as exc:
         await db.rollback()
@@ -1438,7 +1694,7 @@ async def refresh_deployment_funded_status(deployment_id: UUID, db: AsyncSession
     if str(getattr(row, "account_policy_type", "STANDARD") or "STANDARD").upper() != "FUNDED":
         raise HTTPException(status_code=400, detail="This is not a FUNDED deployment.")
     try:
-        sync_result = await sync_deployment_broker_state(db, row.id)
+        sync_result = await _sync_deployment_using_configured_transport(db, row)
         row = await get_deployment_or_404(db, deployment_id, current_user)
         decision = await evaluate_funded_guard(db, row, purpose="MANUAL_REFRESH", persist_decision=False, auto_pause_on_breach=True)
         await db.commit()

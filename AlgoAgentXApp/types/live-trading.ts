@@ -868,6 +868,97 @@ export interface LiveCandleSnapshot {
   candles: LiveMarketCandle[];
 }
 
+export interface LiveLatencyTrace {
+  id: string;
+  trace_id: string;
+  deployment_id: string;
+  broker_account_id?: string | null;
+  signal_id?: string | null;
+  order_id?: string | null;
+  candle_open_time: string;
+  expected_close_at: string;
+  provider: string;
+  environment?: string | null;
+  symbol: string;
+  timeframe: string;
+  source?: string | null;
+  status: string;
+  signal_type?: string | null;
+  error_message?: string | null;
+  timeline: Record<string, string | null>;
+  metrics: Record<string, number>;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface LiveLatencyRollupItem {
+  count: number;
+  p50?: number | null;
+  p95?: number | null;
+  min?: number | null;
+  max?: number | null;
+}
+
+export interface LiveLatencyResponse {
+  latest?: LiveLatencyTrace | null;
+  recent: LiveLatencyTrace[];
+  rollup: Record<string, LiveLatencyRollupItem>;
+  sample_size: number;
+}
+
+export interface LiveWorkerHealth {
+  role?: string;
+  worker_id?: string;
+  status?: string;
+  heartbeat_at?: string;
+  last_error?: string | null;
+  feeds?: number;
+  feed_deployments?: string[];
+  connections?: Record<string, {
+    environment?: string;
+    state?: string;
+    connected?: boolean;
+    connected_at?: string | null;
+    last_rx_at?: string | null;
+    last_tx_at?: string | null;
+    reconnect_count?: number;
+    last_connection_error?: string | null;
+    authorized_accounts?: number;
+    trendbar_subscriptions?: number;
+  }>;
+  [key: string]: unknown;
+}
+
+export interface LivePipelineHealth {
+  event_pipeline_enabled: boolean;
+  market_worker_enabled: boolean;
+  strategy_stream_enabled: boolean;
+  reconcile_worker_enabled: boolean;
+  persistent_ctrader_enabled: boolean;
+  legacy_runner_enabled: boolean;
+  deployment_running: boolean;
+  auto_runner_enabled: boolean;
+  auto_trade_enabled: boolean;
+  workers: Record<string, LiveWorkerHealth | null>;
+  redis_available?: boolean;
+  disabled_flags?: string[];
+  deployment_environment?: string;
+  connection?: {
+    environment?: string;
+    state?: string;
+    connected?: boolean;
+    reconnect_count?: number;
+    [key: string]: unknown;
+  } | null;
+  redis_error?: string | null;
+  market_data?: {
+    stored_count?: number;
+    latest_candle_time?: string | null;
+    latest_source?: string | null;
+  };
+}
+
 export interface StrategyRunnerInfo {
   last_run_at?: string | null;
   last_candle_time?: string | null;

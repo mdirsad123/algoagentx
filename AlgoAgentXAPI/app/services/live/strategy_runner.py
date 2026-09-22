@@ -4,16 +4,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 import math
-import hashlib
 from uuid import UUID
 
 import pandas as pd
 from fastapi import HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from ...db.models import BrokerAccount, LiveOrder, LiveSignal, LiveTradeLog, Strategy, StrategyDeployment
+from ...core.redis_manager import redis_manager
 from ..strategy_registry import resolve_strategy
 from .execution_engine import execute_signal
 from .order_preview_service import build_live_order_preview
@@ -22,6 +22,8 @@ from .broker_candle_service import get_latest_closed_candles, load_live_candles_
 from .pnl_service import to_decimal
 from .runner_scheduler import calculate_next_runner_after_candle, calculate_next_runner_at, ensure_utc
 from ..live_trading.paper_position_manager import process_paper_positions_for_deployment
+from .live_latency_trace_service import LiveLatencyTraceService
+from .deployment_lock import try_deployment_xact_lock
 
 
 @dataclass
@@ -81,10 +83,13 @@ def _normalize_dt(value: Any) -> datetime:
         return datetime.now(timezone.utc)
 
 
-def _deployment_lock_key(deployment_id: UUID) -> int:
-    """Stable signed 64-bit key for PostgreSQL advisory transaction locks."""
-    digest = hashlib.sha256(str(deployment_id).encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], "big", signed=True)
+def _mark_candle_processed(deployment: StrategyDeployment, candle_time: datetime) -> None:
+    """Advance the durable cursor only after a candle completed successfully."""
+    current = getattr(deployment, "last_processed_candle_time", None)
+    if current is not None and current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    if current is None or candle_time > current:
+        deployment.last_processed_candle_time = candle_time
 
 
 async def _log(
@@ -583,7 +588,16 @@ async def run_full_dry_test_for_deployment(db: AsyncSession, deployment_id: UUID
     return {"success": True, "deployment_id": str(deployment.id), "strategy_name": canonical_name, "latest_candle_time": latest_candle_time.isoformat(), "signal": signal_type, "steps": steps, "entry_plan": entry_plan, "risk_preview": preview, "final_action": final_action, "message": f"Full dry test completed: {final_action.replace('_', ' ').title()}"}
 
 
-async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, execute: bool = True, *, refresh_broker_candles: bool = True) -> dict[str, Any]:
+async def run_strategy_for_deployment(
+    db: AsyncSession,
+    deployment_id: UUID,
+    execute: bool = True,
+    *,
+    refresh_broker_candles: bool = True,
+    candle_time: datetime | None = None,
+    trace_id: str | None = None,
+    event_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
     if deployment is None:
         raise HTTPException(status_code=404, detail="Deployment not found")
@@ -592,10 +606,10 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
     canonical_name: str | None = None
     latest_candle_time: datetime | None = None
     latest_symbol: str | None = None
+    latency_trace = LiveLatencyTraceService(redis_manager.client if redis_manager.is_available else None)
 
     try:
-        lock_key = _deployment_lock_key(deployment.id)
-        locked = (await db.execute(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": lock_key})).scalar()
+        locked = await try_deployment_xact_lock(db, deployment.id)
         if not locked:
             latest_log_message = "Another runner is already processing this deployment."
             await _log(db, deployment, "RUNNER_LOCK_SKIPPED", latest_log_message, "WARNING", {"deployment_id": str(deployment.id)})
@@ -616,7 +630,7 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
                 final_action="LOCK_SKIPPED",
             ).to_dict()
 
-        await _log(db, deployment, "RUNNER_STARTED", "Strategy runner started", metadata={"execute": execute})
+        await _log(db, deployment, "RUNNER_STARTED", "Strategy runner started", metadata={"execute": execute, "trace_id": trace_id, "event_context": event_context or {}})
         await _log(db, deployment, "LIVE_ENGINE_QA_STARTED", "Live engine final QA runner cycle started", metadata={"context": "runner", "execute": execute})
         mode = str(deployment.mode or "PAPER").upper()
         status = str(deployment.status or "").upper()
@@ -646,7 +660,13 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
                 refresh_warning = str(getattr(exc, "detail", None) or exc)
                 await _log(db, deployment, "RUNNER_CANDLE_REFRESH_WARNING", f"Broker candle refresh failed; using stored candles if available: {refresh_warning}", "WARNING", {"deployment_id": str(deployment.id), "instrument": deployment.instrument, "instrument_key": getattr(deployment, "instrument_key", None)})
 
-        candles = await load_live_candles_for_runner(db, deployment, limit=300)
+        authoritative_candle_time = _normalize_dt(candle_time) if candle_time is not None else None
+        candles = await load_live_candles_for_runner(
+            db,
+            deployment,
+            limit=300,
+            through_candle_time=authoritative_candle_time,
+        )
         if len(candles) < 20:
             detail = {
                 "ok": False,
@@ -670,12 +690,19 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
 
         latest_candle = candles[0]
         latest_candle_time = _normalize_dt(latest_candle.get("candle_time"))
+        if authoritative_candle_time is not None and latest_candle_time != authoritative_candle_time:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Authoritative closed candle is not available in PostgreSQL "
+                    f"(expected {authoritative_candle_time.isoformat()}, got {latest_candle_time.isoformat()})."
+                ),
+            )
         latest_close = to_decimal(latest_candle.get("close"))
         latest_symbol = str(latest_candle.get("symbol") or deployment.instrument)
         df = _candles_to_dataframe(candles)
         delay_seconds = 1
         deployment.last_runner_at = datetime.now(timezone.utc)
-        deployment.last_processed_candle_time = latest_candle_time
         deployment.next_run_at = calculate_next_runner_after_candle(latest_candle_time, deployment.timeframe, delay_seconds, now_utc=datetime.now(timezone.utc))
         await _log(
             db,
@@ -684,6 +711,7 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
             f"Loaded {len(df)} closed broker candles for strategy run",
             metadata={"latest_candle_time": latest_candle_time.isoformat(), "symbol": latest_symbol, "next_run_at": deployment.next_run_at.isoformat() if deployment.next_run_at else None},
         )
+        await latency_trace.mark(trace_id, "t6", status="STRATEGY_STARTED")
 
         strategy_params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
         strategy_class, params, canonical_name = resolve_strategy(strategy.id, strategy.name, strategy_params)
@@ -691,6 +719,7 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
         generated = _run_strategy_generate(strategy_instance)
         if generated is None or not isinstance(generated, pd.DataFrame) or generated.empty:
             raise HTTPException(status_code=400, detail="Strategy did not return a valid DataFrame")
+        await latency_trace.mark(trace_id, "t7", status="STRATEGY_FINISHED")
 
         signal_payload = extract_latest_signal_payload(generated)
         signal_type = str(signal_payload.get("signal_type") or "HOLD")
@@ -731,6 +760,7 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
         # signal counts stay useful for trading decisions.
         if signal_type == "HOLD":
             deployment.last_heartbeat_at = datetime.now(timezone.utc)
+            _mark_candle_processed(deployment, latest_candle_time)
             latest_log_message = "HOLD - no tradeable signal, not saved"
             await _log(
                 db,
@@ -760,6 +790,7 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
         duplicate = await _find_duplicate_engine_signal(db, deployment.id, latest_candle_time, signal_type, strategy_id=deployment.strategy_id, symbol=latest_symbol, timeframe=deployment.timeframe)
         if duplicate is not None:
             deployment.last_heartbeat_at = datetime.now(timezone.utc)
+            _mark_candle_processed(deployment, latest_candle_time)
             latest_log_message = "Duplicate tradeable signal ignored"
             await _log(
                 db,
@@ -787,6 +818,7 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
             ).to_dict()
 
         signal = LiveSignal(
+            trace_id=trace_id,
             deployment_id=deployment.id,
             user_id=deployment.user_id,
             strategy_id=deployment.strategy_id,
@@ -817,6 +849,8 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
                 "strategy_reward_points": signal_payload.get("strategy_reward_points"),
                 "signal_reason": signal_payload.get("signal_reason"),
                 "source_row": signal_payload.get("source_row") or {},
+                "trace_id": trace_id,
+                "event_context": event_context or {},
             },
             status="RECEIVED",
         )
@@ -824,9 +858,17 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
             async with db.begin_nested():
                 db.add(signal)
                 await db.flush()
+                await latency_trace.mark(
+                    trace_id,
+                    "t8",
+                    status="SIGNAL_PERSISTED",
+                    signal_id=str(signal.id),
+                    signal_type=signal_type,
+                )
         except IntegrityError:
             duplicate = await _find_duplicate_engine_signal(db, deployment.id, latest_candle_time, signal_type, strategy_id=deployment.strategy_id, symbol=latest_symbol, timeframe=deployment.timeframe)
             deployment.last_heartbeat_at = datetime.now(timezone.utc)
+            _mark_candle_processed(deployment, latest_candle_time)
             latest_log_message = "Duplicate tradeable signal blocked by DB idempotency guard"
             await _log(
                 db,
@@ -881,6 +923,7 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
                 {"signal_id": str(signal.id), "order_id": str(order.id) if order else None, "executed": executed},
             )
 
+        _mark_candle_processed(deployment, latest_candle_time)
         await db.commit()
         await db.refresh(signal)
         if order is not None:
@@ -906,11 +949,53 @@ async def run_strategy_for_deployment(db: AsyncSession, deployment_id: UUID, exe
 
     except HTTPException as exc:
         latest_log_message = str(exc.detail)
+        if candle_time is not None:
+            # Event work is retried from the Redis pending list. Rolling back
+            # its partial signal also keeps a retry from treating a failed
+            # candle as a completed duplicate.
+            await db.rollback()
+            deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
+            if deployment is not None:
+                await _log(db, deployment, "RUNNER_ERROR", latest_log_message, "ERROR", {"deployment_id": str(deployment_id)})
+                await db.commit()
+            raise
         await _log(db, deployment, "RUNNER_ERROR", latest_log_message, "ERROR", {"deployment_id": str(deployment.id)})
         await db.commit()
         raise
     except Exception as exc:
         latest_log_message = f"Strategy runner failed: {exc.__class__.__name__}: {str(exc)[:240]}"
+        if candle_time is not None:
+            await db.rollback()
+            deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
+            if deployment is not None:
+                await _log(db, deployment, "RUNNER_ERROR", latest_log_message, "ERROR", {"deployment_id": str(deployment_id)})
+                await db.commit()
+            raise HTTPException(status_code=500, detail=latest_log_message) from exc
         await _log(db, deployment, "RUNNER_ERROR", latest_log_message, "ERROR", {"deployment_id": str(deployment.id)})
         await db.commit()
         raise HTTPException(status_code=400, detail="Strategy runner failed. Check execution logs for details.") from exc
+
+
+async def run_strategy_for_candle(
+    db: AsyncSession,
+    deployment_id: UUID,
+    candle_time: datetime,
+    trace_id: str,
+    *,
+    execute: bool = True,
+    event_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run the existing strategy engine for one authoritative closed candle.
+
+    This is the Redis worker entry point.  Broker candle refresh is disabled so
+    no polling or second cTrader connection can enter the critical path.
+    """
+    return await run_strategy_for_deployment(
+        db,
+        deployment_id,
+        execute=execute,
+        refresh_broker_candles=False,
+        candle_time=candle_time,
+        trace_id=trace_id,
+        event_context=event_context,
+    )

@@ -11,6 +11,7 @@ from strategies.stock_burner_ema_9_20 import StockBurnerEMA920
 from strategies.trend_continuation_tce_adam import TrendContinuationTCE
 from strategies.simple_trendline import SimpleTrendlineStrategy
 from strategies.every_two_candle_color_demo import EveryTwoCandleColorDemoStrategy
+from strategies.every_candle_color_live_latency_test import EveryCandleColorLiveLatencyTestStrategy
 from strategies.xauusd_5m_resistance_rejection_v1 import XAUUSD5MResistanceRejectionV1
 
 
@@ -37,6 +38,11 @@ _REGISTRY: dict[str, StrategyRegistryEntry] = {
         EveryTwoCandleColorDemoStrategy,
         {"signal_every_n_candles": 2, "warmup_bars": 2, "signal_latest_candle": True},
         "Every 2 Candle Color Demo Strategy",
+    ),
+    "every_candle_color_live_latency_test": StrategyRegistryEntry(
+        EveryCandleColorLiveLatencyTestStrategy,
+        {"warmup_bars": 2, "doji_side": "BUY"},
+        "Every Candle Color Live Latency Test Strategy",
     ),
 }
 
@@ -70,7 +76,13 @@ def resolve_strategy(strategy_id: str | None, strategy_name: str | None, db_para
     haystack = f"{normalized_id} {normalized_name}".strip()
 
     key = None
-    if "resistance rejection" in haystack or "xauusd 5m resistance" in haystack:
+    if (
+        "every candle" in haystack
+        or "live latency test" in haystack
+        or ("latency" in haystack and "candle color" in haystack)
+    ):
+        key = "every_candle_color_live_latency_test"
+    elif "resistance rejection" in haystack or "xauusd 5m resistance" in haystack:
         key = "xauusd_5m_resistance_rejection_v1"
     elif (
         "every 2 candle" in haystack

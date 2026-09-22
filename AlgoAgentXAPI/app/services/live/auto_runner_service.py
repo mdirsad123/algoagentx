@@ -7,11 +7,11 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select, update, or_
+from sqlalchemy import func, select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import settings
-from ...db.models import LiveTradeLog, StrategyDeployment
+from ...db.models import BrokerAccount, BrokerProvider, LiveTradeLog, StrategyDeployment
 from ...db.session import async_session
 from .broker_candle_service import get_latest_closed_candles, refresh_deployment_candles
 from .runner_scheduler import calculate_next_runner_after_candle, calculate_next_runner_at, ensure_utc, latest_expected_closed_candle_open, utc_now
@@ -382,11 +382,25 @@ async def run_due_deployments(db: AsyncSession | None = None) -> dict[str, Any]:
 
     async with _RUNNER_SCAN_LOCK:
         try:
-            deployment_ids = (await session.execute(
-                select(StrategyDeployment.id).where(
+            query = select(StrategyDeployment.id).where(
                     StrategyDeployment.status == "RUNNING",
                     StrategyDeployment.auto_runner_enabled.is_(True),
-                ).order_by(StrategyDeployment.created_at.asc()).limit(100)
+                )
+            if settings.live_event_pipeline_enabled and settings.live_market_worker_enabled:
+                # The market worker owns cTrader feeds even during the
+                # market-only rollout phase. Keep the original scheduler alive
+                # for MT5, Upstox, and other brokers in the same API process.
+                provider = func.upper(func.coalesce(
+                    BrokerProvider.code, BrokerAccount.broker_code,
+                    BrokerAccount.broker_name, "MT5",
+                ))
+                query = (
+                    query.outerjoin(BrokerAccount, BrokerAccount.id == StrategyDeployment.broker_account_id)
+                    .outerjoin(BrokerProvider, BrokerProvider.id == BrokerAccount.broker_provider_id)
+                    .where(provider.notin_(("CTRADER", "CTRADER_API")))
+                )
+            deployment_ids = (await session.execute(
+                query.order_by(StrategyDeployment.created_at.asc()).limit(100)
             )).scalars().all()
 
             results: list[dict[str, Any]] = []

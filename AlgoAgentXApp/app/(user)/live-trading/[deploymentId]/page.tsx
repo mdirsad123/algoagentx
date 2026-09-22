@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Activity, Link2, Pause, Play, RefreshCw, Settings, ShieldCheck, Square } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Activity, Link2, RefreshCw, Settings, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -12,13 +12,29 @@ import { PageShell } from "@/components/ui/PageShell";
 import { OrderCalculationAuditPanel } from "@/components/live/OrderCalculationAuditPanel";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
-import type { BrokerAccount, LiveCandleSnapshot, FullDryTestResponse, LiveDeploymentSummary, LiveReadiness, LiveReadinessCheck, StrategyDeployment } from "@/types/live-trading";
+import axiosInstance from "@/lib/axios";
+import type { BrokerAccount, LiveCandleSnapshot, FullDryTestResponse, LiveDeploymentSummary, LiveLatencyResponse, LivePipelineHealth, LiveReadiness, LiveReadinessCheck, StrategyDeployment } from "@/types/live-trading";
 import { formatDateTimeIST } from "@/lib/timezone";
 
 const date = (value?: string | null) => formatDateTimeIST(value);
 const dateWithSeconds = (value?: string | null) => formatDateTimeIST(value, { seconds: true });
 const num = (value: unknown) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 const pct = (value: unknown) => value === null || value === undefined || value === "" ? "—" : `${(Number(value) * 100).toFixed(2)}%`;
+
+// Keep pipeline health independent from the large liveTradingApi object. Older
+// production bundles can briefly contain a stale copy of that object while the
+// deployment page itself is already on the new build, which previously caused
+// `getDeploymentPipelineHealth is not a function`. This direct client uses the
+// same authenticated axios instance and the same backend route, so health UI can
+// recover cleanly even during a mixed/stale browser bundle transition.
+const getDeploymentPipelineHealthDirect = async (deploymentId: string): Promise<LivePipelineHealth> => {
+  const response = await axiosInstance.get(`/api/v1/live/deployments/${deploymentId}/pipeline-health`);
+  const payload = response.data as { success?: boolean; data?: LivePipelineHealth } | LivePipelineHealth;
+  if (payload && typeof payload === "object" && "success" in payload) {
+    return ((payload as { data?: LivePipelineHealth }).data ?? {}) as LivePipelineHealth;
+  }
+  return payload as LivePipelineHealth;
+};
 
 const openedAtDisplay = (p: { opened_at?: string | null; broker_opened_at?: string | null; broker_opened_at_raw?: string | null }) => {
   const broker = p.broker_opened_at ? date(p.broker_opened_at) : p.broker_opened_at_raw || null;
@@ -60,7 +76,53 @@ function StatusBadge({ value }: { value?: string }) {
 }
 
 function MetricCard({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-xl border border-white/10 bg-white/5 p-4"><p className="text-xs text-purple-300">{label}</p><p className="mt-2 text-2xl font-bold text-white">{value}</p></div>;
+  return (
+    <div className="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-white/5 p-4">
+      <p className="text-xs leading-4 text-purple-300 break-words [overflow-wrap:anywhere]">{label}</p>
+      <p
+        className="mt-2 min-w-0 break-words text-lg font-bold leading-tight text-white sm:text-xl [overflow-wrap:anywhere] 2xl:text-2xl"
+        title={value}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+
+function ControlToggle({
+  label,
+  active,
+  disabled,
+  onClick,
+  tone = "lime",
+}: {
+  label: string;
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  tone?: "lime" | "yellow" | "red" | "cyan" | "fuchsia";
+}) {
+  // All enabled/active controls use the same green state so the operator can
+  // scan the runner toolbar instantly. The inactive state intentionally stays
+  // neutral/dim. `tone` is kept in the API for backward compatibility.
+  void tone;
+  const activeClass = "border-emerald-400/60 bg-emerald-500/25 text-emerald-50 shadow-[0_0_0_1px_rgba(52,211,153,0.10)]";
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={active}
+      disabled={disabled}
+      onClick={onClick}
+      className={`inline-flex h-9 items-center gap-2 rounded-full border px-3 text-xs font-semibold transition ${active ? activeClass : "border-white/10 bg-white/5 text-purple-200 hover:bg-white/10"} disabled:cursor-not-allowed disabled:opacity-40`}
+    >
+      <span className={`relative h-4 w-7 rounded-full ${active ? "bg-white/25" : "bg-slate-950/40"}`}>
+        <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${active ? "left-3.5" : "left-0.5"}`} />
+      </span>
+      {label}
+    </button>
+  );
 }
 
 
@@ -78,11 +140,11 @@ function readinessTheme(status?: string) {
 
 function LiveFlowPanel() {
   const steps = [
-    "Refresh candles",
-    "Strategy checks latest closed candle",
-    "If signal is BUY/SELL, risk engine calculates lot/qty",
-    "Order is sent to the connected broker account",
-    "Position is monitored and synced",
+    "Persistent broker stream receives a closed candle",
+    "Candle is stored and published through Redis",
+    "Strategy, safety and risk checks run",
+    "Order is sent on the persistent broker session",
+    "Broker ACK/fill and positions are synchronized",
   ];
   return (
     <GlassCard className="mb-6 p-6" hoverEffect={false}>
@@ -108,6 +170,108 @@ function LiveFlowPanel() {
         <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">Dry Run</span> tests strategy signal without placing order.</div>
         <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">DEMO mode</span> sends orders to your connected demo broker.</div>
         <div className="rounded-xl border border-white/10 bg-white/5 p-4"><span className="font-semibold text-white">LIVE mode</span> sends orders only after broker connection, readiness, and safety checks pass.</div>
+      </div>
+    </GlassCard>
+  );
+}
+
+function LivePipelineCard({ latency, health, healthError }: { latency: LiveLatencyResponse | null; health: LivePipelineHealth | null; healthError?: string }) {
+  const latest = latency?.latest;
+  const timeline = latest?.timeline || {};
+  const t0 = timeline.t0_expected_close_at ? new Date(timeline.t0_expected_close_at).getTime() : null;
+  const offset = (field: string) => {
+    const value = timeline[field];
+    if (!value || t0 === null) return "Pending";
+    return `+${Math.max(0, new Date(value).getTime() - t0).toLocaleString()} ms`;
+  };
+  const metric = (key: string, percentile: "p50" | "p95") => {
+    const value = latency?.rollup?.[key]?.[percentile];
+    return value === null || value === undefined ? "—" : `${Number(value).toFixed(1)} ms`;
+  };
+  const market = health?.workers?.live_market_worker;
+  const strategy = health?.workers?.live_strategy_worker;
+  const reconcile = health?.workers?.live_reconcile_worker;
+  const connections = market?.connections || {};
+  const connection = health?.connection || Object.values(connections)[0];
+  const flagsEnabled = Boolean(
+    health?.event_pipeline_enabled
+      && health?.market_worker_enabled
+      && health?.strategy_stream_enabled
+      && health?.reconcile_worker_enabled
+      && health?.persistent_ctrader_enabled
+  );
+  const marketStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.market_worker_enabled ? "DISABLED" : market?.status || "OFFLINE";
+  const strategyStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.strategy_stream_enabled ? "DISABLED" : strategy?.status || "OFFLINE";
+  const reconcileStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.reconcile_worker_enabled ? "DISABLED" : reconcile?.status || "OFFLINE";
+  const connectionStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.persistent_ctrader_enabled ? "DISABLED" : connection?.state || "OFFLINE";
+  const eventMode = Boolean(
+    flagsEnabled
+      && [marketStatus, strategyStatus, reconcileStatus].every((value) => value === "HEALTHY" || value === "DEGRADED")
+      && connectionStatus === "CONNECTED"
+  );
+  const disabledFlags = health ? [
+    !health.event_pipeline_enabled && "LIVE_EVENT_PIPELINE_ENABLED",
+    !health.market_worker_enabled && "LIVE_MARKET_WORKER_ENABLED",
+    !health.strategy_stream_enabled && "LIVE_STRATEGY_STREAM_ENABLED",
+    !health.reconcile_worker_enabled && "LIVE_RECONCILE_WORKER_ENABLED",
+    !health.persistent_ctrader_enabled && "CTRADER_PERSISTENT_CONNECTION_ENABLED",
+  ].filter(Boolean) as string[] : [];
+  const statusClass = (value?: string) => value === "HEALTHY" || value === "CONNECTED" ? "text-lime-200" : value === "DISABLED" ? "text-yellow-200" : value === "CHECKING" ? "text-purple-200" : value ? "text-amber-200" : "text-red-200";
+
+  return (
+    <GlassCard className="mb-6 p-6" hoverEffect={false}>
+      <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
+        <div>
+          <div className="flex items-center gap-2"><Activity className="h-5 w-5 text-cyan-300" /><h2 className="text-xl font-bold text-white">Connection & End-to-End Latency</h2></div>
+          <p className="mt-1 text-sm text-purple-200">Observer-only diagnostics. The browser is not part of the candle → strategy → order path.</p>
+        </div>
+        <Badge className={eventMode ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : !health ? "border-purple-400/30 bg-purple-400/20 text-purple-100" : "border-yellow-400/30 bg-yellow-400/20 text-yellow-100"}>
+          {eventMode ? "EVENT PIPELINE ACTIVE" : !health ? "HEALTH CHECK PENDING" : disabledFlags.length ? "EVENT PIPELINE DISABLED" : "EVENT PIPELINE STARTING / DEGRADED"}
+        </Badge>
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+        <MetricCard label={`cTrader ${connection?.environment || health?.deployment_environment || ""}`.trim()} value={connectionStatus} />
+        <MetricCard label="Market Worker" value={marketStatus} />
+        <MetricCard label="Strategy Worker" value={strategyStatus} />
+        <MetricCard label="Reconcile Worker" value={reconcileStatus} />
+        <MetricCard label="Close → Send p50" value={metric("close_to_order_send_ms", "p50")} />
+        <MetricCard label="Close → Send p95" value={metric("close_to_order_send_ms", "p95")} />
+      </div>
+      {healthError && (
+        <div className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">
+          Pipeline health API error: <span className="font-semibold">{healthError}</span>. The worker containers may still be running; check the API build/route and Redis heartbeat keys.
+        </div>
+      )}
+      {disabledFlags.length > 0 && (
+        <div className="mt-4 rounded-xl border border-yellow-400/30 bg-yellow-500/10 p-3 text-sm text-yellow-100">
+          Docker containers may be running but these workers are intentionally idle because API environment flags are OFF: <span className="font-semibold">{disabledFlags.join(", ")}</span>. Set them to true in <code>.env.prod</code> and recreate API + live workers.
+        </div>
+      )}
+      {health && disabledFlags.length === 0 && !eventMode && (
+        <div className="mt-4 rounded-xl border border-amber-400/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+          Event flags are enabled, but the runtime is not fully healthy yet. Market feeds: <span className="font-semibold">{String(market?.feeds ?? 0)}</span>.
+          {health.redis_error ? <span> Redis health read: <span className="font-semibold">{String(health.redis_error)}</span>.</span> : null}
+          {market?.last_error ? <span> Market worker: <span className="font-semibold">{String(market.last_error)}</span>.</span> : null}
+          {strategy?.last_error ? <span> Strategy worker: <span className="font-semibold">{String(strategy.last_error)}</span>.</span> : null}
+          {reconcile?.last_error ? <span> Reconcile worker: <span className="font-semibold">{String(reconcile.last_error)}</span>.</span> : null}
+        </div>
+      )}
+      <div className="mt-4 grid grid-cols-2 gap-2 text-sm md:grid-cols-4 xl:grid-cols-7">
+        {[
+          ["Broker event", "t1_broker_event_received_at"],
+          ["DB stored", "t3_candle_db_commit_at"],
+          ["Strategy start", "t6_strategy_started_at"],
+          ["Signal ready", "t8_signal_persisted_at"],
+          ["Order sent", "t12_order_request_sent_at"],
+          ["Broker accepted", "t13_broker_order_accepted_at"],
+          ["Filled", "t14_broker_fill_received_at"],
+        ].map(([label, field]) => <div key={field} className="rounded-xl border border-white/10 bg-white/5 p-3"><p className="text-xs text-purple-300">{label}</p><p className="mt-1 font-semibold text-white">{offset(field)}</p></div>)}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-purple-200">
+        <span>Trace: <span className="text-white">{latest?.trace_id || "No completed candle trace yet"}</span></span>
+        <span>Status: <span className={statusClass(latest?.status)}>{latest?.status || "WAITING"}</span></span>
+        <span>Reconnects: <span className="text-white">{connection?.reconnect_count ?? 0}</span></span>
+        <span>Close → fill p50/p95: <span className="text-white">{metric("close_to_fill_ms", "p50")} / {metric("close_to_fill_ms", "p95")}</span></span>
       </div>
     </GlassCard>
   );
@@ -168,6 +332,9 @@ export default function LiveDeploymentDetailPage() {
   const [summary, setSummary] = useState<LiveDeploymentSummary | null>(null);
   const [readiness, setReadiness] = useState<LiveReadiness | null>(null);
   const [candleSnapshot, setCandleSnapshot] = useState<LiveCandleSnapshot | null>(null);
+  const [latency, setLatency] = useState<LiveLatencyResponse | null>(null);
+  const [pipelineHealth, setPipelineHealth] = useState<LivePipelineHealth | null>(null);
+  const [pipelineHealthError, setPipelineHealthError] = useState("");
   const [brokerAccounts, setBrokerAccounts] = useState<BrokerAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -180,6 +347,12 @@ export default function LiveDeploymentDetailPage() {
   const [showSignals, setShowSignals] = useState(false);
   const [showOrders, setShowOrders] = useState(false);
   const [showAdvancedDiagnostics, setShowAdvancedDiagnostics] = useState(false);
+  // Runtime resources are polled independently. One slow endpoint (for example
+  // latency/health during broker recovery) must never freeze candle/summary UI.
+  // The generation changes after a mutation so older responses cannot overwrite
+  // Start/Auto Runner/Auto Trade changes.
+  const runtimeGeneration = useRef(0);
+  const runtimeInFlight = useRef<Record<string, number>>({});
 
   const metrics = summary?.metrics;
   const broker = summary?.broker;
@@ -188,6 +361,16 @@ export default function LiveDeploymentDetailPage() {
   const openPositions = summary?.open_positions || [];
   const recentLogs = summary?.recent_logs || [];
   const latestCandles = candleSnapshot?.candles?.slice(0, 5) || [];
+  const marketWorkerHealth = pipelineHealth?.workers?.live_market_worker;
+  const marketFeedCount = Number(marketWorkerHealth?.feeds ?? 0);
+  const healthStoredCandleCount = Number(pipelineHealth?.market_data?.stored_count ?? 0);
+  const marketSnapshotEmptyMessage = healthStoredCandleCount > 0
+    ? `Database health reports ${healthStoredCandleCount} stored candle${healthStoredCandleCount === 1 ? "" : "s"}, but this snapshot has not refreshed yet. The independent candle poll will retry automatically; Refresh also forces an immediate read.`
+    : pipelineHealth && marketFeedCount === 0
+      ? "Market worker has no registered feed for this deployment yet. Keep the deployment RUNNING, Auto Runner ON, cTrader CONNECTED, and verify the market worker health/error above."
+      : marketWorkerHealth?.last_error
+        ? `Market worker has not stored a candle yet. Current worker error: ${String(marketWorkerHealth.last_error)}`
+        : "No broker candles stored yet. The cTrader live feed stays subscribed even if historical bootstrap temporarily fails and will retry automatically. You can also use Refresh Candles for a manual bootstrap check.";
   const currency = broker?.currency || metrics?.account_currency || metrics?.currency || null;
   const isRunning = (summary?.deployment?.status || deployment?.status) === "RUNNING";
   const mode = summary?.deployment?.mode || deployment?.mode;
@@ -204,24 +387,104 @@ export default function LiveDeploymentDetailPage() {
     [brokerAccounts]
   );
 
+  const loadRuntime = async (silent = false) => {
+    if (!deploymentId) return;
+    const generation = runtimeGeneration.current;
+
+    const runResource = async <T,>(
+      key: string,
+      request: () => Promise<T>,
+      apply: (value: T) => void,
+      errorLabel: string,
+      onError?: (message: string) => void,
+    ) => {
+      // Do not overlap the same poll within one generation. A mutation creates a
+      // new generation and is allowed to issue a fresh request immediately.
+      if (runtimeInFlight.current[key] === generation) return;
+      runtimeInFlight.current[key] = generation;
+      try {
+        const value = await request();
+        if (generation === runtimeGeneration.current) apply(value);
+      } catch (error: any) {
+        const message = error?.message || errorLabel;
+        if (generation === runtimeGeneration.current) onError?.(message);
+        if (!silent && generation === runtimeGeneration.current) {
+          showToast(message, "error");
+        }
+      } finally {
+        if (runtimeInFlight.current[key] === generation) {
+          delete runtimeInFlight.current[key];
+        }
+      }
+    };
+
+    // Apply each response as soon as it arrives. Previously Promise.all waited
+    // for the slowest call, and the 5-second poll could repeatedly invalidate
+    // the entire batch. That left Pipeline Health on CHECKING and the Market
+    // Data Snapshot stuck at its old zero-candle value even while trades ran.
+    await Promise.allSettled([
+      runResource(
+        "summary",
+        () => liveTradingApi.getDeploymentSummary(deploymentId, { refreshBroker: false }),
+        setSummary,
+        "Failed to load deployment summary",
+      ),
+      runResource(
+        "candles",
+        () => liveTradingApi.getDeploymentCandles(deploymentId, 20),
+        setCandleSnapshot,
+        "Failed to load market candles",
+      ),
+      runResource(
+        "latency",
+        () => liveTradingApi.getDeploymentLatency(deploymentId, 50),
+        setLatency,
+        "Failed to load live latency",
+      ),
+      runResource(
+        "pipelineHealth",
+        getDeploymentPipelineHealthDirect.bind(null, deploymentId),
+        (value) => { setPipelineHealth(value); setPipelineHealthError(""); },
+        "Failed to load pipeline health",
+        setPipelineHealthError,
+      ),
+    ]);
+  };
+
   const loadSummary = async (silent = false) => {
     if (!deploymentId) return;
     try {
       if (!silent) setLoading(true);
-      const [d, sm, accounts, candles, ready] = await Promise.all([
-        liveTradingApi.getDeployment(deploymentId),
-        liveTradingApi.getDeploymentSummary(deploymentId, { refreshBroker: false }),
-        liveTradingApi.listBrokerAccounts(),
-        liveTradingApi.getDeploymentCandles(deploymentId, 5).catch(() => null),
-        liveTradingApi.getDeploymentReadiness(deploymentId).catch(() => null),
-      ]);
+
+      // A newly-created deployment can briefly race navigation/DB visibility.
+      // Retry the primary deployment read instead of flashing a false "No record found".
+      let d: StrategyDeployment | null = null;
+      let lastError: any = null;
+      const attempts = silent ? 1 : 6;
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        try {
+          d = await liveTradingApi.getDeployment(deploymentId);
+          break;
+        } catch (error: any) {
+          lastError = error;
+          if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, 500 + attempt * 250));
+        }
+      }
+      if (!d) throw lastError || new Error("Deployment is not available yet");
+
       setDeployment(d);
-      setSummary(sm);
-      setBrokerAccounts(accounts);
-      if (ready) setReadiness(ready);
-      if (candles) setCandleSnapshot(candles);
+
+      // Optional/readiness calls must never make an existing deployment look missing.
+      const [accountsResult, readyResult] = await Promise.allSettled([
+        liveTradingApi.listBrokerAccounts(),
+        liveTradingApi.getDeploymentReadiness(deploymentId),
+      ]);
+      if (accountsResult.status === "fulfilled") setBrokerAccounts(accountsResult.value);
+      if (readyResult.status === "fulfilled") setReadiness(readyResult.value);
+
+      await loadRuntime(true);
     } catch (error: any) {
-      showToast(error.message || "Failed to load deployment summary", "error");
+      if (!silent) showToast(error.message || "Failed to load deployment summary", "error");
     } finally {
       if (!silent) setLoading(false);
     }
@@ -305,7 +568,7 @@ export default function LiveDeploymentDetailPage() {
 
   useEffect(() => {
     if (!deploymentId) return;
-    const timer = setInterval(() => loadSummary(true), 5000);
+    const timer = setInterval(() => loadRuntime(true), 5000);
     return () => clearInterval(timer);
   }, [deploymentId]);
 
@@ -319,9 +582,16 @@ export default function LiveDeploymentDetailPage() {
     if (!deploymentId) return;
     try {
       setBusy(true);
-      if (type === "start") await liveTradingApi.startDeployment(deploymentId);
-      if (type === "pause") await liveTradingApi.pauseDeployment(deploymentId);
-      if (type === "stop") await liveTradingApi.stopDeployment(deploymentId);
+      let updated: StrategyDeployment;
+      if (type === "start") updated = await liveTradingApi.startDeployment(deploymentId);
+      else if (type === "pause") updated = await liveTradingApi.pauseDeployment(deploymentId);
+      else updated = await liveTradingApi.stopDeployment(deploymentId);
+
+      runtimeGeneration.current += 1;
+      // Update the visible state immediately from the successful action response;
+      // the background refresh then fills broker/runtime details without leaving DRAFT stale.
+      setDeployment(updated);
+      setSummary((previous) => previous ? { ...previous, deployment: { ...previous.deployment, ...updated } } : previous);
       showToast(`Deployment ${type} action completed`, "success");
       await loadSummary(true);
     } catch (error: any) {
@@ -342,9 +612,12 @@ export default function LiveDeploymentDetailPage() {
           return;
         }
       }
-      await liveTradingApi.updateDeployment(deploymentId, { auto_trade_enabled: enabled });
+      runtimeGeneration.current += 1;
+      const updated = await liveTradingApi.updateDeployment(deploymentId, { auto_trade_enabled: enabled });
+      setDeployment(updated);
+      setSummary((previous) => previous ? { ...previous, deployment: { ...previous.deployment, ...updated } } : previous);
       showToast(enabled ? "Auto Trade enabled" : "Auto Trade disabled", "success");
-      await loadSummary(true);
+      await loadRuntime(true);
     } catch (error: any) {
       showToast(error.message || "Failed to update Auto Trade", "error");
     } finally {
@@ -381,14 +654,22 @@ export default function LiveDeploymentDetailPage() {
     if (!deploymentId) return;
     try {
       setRunnerBusy(true);
-      if (action === "enable") await liveTradingApi.enableAutoRunner(deploymentId);
-      if (action === "disable") await liveTradingApi.disableAutoRunner(deploymentId);
+      runtimeGeneration.current += 1;
+      if (action === "enable" || action === "disable") {
+        const updated = action === "enable"
+          ? await liveTradingApi.enableAutoRunner(deploymentId)
+          : await liveTradingApi.disableAutoRunner(deploymentId);
+        // Apply the mutation response immediately. This removes the visible
+        // ON-toast/OFF-toggle race caused by an older 5-second poll finishing late.
+        setDeployment(updated);
+        setSummary((previous) => previous ? { ...previous, deployment: { ...previous.deployment, ...updated } } : previous);
+      }
       if (action === "run-now") {
         const result = await liveTradingApi.runAutoRunnerNow(deploymentId);
         setRunnerResult(String(result.message || result.reason || "Auto runner checked"));
       }
       showToast(action === "enable" ? "Auto runner enabled" : action === "disable" ? "Auto runner disabled" : "Auto runner tick completed", "success");
-      await loadSummary(true);
+      await loadRuntime(true);
     } catch (error: any) {
       showToast(error.message || "Auto runner action failed", "error");
     } finally {
@@ -402,7 +683,8 @@ export default function LiveDeploymentDetailPage() {
   const subtitle = `${summary?.deployment?.strategy_name || deployment?.strategy_id || "Strategy"} • ${summary?.deployment?.instrument || deployment?.instrument || "—"} • ${summary?.deployment?.timeframe || deployment?.timeframe || "—"}`;
 
   if (loading) return <PageShell><GlassCard className="p-6 text-purple-100">Loading deployment...</GlassCard></PageShell>;
-  if (!deployment || !summary) return <PageShell><NoRows label="No record found" /></PageShell>;
+  if (!deployment) return <PageShell><NoRows label="Deployment not available. Refresh once if it was just created; otherwise it may have been deleted." /></PageShell>;
+  if (!summary) return <PageShell><GlassCard className="p-6 text-purple-100">Deployment loaded. Waiting for live runtime status...</GlassCard></PageShell>;
 
   return (
     <PageShell>
@@ -461,13 +743,20 @@ export default function LiveDeploymentDetailPage() {
             <h2 className="text-xl font-bold text-lime-300">Strategy Runner</h2>
             <p className="mt-1 max-w-2xl text-sm text-purple-200">Runs the selected strategy on the latest closed broker candles. Auto Trade only places orders after the live engine status and risk checks pass.</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button disabled={busy || isPaperDeprecated} onClick={() => action("start")} className="gap-2 bg-lime-500 text-slate-950 hover:bg-lime-400"><Play className="h-4 w-4" />Start</Button>
-            <Button disabled={busy} onClick={() => action("pause")} className="gap-2 bg-yellow-500 text-slate-950 hover:bg-yellow-400"><Pause className="h-4 w-4" />Pause</Button>
-            <Button disabled={busy} onClick={() => action("stop")} variant="outline" className="gap-2 border-red-400/30 bg-red-500/10 text-red-100 hover:bg-red-500/20"><Square className="h-4 w-4" />Stop</Button>
-            <Button disabled={runnerBusy || !isRunning || !summary.deployment?.auto_trade_enabled} onClick={() => autoRunnerAction("run-now")} variant="outline" className="gap-2 border-cyan-400/30 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/20"><RefreshCw className="h-4 w-4" />Run Strategy Once</Button>
-            <Button disabled={busy} onClick={() => toggleAutoTrade(!summary.deployment?.auto_trade_enabled)} className="gap-2 bg-fuchsia-500 text-white hover:bg-fuchsia-400">{summary.deployment?.auto_trade_enabled ? "Disable Auto Trade" : "Enable Auto Trade"}</Button>
-            <Button disabled={runnerBusy || !isRunning || !summary.deployment?.auto_trade_enabled} onClick={() => autoRunnerAction(summary.deployment?.auto_runner_enabled ? "disable" : "enable")} className="gap-2 bg-emerald-500 text-slate-950 hover:bg-emerald-400">{summary.deployment?.auto_runner_enabled ? "Disable Auto Runner" : "Enable Auto Runner"}</Button>
+          <div className="flex max-w-3xl flex-wrap justify-end gap-2 rounded-2xl border border-white/10 bg-slate-950/20 p-2">
+            <ControlToggle label="Start" active={isRunning} disabled={busy || isPaperDeprecated} onClick={() => action("start")} tone="lime" />
+            <ControlToggle label="Pause" active={(summary.deployment?.status || deployment.status) === "PAUSED"} disabled={busy} onClick={() => action("pause")} tone="yellow" />
+            <ControlToggle label="Stop" active={(summary.deployment?.status || deployment.status) === "STOPPED"} disabled={busy} onClick={() => action("stop")} tone="red" />
+            <ControlToggle label="Auto Trade" active={Boolean(summary.deployment?.auto_trade_enabled)} disabled={busy} onClick={() => toggleAutoTrade(!summary.deployment?.auto_trade_enabled)} tone="fuchsia" />
+            <ControlToggle label="Auto Runner" active={Boolean(summary.deployment?.auto_runner_enabled)} disabled={runnerBusy || !isRunning || !summary.deployment?.auto_trade_enabled} onClick={() => autoRunnerAction(summary.deployment?.auto_runner_enabled ? "disable" : "enable")} tone="lime" />
+            <button
+              type="button"
+              disabled={runnerBusy || !isRunning || !summary.deployment?.auto_trade_enabled}
+              onClick={() => autoRunnerAction("run-now")}
+              className="inline-flex h-9 items-center gap-2 rounded-full border border-cyan-400/40 bg-cyan-400/10 px-3 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />Run Once
+            </button>
           </div>
         </div>
         <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -486,9 +775,11 @@ export default function LiveDeploymentDetailPage() {
           <Badge className={summary.deployment?.auto_runner_enabled ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : "border-yellow-400/30 bg-yellow-400/20 text-yellow-100"}>Auto Runner {summary.deployment?.auto_runner_enabled ? "ON" : "OFF"}</Badge>
           <span className="text-sm text-purple-200">Last signal: {date(summary.deployment?.last_signal_at || deployment.last_signal_at)}</span>
         </div>
-        <p className="mt-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3 text-xs text-cyan-100">Auto Runner starts fetching the just-closed broker candle at about +1s, retries every 1s for up to 20 broker refresh attempts, and runs the strategy immediately when that exact closed candle is available.</p>
+        <p className="mt-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3 text-xs text-cyan-100">In event mode, the persistent cTrader stream publishes each closed candle immediately; +3s/+8s historical requests are recovery only. The legacy scheduler remains available behind rollout flags.</p>
         {runnerResult && <p className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-purple-100">Latest runner log: {runnerResult}</p>}
       </GlassCard>
+
+      <LivePipelineCard latency={latency} health={pipelineHealth} healthError={pipelineHealthError} />
 
       <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-7">
         <MetricCard label="Equity" value={formatMoney(metrics?.equity ?? metrics?.effective_capital ?? deployment.capital, currency)} />
@@ -599,14 +890,14 @@ export default function LiveDeploymentDetailPage() {
           )}
 
           <GlassCard className="mb-6 p-6" hoverEffect={false}>
-            <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
-              <div>
+            <div className="flex min-w-0 flex-col justify-between gap-3 lg:flex-row lg:items-center">
+              <div className="min-w-0">
                 <h2 className="text-xl font-bold text-lime-300">Market Data Snapshot</h2>
                 <p className="mt-1 text-sm text-purple-200">Latest closed candles stored from the connected broker for the live strategy runner. No chart and no fake data.</p>
               </div>
               <Button disabled={candleBusy || !["DEMO", "LIVE"].includes(mode) || !broker || broker.status !== "CONNECTED"} onClick={refreshCandles} className="gap-2 bg-cyan-500 text-slate-950 hover:bg-cyan-400"><RefreshCw className="h-4 w-4" /> Refresh Candles</Button>
             </div>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4 xl:grid-cols-8">
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
               <MetricCard label="Data Source" value={candleSource} />
               <MetricCard label="Deployment Symbol" value={candleSnapshot?.symbol || summary.deployment?.instrument || deployment.instrument} />
               <MetricCard label={isUpstoxBroker ? "Instrument Key" : "Broker Symbol"} value={candleSnapshot?.instrument_key || candleSnapshot?.resolved_symbol || deployment.instrument_key || deployment.broker_symbol || candleSnapshot?.symbol || summary.deployment?.instrument || deployment.instrument} />
@@ -623,7 +914,7 @@ export default function LiveDeploymentDetailPage() {
               <span className="mx-2 text-purple-400">•</span>
               Next close expected: <span className="font-semibold text-white">{date(candleSnapshot?.next_closed_candle_expected_at)}</span>
             </div>
-            {latestCandles.length === 0 ? <div className="mt-4"><NoRows label="No broker candles stored yet. Check the selected broker symbol/account and refresh candles. MT5 users may also need Market Watch → Show All and the symbol chart opened once." /></div> : (
+            {latestCandles.length === 0 ? <div className="mt-4"><NoRows label={marketSnapshotEmptyMessage} /></div> : (
               <div className="responsive-table-wrapper mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="text-purple-200"><tr><th>Time</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody className="divide-y divide-white/10">{latestCandles.map((candle, index) => <tr key={candle.id || `${candle.candle_time}-${index}`} className="text-purple-50"><td className="py-3">{date(candle.candle_time)}</td><td>{num(candle.open)}</td><td>{num(candle.high)}</td><td>{num(candle.low)}</td><td>{num(candle.close)}</td><td>{num(candle.volume)}</td></tr>)}</tbody></table></div>
             )}
           </GlassCard>
