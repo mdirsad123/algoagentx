@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 
-title AlgoAgentX - PROD Database Backup to Oracle
+title AlgoAgentX - LOCAL PROD to ORACLE PROD Database Restore
 
 :: ============================================================
-:: AlgoAgentX PROD Database Backup + Oracle Restore
+:: AlgoAgentX LOCAL PROD Backup + ORACLE PROD Restore
 :: ============================================================
 
 set "PROJECT=D:\Stock_market\algoagentx"
@@ -135,73 +135,73 @@ if not exist "%BACKUP_DIR%" (
 
 echo.
 echo ============================================================
-echo [1/5] Taking backup from LOCAL PROD database
+echo [1/6] Taking backup from LOCAL PROD database
 echo ============================================================
 echo.
 
-docker exec -t %LOCAL_CONTAINER% ^
-pg_dump ^
--U %DB_USER% ^
--d %DB_NAME% ^
--F c ^
--b ^
--v ^
--f "/tmp/!BACKUP_FILE!"
+docker exec -t %LOCAL_CONTAINER% pg_dump -U %DB_USER% -d %DB_NAME% -F c -b -v -f "/tmp/!BACKUP_FILE!"
 
 if errorlevel 1 goto ERROR
 
 
 echo.
 echo ============================================================
-echo [2/5] Copying PROD backup from Docker to Windows
+echo [2/6] Copying PROD backup from Docker to Windows
 echo ============================================================
 echo.
 
-docker cp ^
-%LOCAL_CONTAINER%:/tmp/!BACKUP_FILE! ^
-"!LOCAL_BACKUP!"
+docker cp "%LOCAL_CONTAINER%:/tmp/!BACKUP_FILE!" "!LOCAL_BACKUP!"
 
 if errorlevel 1 goto ERROR
 
 
 echo.
 echo ============================================================
-echo [3/5] Uploading Windows backup to Oracle Ubuntu
+echo [3/6] Connecting to Oracle Ubuntu and preparing backup folder
 echo ============================================================
 echo.
 
-scp ^
--i "%KEY%" ^
-"!LOCAL_BACKUP!" ^
-"%SERVER%:!REMOTE_BACKUP!"
+echo Connecting to:
+echo %SERVER%
+echo.
+echo Remote project:
+echo %REMOTE_PROJECT%
+echo.
+
+ssh -i "%KEY%" %SERVER% "mkdir -p '%REMOTE_BACKUP_DIR%' && cd '%REMOTE_PROJECT%' && echo Connected to Oracle Ubuntu && echo Current directory: && pwd"
 
 if errorlevel 1 goto ERROR
 
 
 echo.
 echo ============================================================
-echo [4/5] Copying Oracle backup into PROD Docker container
+echo [4/6] Uploading Windows backup to Oracle Ubuntu
 echo ============================================================
 echo.
 
-ssh ^
--i "%KEY%" ^
-%SERVER% ^
-"docker cp '!REMOTE_BACKUP!' %REMOTE_CONTAINER%:/tmp/!BACKUP_FILE!"
+scp -i "%KEY%" "!LOCAL_BACKUP!" "%SERVER%:!REMOTE_BACKUP!"
 
 if errorlevel 1 goto ERROR
 
 
 echo.
 echo ============================================================
-echo [5/5] Restoring backup into Oracle PROD database
+echo [5/6] Copying Oracle backup into PROD Docker container
 echo ============================================================
 echo.
 
-ssh ^
--i "%KEY%" ^
-%SERVER% ^
-"docker exec -i %REMOTE_CONTAINER% pg_restore -U %DB_USER% -d %DB_NAME% --clean --if-exists --no-owner --no-privileges -v /tmp/!BACKUP_FILE!"
+ssh -i "%KEY%" %SERVER% "cd '%REMOTE_PROJECT%' && docker cp '!REMOTE_BACKUP!' '%REMOTE_CONTAINER%:/tmp/!BACKUP_FILE!'"
+
+if errorlevel 1 goto ERROR
+
+
+echo.
+echo ============================================================
+echo [6/6] Restoring backup into Oracle PROD database
+echo ============================================================
+echo.
+
+ssh -i "%KEY%" %SERVER% "cd '%REMOTE_PROJECT%' && docker exec -i %REMOTE_CONTAINER% pg_restore -U %DB_USER% -d %DB_NAME% --clean --if-exists --no-owner --no-privileges -v '/tmp/!BACKUP_FILE!'"
 
 if errorlevel 1 goto ERROR
 

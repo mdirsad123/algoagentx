@@ -185,9 +185,7 @@ echo [3/4] Copying backup into LOCAL PROD Docker container
 echo ============================================================
 echo.
 
-docker cp ^
-"!LOCAL_BACKUP!" ^
-%PROD_CONTAINER%:/tmp/!BACKUP_FILE!
+docker cp "!LOCAL_BACKUP!" "%PROD_CONTAINER%:/tmp/!BACKUP_FILE!"
 
 if errorlevel 1 goto ERROR
 
@@ -203,16 +201,7 @@ echo [4/4] Restoring DEV backup into LOCAL PROD database
 echo ============================================================
 echo.
 
-docker exec -i %PROD_CONTAINER% ^
-pg_restore ^
--U %DB_USER% ^
--d %PROD_DB% ^
---clean ^
---if-exists ^
---no-owner ^
---no-privileges ^
--v ^
-"/tmp/!BACKUP_FILE!"
+docker exec -i %PROD_CONTAINER% pg_restore -U %DB_USER% -d %PROD_DB% --clean --if-exists --no-owner --no-privileges -v "/tmp/!BACKUP_FILE!"
 
 if errorlevel 1 goto ERROR
 
