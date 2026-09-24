@@ -13,7 +13,7 @@ import signal
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -1021,8 +1021,7 @@ class LiveMarketWorker:
                     continue
                 if entry is None or entry <= 0:
                     raise ValueError("Entry price is required for cTrader relative SL/TP")
-                distance = abs(entry - Decimal(str(value)))
-                relative = int((distance * Decimal("100000")).to_integral_value(rounding=ROUND_DOWN))
+                relative = CTraderAdapter._price_distance_to_relative(entry, Decimal(str(value)), full_symbol)
                 if relative > 0:
                     payload[protocol_key] = relative
             previous_result = await self._reserve_broker_intent(request, action, client_order_id)

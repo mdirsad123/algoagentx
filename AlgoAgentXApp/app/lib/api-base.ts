@@ -3,9 +3,11 @@ export const getApiBaseUrl = (): string => {
   if (configured) return configured;
 
   if (typeof window !== 'undefined') {
-    const { protocol, hostname } = window.location;
+    const { hostname, origin } = window.location;
     if (hostname === 'localhost' || hostname === '127.0.0.1') return 'http://localhost:8000';
-    return `${protocol}//${hostname}:8000`;
+    // Production is served behind Nginx, which proxies /api/* to FastAPI:8000.
+    // Use the browser origin so Oracle/public deployments do not expose :8000.
+    return origin;
   }
 
   return 'http://localhost:8000';

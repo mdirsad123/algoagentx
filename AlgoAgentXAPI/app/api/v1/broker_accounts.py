@@ -278,6 +278,24 @@ def _money_or_none(value):
     except Exception:
         return None
 
+def _decimal_or_none(value, field_name: str) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        result = Decimal(str(value))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} must be a valid number",
+        ) from exc
+
+    if result <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} must be greater than zero",
+        )
+
+    return result
 
 def _ctrader_connection_from_selected(row: BrokerAccount, selected: dict | None = None) -> dict:
     account = selected if isinstance(selected, dict) else _selected_ctrader_account(row)
@@ -1077,65 +1095,363 @@ async def sync_broker_account(broker_account_id: UUID, db: AsyncSession = Depend
 
 
 @router.post("/{broker_account_id}/ctrader/test-order")
-async def place_ctrader_test_order(broker_account_id: UUID, payload: dict, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    row = await get_broker_account_or_404(db, broker_account_id, current_user)
+async def place_ctrader_test_order(
+    broker_account_id: UUID,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    row = await get_broker_account_or_404(
+        db,
+        broker_account_id,
+        current_user,
+    )
+
     if not _is_ctrader_account(row):
-        raise HTTPException(status_code=400, detail="Broker account is not a cTrader account")
+        raise HTTPException(
+            status_code=400,
+            detail="Broker account is not a cTrader account",
+        )
+
     selected = _selected_ctrader_account(row)
+
     if not selected:
-        raise HTTPException(status_code=400, detail="Account selection required before placing cTrader demo orders. Sync and select a cTrader trading account first.")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Account selection required before placing cTrader demo orders. "
+                "Sync and select a cTrader trading account first."
+            ),
+        )
+
     if str(row.status or "").upper() != BROKER_STATUS_CONNECTED:
-        raise HTTPException(status_code=400, detail="cTrader broker account must be CONNECTED before placing demo orders. Test or Sync the account first.")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "cTrader broker account must be CONNECTED before placing "
+                "demo orders. Test or Sync the account first."
+            ),
+        )
+
     if not _is_demo_ctrader_selected(selected, row):
-        raise HTTPException(status_code=400, detail="cTrader live order execution is disabled in this phase.")
+        raise HTTPException(
+            status_code=400,
+            detail="cTrader live order execution is disabled in this phase.",
+        )
+
+    # ---------------------------------------------------------
+    # Basic order request
+    # ---------------------------------------------------------
 
     symbol = str(payload.get("symbol") or "").strip().upper()
     side = str(payload.get("side") or "BUY").strip().upper()
+    order_type = str(
+        payload.get("order_type") or "MARKET"
+    ).strip().upper()
+
     volume_raw = payload.get("volume") or payload.get("quantity")
+
     if not symbol:
-        raise HTTPException(status_code=400, detail="Symbol is required")
+        raise HTTPException(
+            status_code=400,
+            detail="Symbol is required",
+        )
+
     if side not in {"BUY", "SELL"}:
-        raise HTTPException(status_code=400, detail="Side must be BUY or SELL")
+        raise HTTPException(
+            status_code=400,
+            detail="Side must be BUY or SELL",
+        )
+
+    # Current live AlgoAgentX cTrader execution uses MARKET orders.
+    # Keep this test endpoint identical to the live execution path.
+    if order_type != "MARKET":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only MARKET cTrader demo orders are currently supported "
+                "by this test endpoint."
+            ),
+        )
+
     try:
         volume = Decimal(str(volume_raw))
         if volume <= 0:
             raise ValueError()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="Volume must be greater than zero") from exc
+        raise HTTPException(
+            status_code=400,
+            detail="Volume must be greater than zero",
+        ) from exc
 
-    symbol_meta = await _find_ctrader_symbol_meta(db, symbol, row)
+    stop_loss = _decimal_or_none(
+        payload.get("stop_loss"),
+        "Stop loss",
+    )
+
+    take_profit = _decimal_or_none(
+        payload.get("take_profit"),
+        "Take profit",
+    )
+
+    entry_price = _decimal_or_none(
+        payload.get("entry_price")
+        or payload.get("price"),
+        "Entry price",
+    )
+
+    # ---------------------------------------------------------
+    # Refresh OAuth before quote/order request
+    # ---------------------------------------------------------
+
+    try:
+        await _refresh_ctrader_token_if_needed(
+            row,
+            db,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=CTraderAdapter._safe_order_error(exc),
+        ) from exc
+
+    adapter = CTraderAdapter(row)
+
+    # ---------------------------------------------------------
+    # Resolve symbol metadata
+    # ---------------------------------------------------------
+
+    symbol_meta = await _find_ctrader_symbol_meta(
+        db,
+        symbol,
+        row,
+    )
+
+    # ---------------------------------------------------------
+    # MARKET orders:
+    #
+    # The browser's entry price is optional.
+    #
+    # If SL/TP exists but entry price was not supplied by the UI,
+    # retrieve the current cTrader quote automatically.
+    #
+    # BUY  -> ASK is the entry reference
+    # SELL -> BID is the entry reference
+    # ---------------------------------------------------------
+
+    quote = None
+
+    if entry_price is None and (
+        stop_loss is not None
+        or take_profit is not None
+    ):
+        try:
+            quote = await adapter.get_quote(symbol)
+
+            if not isinstance(quote, dict):
+                raise ValueError(
+                    "cTrader did not return a valid quote."
+                )
+
+            if quote.get("success") is False:
+                raise ValueError(
+                    quote.get("message")
+                    or "cTrader quote is unavailable."
+                )
+
+            if side == "BUY":
+                quote_price = (
+                    quote.get("ask")
+                    or quote.get("price")
+                )
+            else:
+                quote_price = (
+                    quote.get("bid")
+                    or quote.get("price")
+                )
+
+            if quote_price in (None, ""):
+                raise ValueError(
+                    "cTrader did not return a usable market price."
+                )
+
+            entry_price = Decimal(str(quote_price))
+
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Could not obtain cTrader market price required "
+                    f"for SL/TP calculation: {str(exc)}"
+                ),
+            ) from exc
+
+    # ---------------------------------------------------------
+    # Validate SL / TP direction before contacting cTrader
+    # ---------------------------------------------------------
+
+    if entry_price is not None:
+
+        if side == "BUY":
+
+            if (
+                stop_loss is not None
+                and stop_loss >= entry_price
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "BUY stop loss must be below "
+                        f"entry/reference price {entry_price}"
+                    ),
+                )
+
+            if (
+                take_profit is not None
+                and take_profit <= entry_price
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "BUY take profit must be above "
+                        f"entry/reference price {entry_price}"
+                    ),
+                )
+
+        elif side == "SELL":
+
+            if (
+                stop_loss is not None
+                and stop_loss <= entry_price
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "SELL stop loss must be above "
+                        f"entry/reference price {entry_price}"
+                    ),
+                )
+
+            if (
+                take_profit is not None
+                and take_profit >= entry_price
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "SELL take profit must be below "
+                        f"entry/reference price {entry_price}"
+                    ),
+                )
+
+    # ---------------------------------------------------------
+    # Generate durable client order id
+    # ---------------------------------------------------------
+
+    client_order_id = (
+        payload.get("client_order_id")
+        or f"aax-ctrader-demo-{secrets.token_hex(6)}"
+    )
+
+    comment = (
+        payload.get("comment")
+        or "AlgoAgentX cTrader DEMO test order"
+    )
+
     request_payload = {
         "symbol": symbol,
         "side": side,
+        "order_type": order_type,
         "volume": str(volume),
-        "stop_loss": payload.get("stop_loss"),
-        "take_profit": payload.get("take_profit"),
-        "client_order_id": payload.get("client_order_id") or f"aax-ctrader-demo-{secrets.token_hex(6)}",
-        "comment": payload.get("comment") or "AlgoAgentX cTrader DEMO test order",
+        "entry_price": (
+            str(entry_price)
+            if entry_price is not None
+            else None
+        ),
+        "stop_loss": (
+            str(stop_loss)
+            if stop_loss is not None
+            else None
+        ),
+        "take_profit": (
+            str(take_profit)
+            if take_profit is not None
+            else None
+        ),
+        "client_order_id": client_order_id,
+        "comment": comment,
         "selected_account": {
-            "ctrader_account_id": selected.get("ctrader_account_id"),
-            "account_number": selected.get("account_number"),
-            "account_type": selected.get("account_type"),
-            "currency": selected.get("currency"),
+            "ctrader_account_id": selected.get(
+                "ctrader_account_id"
+            ),
+            "account_number": selected.get(
+                "account_number"
+            ),
+            "account_type": selected.get(
+                "account_type"
+            ),
+            "currency": selected.get(
+                "currency"
+            ),
         },
         "symbol_meta": symbol_meta or {},
     }
-    log = BrokerOrderExecutionLog(
-        user_id=user_id_from(current_user),
-        broker_account_id=row.id,
-        broker_provider_code="CTRADER",
-        execution_mode="DEMO",
-        symbol=symbol,
-        side=side,
-        volume=volume,
-        request_payload=_sanitize_order_payload(request_payload),
-        status="PENDING",
-        client_order_id=request_payload["client_order_id"],
-    )
+
+    if quote:
+        request_payload["market_quote"] = {
+            "bid": str(quote.get("bid"))
+            if quote.get("bid") is not None
+            else None,
+            "ask": str(quote.get("ask"))
+            if quote.get("ask") is not None
+            else None,
+            "price": str(quote.get("price"))
+            if quote.get("price") is not None
+            else None,
+        }
+
+    # ---------------------------------------------------------
+    # Execution log
+    #
+    # IMPORTANT:
+    # Older BrokerOrderExecutionLog schemas do not contain a
+    # client_order_id database column.
+    #
+    # client_order_id is always preserved inside request_payload.
+    # Only write the dedicated ORM field when that model actually
+    # contains the column.
+    # ---------------------------------------------------------
+
+    log_kwargs = {
+        "user_id": user_id_from(current_user),
+        "broker_account_id": row.id,
+        "broker_provider_code": "CTRADER",
+        "execution_mode": "DEMO",
+        "symbol": symbol,
+        "side": side,
+        "volume": volume,
+        "request_payload": _sanitize_order_payload(
+            request_payload
+        ),
+        "status": "PENDING",
+    }
+
+    if hasattr(
+        BrokerOrderExecutionLog,
+        "client_order_id",
+    ):
+        log_kwargs["client_order_id"] = client_order_id
+
+    log = BrokerOrderExecutionLog(**log_kwargs)
+
     db.add(log)
     await db.flush()
 
-    adapter = CTraderAdapter(row)
+    # ---------------------------------------------------------
+    # Send real DEMO market order through the same cTrader
+    # adapter used by AlgoAgentX execution.
+    # ---------------------------------------------------------
+
     try:
         result = await adapter.place_demo_market_order(
             selected_account=selected,
@@ -1143,43 +1459,161 @@ async def place_ctrader_test_order(broker_account_id: UUID, payload: dict, db: A
             symbol=symbol,
             side=side,
             volume=volume,
-            stop_loss=payload.get("stop_loss"),
-            take_profit=payload.get("take_profit"),
-            client_order_id=request_payload["client_order_id"],
-            comment=request_payload["comment"],
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            client_order_id=client_order_id,
+            comment=comment,
         )
-        log.status = "SUCCESS" if result.success else "FAILED"
-        log.error_message = None if result.success else result.message
-        log.broker_order_id = result.broker_order_id
-        log.response_payload = _sanitize_order_payload({"status": result.status, "message": result.message, "broker_order_id": result.broker_order_id, "executed_price": str(result.executed_price) if result.executed_price is not None else None, "raw": result.raw_response or {}})
-        row.last_connection_result = {**(row.last_connection_result or {}), "last_ctrader_test_order": log.response_payload}
-        row.metadata_json = {**(row.metadata_json or {}), "safe_message": result.message, "last_ctrader_test_order_at": datetime.now(timezone.utc).isoformat()}
+
+        raw_response = (
+            result.raw_response
+            if isinstance(result.raw_response, dict)
+            else {}
+        )
+
+        log.status = (
+            "SUCCESS"
+            if result.success
+            else "FAILED"
+        )
+
+        log.error_message = (
+            None
+            if result.success
+            else result.message
+        )
+
+        log.broker_order_id = (
+            result.broker_order_id
+        )
+
+        log.response_payload = _sanitize_order_payload(
+            {
+                "status": result.status,
+                "message": result.message,
+                "broker_order_id": result.broker_order_id,
+                "executed_price": (
+                    str(result.executed_price)
+                    if result.executed_price is not None
+                    else None
+                ),
+                "raw": raw_response,
+            }
+        )
+
+        row.last_connection_result = {
+            **(row.last_connection_result or {}),
+            "last_ctrader_test_order": (
+                log.response_payload
+            ),
+        }
+
+        row.metadata_json = {
+            **(row.metadata_json or {}),
+            "safe_message": result.message,
+            "last_ctrader_test_order_at": (
+                datetime.now(
+                    timezone.utc
+                ).isoformat()
+            ),
+        }
+
         await db.commit()
+
         await db.refresh(log)
         await db.refresh(row)
+
         if not result.success:
-            raise HTTPException(status_code=400, detail=result.message)
-        return success_response({
-            "order_id": result.broker_order_id,
-            "status": result.status,
-            "symbol": symbol,
-            "side": side,
-            "volume": str(volume),
-            "broker_account": dump_one(BrokerAccountOut, row),
-            "execution_log_id": str(log.id),
-            "message": result.message,
-        }, "cTrader demo order placed")
+            raise HTTPException(
+                status_code=400,
+                detail=result.message,
+            )
+
+        return success_response(
+            {
+                "order_id": result.broker_order_id,
+                "status": result.status,
+                "symbol": symbol,
+                "side": side,
+                "order_type": order_type,
+                "volume": str(volume),
+
+                "reference_entry_price": (
+                    str(entry_price)
+                    if entry_price is not None
+                    else None
+                ),
+
+                "stop_loss": (
+                    str(stop_loss)
+                    if stop_loss is not None
+                    else None
+                ),
+
+                "take_profit": (
+                    str(take_profit)
+                    if take_profit is not None
+                    else None
+                ),
+
+                # Useful for validating the exact cTrader
+                # precision conversion.
+                "protocol_volume": raw_response.get(
+                    "protocol_volume"
+                ),
+
+                "relative_stop_loss": raw_response.get(
+                    "relative_stop_loss"
+                ),
+
+                "relative_take_profit": raw_response.get(
+                    "relative_take_profit"
+                ),
+
+                "broker_account": dump_one(
+                    BrokerAccountOut,
+                    row,
+                ),
+
+                "execution_log_id": str(log.id),
+
+                "message": result.message,
+            },
+            "cTrader demo order placed",
+        )
+
     except HTTPException:
         raise
+
     except Exception as exc:
-        message = CTraderAdapter._safe_order_error(exc)
+
+        message = CTraderAdapter._safe_order_error(
+            exc
+        )
+
         log.status = "FAILED"
         log.error_message = message
-        log.response_payload = {"status": "FAILED", "message": message}
-        row.metadata_json = {**(row.metadata_json or {}), "safe_message": message, "last_ctrader_test_order_error": message}
-        await db.commit()
-        raise HTTPException(status_code=400, detail=message) from exc
 
+        log.response_payload = {
+            "status": "FAILED",
+            "message": message,
+        }
+
+        row.metadata_json = {
+            **(row.metadata_json or {}),
+            "safe_message": message,
+            "last_ctrader_test_order_error": (
+                message
+            ),
+        }
+
+        await db.commit()
+
+        raise HTTPException(
+            status_code=400,
+            detail=message,
+        ) from exc
 
 @router.get("/{broker_account_id}/account-info")
 async def get_broker_account_info(broker_account_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):

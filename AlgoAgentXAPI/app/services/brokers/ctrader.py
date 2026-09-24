@@ -4,7 +4,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import Any, Optional
 from urllib.parse import urlencode
 
@@ -106,7 +106,6 @@ def _money_value(value: Any, money_digits: Any = 0) -> float | None:
         return float(Decimal(str(value)) / (Decimal(10) ** digits))
     except Exception:
         return None
-
 
 def _safe_oauth_error(payload: dict[str, Any], status_code: int | None = None) -> str:
     raw_error = str(payload.get("error") or payload.get("errorCode") or payload.get("code") or "").lower()
@@ -553,15 +552,13 @@ class CTraderAdapter(BrokerAdapter):
                 if stop_loss not in (None, ""):
                     if entry is None or entry <= 0:
                         raise ValueError("Entry price is required to attach cTrader market-order stop loss.")
-                    distance = abs(entry - Decimal(str(stop_loss)))
-                    rel = int((distance * Decimal("100000")).to_integral_value(rounding=ROUND_DOWN))
+                    rel = self._price_distance_to_relative(entry, Decimal(str(stop_loss)), full_symbol)
                     if rel > 0:
                         payload["relativeStopLoss"] = rel
                 if take_profit not in (None, ""):
                     if entry is None or entry <= 0:
                         raise ValueError("Entry price is required to attach cTrader market-order take profit.")
-                    distance = abs(Decimal(str(take_profit)) - entry)
-                    rel = int((distance * Decimal("100000")).to_integral_value(rounding=ROUND_DOWN))
+                    rel = self._price_distance_to_relative(entry, Decimal(str(take_profit)), full_symbol)
                     if rel > 0:
                         payload["relativeTakeProfit"] = rel
 
@@ -803,6 +800,31 @@ class CTraderAdapter(BrokerAdapter):
         if not isinstance(row, dict):
             raise ValueError(f"cTrader returned invalid symbol metadata for symbol id {symbol_id}.")
         return row
+
+    @staticmethod
+    def _price_distance_to_relative(entry: Decimal, protection: Decimal, full_symbol: dict[str, Any] | None) -> int:
+        """Convert an absolute SL/TP price into cTrader relative-price units safely.
+
+        cTrader relativeStopLoss/relativeTakeProfit are int64 values where one
+        unit equals 0.00001 of price. The server still validates the implied
+        price precision against the symbol's ``digits``. Strategy/live values
+        can arrive as floats with hidden tails (for example 4260.1699999997),
+        so multiplying the raw distance by 100000 can produce a formally
+        invalid relative value. Normalize both prices to the broker symbol
+        precision *before* converting to protocol units.
+        """
+        try:
+            raw_digits = int((full_symbol or {}).get("digits") if (full_symbol or {}).get("digits") is not None else 5)
+        except (TypeError, ValueError):
+            raw_digits = 5
+        # Relative protection uses fixed 1e-5 protocol units, so at most five
+        # decimal places can be represented exactly.
+        digits = max(0, min(raw_digits, 5))
+        quantum = Decimal("1").scaleb(-digits)
+        normalized_entry = Decimal(str(entry)).quantize(quantum, rounding=ROUND_HALF_UP)
+        normalized_protection = Decimal(str(protection)).quantize(quantum, rounding=ROUND_HALF_UP)
+        distance = abs(normalized_protection - normalized_entry).quantize(quantum, rounding=ROUND_HALF_UP)
+        return int((distance * Decimal("100000")).to_integral_value(rounding=ROUND_HALF_UP))
 
     @staticmethod
     def _lots_to_protocol_volume(lots: Decimal, full_symbol: dict[str, Any]) -> int:
