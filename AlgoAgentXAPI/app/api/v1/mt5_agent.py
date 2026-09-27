@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_current_user, get_db
-from ...db.models import BrokerAccount, LiveOrder, MT5Agent, MT5AgentCommand, PriceAlert
+from ...db.models import BrokerAccount, LiveOrder, LivePosition, MT5Agent, MT5AgentCommand, PriceAlert
 from ...schemas.mt5_agent import MT5AgentCommandOut, MT5AgentCommandResultIn, MT5AgentHeartbeatIn, MT5AgentOrderResultIn, MT5AgentOut, MT5AgentRegisterIn, MT5AgentRegisterOut
 from ...schemas.alerts import MT5QuoteBatchIn
 from ...utils.api_response import success_response
@@ -218,30 +218,75 @@ async def _store_command_result(payload: MT5AgentCommandResultIn, authorization:
     cmd.result_payload = payload.model_dump(mode="json")
     cmd.completed_at = datetime.now(timezone.utc)
 
-    if cmd.command_type == "PLACE_ORDER":
+    if cmd.command_type in {"PLACE_ORDER", "CLOSE_POSITION"}:
         raw_payload = cmd.request_payload if isinstance(cmd.request_payload, dict) else {}
         client_order_id = raw_payload.get("client_order_id") or raw_payload.get("idempotency_key")
         live_order = None
-        if client_order_id:
+        if cmd.command_type == "PLACE_ORDER" and client_order_id:
             live_order = (await db.execute(select(LiveOrder).where(LiveOrder.client_order_id == client_order_id))).scalar_one_or_none()
         if live_order is None:
             live_order = (await db.execute(select(LiveOrder).where(LiveOrder.broker_order_id == str(cmd.id)))).scalar_one_or_none()
         if live_order is not None:
             raw_result = payload.raw_response or {}
             old_raw = live_order.raw_response if isinstance(live_order.raw_response, dict) else {}
+            actual_request = raw_result.get("request") if isinstance(raw_result, dict) else None
             if payload.broker_order_id:
                 live_order.broker_order_id = str(payload.broker_order_id)
             if payload.executed_price is not None:
                 live_order.executed_price = payload.executed_price
+            # Cross-broker MT5 copies may translate absolute SL/TP by the target
+            # terminal quote offset. Persist the exact request accepted/rejected
+            # by MT5 so Recent Orders reflects what was really sent.
+            if isinstance(actual_request, dict):
+                if actual_request.get("symbol"):
+                    live_order.symbol = str(actual_request.get("symbol"))
+                if actual_request.get("sl") not in (None, ""):
+                    live_order.stop_loss = actual_request.get("sl")
+                if actual_request.get("tp") not in (None, ""):
+                    live_order.target = actual_request.get("tp")
+                if actual_request.get("volume") not in (None, ""):
+                    live_order.qty = actual_request.get("volume")
             live_order.status = "FILLED" if payload.success else "ERROR"
             live_order.error_message = None if payload.success else (payload.message or cmd.error_message)
             live_order.raw_response = {
                 **old_raw,
                 "agent_command_id": str(cmd.id),
                 "client_order_id": client_order_id,
+                "mt5_command_type": cmd.command_type,
                 "mt5_order_result": raw_result,
                 "mt5_order_message": payload.message,
             }
+
+            if cmd.command_type == "CLOSE_POSITION" and payload.success:
+                position = None
+                local_position_id = old_raw.get("local_position_id") if isinstance(old_raw, dict) else None
+                if local_position_id:
+                    try:
+                        position = (await db.execute(
+                            select(LivePosition).where(
+                                LivePosition.id == UUID(str(local_position_id)),
+                                LivePosition.broker_account_id == cmd.broker_account_id,
+                            )
+                        )).scalar_one_or_none()
+                    except Exception:
+                        position = None
+                if position is None:
+                    ticket = str(raw_payload.get("position_ticket") or "").strip()
+                    if ticket:
+                        position = (await db.execute(
+                            select(LivePosition).where(
+                                LivePosition.deployment_id == live_order.deployment_id,
+                                LivePosition.broker_account_id == cmd.broker_account_id,
+                                LivePosition.broker_position_id == ticket,
+                                LivePosition.status == "OPEN",
+                            ).limit(1)
+                        )).scalar_one_or_none()
+                if position is not None:
+                    position.status = "CLOSED"
+                    position.closed_at = datetime.now(timezone.utc)
+                    position.unrealized_pnl = 0
+                    if payload.executed_price is not None:
+                        position.current_price = payload.executed_price
 
     await db.commit()
     return {"command_id": str(cmd.id), "status": cmd.status}

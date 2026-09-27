@@ -26,6 +26,7 @@ from ...db.models import BrokerAccount, BrokerOrderEvent, LiveBrokerOrderIntent,
 from ...db.session import async_session
 from ...utils.credential_crypto import decrypt_credential
 from ..brokers.ctrader import CTraderAdapter, _money_value, _without_secret
+from ..brokers.symbol_utils import best_broker_symbol_ref
 from ..brokers.ctrader_connection_manager import (
     PT_CLOSE_POSITION_REQ,
     PT_EXECUTION_EVENT,
@@ -362,27 +363,34 @@ class LiveMarketWorker:
         )
 
     @staticmethod
-    def _symbol_id_from_metadata(metadata: dict[str, Any], symbol: str) -> int | None:
-        rows = metadata.get("ctrader_symbols_preview") or metadata.get("symbols") or []
-        for row in rows if isinstance(rows, list) else []:
-            if not isinstance(row, dict):
-                continue
-            name = str(row.get("symbol_name") or row.get("symbol") or row.get("trading_symbol") or "").upper()
-            if name == symbol and (row.get("symbol_id") or row.get("id")) not in (None, ""):
-                return int(row.get("symbol_id") or row.get("id"))
-        return None
+    def _best_symbol_ref(rows: list[dict[str, Any]], symbol: str) -> tuple[int, str] | None:
+        return best_broker_symbol_ref(rows, symbol)
 
-    @staticmethod
-    async def _resolve_symbol_id(connection: PersistentCTraderConnection, account_id: int, symbol: str) -> int:
+    @classmethod
+    def _symbol_ref_from_metadata(cls, metadata: dict[str, Any], symbol: str) -> tuple[int, str] | None:
+        rows = metadata.get("ctrader_symbols_preview") or metadata.get("symbols") or []
+        return cls._best_symbol_ref(rows if isinstance(rows, list) else [], symbol)
+
+    @classmethod
+    def _symbol_id_from_metadata(cls, metadata: dict[str, Any], symbol: str) -> int | None:
+        ref = cls._symbol_ref_from_metadata(metadata, symbol)
+        return ref[0] if ref is not None else None
+
+    @classmethod
+    async def _resolve_symbol_ref(
+        cls, connection: PersistentCTraderConnection, account_id: int, symbol: str
+    ) -> tuple[int, str]:
         payload = await connection.get_symbols(account_id)
         rows = payload.get("symbol") or []
-        for row in rows if isinstance(rows, list) else []:
-            if not isinstance(row, dict):
-                continue
-            name = str(row.get("symbolName") or row.get("symbol") or "").upper()
-            if name == symbol and row.get("symbolId") not in (None, ""):
-                return int(row["symbolId"])
+        matched = cls._best_symbol_ref(rows if isinstance(rows, list) else [], symbol)
+        if matched is not None:
+            return matched
         raise ValueError(f"cTrader symbol {symbol} was not found")
+
+    @classmethod
+    async def _resolve_symbol_id(cls, connection: PersistentCTraderConnection, account_id: int, symbol: str) -> int:
+        symbol_id, _resolved_name = await cls._resolve_symbol_ref(connection, account_id, symbol)
+        return symbol_id
 
     async def _activate_feed(self, feed: FeedRegistration) -> None:
         connection = ctrader_connection_manager.connection(feed.environment)
@@ -993,9 +1001,10 @@ class LiveMarketWorker:
         if action == "PLACE_MARKET":
             order = request.get("order") if isinstance(request.get("order"), dict) else {}
             symbol = str(order.get("symbol") or "").upper()
-            symbol_id = self._symbol_id_from_metadata(metadata, symbol)
-            if symbol_id is None:
-                symbol_id = await self._resolve_symbol_id(connection, account_id, symbol)
+            symbol_ref = self._symbol_ref_from_metadata(metadata, symbol)
+            if symbol_ref is None:
+                symbol_ref = await self._resolve_symbol_ref(connection, account_id, symbol)
+            symbol_id, resolved_symbol = symbol_ref
             full = await connection.get_full_symbol(account_id, symbol_id)
             full_rows = full.get("symbol") or []
             full_symbol = full_rows[0] if isinstance(full_rows, list) and full_rows else {}
@@ -1108,6 +1117,9 @@ class LiveMarketWorker:
                 "gateway": "PERSISTENT_SESSION",
                 "environment": environment,
                 "position_id": broker_position_id,
+                "symbol": resolved_symbol if action == "PLACE_MARKET" else None,
+                "requested_symbol": symbol if action == "PLACE_MARKET" else None,
+                "symbol_id": str(symbol_id) if action == "PLACE_MARKET" else None,
                 "requested_lots": requested_lots,
                 "protocol_volume": protocol_volume,
                 "execution": _without_secret(execution),

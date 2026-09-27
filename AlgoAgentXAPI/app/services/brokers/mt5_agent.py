@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -87,8 +88,10 @@ class MT5AgentAdapter(BrokerAdapter):
             "deviation": order_request.deviation,
             "comment": order_request.comment,
             "max_lot": str(order_request.max_lot) if order_request.max_lot is not None else None,
-            "client_order_id": order_request.idempotency_key or order_request.tag,
+            "client_order_id": order_request.tag or order_request.idempotency_key,
             "idempotency_key": order_request.idempotency_key or order_request.tag,
+            "is_copy_execution": bool(order_request.is_copy_execution),
+            "source_broker_code": order_request.source_broker_code,
         }
         if order_request.idempotency_key:
             existing = (await self.db.execute(
@@ -111,10 +114,73 @@ class MT5AgentAdapter(BrokerAdapter):
         return BrokerOrderResult(True, "PLACED", "MT5 order command queued for AlgoAgentX MT5 Agent.", broker_order_id=str(command.id), raw_response={"agent_command_id": str(command.id), "execution_mode": "AGENT"})
 
     async def close_position(self, position_id_or_symbol: str, side: str, qty: Decimal) -> BrokerOrderResult:
-        return await self.place_market_order(BrokerOrderRequest(symbol=position_id_or_symbol, side=side, qty=qty, comment="AlgoAgentX MT5 Agent close"))
+        """Queue a true MT5 position-close command.
+
+        A close must NOT be routed through PLACE_ORDER: PLACE_ORDER requires SL/TP
+        and, on hedging accounts, an opposite market order can open a new position
+        instead of closing the existing ticket.  Prefer the broker position ticket
+        populated by broker reconciliation; symbol fallback is retained for older
+        rows and is resolved by the Windows agent.
+        """
+        agent = await self._latest_agent()
+        if not _is_fresh(agent):
+            return BrokerOrderResult(False, "ERROR", FRIENDLY_DISCONNECTED, raw_response={"execution_mode": "AGENT"})
+        if self.db is None:
+            return BrokerOrderResult(False, "ERROR", "MT5 Agent database session is unavailable.", raw_response={"execution_mode": "AGENT"})
+
+        raw_ref = str(position_id_or_symbol or "").strip()
+        is_ticket = raw_ref.isdigit()
+        close_identity = f"{self.broker_account.id}:{raw_ref}:{str(side or '').upper()}:{qty}"
+        close_key = "AXC-" + hashlib.sha256(close_identity.encode("utf-8")).hexdigest()[:32]
+        payload = {
+            "position_ticket": raw_ref if is_ticket else None,
+            "symbol": None if is_ticket else raw_ref,
+            "position_side": str(side or "").upper(),
+            "qty": str(qty),
+            "idempotency_key": close_key,
+            "comment": "AlgoAgentX MT5 close",
+        }
+
+        existing = (await self.db.execute(
+            select(MT5AgentCommand)
+            .where(MT5AgentCommand.command_type == "CLOSE_POSITION")
+            .where(MT5AgentCommand.request_payload["idempotency_key"].astext == close_key)
+            .order_by(MT5AgentCommand.created_at.desc())
+        )).scalars().first()
+        if existing is not None and str(existing.status or "").upper() not in {"ERROR", "TIMEOUT"}:
+            return BrokerOrderResult(
+                True,
+                "FILLED" if str(existing.status or "").upper() == "COMPLETED" else "PLACED",
+                "Duplicate MT5 close blocked by idempotency key; returning existing command.",
+                broker_order_id=str(existing.id),
+                raw_response={"agent_command_id": str(existing.id), "execution_mode": "AGENT", "idempotency_key": close_key, "duplicate_command": True},
+            )
+
+        command = MT5AgentCommand(
+            agent_id=agent.id,
+            user_id=self.broker_account.user_id,
+            broker_account_id=self.broker_account.id,
+            command_type="CLOSE_POSITION",
+            status="PENDING",
+            request_payload=payload,
+        )
+        self.db.add(command)
+        await self.db.flush()
+        return BrokerOrderResult(
+            True,
+            "PLACED",
+            "MT5 close command queued for AlgoAgentX MT5 Agent.",
+            broker_order_id=str(command.id),
+            raw_response={"agent_command_id": str(command.id), "execution_mode": "AGENT", "idempotency_key": close_key, "close_position": True},
+        )
 
     async def get_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
         agent = await self._latest_agent()
+        # Position truth is a pre-trade safety input. Never use a stale heartbeat
+        # because an empty/stale snapshot could let a copy account exceed its
+        # max-open-position limit. Fail this target safely until the agent is live.
+        if not _is_fresh(agent):
+            raise RuntimeError(FRIENDLY_DISCONNECTED)
         meta = agent.metadata_json if agent else {}
         positions = meta.get("positions") if isinstance(meta, dict) else None
         rows = positions if isinstance(positions, list) else []

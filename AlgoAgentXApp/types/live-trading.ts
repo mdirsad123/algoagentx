@@ -359,6 +359,8 @@ export interface StrategyDeployment {
   allow_short: boolean;
   auto_trade_enabled: boolean;
   auto_runner_enabled?: boolean;
+  copy_trading_enabled?: boolean;
+  copy_broker_account_ids?: string[];
   last_runner_at?: string | null;
   next_run_at?: string | null;
   last_runner_wakeup_at?: string | null;
@@ -427,6 +429,8 @@ export interface DeploymentPayload {
   allow_short: boolean;
   auto_trade_enabled: boolean;
   auto_runner_enabled?: boolean;
+  copy_trading_enabled?: boolean;
+  copy_broker_account_ids?: string[];
   last_runner_at?: string | null;
   next_run_at?: string | null;
   last_runner_wakeup_at?: string | null;
@@ -504,6 +508,13 @@ export interface LiveOrder {
   updated_at?: string;
 }
 
+export interface CopyTradingOrder extends LiveOrder {
+  broker_account_label?: string | null;
+  broker_code?: string | null;
+  broker_mode?: string | null;
+  broker_login_id?: string | null;
+}
+
 export interface LivePosition {
   id: string;
   deployment_id: string;
@@ -557,6 +568,7 @@ export interface LiveDeploymentSummaryMetrics {
   open_positions_count: number;
   orders_today: number;
   orders_count_today: number;
+  copy_orders_today?: number;
   signals_today: number;
   signals_count_today: number;
   total_orders: number;
@@ -599,6 +611,8 @@ export interface LiveDeploymentSummaryDeployment {
   status: DeploymentStatus;
   auto_trade_enabled: boolean;
   auto_runner_enabled?: boolean;
+  copy_trading_enabled?: boolean;
+  copy_broker_account_ids?: string[];
   last_runner_at?: string | null;
   next_run_at?: string | null;
   last_runner_wakeup_at?: string | null;
@@ -651,6 +665,7 @@ export interface LiveDeploymentSummary {
   latest_order?: LiveOrder | null;
   open_positions?: LivePosition[];
   recent_orders?: LiveOrder[];
+  copy_orders?: CopyTradingOrder[];
   recent_signals?: LiveSignal[];
   recent_logs?: LiveTradeLog[];
   position_events?: LiveTradeLog[];

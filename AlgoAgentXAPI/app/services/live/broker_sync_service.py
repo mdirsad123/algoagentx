@@ -152,6 +152,7 @@ def _mt5_position_values(position: dict[str, Any], deployment: StrategyDeploymen
     avg = _dec(position.get("price_open") or 0)
     current = _dec(position.get("price_current") or avg, str(avg))
     return {
+        "broker_position_id": str(position.get("ticket") or position.get("position_id") or "").strip() or None,
         "symbol": str(position.get("symbol") or deployment.broker_symbol or deployment.instrument),
         "side": _mt5_side(position),
         "qty": abs(qty),
@@ -256,7 +257,13 @@ async def reconcile_orders(db: AsyncSession, deployment: StrategyDeployment, bro
             processed=True,
         )
         events += 1
-        local = (await db.execute(select(LiveOrder).where(LiveOrder.deployment_id == deployment.id, LiveOrder.broker_order_id == broker_order_id))).scalar_one_or_none()
+        local = (await db.execute(
+            select(LiveOrder).where(
+                LiveOrder.deployment_id == deployment.id,
+                LiveOrder.broker_account_id == deployment.broker_account_id,
+                LiveOrder.broker_order_id == broker_order_id,
+            )
+        )).scalar_one_or_none()
         if local is None:
             unmatched += 1
             continue
@@ -269,7 +276,16 @@ async def reconcile_orders(db: AsyncSession, deployment: StrategyDeployment, bro
 
 
 async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, broker_positions: list[dict[str, Any]], provider_code: str) -> dict[str, Any]:
-    open_rows = (await db.execute(select(LivePosition).where(LivePosition.deployment_id == deployment.id, LivePosition.status == "OPEN"))).scalars().all()
+    # A single deployment may fan one signal out to several broker accounts.
+    # Reconciliation must therefore be account-scoped: syncing the primary
+    # account must never mark copy-account positions CLOSED, and vice versa.
+    open_rows = (await db.execute(
+        select(LivePosition).where(
+            LivePosition.deployment_id == deployment.id,
+            LivePosition.broker_account_id == deployment.broker_account_id,
+            LivePosition.status == "OPEN",
+        )
+    )).scalars().all()
     matched: set[str] = set()
     created = 0
     updated = 0
@@ -374,6 +390,59 @@ async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, 
         "unrealized_pnl": str(total_unrealized),
         "realized_pnl": str(total_realized),
     }
+
+
+async def sync_copy_target_positions(db: AsyncSession, deployment: StrategyDeployment) -> dict[str, Any]:
+    """Refresh broker position truth for one copy-trading target account.
+
+    Copy targets share the deployment id but have their own broker_account_id.
+    The normal deployment sync is intentionally primary-account scoped, so using
+    it for a copy target would silently reload/sync the primary account.  This
+    helper performs only the account-specific position refresh needed by the
+    copy risk gate and never commits or mutates the primary deployment row.
+    """
+    if not getattr(deployment, "broker_account_id", None):
+        raise ValueError("Copy target broker account is missing")
+
+    broker = (await db.execute(
+        select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id)
+    )).scalar_one_or_none()
+    if broker is None:
+        raise ValueError("Copy target broker account not found")
+    if str(getattr(broker, "status", "") or "").upper() != "CONNECTED":
+        raise ValueError("Copy target broker account is not CONNECTED")
+
+    provider_code = get_broker_code(broker)
+    adapter = get_broker_adapter(broker, db)
+    symbol = (
+        getattr(deployment, "broker_symbol", None)
+        or getattr(deployment, "instrument", None)
+        or getattr(deployment, "instrument_key", None)
+    )
+
+    try:
+        positions = await adapter.get_positions(symbol) or []
+    except TypeError:
+        positions = await adapter.get_positions() or []
+
+    if positions and isinstance(positions[0], dict) and positions[0].get("success") is False:
+        raise RuntimeError(str(positions[0].get("message") or "Copy broker positions fetch failed"))
+
+    result = await reconcile_positions(db, deployment, positions, provider_code)
+    await _write_log(
+        db,
+        deployment,
+        "COPY_BROKER_POSITION_SYNCED",
+        f"{provider_code} copy-account positions refreshed before risk checks",
+        "INFO",
+        {
+            "broker_account_id": str(deployment.broker_account_id),
+            "provider_code": provider_code,
+            "broker_positions": len(positions),
+            **result,
+        },
+    )
+    return {"provider_code": provider_code, "positions_count": len(positions), **result}
 
 
 async def sync_deployment_broker_state(db: AsyncSession, deployment_id: UUID | str) -> dict[str, Any]:

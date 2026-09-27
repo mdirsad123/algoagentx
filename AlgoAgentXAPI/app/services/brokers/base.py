@@ -34,6 +34,12 @@ class BrokerOrderRequest:
     instrument_key: Optional[str] = None
     tag: Optional[str] = None
     idempotency_key: Optional[str] = None
+    # Copy execution metadata is intentionally optional so every existing
+    # broker adapter keeps the exact same call contract.  The MT5 Agent uses
+    # this only to translate source-account SL/TP distances to the target
+    # terminal's live market price during cross-account copy execution.
+    is_copy_execution: bool = False
+    source_broker_code: Optional[str] = None
 
 
 @dataclass

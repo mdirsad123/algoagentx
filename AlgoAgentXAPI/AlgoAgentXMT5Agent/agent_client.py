@@ -13,7 +13,7 @@ class AgentApiClient:
         self.session.headers.update({
             "Authorization": f"Bearer {self.agent_token}",
             "Content-Type": "application/json",
-            "User-Agent": "AlgoAgentXMT5Agent/0.4.1-alerts-symbols",
+            "User-Agent": "AlgoAgentXMT5Agent/0.4.2-copy-close-symbols",
         })
 
     def _url(self, path: str) -> str:

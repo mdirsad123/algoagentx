@@ -130,6 +130,7 @@ async def check_execution_safety(db: AsyncSession, deployment: StrategyDeploymen
             .join(LiveSignal, LiveSignal.id == LiveOrder.signal_id)
             .where(
                 LiveOrder.deployment_id == deployment.id,
+                LiveOrder.broker_account_id == deployment.broker_account_id,
                 LiveSignal.candle_time == signal.candle_time,
                 LiveSignal.signal_type == signal.signal_type,
                 LiveSignal.source == signal.source,

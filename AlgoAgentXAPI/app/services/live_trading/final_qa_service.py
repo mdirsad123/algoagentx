@@ -79,9 +79,14 @@ async def build_final_live_qa(db: AsyncSession, deployment_id: UUID, user: dict)
     if deployment.broker_account_id:
         broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
 
-    open_positions = int((await db.execute(select(func.count(LivePosition.id)).where(LivePosition.deployment_id == deployment.id, LivePosition.status == "OPEN"))).scalar() or 0)
+    position_filters = [LivePosition.deployment_id == deployment.id, LivePosition.status == "OPEN"]
+    order_filters = [LiveOrder.deployment_id == deployment.id]
+    if getattr(deployment, "broker_account_id", None) is not None:
+        position_filters.append(LivePosition.broker_account_id == deployment.broker_account_id)
+        order_filters.append(LiveOrder.broker_account_id == deployment.broker_account_id)
+    open_positions = int((await db.execute(select(func.count(LivePosition.id)).where(*position_filters))).scalar() or 0)
     last_dry = (await db.execute(select(LiveTradeLog).where(LiveTradeLog.deployment_id == deployment.id, LiveTradeLog.event_type.in_(["FULL_DRY_TEST", "RUN_FULL_DRY_TEST"])).order_by(LiveTradeLog.created_at.desc()).limit(1))).scalar_one_or_none()
-    recent_orders = list((await db.execute(select(LiveOrder).where(LiveOrder.deployment_id == deployment.id).order_by(LiveOrder.created_at.desc()).limit(50))).scalars().all())
+    recent_orders = list((await db.execute(select(LiveOrder).where(*order_filters).order_by(LiveOrder.created_at.desc()).limit(50))).scalars().all())
     last_paper = next((o for o in recent_orders if isinstance(o.raw_response, dict) and o.raw_response.get("is_test_order") is True and o.raw_response.get("qa_test_type") == "PAPER_ORDER_TEST"), None)
     last_demo = next((o for o in recent_orders if isinstance(o.raw_response, dict) and o.raw_response.get("qa_test_type") == "DEMO_MICRO_ORDER"), None)
     last_log = (await db.execute(select(LiveTradeLog).where(LiveTradeLog.deployment_id == deployment.id, LiveTradeLog.level.in_(["ERROR", "WARNING"])).order_by(LiveTradeLog.created_at.desc()).limit(1))).scalar_one_or_none()

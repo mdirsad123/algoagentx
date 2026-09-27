@@ -53,7 +53,7 @@ def load_config() -> dict[str, Any]:
             "ENABLE_ORDER_EXECUTION": False,
             "MT5_PATH": "",
             "DEFAULT_DEVIATION": 20,
-            "AGENT_VERSION": "0.4.1-alerts-symbols",
+            "AGENT_VERSION": "0.4.2-copy-close-symbols",
             "LOG_LEVEL": "ERROR",
         }
         with CONFIG_PATH.open("w", encoding="utf-8") as f:
@@ -100,7 +100,7 @@ def main() -> None:
     alert_quote_interval = max(0.1, float(config.get("ALERT_QUOTE_INTERVAL_MS") or 250) / 1000.0)
     alert_symbol_refresh = max(1.0, float(config.get("ALERT_SYMBOL_REFRESH_SECONDS") or 1))
     enable_order_execution = _to_bool(config.get("ENABLE_ORDER_EXECUTION"), False)
-    agent_version = str(config.get("AGENT_VERSION") or "0.4.1-alerts-symbols")
+    agent_version = str(config.get("AGENT_VERSION") or "0.4.2-copy-close-symbols")
 
     if not agent_token or "paste-your-agent-token" in agent_token:
         raise SystemExit("AGENT_TOKEN is missing. Generate token in AlgoAgentX > Brokers > MT5 Agent Setup and paste it into config.json.")
@@ -196,6 +196,18 @@ def main() -> None:
                         executed_price=result.get("executed_price"),
                     )
                     _log_command_result("Order", command_id, result)
+
+                elif command_type == "CLOSE_POSITION":
+                    result = mt5.close_position(command, enable_order_execution=enable_order_execution)
+                    api.send_order_result(
+                        command_id=command_id,
+                        success=bool(result.get("success")),
+                        message=str(result.get("message") or "MT5 close processed"),
+                        raw_response=result.get("raw") or {},
+                        broker_order_id=result.get("broker_order_id"),
+                        executed_price=result.get("executed_price"),
+                    )
+                    _log_command_result("Position close", command_id, result)
 
                 elif command_type == "FETCH_SYMBOLS":
                     logger.debug("Received FETCH_SYMBOLS command | command=%s", command_id)

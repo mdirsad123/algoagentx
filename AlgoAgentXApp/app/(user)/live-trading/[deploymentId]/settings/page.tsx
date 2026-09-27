@@ -74,6 +74,7 @@ type FormState = {
   max_daily_loss: number; max_trades_per_day: number; max_open_positions: number; allow_short: boolean; auto_trade_enabled: boolean; auto_runner_enabled: boolean;
   mt5_demo_max_lot: number; broker_symbol: string; instrument_key: string; exchange: string; segment: string; product_type: string; order_variety: string;
   quantity_mode: string; fixed_quantity: number; max_quantity: number; max_order_value: number; square_off_time: string; upstox_order_confirmed: boolean;
+  copy_trading_enabled: boolean; copy_broker_account_ids: string[];
   break_even_enabled: boolean; break_even_trigger_r: number; trailing_enabled: boolean; trailing_mode: string; trail_start_r: number; trail_atr_multiplier: number; partial_exit_enabled: boolean; partial_exit_at_r: number; partial_exit_percent: number;
 };
 
@@ -239,17 +240,20 @@ export default function LiveDeploymentSettingsPage() {
   const [fundedTiers, setFundedTiers] = useState<FundedRiskPlanPayload["risk_tiers"]>([]);
   const [phaseAdvanceBrokerId, setPhaseAdvanceBrokerId] = useState("");
   const [phaseAdvanceBusy, setPhaseAdvanceBusy] = useState(false);
+  const [initialRouting, setInitialRouting] = useState({ broker_account_id: "", instrument: "" });
   const [form, setForm] = useState<FormState>({
     name: "", instrument: "", timeframe: "", mode: "PAPER", broker_account_id: "", capital: 100000, risk_per_trade: 0.01, rr_ratio: 2,
     sl_mode: "FIXED_PERCENT", atr_period: 14, atr_multiplier: 2, swing_lookback: 10, price_risk_pct: 0.002, max_daily_loss: 5000,
     max_trades_per_day: 10, max_open_positions: 1, allow_short: true, auto_trade_enabled: false, auto_runner_enabled: false, mt5_demo_max_lot: 0.02,
     broker_symbol: "", instrument_key: "", exchange: "NSE_EQ", segment: "EQ", product_type: "MIS", order_variety: "REGULAR", quantity_mode: "FIXED_QTY",
     fixed_quantity: 1, max_quantity: 1, max_order_value: 5000, square_off_time: "15:15", upstox_order_confirmed: false,
+    copy_trading_enabled: false, copy_broker_account_ids: [],
     break_even_enabled: false, break_even_trigger_r: 1, trailing_enabled: false, trailing_mode: "ATR_TRAIL", trail_start_r: 1.5, trail_atr_multiplier: 1, partial_exit_enabled: false, partial_exit_at_r: 1, partial_exit_percent: 0.5,
   });
 
   const selectedBroker = useMemo(() => brokers.find((broker) => broker.id === form.broker_account_id), [brokers, form.broker_account_id]);
   const connectedBrokers = useMemo(() => brokers.filter((broker) => (broker.mode === "DEMO" || broker.mode === "LIVE") && broker.status === "CONNECTED"), [brokers]);
+  const copyTargetBrokers = useMemo(() => connectedBrokers.filter((broker) => broker.id !== form.broker_account_id && broker.mode === selectedBroker?.mode), [connectedBrokers, form.broker_account_id, selectedBroker]);
   const isUpstox = (selectedBroker?.broker_name || selectedBroker?.broker_code || "").toUpperCase() === "UPSTOX";
   const isRunning = deploymentStatus === "RUNNING";
   const isFunded = fundedStatus?.account_policy_type === "FUNDED";
@@ -272,7 +276,6 @@ export default function LiveDeploymentSettingsPage() {
   const liveQuantityMode = form.quantity_mode || "FIXED_QTY";
   const selectedMarketCode = normalizeSymbol(selectedMasterInstrument?.market || selectedMasterInstrument?.asset_class || selectedMasterInstrument?.exchange || (isUpstox ? "NSE" : ""));
   const supportsLiveSquareOff = isUpstox || ["NSE", "NSE_EQ", "NSE_FO", "BSE", "INDIAN_EQUITY", "INDIAN_INDEX", "INDIAN_FO", "INDIAN_FUTURES", "INDIAN_OPTIONS"].some((code) => selectedMarketCode.includes(code));
-  const brokerLabel = selectedBroker ? `${selectedBroker.broker_code || selectedBroker.broker_name || "Broker"} • ${selectedBroker.account_label || "Account"} • ${selectedBroker.mode || form.mode} • ${selectedBroker.status || "—"} • ${selectedBroker.login_id || selectedBroker.server_name || "—"}` : "Selected broker account";
   const brokerMappingLabel = form.instrument_key && (isUpstox || selectedMarketCode.includes("INDIAN")) ? `Instrument key: ${form.instrument_key}` : `Broker symbol: ${form.broker_symbol || form.instrument}`;
 
   useEffect(() => {
@@ -313,6 +316,7 @@ export default function LiveDeploymentSettingsPage() {
           })) : []);
         } else setFundedStatus(null);
         setPhaseAdvanceBrokerId(row.broker_account_id || "");
+        setInitialRouting({ broker_account_id: row.broker_account_id || "", instrument: normalizeSymbol(row.instrument) });
         if (compatRow) setCompatibility(compatRow);
         setForm((prev) => ({ ...prev,
           name: row.name, instrument: row.instrument, timeframe: row.timeframe, mode: (row.mode === "LIVE" ? "LIVE" : row.mode === "DEMO" ? "DEMO" : "PAPER"), broker_account_id: row.broker_account_id || "",
@@ -322,6 +326,7 @@ export default function LiveDeploymentSettingsPage() {
           broker_symbol: row.broker_symbol || "", instrument_key: row.instrument_key || "", exchange: row.exchange || "NSE_EQ", segment: row.segment || "EQ", product_type: row.product_type || "MIS",
           order_variety: row.order_variety || "REGULAR", quantity_mode: row.quantity_mode || "FIXED_QTY", fixed_quantity: Number(row.fixed_quantity ?? 1), max_quantity: Number(row.max_quantity ?? 1),
           max_order_value: Number(row.max_order_value ?? 5000), square_off_time: row.square_off_time || "15:15", upstox_order_confirmed: Boolean(row.upstox_order_confirmed),
+          copy_trading_enabled: Boolean(row.copy_trading_enabled), copy_broker_account_ids: Array.isArray(row.copy_broker_account_ids) ? row.copy_broker_account_ids.map(String) : [],
         }));
       } catch (error: any) { showToast(error.message || "Failed to load settings", "error"); } finally { setLoading(false); }
     };
@@ -421,11 +426,13 @@ export default function LiveDeploymentSettingsPage() {
           return;
         }
       }
+      const routingChanged = String(form.broker_account_id || "") !== String(initialRouting.broker_account_id || "") || normalizeSymbol(form.instrument) !== normalizeSymbol(initialRouting.instrument);
       await liveTradingApi.updateDeployment(deploymentId, {
-        name: form.name,
+        name: form.name, mode: form.mode, broker_account_id: form.broker_account_id || null, instrument: normalizeSymbol(form.instrument), timeframe: form.timeframe,
+        ...(routingChanged ? { broker_symbol: null, instrument_key: null, exchange: null, segment: null } : {}),
         risk_per_trade: form.risk_per_trade, rr_ratio: form.rr_ratio, price_risk_pct: form.price_risk_pct, max_daily_loss: form.max_daily_loss,
         max_trades_per_day: form.max_trades_per_day, max_open_positions: form.max_open_positions, allow_short: form.allow_short, auto_trade_enabled: form.auto_trade_enabled,
-        auto_runner_enabled: form.auto_runner_enabled, mt5_demo_max_lot: form.mt5_demo_max_lot,
+        auto_runner_enabled: form.auto_runner_enabled, copy_trading_enabled: form.copy_trading_enabled, copy_broker_account_ids: form.copy_broker_account_ids, mt5_demo_max_lot: form.mt5_demo_max_lot,
         product_type: form.product_type, order_variety: form.order_variety, quantity_mode: form.quantity_mode, fixed_quantity: form.fixed_quantity,
         max_quantity: form.max_quantity, max_order_value: form.max_order_value, square_off_time: form.square_off_time, upstox_order_confirmed: form.upstox_order_confirmed,
       });
@@ -465,7 +472,7 @@ export default function LiveDeploymentSettingsPage() {
     } catch (error: any) { showToast(error?.message || "Failed to advance funded phase", "error"); } finally { setPhaseAdvanceBusy(false); }
   };
 
-  const LockedNote = () => <div className="rounded-xl border border-cyan-300/25 bg-cyan-400/10 p-4 text-sm text-cyan-100"><Lock className="mr-2 inline h-4 w-4" />Mode, broker account, instrument, and timeframe are locked after deployment creation to keep approval, sync, candle storage, and execution routing safe. Create a new deployment to change them. {isRunning && <span className="ml-1 text-amber-100">This deployment is RUNNING, so additional runtime changes may also be guarded by backend safety.</span>} <Link className="ml-2 underline" href={`/live-trading/new?clone=${deploymentId}`}><Copy className="mr-1 inline h-4 w-4" />Clone Deployment</Link></div>;
+  const LockedNote = () => <div className="rounded-xl border border-cyan-300/25 bg-cyan-400/10 p-4 text-sm text-cyan-100"><Lock className="mr-2 inline h-4 w-4" />Mode, broker account, instrument, and timeframe can be changed for a stopped STANDARD deployment. {isRunning && <span className="ml-1 text-amber-100">Stop this deployment first to edit routing/candle settings safely.</span>} {isFunded && <span className="ml-1 text-amber-100">Funded routing remains protected and uses the funded workflow.</span>} <Link className="ml-2 underline" href={`/live-trading/new?clone=${deploymentId}`}><Copy className="mr-1 inline h-4 w-4" />Clone Deployment</Link></div>;
 
   return (
     <PageShell>
@@ -589,10 +596,10 @@ export default function LiveDeploymentSettingsPage() {
             <div className="rounded-2xl border border-white/10 bg-white/5 p-5"><div className="flex items-center justify-between gap-3"><div><h3 className="font-black text-white">Beginner Safe Mode</h3><p className="text-xs text-purple-200">Safe dropdowns prevent invalid values. Advanced custom inputs stay collapsed.</p></div><Button type="button" variant="outline" onClick={() => setAdvancedMode((v) => !v)} className="border-white/10 bg-white/5 text-white hover:bg-white/10">{advancedMode ? "Hide Advanced" : "Advanced Mode"}</Button></div>
               <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                 <FieldShell label="Name"><InputBox value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></FieldShell>
-                <FieldShell label="Mode" hint={isPaperDeprecated ? "PAPER deployment is deprecated. Create a broker deployment instead." : "Mode is locked after deployment creation. Create a new deployment to use another mode."}><SelectBox disabled value={form.mode}>{isPaperDeprecated && <option value="PAPER">PAPER Deprecated</option>}<option value="DEMO">DEMO / Broker</option><option value="LIVE">LIVE / Broker</option></SelectBox></FieldShell>
-                <FieldShell label="Broker Account" hint="Broker account is locked after deployment creation to keep approval, sync, and risk routing safe."><SelectBox disabled value={form.broker_account_id}><option value={form.broker_account_id}>{brokerLabel}</option>{connectedBrokers.filter((broker) => broker.id !== form.broker_account_id).map((broker) => <option key={broker.id} value={broker.id}>{broker.broker_code || broker.broker_name} • {broker.account_label} • {broker.mode} • {broker.status} • {broker.login_id || broker.server_name || "—"}</option>)}</SelectBox></FieldShell>
-                <FieldShell label="Instrument" hint="Instrument is locked after deployment creation. Create a new deployment to trade another instrument."><SelectBox disabled value={normalizeSymbol(form.instrument)}>{instrumentOptions.length ? instrumentOptions.map((option) => <option key={option.key} value={option.value}>{option.label}</option>) : <option value={normalizeSymbol(form.instrument)}>{loadingSymbols ? "Loading symbols..." : (form.instrument || "Selected symbol")}</option>}</SelectBox><p className="mt-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-purple-100">{brokerMappingLabel}</p></FieldShell>
-                <FieldShell label="Timeframe" hint="Timeframe is locked after creation because live candles are stored per deployment timeframe."><SelectBox disabled value={form.timeframe}>{[...new Set([form.timeframe, ...(isUpstox ? UPSTOX_TIMEFRAME_OPTIONS : TIMEFRAME_OPTIONS)])].filter(Boolean).map((tf) => <option key={tf} value={tf}>{tf}</option>)}</SelectBox></FieldShell>
+                <FieldShell label="Mode" hint={isPaperDeprecated ? "PAPER deployment is deprecated. Create a broker deployment instead." : isRunning ? "Stop the deployment before changing mode." : isFunded ? "Funded deployment mode remains protected." : "You can change the broker environment while the deployment is stopped."}><SelectBox disabled={isRunning || isFunded} value={form.mode} onChange={(e) => { const mode = e.target.value as FormState["mode"]; const currentBroker = brokers.find((broker) => broker.id === form.broker_account_id); setForm((prev) => ({ ...prev, mode, broker_account_id: currentBroker && currentBroker.mode === mode ? prev.broker_account_id : "", copy_broker_account_ids: prev.copy_broker_account_ids.filter((id) => brokers.find((broker) => broker.id === id)?.mode === mode) })); }}>{isPaperDeprecated && <option value="PAPER">PAPER Deprecated</option>}<option value="DEMO">DEMO / Broker</option><option value="LIVE">LIVE / Broker</option></SelectBox></FieldShell>
+                <FieldShell label="Broker Account" hint={isRunning ? "Stop the deployment before changing the primary broker account." : isFunded ? "Funded broker changes use the funded phase workflow." : "You can switch the primary connected broker account while the deployment is stopped."}><SelectBox disabled={isRunning || isFunded} value={form.broker_account_id} onChange={(e) => setForm((prev) => ({ ...prev, broker_account_id: e.target.value, copy_broker_account_ids: prev.copy_broker_account_ids.filter((id) => id !== e.target.value) }))}><option value="">Select connected broker account</option>{connectedBrokers.filter((broker) => broker.mode === form.mode).map((broker) => <option key={broker.id} value={broker.id}>{broker.broker_code || broker.broker_name} • {broker.account_label} • {broker.mode} • {broker.status} • {broker.login_id || broker.server_name || "—"}</option>)}</SelectBox></FieldShell>
+                <FieldShell label="Instrument" hint={isRunning ? "Stop the deployment before changing instrument." : isFunded ? "Funded deployment instrument remains protected." : "You can change the deployment instrument while it is stopped."}><SelectBox disabled={isRunning || isFunded} value={normalizeSymbol(form.instrument)} onChange={(e) => setForm((prev) => ({ ...prev, instrument: normalizeSymbol(e.target.value) }))}>{instrumentOptions.length ? instrumentOptions.map((option) => <option key={option.key} value={option.value}>{option.label}</option>) : <option value={normalizeSymbol(form.instrument)}>{loadingSymbols ? "Loading symbols..." : (form.instrument || "Selected symbol")}</option>}</SelectBox><p className="mt-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-purple-100">{brokerMappingLabel}</p></FieldShell>
+                <FieldShell label="Timeframe" hint={isRunning ? "Stop the deployment before changing timeframe." : isFunded ? "Funded deployment timeframe remains protected." : "You can change the candle timeframe while the deployment is stopped."}><SelectBox disabled={isRunning || isFunded} value={form.timeframe} onChange={(e) => setForm((prev) => ({ ...prev, timeframe: e.target.value }))}>{[...new Set([form.timeframe, ...(isUpstox ? UPSTOX_TIMEFRAME_OPTIONS : TIMEFRAME_OPTIONS)])].filter(Boolean).map((tf) => <option key={tf} value={tf}>{tf}</option>)}</SelectBox></FieldShell>
                 {!isFunded && <FieldShell label="Risk per Trade" hint={form.risk_per_trade > 0.02 ? "Warning: above 2% is aggressive." : "Default recommended: 1%."}><SelectBox value={selectValue(form.risk_per_trade, RISK_OPTIONS)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, risk_per_trade: Number(e.target.value) }) : setAdvancedMode(true)}>{RISK_OPTIONS.map((value) => <option key={value} value={value}>{percent(value)}</option>)}<option value="CUSTOM">Custom Advanced</option></SelectBox>{advancedMode && selectValue(form.risk_per_trade, RISK_OPTIONS) === "CUSTOM" && <InputBox type="number" step="0.001" max="0.10" value={form.risk_per_trade} onChange={(e) => setForm({ ...form, risk_per_trade: Number(e.target.value) })} />}</FieldShell>}
                 <FieldShell label="RR Ratio"><SelectBox value={form.rr_ratio} onChange={(e) => setForm({ ...form, rr_ratio: Number(e.target.value) })}>{RR_OPTIONS.map((value) => <option key={value} value={value}>1:{value}</option>)}</SelectBox></FieldShell>
                 <FieldShell label="SL Mode"><SelectBox value={liveSlMode} onChange={(e) => setForm({ ...form, sl_mode: e.target.value })}>{SL_MODES.map((value) => <option key={value} value={value}>{value.replace(/_/g, " ")}</option>)}</SelectBox></FieldShell>
@@ -627,6 +634,19 @@ export default function LiveDeploymentSettingsPage() {
               </div>}
               <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-500/10 p-3 text-xs text-amber-100">{isFunded ? "Funded hard rules, broker balance/equity, safety buffer and deployment risk plan remain authoritative. Runtime UI cannot bypass the funded guard." : "Live safety remains enforced by broker readiness, broker max-lot/quantity caps and daily loss guardrails. Runtime UI cannot bypass backend caps."}</div>
             </div>}
+
+            <div className="rounded-2xl border border-cyan-300/20 bg-cyan-500/10 p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div><h3 className="font-black text-white">Copy Trading</h3><p className="mt-1 text-xs text-purple-100/80">The strategy still runs once on the primary deployment. A valid trade intent is routed independently to the selected connected accounts using the same risk settings.</p></div>
+                <label className="flex items-center gap-2 text-sm font-semibold text-cyan-100"><input type="checkbox" disabled={isFunded} checked={form.copy_trading_enabled} onChange={(e) => setForm({ ...form, copy_trading_enabled: e.target.checked })} />Enable Copy Trading</label>
+              </div>
+              {isFunded && <p className="mt-3 rounded-lg border border-amber-300/20 bg-amber-500/10 p-3 text-xs text-amber-100">Funded copy trading is kept disabled in this safe release because each target needs its own funded profile/drawdown state.</p>}
+              {!isFunded && form.copy_trading_enabled && <div className="mt-4 space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-purple-200">Copy signal to connected accounts</p>
+                {copyTargetBrokers.length === 0 ? <p className="rounded-lg border border-white/10 bg-white/5 p-3 text-sm text-purple-200">No additional connected account in the same DEMO/LIVE environment is available.</p> : copyTargetBrokers.map((broker) => { const checked = form.copy_broker_account_ids.includes(broker.id); return <label key={broker.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-purple-50"><input type="checkbox" checked={checked} onChange={(e) => setForm({ ...form, copy_broker_account_ids: e.target.checked ? [...new Set([...form.copy_broker_account_ids, broker.id])] : form.copy_broker_account_ids.filter((id) => id !== broker.id) })} /><span><strong>{broker.broker_code || broker.broker_name}</strong> • {broker.account_label} • {broker.mode} • {broker.login_id || broker.server_name || "Connected"}</span></label>; })}
+                <p className="text-xs text-purple-200/80">Risk sizing, open-position limits, duplicate protection and order execution are evaluated per target account. One target failure does not cancel successful sibling accounts.</p>
+              </div>}
+            </div>
 
             <div className="flex flex-wrap gap-4 rounded-xl border border-white/10 bg-white/5 p-4"><label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={form.allow_short} onChange={(e) => setForm({ ...form, allow_short: e.target.checked })} />Allow short</label><label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={form.auto_trade_enabled} onChange={(e) => setForm({ ...form, auto_trade_enabled: e.target.checked })} />Auto trade enabled</label><label className="flex items-center gap-2 text-sm text-purple-100"><input type="checkbox" checked={form.auto_runner_enabled} onChange={(e) => setForm({ ...form, auto_runner_enabled: e.target.checked })} />Auto runner enabled</label>{isUpstox && <label className="flex items-center gap-2 text-sm text-yellow-100"><input type="checkbox" checked={form.upstox_order_confirmed} onChange={(e) => setForm({ ...form, upstox_order_confirmed: e.target.checked })} />I understand Upstox orders may place real trades</label>}</div>
             <Button disabled={saving || isPaperDeprecated} className="border-0 bg-gradient-to-r from-lime-400 to-emerald-500 text-slate-950 hover:from-lime-300 hover:to-emerald-400">{isPaperDeprecated ? "Create Broker Deployment Instead" : saving ? "Saving..." : "Save Settings"}</Button>

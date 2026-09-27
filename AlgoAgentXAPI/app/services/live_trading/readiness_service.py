@@ -338,7 +338,10 @@ async def check_platform_and_limits(db: AsyncSession, deployment: StrategyDeploy
         loss_message = "Funded daily/max drawdown is checked by the funded guard using the profile rule day."
     else:
         start = day_start_utc()
-        orders_today = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment.id, LiveOrder.created_at >= start))).scalar() or 0)
+        order_filters = [LiveOrder.deployment_id == deployment.id, LiveOrder.created_at >= start]
+        if getattr(deployment, "broker_account_id", None) is not None:
+            order_filters.append(LiveOrder.broker_account_id == deployment.broker_account_id)
+        orders_today = int((await db.execute(select(func.count(LiveOrder.id)).where(*order_filters))).scalar() or 0)
         max_trades_ok = max_trades <= 0 or orders_today < max_trades
         # Live orders do not persist realized PnL directly in all schema versions; keep this guard
         # conservative for Standard deployments and let the execution engine enforce real PnL limits later.

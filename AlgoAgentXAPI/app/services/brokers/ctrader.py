@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
@@ -14,6 +15,7 @@ from ...core.config import settings
 from ...db.models import BrokerAccount
 from ...utils.credential_crypto import decrypt_credential
 from .base import BrokerAdapter, BrokerConnectionResult, BrokerOrderRequest, BrokerOrderResult
+from .symbol_utils import symbol_key, symbol_pair_root, symbol_match_score
 
 DEFAULT_CTRADER_AUTH_URL = "https://openapi.ctrader.com/apps/auth"
 DEFAULT_CTRADER_TOKEN_URL = "https://openapi.ctrader.com/apps/token"
@@ -404,6 +406,37 @@ class CTraderAdapter(BrokerAdapter):
 
 
     @staticmethod
+    def _symbol_key(value: Any) -> str:
+        return symbol_key(value)
+
+    @classmethod
+    def _symbol_pair_root(cls, value: Any) -> str:
+        return symbol_pair_root(value)
+
+    @classmethod
+    def _symbol_match_score(cls, requested: Any, candidate: Any) -> int | None:
+        return symbol_match_score(requested, candidate)
+
+    @classmethod
+    def _best_symbol_meta(cls, requested: Any, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+        ranked: list[tuple[int, int, dict[str, Any]]] = []
+        for item in rows or []:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("symbol_name") or item.get("trading_symbol") or item.get("symbol") or item.get("name")
+            if not name or (item.get("symbol_id") or item.get("id")) is None:
+                continue
+            score = cls._symbol_match_score(requested, name)
+            if score is None:
+                continue
+            ranked.append((score, len(str(name)), item))
+        if not ranked:
+            return None
+        ranked.sort(key=lambda row: (row[0], row[1]))
+        return ranked[0][2]
+
+
+    @staticmethod
     def _as_decimal(value: Any, field_name: str) -> Decimal:
         try:
             dec = Decimal(str(value))
@@ -518,6 +551,12 @@ class CTraderAdapter(BrokerAdapter):
             if not symbol_meta or not (symbol_meta.get("symbol_id") or symbol_meta.get("id")):
                 symbol_meta = await self._resolve_symbol_meta(clean_symbol)
             symbol_id = int(symbol_meta.get("symbol_id") or symbol_meta.get("id"))
+            resolved_symbol = str(
+                symbol_meta.get("symbol_name")
+                or symbol_meta.get("trading_symbol")
+                or symbol_meta.get("symbol")
+                or clean_symbol
+            ).strip().upper()
 
             is_live, discovered = await self._resolve_account_environment(str(account_id))
             if is_live:
@@ -590,7 +629,8 @@ class CTraderAdapter(BrokerAdapter):
                     "transport": "OPEN_API_JSON",
                     "order_id": order_id,
                     "position_id": position_id,
-                    "symbol": clean_symbol,
+                    "symbol": resolved_symbol,
+                    "requested_symbol": clean_symbol,
                     "symbol_id": str(symbol_id),
                     "requested_lots": str(lots),
                     "protocol_volume": protocol_volume,
@@ -624,18 +664,38 @@ class CTraderAdapter(BrokerAdapter):
         if not token:
             raise ValueError("cTrader OAuth token is missing. Please reconnect cTrader.")
         self.validate_config()
-        client = _CTraderJsonWsClient(is_live=is_live)
-        await client.__aenter__()
-        try:
-            await client.request(
-                PT_APPLICATION_AUTH_REQ,
-                {"clientId": self._client_id(), "clientSecret": self._client_secret()},
-                PT_APPLICATION_AUTH_RES,
-            )
-        except Exception:
-            await client.__aexit__(None, None, None)
-            raise
-        return client
+
+        # Short-lived API requests (symbol list/account discovery) previously
+        # failed immediately on a transient Docker/host DNS miss such as
+        # socket.gaierror: [Errno -3] Temporary failure in name resolution.
+        # The persistent market worker already has its own reconnect/backoff
+        # supervisor; this retry is intentionally limited to this short-lived
+        # adapter transport so it does not change the live execution pipeline.
+        last_dns_error: socket.gaierror | None = None
+        for attempt in range(3):
+            client = _CTraderJsonWsClient(is_live=is_live)
+            try:
+                await client.__aenter__()
+                await client.request(
+                    PT_APPLICATION_AUTH_REQ,
+                    {"clientId": self._client_id(), "clientSecret": self._client_secret()},
+                    PT_APPLICATION_AUTH_RES,
+                )
+                return client
+            except socket.gaierror as exc:
+                last_dns_error = exc
+                await client.__aexit__(None, None, None)
+                if attempt >= 2:
+                    raise
+                await asyncio.sleep(0.75 * (attempt + 1))
+            except Exception:
+                await client.__aexit__(None, None, None)
+                raise
+
+        # Defensive only; loop above either returns or raises.
+        if last_dns_error is not None:
+            raise last_dns_error
+        raise RuntimeError("Unable to connect to cTrader Open API.")
 
     async def fetch_accounts(self) -> list[dict[str, Any]]:
         # Preserve optional legacy bridge compatibility, but no bridge is required.
@@ -1054,14 +1114,7 @@ class CTraderAdapter(BrokerAdapter):
         if not selected:
             return BrokerOrderResult(False, "REJECTED", "cTrader account selection required before placing demo orders.", raw_response={"provider": "CTRADER"})
         symbols = meta.get("ctrader_symbols_preview") if isinstance(meta, dict) else []
-        symbol_meta = None
-        if isinstance(symbols, list):
-            for item in symbols:
-                if not isinstance(item, dict):
-                    continue
-                if str(item.get("symbol_name") or item.get("trading_symbol") or item.get("symbol") or "").upper() == str(order_request.symbol or "").upper():
-                    symbol_meta = item
-                    break
+        symbol_meta = self._best_symbol_meta(order_request.symbol, symbols) if isinstance(symbols, list) else None
         return await self.place_demo_market_order(
             selected_account=selected,
             symbol_meta=symbol_meta,
@@ -1145,7 +1198,17 @@ class CTraderAdapter(BrokerAdapter):
         account_id = selected.get("ctrader_account_id") or selected.get("account_number")
         if not account_id:
             return [{"success": False, "message": "Selected cTrader account does not contain an account id."}]
-        rows = await self.fetch_symbols(str(account_id), max(1, min(int(limit or 200), 2000)))
+        try:
+            rows = await self.fetch_symbols(str(account_id), max(1, min(int(limit or 200), 2000)))
+        except socket.gaierror:
+            # If cTrader DNS is temporarily unavailable, keep the deployment UI
+            # usable with the last broker-synced symbol preview.  The persistent
+            # live market connection is independent and will reconnect itself.
+            meta = getattr(self.broker_account, "metadata_json", None) or {}
+            preview = meta.get("ctrader_symbols_preview") if isinstance(meta, dict) else []
+            rows = [self.normalize_symbol(item) for item in preview if isinstance(item, dict)]
+            if not rows:
+                raise
         needle = str(query or "").strip().upper()
         result: list[dict[str, Any]] = []
         for item in rows:
@@ -1177,20 +1240,18 @@ class CTraderAdapter(BrokerAdapter):
             raise ValueError("cTrader symbol is required.")
         meta = getattr(self.broker_account, "metadata_json", None) or {}
         preview = meta.get("ctrader_symbols_preview") if isinstance(meta, dict) else []
-        for item in preview if isinstance(preview, list) else []:
-            if not isinstance(item, dict):
-                continue
-            candidate = str(item.get("symbol_name") or item.get("trading_symbol") or item.get("symbol") or "").strip().upper()
-            if candidate == clean and (item.get("symbol_id") or item.get("id")) is not None:
-                return item
+        if isinstance(preview, list):
+            matched = self._best_symbol_meta(clean, preview)
+            if matched is not None:
+                return matched
         selected = self._selected_account()
         account_id = (selected or {}).get("ctrader_account_id") or (selected or {}).get("account_number")
         if not account_id:
             raise ValueError("Select a cTrader trading account before requesting market data.")
         rows = await self.fetch_symbols(str(account_id), 2000)
-        for item in rows:
-            if str(item.get("symbol_name") or "").strip().upper() == clean:
-                return item
+        matched = self._best_symbol_meta(clean, rows)
+        if matched is not None:
+            return matched
         raise ValueError(f"cTrader symbol {clean} was not found. Sync the selected cTrader account and choose a symbol from its broker list.")
 
     async def get_quotes(self, symbols: list[str]) -> list[dict[str, Any]]:
@@ -1299,7 +1360,10 @@ class CTraderAdapter(BrokerAdapter):
             sid = str(trade.get("symbolId") or "")
             light = symbol_by_id.get(sid, {})
             name = str(light.get("symbol_name") or sid)
-            if symbol and name.upper() != str(symbol).upper():
+            # Copy-trading callers pass the broker-neutral/canonical symbol.
+            # Accept broker suffix/root aliases (e.g. XAUUSD <-> XAUUSDm) so a
+            # position is never hidden from the per-account max-position guard.
+            if symbol and symbol_match_score(symbol, name) is None:
                 continue
             full_symbol = None
             try:

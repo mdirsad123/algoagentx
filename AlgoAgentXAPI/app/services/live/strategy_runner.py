@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 import math
+import logging
 from uuid import UUID
 
 import pandas as pd
@@ -24,6 +25,8 @@ from .runner_scheduler import calculate_next_runner_after_candle, calculate_next
 from ..live_trading.paper_position_manager import process_paper_positions_for_deployment
 from .live_latency_trace_service import LiveLatencyTraceService
 from .deployment_lock import try_deployment_xact_lock
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -949,31 +952,33 @@ async def run_strategy_for_deployment(
 
     except HTTPException as exc:
         latest_log_message = str(exc.detail)
-        if candle_time is not None:
-            # Event work is retried from the Redis pending list. Rolling back
-            # its partial signal also keeps a retry from treating a failed
-            # candle as a completed duplicate.
-            await db.rollback()
-            deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
-            if deployment is not None:
-                await _log(db, deployment, "RUNNER_ERROR", latest_log_message, "ERROR", {"deployment_id": str(deployment_id)})
-                await db.commit()
-            raise
-        await _log(db, deployment, "RUNNER_ERROR", latest_log_message, "ERROR", {"deployment_id": str(deployment.id)})
-        await db.commit()
+        # A failed flush/commit leaves AsyncSession in a failed transaction.
+        # Always rollback before any new ORM query/log write, for BOTH the
+        # event-worker route and the MT5/legacy auto-runner route.
+        await db.rollback()
+        failed_deployment = (
+            await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))
+        ).scalar_one_or_none()
+        if failed_deployment is not None:
+            await _log(db, failed_deployment, "RUNNER_ERROR", latest_log_message, "ERROR", {"deployment_id": str(deployment_id)})
+            await db.commit()
         raise
     except Exception as exc:
+        logger.exception("Strategy runner failed for deployment %s", deployment_id)
         latest_log_message = f"Strategy runner failed: {exc.__class__.__name__}: {str(exc)[:240]}"
-        if candle_time is not None:
-            await db.rollback()
-            deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
-            if deployment is not None:
-                await _log(db, deployment, "RUNNER_ERROR", latest_log_message, "ERROR", {"deployment_id": str(deployment_id)})
-                await db.commit()
-            raise HTTPException(status_code=500, detail=latest_log_message) from exc
-        await _log(db, deployment, "RUNNER_ERROR", latest_log_message, "ERROR", {"deployment_id": str(deployment.id)})
-        await db.commit()
-        raise HTTPException(status_code=400, detail="Strategy runner failed. Check execution logs for details.") from exc
+        # Never attempt to reuse a poisoned transaction after DBAPI/flush errors.
+        # This prevents PendingRollbackError from masking the real root cause and
+        # lets the 1-second auto-runner retry start with a clean session.
+        await db.rollback()
+        failed_deployment = (
+            await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))
+        ).scalar_one_or_none()
+        if failed_deployment is not None:
+            await _log(db, failed_deployment, "RUNNER_ERROR", latest_log_message, "ERROR", {"deployment_id": str(deployment_id)})
+            await db.commit()
+        status_code = 500 if candle_time is not None else 400
+        detail = latest_log_message if candle_time is not None else "Strategy runner failed. Check execution logs for details."
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 async def run_strategy_for_candle(

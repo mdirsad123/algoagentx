@@ -52,7 +52,7 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
 
     # Risk-reducing actions are resolved before entry-only limits. A daily loss
     # or funded guard may block NEW risk, but must never prevent an EXIT.
-    early_open_positions = await get_open_positions(db, deployment.id)
+    early_open_positions = await get_open_positions(db, deployment.id, deployment.broker_account_id)
     if signal.signal_type == "EXIT":
         if not early_open_positions:
             return RiskResult(False, "No open position to close")
@@ -76,6 +76,7 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
         orders_today = (await db.execute(
             select(func.count(LiveOrder.id)).where(
                 LiveOrder.deployment_id == deployment.id,
+                LiveOrder.broker_account_id == deployment.broker_account_id,
                 LiveOrder.created_at >= day_start,
                 LiveOrder.status.in_(["FILLED", "PLACED", "PENDING_DEMO"]),
             )
@@ -86,6 +87,7 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
         realized_today = to_decimal((await db.execute(
             select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(
                 LivePosition.deployment_id == deployment.id,
+                LivePosition.broker_account_id == deployment.broker_account_id,
                 LivePosition.closed_at >= day_start,
             )
         )).scalar())
@@ -97,6 +99,7 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
         .join(LiveSignal, LiveSignal.id == LiveOrder.signal_id)
         .where(
             LiveOrder.deployment_id == deployment.id,
+            LiveOrder.broker_account_id == deployment.broker_account_id,
             LiveSignal.candle_time == signal.candle_time,
             LiveSignal.signal_type == signal.signal_type,
             LiveOrder.status.in_(["FILLED", "PLACED", "PENDING_DEMO"]),
@@ -106,7 +109,7 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
     if duplicate is not None:
         return RiskResult(False, "Duplicate order for same candle and signal")
 
-    open_positions = await get_open_positions(db, deployment.id)
+    open_positions = await get_open_positions(db, deployment.id, deployment.broker_account_id)
     if signal.signal_type == "EXIT":
         if not open_positions:
             return RiskResult(False, "No open position to close")
@@ -154,7 +157,7 @@ async def validate_upstox_order_rules(db: AsyncSession, deployment: StrategyDepl
 
     product = str(getattr(deployment, "product_type", "MIS") or "MIS").upper()
     if product in {"DELIVERY", "CNC", "D"} and signal.signal_type == "SELL":
-        open_positions = await get_open_positions(db, deployment.id)
+        open_positions = await get_open_positions(db, deployment.id, deployment.broker_account_id)
         has_long = any(p.side == "LONG" for p in open_positions)
         if not has_long:
             return RiskResult(False, "Delivery/CNC short sell is disabled by default")

@@ -4,6 +4,7 @@ import logging
 import secrets
 from datetime import datetime, time, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -37,7 +38,7 @@ from ...services.live.strategy_runner import run_strategy_for_deployment, run_fu
 from ...services.live.compatibility_service import run_live_compatibility_check, compatibility_failed
 from ...services.live.auto_runner_service import run_deployment_if_due
 from ...services.live.runner_scheduler import calculate_next_runner_at
-from ...services.live.broker_sync_service import clamp_live_sync_interval, sync_ctrader_deployment_via_gateway, sync_deployment_broker_state
+from ...services.live.broker_sync_service import clamp_live_sync_interval, sync_copy_target_positions, sync_ctrader_deployment_via_gateway, sync_deployment_broker_state
 from ...services.live.trading_safety import check_platform_mode_allowed, get_platform_trading_settings, mark_heartbeat
 from ...services.live_trading.readiness_service import build_live_deployment_readiness
 from ...services.live_trading.paper_position_manager import process_paper_positions_for_deployment
@@ -776,25 +777,82 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
                 ).scalar_one_or_none()
                 broker = _broker_safe(broker_row)
 
-    realized = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == deployment_id))).scalar())
-    unrealized = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.unrealized_pnl), 0)).where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN"))).scalar())
-    today_realized_pnl = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == deployment_id, LivePosition.closed_at >= day_start))).scalar())
+    # Deployment headline metrics represent the PRIMARY account only. Copy orders
+    # are execution replicas of the same strategy signal and must not inflate
+    # Orders Today, max-trades checks, primary PnL, or primary open-position UI.
+    primary_position_filters = [LivePosition.deployment_id == deployment_id]
+    primary_order_filters = [LiveOrder.deployment_id == deployment_id]
+    if deployment_broker_account_id is not None:
+        primary_position_filters.append(LivePosition.broker_account_id == deployment_broker_account_id)
+        primary_order_filters.append(LiveOrder.broker_account_id == deployment_broker_account_id)
+
+    realized = _dec((await db.execute(
+        select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(*primary_position_filters)
+    )).scalar())
+    unrealized = _dec((await db.execute(
+        select(func.coalesce(func.sum(LivePosition.unrealized_pnl), 0)).where(*primary_position_filters, LivePosition.status == "OPEN")
+    )).scalar())
+    today_realized_pnl = _dec((await db.execute(
+        select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(*primary_position_filters, LivePosition.closed_at >= day_start)
+    )).scalar())
     today_unrealized_pnl = unrealized
     today_pnl = today_realized_pnl + today_unrealized_pnl
-    open_positions_count = int((await db.execute(select(func.count(LivePosition.id)).where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN"))).scalar() or 0)
-    orders_count_today = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment_id, LiveOrder.created_at >= day_start))).scalar() or 0)
+    open_positions_count = int((await db.execute(
+        select(func.count(LivePosition.id)).where(*primary_position_filters, LivePosition.status == "OPEN")
+    )).scalar() or 0)
+    orders_count_today = int((await db.execute(
+        select(func.count(LiveOrder.id)).where(*primary_order_filters, LiveOrder.created_at >= day_start)
+    )).scalar() or 0)
+    copy_orders_count_today = int((await db.execute(
+        select(func.count(LiveOrder.id)).where(
+            LiveOrder.deployment_id == deployment_id,
+            LiveOrder.created_at >= day_start,
+            LiveOrder.broker_account_id.is_not(None),
+            LiveOrder.broker_account_id != deployment_broker_account_id,
+        )
+    )).scalar() or 0) if deployment_broker_account_id is not None else 0
     tradeable_signal_filter = LiveSignal.signal_type.in_(["BUY", "SELL", "EXIT"])
     signals_count_today = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == deployment_id, LiveSignal.created_at >= day_start, tradeable_signal_filter))).scalar() or 0)
-    total_orders = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment_id))).scalar() or 0)
+    total_orders = int((await db.execute(select(func.count(LiveOrder.id)).where(*primary_order_filters))).scalar() or 0)
     total_signals = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == deployment_id, tradeable_signal_filter))).scalar() or 0)
 
     latest_equity = (await db.execute(select(LiveEquityPoint.equity).where(LiveEquityPoint.deployment_id == deployment_id).order_by(LiveEquityPoint.timestamp.desc()).limit(1))).scalar_one_or_none()
     equity = _dec(latest_equity, str(_dec(deployment_capital, "100000") + realized + unrealized))
 
     latest_signal = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == deployment_id, tradeable_signal_filter).order_by(LiveSignal.created_at.desc()).limit(1))).scalar_one_or_none()
-    latest_order = (await db.execute(select(LiveOrder).where(LiveOrder.deployment_id == deployment_id).order_by(LiveOrder.created_at.desc()).limit(1))).scalar_one_or_none()
-    open_positions = (await db.execute(select(LivePosition).where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN").order_by(LivePosition.opened_at.desc()).limit(20))).scalars().all()
-    recent_orders = await _recent(db, LiveOrder, deployment_id)
+    latest_order = (await db.execute(
+        select(LiveOrder).where(*primary_order_filters).order_by(LiveOrder.created_at.desc()).limit(1)
+    )).scalar_one_or_none()
+    open_positions = (await db.execute(
+        select(LivePosition).where(*primary_position_filters, LivePosition.status == "OPEN").order_by(LivePosition.opened_at.desc()).limit(20)
+    )).scalars().all()
+    recent_orders = (await db.execute(
+        select(LiveOrder).where(*primary_order_filters).order_by(LiveOrder.created_at.desc()).limit(20)
+    )).scalars().all()
+
+    copy_order_rows = []
+    if deployment_broker_account_id is not None:
+        copy_order_rows = (await db.execute(
+            select(LiveOrder, BrokerAccount)
+            .join(BrokerAccount, BrokerAccount.id == LiveOrder.broker_account_id, isouter=True)
+            .where(
+                LiveOrder.deployment_id == deployment_id,
+                LiveOrder.broker_account_id.is_not(None),
+                LiveOrder.broker_account_id != deployment_broker_account_id,
+            )
+            .order_by(LiveOrder.created_at.desc())
+            .limit(50)
+        )).all()
+    copy_orders = []
+    for copy_order, copy_broker in copy_order_rows:
+        item = LiveOrderOut.model_validate(copy_order).model_dump(mode="json")
+        item.update({
+            "broker_account_label": getattr(copy_broker, "account_label", None) if copy_broker is not None else None,
+            "broker_code": get_broker_code(copy_broker) if copy_broker is not None else None,
+            "broker_mode": getattr(copy_broker, "mode", None) if copy_broker is not None else None,
+            "broker_login_id": getattr(copy_broker, "login_id", None) if copy_broker is not None else None,
+        })
+        copy_orders.append(item)
     recent_signals = (await db.execute(select(LiveSignal).where(LiveSignal.deployment_id == deployment_id, tradeable_signal_filter).order_by(LiveSignal.created_at.desc()).limit(20))).scalars().all()
     recent_logs = await _recent(db, LiveTradeLog, deployment_id)
     position_events = (await db.execute(
@@ -859,6 +917,8 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
             "status": row.status,
             "auto_trade_enabled": row.auto_trade_enabled,
             "auto_runner_enabled": getattr(row, "auto_runner_enabled", False),
+            "copy_trading_enabled": bool(getattr(row, "copy_trading_enabled", False)),
+            "copy_broker_account_ids": list(getattr(row, "copy_broker_account_ids", None) or []),
             "last_runner_at": getattr(row, "last_runner_at", None),
             "next_run_at": getattr(row, "next_run_at", None),
             "last_runner_wakeup_at": getattr(row, "last_runner_wakeup_at", None),
@@ -911,6 +971,7 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
             "open_positions_count": open_positions_count,
             "orders_today": orders_count_today,
             "orders_count_today": orders_count_today,
+            "copy_orders_today": copy_orders_count_today,
             "signals_today": signals_count_today,
             "signals_count_today": signals_count_today,
             "total_orders": total_orders,
@@ -983,6 +1044,7 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
         "open_positions": dump_list(LivePositionOut, open_positions),
         "position_events": dump_list(LiveTradeLogOut, position_events),
         "recent_orders": dump_list(LiveOrderOut, recent_orders),
+        "copy_orders": copy_orders,
         "recent_signals": dump_list(LiveSignalOut, recent_signals),
         "recent_logs": dump_list(LiveTradeLogOut, recent_logs),
     }
@@ -1178,6 +1240,50 @@ async def create_deployment(payload: StrategyDeploymentCreate, db: AsyncSession 
 
 
 
+async def _refresh_open_position_accounts_before_delete(db: AsyncSession, row: StrategyDeployment) -> list[str]:
+    """Reconcile only accounts that still have local OPEN rows before delete.
+
+    Copy-trading deployments intentionally show primary-account headline metrics,
+    so an old/stale OPEN row on a copy account can be invisible on the main card
+    while still correctly blocking a destructive delete.  Before returning that
+    block, ask each affected broker account for current position truth.  Empty
+    broker truth closes the stale local row via account-scoped reconciliation.
+
+    A failed/offline broker refresh is never treated as "no position"; the row
+    remains OPEN and deletion remains blocked safely.
+    """
+    account_ids = list((await db.execute(
+        select(LivePosition.broker_account_id)
+        .where(LivePosition.deployment_id == row.id, LivePosition.status == "OPEN")
+        .distinct()
+    )).scalars().all())
+
+    warnings: list[str] = []
+    for raw_account_id in account_ids:
+        account_id = raw_account_id or row.broker_account_id
+        if account_id is None:
+            warnings.append("legacy OPEN position has no broker account id")
+            continue
+
+        # Explicit scalar context only. Do not clone/walk every ORM column: that
+        # pattern previously caused async MissingGreenlet regressions elsewhere.
+        target = SimpleNamespace(
+            id=row.id,
+            user_id=row.user_id,
+            broker_account_id=account_id,
+            instrument=row.instrument,
+            broker_symbol=row.broker_symbol,
+            instrument_key=row.instrument_key,
+        )
+        try:
+            async with db.begin_nested():
+                await sync_copy_target_positions(db, target)
+        except Exception as exc:
+            warnings.append(f"{account_id}: {exc}")
+
+    return warnings
+
+
 @router.delete("/{deployment_id}")
 async def delete_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     row = await get_deployment_or_404(db, deployment_id, current_user)
@@ -1185,11 +1291,18 @@ async def delete_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_
     if status_value not in {"DRAFT", "STOPPED", "ERROR"}:
         raise HTTPException(status_code=400, detail="Only DRAFT, STOPPED, or ERROR deployments can be deleted. Stop the deployment before deleting it.")
 
+    # Reconcile stale local position rows first. This specifically fixes the case
+    # where an asynchronous MT5 copy command was queued locally, later rejected by
+    # the Windows terminal, and the old optimistic OPEN row remained even though
+    # the broker had no position. Real broker positions still block deletion.
+    delete_sync_warnings = await _refresh_open_position_accounts_before_delete(db, row)
+
     open_positions_count = int((await db.execute(
         select(func.count(LivePosition.id)).where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN")
     )).scalar() or 0)
     if open_positions_count > 0:
-        raise HTTPException(status_code=400, detail="Cannot delete deployment while open live positions exist.")
+        suffix = f" Broker refresh warning: {delete_sync_warnings[0]}" if delete_sync_warnings else ""
+        raise HTTPException(status_code=400, detail=f"Cannot delete deployment while open live positions exist.{suffix}")
 
     active_orders_count = int((await db.execute(
         select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment_id, LiveOrder.status.in_(["PENDING", "PLACED"]))
@@ -1820,12 +1933,45 @@ async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpda
             return str(incoming or "") != str(current or "")
         return str(incoming or "").strip().upper() != str(current or "").strip().upper()
 
-    locked_fields = ["mode", "broker_account_id", "instrument", "broker_symbol", "instrument_key", "exchange", "segment", "timeframe", "account_policy_type", "funded_profile_id", "funded_phase_number", "funded_attach_mode"]
-    if any(field in values and _locked_value_changed(field, values.get(field)) for field in locked_fields):
+    # Standard deployments may change their primary mode/account/instrument/timeframe while STOPPED.
+    # RUNNING structural changes remain protected below by _guard_running_deployment_update().
+    # Funded identity/phase fields still use their dedicated funded workflow.
+    funded_identity_fields = ["account_policy_type", "funded_profile_id", "funded_phase_number", "funded_attach_mode"]
+    if any(field in values and _locked_value_changed(field, values.get(field)) for field in funded_identity_fields):
         raise HTTPException(
             status_code=400,
-            detail="Mode, broker account, instrument, and timeframe are locked after deployment creation. Create a new deployment to change them.",
+            detail="Funded account policy/profile/phase identity cannot be changed from general deployment settings.",
         )
+    structural_fields = ["mode", "broker_account_id", "instrument", "broker_symbol", "instrument_key", "exchange", "segment", "timeframe"]
+    if str(getattr(row, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED" and any(
+        field in values and _locked_value_changed(field, values.get(field)) for field in structural_fields
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Funded deployment mode, broker account, instrument, and timeframe remain protected. Use the funded phase workflow where applicable.",
+        )
+
+    # Copy trading is intentionally configurable while RUNNING because it does not
+    # change the strategy, candle source, instrument or primary broker account.
+    if values.get("copy_trading_enabled") and str(getattr(row, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED":
+        raise HTTPException(status_code=400, detail="Copy trading for FUNDED deployments requires per-target funded profiles and is disabled in this safe release.")
+    if "copy_broker_account_ids" in values:
+        requested = values.get("copy_broker_account_ids") or []
+        deduped = []
+        primary = await get_broker_account_or_404(db, row.broker_account_id, current_user) if row.broker_account_id else None
+        for account_id in requested:
+            if str(account_id) == str(row.broker_account_id):
+                continue
+            broker = await get_broker_account_or_404(db, account_id, current_user)
+            if str(getattr(broker, "status", "") or "").upper() != "CONNECTED":
+                raise HTTPException(status_code=400, detail=f"Copy target {account_id} must be CONNECTED.")
+            if primary is not None and str(broker.mode or "").upper() != str(primary.mode or "").upper():
+                raise HTTPException(status_code=400, detail="Copy targets must use the same DEMO/LIVE environment as the primary account.")
+            if str(account_id) not in {str(x) for x in deduped}:
+                deduped.append(account_id)
+        values["copy_broker_account_ids"] = [str(x) for x in deduped]
+        if values.get("copy_trading_enabled") and not deduped:
+            raise HTTPException(status_code=400, detail="Select at least one connected copy-trading target account.")
 
     funded_plan_fields = {"funded_risk_mode", "funded_fixed_risk_pct", "funded_safety_buffer_pct", "funded_configured_max_risk_pct"}
     if str(getattr(row, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED" and funded_plan_fields.intersection(values):

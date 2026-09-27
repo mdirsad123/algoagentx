@@ -250,6 +250,10 @@ class StrategyDeployment(Base):
     allow_short = Column(Boolean, nullable=False, server_default="true")
     auto_trade_enabled = Column(Boolean, nullable=False, server_default="false")
     auto_runner_enabled = Column(Boolean, nullable=False, server_default="false", index=True)
+    # Copy trading is an execution fan-out layer. The primary broker account remains
+    # the deployment market-data/strategy source; these targets receive the same trade intent.
+    copy_trading_enabled = Column(Boolean, nullable=False, server_default="false", index=True)
+    copy_broker_account_ids = Column(JSONB, nullable=False, server_default="[]")
     last_runner_at = Column(DateTime(timezone=True), nullable=True)
     next_run_at = Column(DateTime(timezone=True), nullable=True)
     last_runner_wakeup_at = Column(DateTime(timezone=True), nullable=True)

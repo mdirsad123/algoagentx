@@ -286,21 +286,51 @@ async def _live_summary(db: AsyncSession, user_id: str) -> tuple[dict[str, Any],
     open_positions = 0
     total_pnl = today_pnl = 0.0
     if has_positions:
-        open_positions = _to_int(await _safe_scalar(db, "SELECT COUNT(*) FROM live_positions WHERE CAST(user_id AS TEXT)=:user_id AND UPPER(COALESCE(status,''))='OPEN'", {"user_id": user_id}))
-        total_pnl = _to_float(await _safe_scalar(db, "SELECT COALESCE(SUM(COALESCE(realized_pnl,0)+COALESCE(unrealized_pnl,0)),0) FROM live_positions WHERE CAST(user_id AS TEXT)=:user_id", {"user_id": user_id}))
-        today_pnl = _to_float(await _safe_scalar(db, "SELECT COALESCE(SUM(COALESCE(realized_pnl,0)+COALESCE(unrealized_pnl,0)),0) FROM live_positions WHERE CAST(user_id AS TEXT)=:user_id AND COALESCE(updated_at, created_at)::date = CURRENT_DATE", {"user_id": user_id}))
+        if has_deployments:
+            primary_position_where = """
+                FROM live_positions p
+                JOIN strategy_deployments d ON d.id = p.deployment_id
+                WHERE CAST(p.user_id AS TEXT)=:user_id
+                  AND (d.broker_account_id IS NULL OR p.broker_account_id = d.broker_account_id)
+            """
+            open_positions = _to_int(await _safe_scalar(db, f"SELECT COUNT(*) {primary_position_where} AND UPPER(COALESCE(p.status,''))='OPEN'", {"user_id": user_id}))
+            total_pnl = _to_float(await _safe_scalar(db, f"SELECT COALESCE(SUM(COALESCE(p.realized_pnl,0)+COALESCE(p.unrealized_pnl,0)),0) {primary_position_where}", {"user_id": user_id}))
+            today_pnl = _to_float(await _safe_scalar(db, f"SELECT COALESCE(SUM(COALESCE(p.realized_pnl,0)+COALESCE(p.unrealized_pnl,0)),0) {primary_position_where} AND COALESCE(p.updated_at, p.created_at)::date = CURRENT_DATE", {"user_id": user_id}))
+        else:
+            open_positions = _to_int(await _safe_scalar(db, "SELECT COUNT(*) FROM live_positions WHERE CAST(user_id AS TEXT)=:user_id AND UPPER(COALESCE(status,''))='OPEN'", {"user_id": user_id}))
+            total_pnl = _to_float(await _safe_scalar(db, "SELECT COALESCE(SUM(COALESCE(realized_pnl,0)+COALESCE(unrealized_pnl,0)),0) FROM live_positions WHERE CAST(user_id AS TEXT)=:user_id", {"user_id": user_id}))
+            today_pnl = _to_float(await _safe_scalar(db, "SELECT COALESCE(SUM(COALESCE(realized_pnl,0)+COALESCE(unrealized_pnl,0)),0) FROM live_positions WHERE CAST(user_id AS TEXT)=:user_id AND COALESCE(updated_at, created_at)::date = CURRENT_DATE", {"user_id": user_id}))
 
     today_orders = 0
     recent_orders: list[dict[str, Any]] = []
     if has_orders:
-        today_orders = _to_int(await _safe_scalar(db, "SELECT COUNT(*) FROM live_orders WHERE CAST(user_id AS TEXT)=:user_id AND created_at::date = CURRENT_DATE", {"user_id": user_id}))
-        rows = await _safe_rows(db, """
-            SELECT id, symbol, side, qty, executed_price, entry_price, status, created_at
-            FROM live_orders
-            WHERE CAST(user_id AS TEXT)=:user_id
-            ORDER BY created_at DESC
-            LIMIT 5
-        """, {"user_id": user_id})
+        if has_deployments:
+            today_orders = _to_int(await _safe_scalar(db, """
+                SELECT COUNT(*)
+                FROM live_orders o
+                JOIN strategy_deployments d ON d.id = o.deployment_id
+                WHERE CAST(o.user_id AS TEXT)=:user_id
+                  AND o.created_at::date = CURRENT_DATE
+                  AND (d.broker_account_id IS NULL OR o.broker_account_id = d.broker_account_id)
+            """, {"user_id": user_id}))
+            rows = await _safe_rows(db, """
+                SELECT o.id, o.symbol, o.side, o.qty, o.executed_price, o.entry_price, o.status, o.created_at
+                FROM live_orders o
+                JOIN strategy_deployments d ON d.id = o.deployment_id
+                WHERE CAST(o.user_id AS TEXT)=:user_id
+                  AND (d.broker_account_id IS NULL OR o.broker_account_id = d.broker_account_id)
+                ORDER BY o.created_at DESC
+                LIMIT 5
+            """, {"user_id": user_id})
+        else:
+            today_orders = _to_int(await _safe_scalar(db, "SELECT COUNT(*) FROM live_orders WHERE CAST(user_id AS TEXT)=:user_id AND created_at::date = CURRENT_DATE", {"user_id": user_id}))
+            rows = await _safe_rows(db, """
+                SELECT id, symbol, side, qty, executed_price, entry_price, status, created_at
+                FROM live_orders
+                WHERE CAST(user_id AS TEXT)=:user_id
+                ORDER BY created_at DESC
+                LIMIT 5
+            """, {"user_id": user_id})
         recent_orders = [
             {
                 "id": str(row.get("id")),

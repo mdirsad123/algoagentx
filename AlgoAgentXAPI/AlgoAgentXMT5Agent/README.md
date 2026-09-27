@@ -37,7 +37,7 @@ python main.py
   "ENABLE_ORDER_EXECUTION": false,
   "MT5_PATH": "",
   "DEFAULT_DEVIATION": 20,
-  "AGENT_VERSION": "0.4.1-alerts-symbols"
+  "AGENT_VERSION": "0.4.2-copy-close-symbols"
 }
 ```
 

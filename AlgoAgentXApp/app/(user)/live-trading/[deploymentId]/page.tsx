@@ -358,6 +358,7 @@ export default function LiveDeploymentDetailPage() {
   const broker = summary?.broker;
   const recentSignals = summary?.recent_signals || [];
   const recentOrders = summary?.recent_orders || [];
+  const copyOrders = summary?.copy_orders || [];
   const openPositions = summary?.open_positions || [];
   const recentLogs = summary?.recent_logs || [];
   const latestCandles = candleSnapshot?.candles?.slice(0, 5) || [];
@@ -929,6 +930,37 @@ export default function LiveDeploymentDetailPage() {
               {!showOrders ? <NoRows label={`Orders are hidden. Total today: ${metrics?.orders_today ?? 0}.`} /> : recentOrders.length === 0 ? <NoRows label="No orders yet" /> : <div className="responsive-table-wrapper max-h-[360px] overflow-auto"><table className="w-full min-w-[980px] text-left text-sm"><thead className="sticky top-0 bg-purple-950 text-purple-200"><tr><th className="p-3">Time</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Entry</th><th>Executed</th><th>SL</th><th>Target</th><th>Status</th><th>Broker Order ID</th><th>Error</th></tr></thead><tbody className="divide-y divide-white/10">{recentOrders.map((o) => <tr key={o.id} className="text-purple-50"><td className="p-3">{date(o.created_at)}</td><td>{o.side}</td><td>{o.symbol}</td><td>{num(o.qty)}</td><td>{num(o.entry_price)}</td><td>{num(o.executed_price)}</td><td>{num(o.stop_loss)}</td><td>{num(o.target)}</td><td>{o.status}</td><td>{o.broker_order_id || "-"}</td><td className="max-w-[260px] truncate" title={o.error_message || "-"}>{o.error_message || "-"}</td></tr>)}</tbody></table></div>}
             </GlassCard>
           </div>
+
+          {(summary?.deployment?.copy_trading_enabled || copyOrders.length > 0) && (
+            <GlassCard className="mb-6 p-6" hoverEffect={false}>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-bold text-white">Copy Trading Orders</h2>
+                  <p className="mt-1 text-sm text-purple-200">Replica executions are shown separately and do not increase the primary Orders Today count.</p>
+                </div>
+                <Badge className="border-cyan-400/30 bg-cyan-400/20 text-cyan-100">Today: {metrics?.copy_orders_today ?? 0}</Badge>
+              </div>
+              {copyOrders.length === 0 ? <NoRows label="No copy-trading orders yet" /> : (
+                <div className="responsive-table-wrapper max-h-[360px] overflow-auto">
+                  <table className="w-full min-w-[1180px] text-left text-sm">
+                    <thead className="sticky top-0 bg-purple-950 text-purple-200">
+                      <tr><th className="p-3">Time</th><th>Account</th><th>Broker</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Entry</th><th>Executed</th><th>SL</th><th>Target</th><th>Status</th><th>Broker Order ID</th><th>Error</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/10">
+                      {copyOrders.map((o) => (
+                        <tr key={o.id} className="text-purple-50">
+                          <td className="p-3">{date(o.created_at)}</td>
+                          <td>{o.broker_account_label || o.broker_login_id || "Copy account"}</td>
+                          <td>{[o.broker_code, o.broker_mode].filter(Boolean).join(" · ") || "-"}</td>
+                          <td>{o.side}</td><td>{o.symbol}</td><td>{num(o.qty)}</td><td>{num(o.entry_price)}</td><td>{num(o.executed_price)}</td><td>{num(o.stop_loss)}</td><td>{num(o.target)}</td><td>{o.status}</td><td>{o.broker_order_id || "-"}</td><td className="max-w-[260px] truncate" title={o.error_message || "-"}>{o.error_message || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </GlassCard>
+          )}
 
           <GlassCard className="p-6" hoverEffect={false}>
             <div className="mb-4 flex items-center justify-between gap-2"><h2 className="text-xl font-bold text-white">Technical Logs</h2><Button size="sm" onClick={() => setShowLogs((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{showLogs ? "Hide Technical Logs" : "Open Technical Logs"}</Button></div>

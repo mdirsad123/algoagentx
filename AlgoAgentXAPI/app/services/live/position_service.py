@@ -11,19 +11,25 @@ from ...db.models import LivePosition, LiveTradeLog, StrategyDeployment
 from .pnl_service import calculate_position_pnl, to_decimal
 
 
-async def get_open_positions(db: AsyncSession, deployment_id) -> list[LivePosition]:
+async def get_open_positions(db: AsyncSession, deployment_id, broker_account_id=None) -> list[LivePosition]:
+    filters = [LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN"]
+    if broker_account_id is not None:
+        filters.append(LivePosition.broker_account_id == broker_account_id)
     rows = await db.execute(
         select(LivePosition)
-        .where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN")
+        .where(*filters)
         .order_by(LivePosition.opened_at.asc())
     )
     return list(rows.scalars().all())
 
 
-async def get_latest_open_position(db: AsyncSession, deployment_id) -> Optional[LivePosition]:
+async def get_latest_open_position(db: AsyncSession, deployment_id, broker_account_id=None) -> Optional[LivePosition]:
+    filters = [LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN"]
+    if broker_account_id is not None:
+        filters.append(LivePosition.broker_account_id == broker_account_id)
     rows = await db.execute(
         select(LivePosition)
-        .where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN")
+        .where(*filters)
         .order_by(LivePosition.opened_at.desc())
         .limit(1)
     )

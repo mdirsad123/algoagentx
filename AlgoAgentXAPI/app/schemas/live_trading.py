@@ -233,6 +233,8 @@ class StrategyDeploymentCreate(LiveBaseModel):
     allow_short: bool = True
     auto_trade_enabled: bool = False
     auto_runner_enabled: bool = False
+    copy_trading_enabled: bool = False
+    copy_broker_account_ids: list[UUID] = Field(default_factory=list)
     mt5_demo_max_lot: Optional[Decimal] = None
     product_type: str = "MIS"
     order_variety: str = "REGULAR"
@@ -329,6 +331,8 @@ class StrategyDeploymentUpdate(LiveBaseModel):
     allow_short: Optional[bool] = None
     auto_trade_enabled: Optional[bool] = None
     auto_runner_enabled: Optional[bool] = None
+    copy_trading_enabled: Optional[bool] = None
+    copy_broker_account_ids: Optional[list[UUID]] = None
     mt5_demo_max_lot: Optional[Decimal] = None
     product_type: Optional[str] = None
     order_variety: Optional[str] = None
@@ -447,6 +451,8 @@ class StrategyDeploymentOut(LiveBaseModel):
     allow_short: bool
     auto_trade_enabled: bool
     auto_runner_enabled: bool = False
+    copy_trading_enabled: bool = False
+    copy_broker_account_ids: list[UUID] = Field(default_factory=list)
     last_runner_at: Optional[datetime] = None
     next_run_at: Optional[datetime] = None
     last_runner_wakeup_at: Optional[datetime] = None
