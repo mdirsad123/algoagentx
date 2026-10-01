@@ -305,8 +305,10 @@ def validate_runtime_config(config: Any) -> dict[str, Any]:
     trade_management = normalized["trade_management"]
     if trade_management["trailing_mode"] not in ALLOWED_TRAILING_MODES:
         errors.append("Trailing mode is invalid.")
-    if trade_management["partial_exit_enabled"] and not (0 < trade_management["partial_exit_percent"] <= 1):
-        errors.append("Partial exit percent must be between 1% and 100%.")
+    if trade_management["partial_exit_enabled"] and trade_management["partial_exit_at_r"] <= 0:
+        errors.append("Partial exit trigger R must be greater than zero.")
+    if trade_management["partial_exit_enabled"] and not (0 < trade_management["partial_exit_percent"] < 1):
+        errors.append("Partial exit percent must be greater than 0% and less than 100%.")
     if trade_management["break_even_trigger_r"] <= 0:
         errors.append("Breakeven trigger R must be greater than zero.")
     if trade_management["trail_start_r"] <= 0:

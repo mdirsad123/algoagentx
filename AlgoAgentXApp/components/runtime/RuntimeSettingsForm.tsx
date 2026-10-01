@@ -23,7 +23,15 @@ const FIXED_PRICE_RISK_OPTIONS: NumberOption[] = [
   { label: "1.00%", value: 0.01 }, { label: "2.00%", value: 0.02 },
 ];
 const MAX_OPEN_POSITION_OPTIONS = numberOptions([1, 2, 3, 5]);
-const BREAK_EVEN_R_OPTIONS = numberOptions([0.5, 1, 1.5, 2]);
+const BREAK_EVEN_R_OPTIONS = numberOptions([0.5, 1, 1.5, 1.7, 2]);
+const PARTIAL_EXIT_R_OPTIONS = numberOptions([0.5, 1, 1.25, 1.35, 1.5, 1.65, 1.7, 1.75, 2]);
+const PARTIAL_EXIT_PERCENT_OPTIONS: NumberOption[] = [
+  { label: "25%", value: 0.25 },
+  { label: "50%", value: 0.5 },
+  { label: "75%", value: 0.75 },
+  { label: "90%", value: 0.9 },
+  { label: "95%", value: 0.95 },
+];
 const TRAIL_START_R_OPTIONS = numberOptions([1, 1.5, 2, 3]);
 const TRAIL_ATR_MULTIPLIER_OPTIONS = numberOptions([1, 1.5, 2, 2.5, 3]);
 const MAX_TRADES_PER_DAY_OPTIONS = ["NONE", "1", "2", "3", "5", "10", "20"].map((value) => ({ label: value === "NONE" ? "No Limit" : value, value }));
@@ -144,8 +152,8 @@ export function RuntimeSettingsForm({
       {trailingEnabled && <div className="space-y-2"><Label className="text-muted-foreground"><FieldLabel label="Trailing Mode" /></Label><Select value={config.trade_management?.trailing_mode || "ATR_TRAIL"} onValueChange={(value) => updateSection("trade_management", "trailing_mode", value)}><SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger><SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground"><SelectItem value="ATR_TRAIL">ATR Trail</SelectItem><SelectItem value="EMA20_TRAIL">EMA20 Trail</SelectItem><SelectItem value="SWING_TRAIL">Swing Trail</SelectItem></SelectContent></Select></div>}
       {trailingEnabled && renderPresetSelect("Trail Start R", config.trade_management?.trail_start_r, TRAIL_START_R_OPTIONS, (value) => updateSection("trade_management", "trail_start_r", value), "Trailing starts only after this R multiple.")}
       {trailingEnabled && renderPresetSelect("Trail ATR Multiplier", config.trade_management?.trail_atr_multiplier, TRAIL_ATR_MULTIPLIER_OPTIONS, (value) => updateSection("trade_management", "trail_atr_multiplier", value), "Used when trailing mode is ATR Trail.")}
-      {partialExitEnabled && renderPresetSelect("Partial Exit At R", config.trade_management?.partial_exit_at_r, BREAK_EVEN_R_OPTIONS, (value) => updateSection("trade_management", "partial_exit_at_r", value), "Close part of the position after this R multiple.")}
-      {partialExitEnabled && <div className="space-y-2"><Label className="text-muted-foreground"><FieldLabel label="Partial Exit Percent" /></Label><Select value={String(config.trade_management?.partial_exit_percent ?? 0.5)} onValueChange={(value) => updateSection("trade_management", "partial_exit_percent", safeNumber(value, 0.5))}><SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger><SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground"><SelectItem value="0.25">25%</SelectItem><SelectItem value="0.5">50%</SelectItem><SelectItem value="0.75">75%</SelectItem></SelectContent></Select><p className="text-[11px] leading-relaxed text-muted-foreground">Remaining position continues to TP/trailing stop.</p></div>}
+      {partialExitEnabled && renderPresetSelect("Partial Exit At R", config.trade_management?.partial_exit_at_r, PARTIAL_EXIT_R_OPTIONS, (value) => updateSection("trade_management", "partial_exit_at_r", value), "Close part of the position after this R multiple.")}
+      {partialExitEnabled && <div className="space-y-2"><Label className="text-muted-foreground"><FieldLabel label="Partial Exit Percent" /></Label><Select value={String(config.trade_management?.partial_exit_percent ?? 0.5)} onValueChange={(value) => updateSection("trade_management", "partial_exit_percent", safeNumber(value, 0.5))}><SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger><SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">{PARTIAL_EXIT_PERCENT_OPTIONS.map((option) => <SelectItem key={String(option.value)} value={String(option.value)}>{option.label}</SelectItem>)}</SelectContent></Select><p className="text-[11px] leading-relaxed text-muted-foreground">Remaining position continues to TP/trailing stop.</p></div>}
     </div>;
   }
 

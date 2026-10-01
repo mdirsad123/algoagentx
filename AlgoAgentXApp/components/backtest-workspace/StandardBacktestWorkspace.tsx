@@ -100,8 +100,8 @@ const FIELD_HELP: Record<string, string> = {
   "Trail Start R": "Profit multiple after which trailing starts. Example: 1.5R means trailing begins after profit reaches 1.5 times initial risk.",
   "Trail ATR Multiplier": "ATR multiplier used for trailing stop distance. Higher values trail wider and may give trades more room.",
   "Partial Exit Enabled": "Closes part of the position at selected profit level. This can lock in gains but reduces the size left for final target.",
-  "Partial Exit At R": "R multiple where partial exit happens. Example: 1R closes part when profit equals initial risk.",
-  "Partial Exit Percent": "Percent of position closed during partial exit. Example: 50% closes half and lets the remaining position continue.",
+  "Partial Exit At R": "R multiple where partial exit happens. Example: 1.7R closes the configured portion after profit reaches 1.7 times the initial risk.",
+  "Partial Exit Percent": "Fraction of the position closed at the partial trigger. Example: 90% closes 90% and leaves 10% running to the final TP/trailing stop.",
   "Runtime Preset": "Saved runtime template for risk, execution, SL/TP and trade management settings. Applying a preset changes this drawer only until you save/run.",
 };
 
@@ -143,7 +143,7 @@ const FIXED_PRICE_RISK_OPTIONS: PresetNumberOption[] = [
   { label: "2.00%", value: 0.02 },
 ];
 const MAX_OPEN_POSITION_OPTIONS: PresetNumberOption[] = [1, 2, 3, 5].map((value) => ({ label: String(value), value }));
-const BREAK_EVEN_R_OPTIONS: PresetNumberOption[] = [0.5, 1, 1.5, 2].map((value) => ({ label: String(value), value }));
+const BREAK_EVEN_R_OPTIONS: PresetNumberOption[] = [0.5, 1, 1.5, 1.7, 2].map((value) => ({ label: String(value), value }));
 const TRAIL_START_R_OPTIONS: PresetNumberOption[] = [1, 1.5, 2, 3].map((value) => ({ label: String(value), value }));
 const TRAIL_ATR_MULTIPLIER_OPTIONS: PresetNumberOption[] = [1, 1.5, 2, 2.5, 3].map((value) => ({ label: String(value), value }));
 const MAX_TRADES_PER_DAY_OPTIONS: Array<{ label: string; value: string }> = [
@@ -1467,6 +1467,8 @@ export default function StandardBacktestWorkspace() {
     const breakEvenTrigger = safeNumber(runtimeConfig.trade_management.break_even_trigger_r, 0);
     const trailStart = safeNumber(runtimeConfig.trade_management.trail_start_r, 0);
     const trailAtrMultiplier = safeNumber(runtimeConfig.trade_management.trail_atr_multiplier, 0);
+    const partialExitAtR = safeNumber(runtimeConfig.trade_management.partial_exit_at_r, 0);
+    const partialExitPercent = safeNumber(runtimeConfig.trade_management.partial_exit_percent, 0);
 
     if (capital <= 0) messages.push("Initial capital must be greater than 0.");
     if (riskPct < 0.001 || riskPct > 0.05) messages.push("Capital risk must stay between 0.10% and 5.00%.");
@@ -1484,6 +1486,8 @@ export default function StandardBacktestWorkspace() {
     if (breakEvenEnabled && (breakEvenTrigger < 0.5 || breakEvenTrigger > 5)) messages.push("Break-even trigger must stay between 0.5R and 5R.");
     if (trailingEnabled && (trailStart < 0.5 || trailStart > 5)) messages.push("Trail start must stay between 0.5R and 5R.");
     if (trailingEnabled && (trailAtrMultiplier < 0.5 || trailAtrMultiplier > 5)) messages.push("Trail ATR multiplier must stay between 0.5 and 5.");
+    if (partialExitEnabled && (partialExitAtR <= 0 || partialExitAtR > 10)) messages.push("Partial exit trigger must be greater than 0R and no more than 10R.");
+    if (partialExitEnabled && (partialExitPercent <= 0 || partialExitPercent >= 1)) messages.push("Partial exit percent must be greater than 0% and less than 100%.");
 
     return messages;
   })();

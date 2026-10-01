@@ -27,8 +27,8 @@ export const RUNTIME_FIELD_HELP: Record<string, string> = {
   "Trail Start R": "Profit multiple after which trailing starts. Example: 1.5R means trailing begins after profit reaches 1.5 times initial risk.",
   "Trail ATR Multiplier": "ATR multiplier used for trailing stop distance. Higher values trail wider and may give trades more room.",
   "Partial Exit Enabled": "Closes part of the position at selected profit level. This can lock in gains but reduces the size left for final target.",
-  "Partial Exit At R": "R multiple where partial exit happens. Example: 1R closes part when profit equals initial risk.",
-  "Partial Exit Percent": "Percent of position closed during partial exit. Example: 50% closes half and lets the remaining position continue.",
+  "Partial Exit At R": "R multiple where partial exit happens. Example: 1.7R closes the configured portion after profit reaches 1.7 times the initial risk.",
+  "Partial Exit Percent": "Fraction of the position closed at the partial trigger. Example: 90% closes 90% and leaves 10% running to the final TP/trailing stop.",
 };
 
 export const STRATEGY_PARAM_HELP = "Strategy-specific parameter. Changing this may affect signal frequency and trade quality. Example: a larger period usually creates fewer but smoother signals.";

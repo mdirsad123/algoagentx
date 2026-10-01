@@ -376,10 +376,47 @@ def _ensure_aware_datetime(value):
     """Return the canonical UTC instant for backtest/market timestamps.
 
     Older AlgoAgentX schemas may expose TIMESTAMP values without tzinfo even
-    though those values represent UTC.  Treating those values as Kolkata time
+    though those values represent UTC. Treating those values as Kolkata time
     shifts every trade by 5h30m, so naive timestamps are normalized as UTC.
     """
     return ensure_utc(value)
+
+
+def _db_datetime_for_column(value, meta: dict | None):
+    """Coerce a datetime to the physical PostgreSQL column's timezone contract.
+
+    AlgoAgentX has legacy databases where ``trades.entry_time`` / ``exit_time``
+    are ``timestamp without time zone`` even though the current SQLAlchemy model
+    declares ``DateTime(timezone=True)``. asyncpg rejects an aware datetime for
+    a timezone-naive PostgreSQL column (and vice versa).
+
+    All AlgoAgentX market/backtest timestamps represent UTC. For a legacy naive
+    column we therefore remove tzinfo *after* canonicalizing the instant to UTC;
+    for ``timestamptz`` columns we keep the UTC-aware datetime. This makes the
+    persistence layer safe before and after a schema migration.
+    """
+    dt = _ensure_aware_datetime(value)
+    if dt is None:
+        return None
+    # pandas.Timestamp is a datetime subclass, but converting to a plain Python
+    # datetime avoids driver-specific adaptation surprises in asyncpg.
+    if hasattr(dt, "to_pydatetime"):
+        dt = dt.to_pydatetime()
+
+    meta = meta or {}
+    data_type = str(meta.get("data_type") or "").strip().lower()
+    udt_name = str(meta.get("udt_name") or "").strip().lower()
+
+    # PostgreSQL reports:
+    #   timestamp without time zone -> udt_name = timestamp
+    #   timestamp with time zone    -> udt_name = timestamptz
+    if "timestamp without time zone" in data_type or udt_name == "timestamp":
+        return dt.replace(tzinfo=None)
+
+    if data_type == "date":
+        return dt.date()
+
+    return dt
 
 
 async def _table_exists(db: AsyncSession, table_name: str) -> bool:
@@ -603,9 +640,9 @@ def _default_trade_value(
         return payload.instrument_id
     if name in {"created_at", "updated_at"} or "time" in data_type:
         if name in {"entry_time", "entry_datetime", "opened_at", "open_time"}:
-            return _ensure_aware_datetime(getattr(trade, "entry_datetime", None))
+            return _db_datetime_for_column(getattr(trade, "entry_datetime", None), meta)
         if name in {"exit_time", "exit_datetime", "closed_at", "close_time"}:
-            return _ensure_aware_datetime(getattr(trade, "exit_datetime", None))
+            return _db_datetime_for_column(getattr(trade, "exit_datetime", None), meta)
         return datetime.utcnow()
     if name == "side":
         return str(getattr(trade, "direction", "") or "")
@@ -1476,6 +1513,7 @@ async def _save_backtest_payload(
             async with db.begin_nested():
                 trade_columns_meta = await _table_columns_meta(db, "trades")
                 trade_columns = {meta["column_name"] for meta in trade_columns_meta}
+                trade_meta_by_column = {meta["column_name"]: meta for meta in trade_columns_meta}
                 pending_rows: list[dict] = []
                 pending_keys: tuple[str, ...] | None = None
 
@@ -1497,8 +1535,12 @@ async def _save_backtest_payload(
                         "id": _uuid_or_bigint_for_column(next((meta for meta in trade_columns_meta if meta["column_name"] == "id"), {"data_type": "bigint", "udt_name": "int8"})),
                         "backtest_id": trades_fk_value,
                         "instrument_id": payload.instrument_id,
-                        "entry_time": _ensure_aware_datetime(trade.entry_datetime),
-                        "exit_time": _ensure_aware_datetime(trade.exit_datetime),
+                        "entry_time": _db_datetime_for_column(
+                            trade.entry_datetime, trade_meta_by_column.get("entry_time")
+                        ),
+                        "exit_time": _db_datetime_for_column(
+                            trade.exit_datetime, trade_meta_by_column.get("exit_time")
+                        ),
                         "side": trade.direction,
                         "quantity": _decimal(getattr(trade, "quantity", 0.0)),
                         "lot_size": _decimal(getattr(trade, "lot_size", None)),
