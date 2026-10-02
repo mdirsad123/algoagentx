@@ -177,9 +177,9 @@ async def _deployment_metrics(db: AsyncSession, deployment_id: UUID) -> dict[str
     unrealized = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.unrealized_pnl), 0)).where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN"))).scalar())
     today_pnl = _dec((await db.execute(select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(LivePosition.deployment_id == deployment_id, LivePosition.closed_at >= day_start))).scalar())
     open_positions = int((await db.execute(select(func.count(LivePosition.id)).where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN"))).scalar() or 0)
-    orders_today = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment_id, LiveOrder.created_at >= day_start))).scalar() or 0)
+    orders_today = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment_id, LiveOrder.created_at >= day_start, LiveOrder.action == "ENTRY"))).scalar() or 0)
     signals_today = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == deployment_id, LiveSignal.created_at >= day_start))).scalar() or 0)
-    total_orders = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment_id))).scalar() or 0)
+    total_orders = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment_id, LiveOrder.action == "ENTRY"))).scalar() or 0)
     total_signals = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == deployment_id))).scalar() or 0)
     latest_equity = (await db.execute(select(LiveEquityPoint.equity).where(LiveEquityPoint.deployment_id == deployment_id).order_by(LiveEquityPoint.timestamp.desc()).limit(1))).scalar_one_or_none()
     return {

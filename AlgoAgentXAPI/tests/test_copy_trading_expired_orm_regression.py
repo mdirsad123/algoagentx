@@ -70,6 +70,7 @@ class _ScalarResult:
 class _FakeDB:
     def __init__(self, dep_row, sig_row, primary_broker, copy_broker):
         self.no_autoflush = _NoAutoflush()
+        self.commit_count = 0
         self._responses = [
             _MappingsResult(dep_row),
             _MappingsResult(sig_row),
@@ -83,6 +84,10 @@ class _FakeDB:
 
     def begin_nested(self):
         return _Nested()
+
+    async def commit(self):
+        self.commit_count += 1
+        return None
 
 
 def test_copy_router_never_reads_expired_primary_orm_after_primary(monkeypatch):
@@ -130,6 +135,7 @@ def test_copy_router_never_reads_expired_primary_orm_after_primary(monkeypatch):
             sig_arg.status = "EXECUTED"
             return SimpleNamespace(id=uuid4(), status="FILLED")
         assert dep_arg.broker_account_id == copy_id
+        assert db_arg.commit_count == 1, "primary result must commit before copy execution"
         return SimpleNamespace(id=uuid4(), status="FILLED")
 
     async def fake_log(*args, **kwargs):
@@ -149,3 +155,4 @@ def test_copy_router_never_reads_expired_primary_orm_after_primary(monkeypatch):
     assert calls[0] is deployment
     assert calls[1].broker_account_id == copy_id
     assert signal.status == "EXECUTED"
+    assert db.commit_count == 1

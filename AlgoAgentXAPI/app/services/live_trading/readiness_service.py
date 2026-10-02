@@ -427,7 +427,7 @@ async def check_platform_and_limits(db: AsyncSession, deployment: StrategyDeploy
         loss_message = "Funded daily/max drawdown is checked by the funded guard using the profile rule day."
     else:
         start = day_start_utc()
-        order_filters = [LiveOrder.deployment_id == deployment.id, LiveOrder.created_at >= start]
+        order_filters = [LiveOrder.deployment_id == deployment.id, LiveOrder.created_at >= start, LiveOrder.action == "ENTRY"]
         if getattr(deployment, "broker_account_id", None) is not None:
             order_filters.append(LiveOrder.broker_account_id == deployment.broker_account_id)
         orders_today = int((await db.execute(select(func.count(LiveOrder.id)).where(*order_filters))).scalar() or 0)

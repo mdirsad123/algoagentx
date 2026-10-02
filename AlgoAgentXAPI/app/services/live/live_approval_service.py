@@ -183,7 +183,7 @@ async def check_live_execution_gate(db: AsyncSession, deployment: StrategyDeploy
     start = day_start_utc()
     filled_statuses = ["FILLED", "PLACED", "PENDING"]
     if approval.max_trades_per_day is not None:
-        count = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.user_id == deployment.user_id, LiveOrder.created_at >= start, LiveOrder.status.in_(filled_statuses)))).scalar() or 0)
+        count = int((await db.execute(select(func.count(LiveOrder.id)).where(LiveOrder.user_id == deployment.user_id, LiveOrder.created_at >= start, LiveOrder.status.in_(filled_statuses), LiveOrder.action == "ENTRY"))).scalar() or 0)
         if count >= int(approval.max_trades_per_day):
             return LiveGateDecision(False, "Approved max trades per day reached.", approval)
 

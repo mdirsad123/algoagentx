@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...db.models import BrokerAccount, Instrument, Strategy, StrategyDeployment, StrategyRuntimePreset, LiveMarketCandle
 from ..brokers.factory import get_broker_code
 from ..trading.risk_engine import calculate_position_size
+from ..trading.partial_exit_engine import calculate_broker_partial_split
 from ..trading.runtime_config_service import deep_merge_runtime_config, resolve_runtime_config, validate_runtime_config
 from .pnl_service import to_decimal
 from .capital_service import get_effective_trading_capital
@@ -337,6 +338,11 @@ async def resolve_live_runtime_config(
                 "max_trades_per_day": getattr(deployment, "max_trades_per_day", None),
                 "max_open_positions": getattr(deployment, "max_open_positions", None),
                 "square_off_time": getattr(deployment, "square_off_time", None) or "15:15",
+            },
+            "trade_management": {
+                "partial_exit_enabled": bool(getattr(deployment, "partial_exit_enabled", False)),
+                "partial_exit_at_r": _float(getattr(deployment, "partial_exit_at_r", None), 1.0),
+                "partial_exit_percent": _float(getattr(deployment, "partial_exit_percent", None), 0.5),
             },
         }
     merged_override = deep_merge_runtime_config(deployment_override, user_override or {})
@@ -781,6 +787,34 @@ async def build_live_order_preview(
         deployment=deployment,
     )
 
+    partial_exit_preview: dict[str, Any] = {"enabled": False}
+    tm_cfg = config.get("trade_management") or {}
+    if bool(tm_cfg.get("partial_exit_enabled")):
+        total_size = final_lot if quantity_mode == "LOTS" else final_qty
+        partial_exit_preview = {
+            "enabled": True,
+            "at_r": _float(tm_cfg.get("partial_exit_at_r"), 1.0),
+            "percent": _float(tm_cfg.get("partial_exit_percent"), 0.5),
+        }
+        if total_size is not None:
+            split = calculate_broker_partial_split(
+                total_size=float(total_size),
+                percent=float(partial_exit_preview["percent"] or 0),
+                quantity_mode=quantity_mode,
+                instrument_spec=instrument_spec,
+            )
+            partial_exit_preview.update({
+                "eligible": bool(split.get("eligible")),
+                "reason": split.get("reason"),
+                "planned_close_size": split.get("partial_close_size"),
+                "planned_runner_size": split.get("runner_size"),
+                "requested_close_size": split.get("requested_close_size"),
+                "requested_runner_size": split.get("requested_runner_size"),
+                "minimum_size": instrument_spec.get("min_lot") if quantity_mode == "LOTS" else instrument_spec.get("min_quantity"),
+                "step_size": instrument_spec.get("lot_step") if quantity_mode == "LOTS" else instrument_spec.get("quantity_step"),
+                "behavior": None if split.get("eligible") else "FULL_POSITION_CONTINUES_TO_BASE_TP",
+            })
+
     risk_metadata = {
         "quantity_mode": quantity_mode,
         "requested_lot": size.get("raw_lot_size"),
@@ -846,6 +880,7 @@ async def build_live_order_preview(
         "risk_engine": size,
         "risk_engine_version": RISK_ENGINE_VERSION,
         "entry_plan": entry_plan,
+        "partial_exit_preview": partial_exit_preview,
         "latest_price_warnings": price_warnings,
         "risk_metadata": risk_metadata,
         "effective_capital": effective_capital,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 class AgentApiClient:
@@ -10,6 +12,18 @@ class AgentApiClient:
         self.agent_token = agent_token.strip()
         self.timeout = timeout
         self.session = requests.Session()
+        retry = Retry(
+            total=3,
+            connect=3,
+            read=2,
+            status=2,
+            backoff_factor=0.25,
+            status_forcelist=(502, 503, 504),
+            allowed_methods=frozenset({"GET"}),
+            raise_on_status=False,
+        )
+        self.session.mount("http://", HTTPAdapter(max_retries=retry))
+        self.session.mount("https://", HTTPAdapter(max_retries=retry))
         self.session.headers.update({
             "Authorization": f"Bearer {self.agent_token}",
             "Content-Type": "application/json",

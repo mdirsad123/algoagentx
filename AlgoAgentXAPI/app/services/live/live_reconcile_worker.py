@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import select
@@ -15,6 +16,8 @@ from ...db.models import BrokerAccount, StrategyDeployment
 from ...db.session import async_session
 from ..brokers.factory import get_broker_code
 from .broker_sync_service import (
+    sync_copy_target_positions,
+    sync_ctrader_account_positions_via_gateway,
     sync_ctrader_deployment_via_gateway,
     sync_deployment_broker_state,
 )
@@ -80,12 +83,8 @@ class LiveReconcileWorker:
 
     async def _sync_one(self, deployment_id: Any, broker_code: str) -> dict[str, Any]:
         async with self._semaphore:
+            # 1) Primary account keeps the existing reconciliation path.
             async with async_session() as db:
-                # Reconciliation and strategy execution both update live_orders,
-                # live_positions and strategy_deployments. Serialize them with the
-                # exact same deployment advisory lock used by strategy_runner. If
-                # a candle is executing, skip this slow repair cycle instead of
-                # waiting and participating in a PostgreSQL deadlock.
                 if not await try_deployment_xact_lock(db, deployment_id):
                     await db.rollback()
                     return {
@@ -95,8 +94,67 @@ class LiveReconcileWorker:
                         "skipped": "DEPLOYMENT_BUSY",
                     }
                 if broker_code in {"CTRADER", "CTRADER_API"} and settings.ctrader_persistent_connection_enabled:
-                    return await sync_ctrader_deployment_via_gateway(db, deployment_id)
-                return await sync_deployment_broker_state(db, deployment_id)
+                    primary = await sync_ctrader_deployment_via_gateway(db, deployment_id)
+                else:
+                    primary = await sync_deployment_broker_state(db, deployment_id)
+
+            # 2) Copy accounts are reconciled independently AFTER primary truth is
+            # safely committed. This is essential for asynchronous MT5 copies:
+            # the MT5 entry command may fill at the terminal after execute_signal
+            # returns, so only broker reconciliation can create its LivePosition.
+            copy_results: list[dict[str, Any]] = []
+            async with async_session() as db:
+                if not await try_deployment_xact_lock(db, deployment_id):
+                    await db.rollback()
+                    return {**primary, "copy_accounts": copy_results, "copy_sync_skipped": "DEPLOYMENT_BUSY"}
+
+                deployment = (await db.execute(
+                    select(StrategyDeployment).where(StrategyDeployment.id == deployment_id)
+                )).scalar_one_or_none()
+                if deployment is None:
+                    return {**primary, "copy_accounts": copy_results}
+
+                copy_enabled = bool(
+                    settings.live_copy_trading_enabled
+                    and bool(getattr(deployment, "copy_trading_enabled", False))
+                    and str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "STANDARD"
+                )
+                raw_ids = list(getattr(deployment, "copy_broker_account_ids", None) or []) if copy_enabled else []
+                seen = {str(deployment.broker_account_id)} if deployment.broker_account_id else set()
+                for raw_id in raw_ids:
+                    if not raw_id or str(raw_id) in seen:
+                        continue
+                    seen.add(str(raw_id))
+                    broker = (await db.execute(
+                        select(BrokerAccount).where(
+                            BrokerAccount.id == raw_id,
+                            BrokerAccount.user_id == deployment.user_id,
+                        )
+                    )).scalar_one_or_none()
+                    if broker is None or str(broker.status or "").upper() != "CONNECTED":
+                        copy_results.append({"broker_account_id": str(raw_id), "synced": False, "skipped": "DISCONNECTED"})
+                        continue
+                    if str(getattr(broker, "mode", "") or "").upper() != str(getattr(deployment, "mode", "") or "").upper():
+                        copy_results.append({"broker_account_id": str(raw_id), "synced": False, "skipped": "MODE_MISMATCH"})
+                        continue
+
+                    try:
+                        code = get_broker_code(broker)
+                        if code in {"CTRADER", "CTRADER_API"} and settings.ctrader_persistent_connection_enabled:
+                            result = await sync_ctrader_account_positions_via_gateway(db, deployment, broker.id)
+                        else:
+                            snapshot = {c.name: getattr(deployment, c.name) for c in StrategyDeployment.__table__.columns}
+                            proxy = SimpleNamespace(**snapshot)
+                            proxy.broker_account_id = broker.id
+                            result = await sync_copy_target_positions(db, proxy)
+                        copy_results.append({"broker_account_id": str(broker.id), "synced": True, **result})
+                    except Exception as exc:
+                        logger.warning("Copy-account reconcile failed deployment=%s account=%s: %s", deployment_id, raw_id, exc)
+                        copy_results.append({"broker_account_id": str(raw_id), "synced": False, "error": str(exc)})
+
+                await db.commit()
+
+            return {**primary, "copy_accounts": copy_results}
 
     async def _health_loop(self) -> None:
         while not self._stop.is_set():

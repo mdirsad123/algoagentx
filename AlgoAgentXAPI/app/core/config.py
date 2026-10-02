@@ -135,6 +135,11 @@ class Settings(BaseSettings):
 
     broker_state_max_age_seconds: int = Field(default=3, description="Maximum cached broker-state age on the cTrader hot path")
     live_reconcile_interval_seconds: int = Field(default=30, description="Dedicated broker reconciliation interval")
+    live_position_manager_worker_enabled: bool = Field(default=False, description="Enable durable post-entry partial-exit manager")
+    live_position_manager_broker_send_enabled: bool = Field(default=False, description="Allow position manager to send real broker partial-close commands")
+    live_position_manager_demo_only: bool = Field(default=True, description="Restrict partial-close sending to DEMO broker accounts")
+    live_position_manager_quote_max_age_seconds: int = Field(default=2, description="Maximum executable quote age for partial-exit trigger")
+    live_position_manager_recovery_scan_seconds: int = Field(default=5, description="Seconds between durable management recovery scans")
     live_latency_trace_enabled: bool = Field(default=True, description="Collect and persist T0-T17 live execution traces")
     live_latency_trace_retention_days: int = Field(default=30, description="Detailed live trace retention window")
 

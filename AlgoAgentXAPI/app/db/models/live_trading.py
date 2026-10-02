@@ -243,6 +243,9 @@ class StrategyDeployment(Base):
     capital = Column(Numeric(18, 4), nullable=False, server_default="100000")
     risk_per_trade = Column(Numeric(10, 6), nullable=False, server_default="0.01")
     rr_ratio = Column(Numeric(10, 4), nullable=False, server_default="2")
+    partial_exit_enabled = Column(Boolean, nullable=False, server_default="false")
+    partial_exit_at_r = Column(Numeric(10, 4), nullable=False, server_default="1.0")
+    partial_exit_percent = Column(Numeric(10, 6), nullable=False, server_default="0.5")
     price_risk_pct = Column(Numeric(10, 6), nullable=False, server_default="0.002")
     max_daily_loss = Column(Numeric(18, 4), nullable=True)
     max_trades_per_day = Column(Integer, nullable=True)
@@ -387,6 +390,7 @@ class LiveOrder(Base):
     symbol = Column(String(100), nullable=False, index=True)
     side = Column(String(20), nullable=False)
     order_type = Column(String(30), nullable=False, server_default="MARKET")
+    action = Column(String(30), nullable=False, server_default="ENTRY", index=True)
     qty = Column(Numeric(18, 8), nullable=False)
     entry_price = Column(Numeric(18, 8), nullable=True)
     executed_price = Column(Numeric(18, 8), nullable=True)
@@ -436,6 +440,56 @@ class LivePosition(Base):
     status = Column(String(30), nullable=False, server_default="OPEN", index=True)
     opened_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     closed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class LivePositionManagementState(Base):
+    __tablename__ = "live_position_management_states"
+    __table_args__ = (
+        UniqueConstraint("live_position_id", name="uq_live_position_management_position"),
+        Index("idx_live_position_mgmt_status", "partial_status"),
+        Index("idx_live_position_mgmt_deployment", "deployment_id"),
+        Index("idx_live_position_mgmt_account", "broker_account_id"),
+        Index("idx_live_position_mgmt_broker_position", "broker_position_id"),
+        UniqueConstraint("idempotency_key", name="uq_live_position_management_idempotency"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    live_position_id = Column(PG_UUID(as_uuid=True), ForeignKey("live_positions.id", ondelete="CASCADE"), nullable=False, unique=True)
+    deployment_id = Column(PG_UUID(as_uuid=True), ForeignKey("strategy_deployments.id", ondelete="CASCADE"), nullable=False, index=True)
+    broker_account_id = Column(PG_UUID(as_uuid=True), ForeignKey("broker_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    entry_order_id = Column(PG_UUID(as_uuid=True), ForeignKey("live_orders.id", ondelete="SET NULL"), nullable=True)
+    entry_signal_id = Column(PG_UUID(as_uuid=True), ForeignKey("live_signals.id", ondelete="SET NULL"), nullable=True)
+    broker_position_id = Column(String(255), nullable=True, index=True)
+    symbol = Column(String(100), nullable=False)
+    side = Column(String(20), nullable=False)
+    initial_size = Column(Numeric(18, 8), nullable=False)
+    initial_entry_price = Column(Numeric(18, 8), nullable=False)
+    initial_stop_loss = Column(Numeric(18, 8), nullable=False)
+    initial_target = Column(Numeric(18, 8), nullable=True)
+    initial_risk_points = Column(Numeric(18, 8), nullable=False)
+    quantity_mode = Column(String(30), nullable=False, server_default="LOTS")
+    instrument_spec_snapshot = Column(JSONB, nullable=False, server_default="{}")
+    runtime_config_snapshot = Column(JSONB, nullable=False, server_default="{}")
+    partial_exit_enabled = Column(Boolean, nullable=False, server_default="false")
+    partial_exit_at_r = Column(Numeric(10, 4), nullable=False)
+    partial_exit_percent = Column(Numeric(10, 6), nullable=False)
+    partial_trigger_price = Column(Numeric(18, 8), nullable=True)
+    partial_status = Column(String(40), nullable=False, server_default="PENDING", index=True)
+    planned_close_size = Column(Numeric(18, 8), nullable=True)
+    planned_runner_size = Column(Numeric(18, 8), nullable=True)
+    effective_partial_percent = Column(Numeric(18, 8), nullable=True)
+    partial_close_order_id = Column(PG_UUID(as_uuid=True), ForeignKey("live_orders.id", ondelete="SET NULL"), nullable=True)
+    partial_close_broker_order_id = Column(String(255), nullable=True)
+    idempotency_key = Column(String(128), nullable=False)
+    trigger_quote_price = Column(Numeric(18, 8), nullable=True)
+    trigger_quote_side = Column(String(30), nullable=True)
+    triggered_at = Column(DateTime(timezone=True), nullable=True)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    filled_at = Column(DateTime(timezone=True), nullable=True)
+    attempt_count = Column(Integer, nullable=False, server_default="0")
+    last_error = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
+from types import SimpleNamespace
 from uuid import UUID
 
 from sqlalchemy import or_, select
@@ -16,6 +17,7 @@ from ...db.models import (
     BrokerOrderEvent,
     LiveOrder,
     LivePosition,
+    LivePositionManagementState,
     LiveSignal,
     LiveTradeLog,
     StrategyDeployment,
@@ -363,12 +365,48 @@ async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, 
         matched.add(str(existing.id))
 
     now = datetime.now(timezone.utc)
+    closed_position_ids: list[UUID] = []
     for local in open_rows:
         if str(local.id) not in matched:
             local.status = "CLOSED"
             local.closed_at = local.closed_at or now
             local.unrealized_pnl = Decimal("0")
+            closed_position_ids.append(local.id)
             closed += 1
+
+    # Partial-exit management is position-scoped for both the primary account and
+    # every copy account. If broker truth says the position is gone (SL/TP/manual
+    # close/full exit), a still-PENDING management row must not linger forever.
+    # Terminalize it immediately; this also prevents any future quote from trying
+    # to partially close a broker position that no longer exists.
+    management_states_closed = 0
+    if closed_position_ids:
+        management_states = (await db.execute(
+            select(LivePositionManagementState).where(
+                LivePositionManagementState.live_position_id.in_(closed_position_ids),
+                LivePositionManagementState.partial_status.notin_([
+                    "DONE", "SKIPPED_MIN_SIZE", "FAILED_TERMINAL", "BROKER_POSITION_CLOSED"
+                ]),
+            )
+        )).scalars().all()
+        for state in management_states:
+            state.partial_status = "BROKER_POSITION_CLOSED"
+            state.filled_at = state.filled_at or now
+            state.last_error = None
+            management_states_closed += 1
+            await _write_log(
+                db,
+                deployment,
+                "PARTIAL_EXIT_POSITION_ALREADY_CLOSED",
+                "Broker reconciliation confirmed the managed position is already closed; partial management is terminalized.",
+                "INFO",
+                {
+                    "live_position_id": str(state.live_position_id),
+                    "broker_position_id": state.broker_position_id,
+                    "broker_account_id": str(state.broker_account_id),
+                    "partial_status": state.partial_status,
+                },
+            )
 
     if broker_positions:
         await _save_event(
@@ -386,10 +424,58 @@ async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, 
         "positions_created": created,
         "positions_updated": updated,
         "positions_closed": closed,
+        "management_states_closed": management_states_closed,
         "open_positions_count": len([p for p in open_rows if p.status == "OPEN"]),
         "unrealized_pnl": str(total_unrealized),
         "realized_pnl": str(total_realized),
     }
+
+
+async def sync_ctrader_account_positions_via_gateway(
+    db: AsyncSession,
+    deployment: StrategyDeployment,
+    broker_account_id: UUID | str,
+) -> dict[str, Any]:
+    """Refresh one cTrader account over the existing persistent gateway.
+
+    This is intentionally account-scoped so copy-account position management does
+    not open another cTrader WebSocket and never syncs the primary account by
+    mistake. Only broker position truth is required for partial-exit management.
+    """
+    from ..brokers.ctrader_order_gateway import request_account_snapshot
+
+    broker = (await db.execute(
+        select(BrokerAccount).where(BrokerAccount.id == broker_account_id)
+    )).scalar_one_or_none()
+    if broker is None:
+        raise ValueError("cTrader account not found")
+    if get_broker_code(broker) not in {"CTRADER", "CTRADER_API"}:
+        raise ValueError("Persistent cTrader account refresh requires a cTrader account")
+
+    response = await request_account_snapshot(
+        broker_account_id=str(broker.id),
+        deployment_id=str(deployment.id),
+    )
+    positions = response.get("positions") if isinstance(response.get("positions"), list) else []
+
+    proxy = SimpleNamespace(**{c.name: getattr(deployment, c.name) for c in StrategyDeployment.__table__.columns})
+    proxy.broker_account_id = broker.id
+    result = await reconcile_positions(db, proxy, positions, "CTRADER")
+    await _write_log(
+        db,
+        proxy,
+        "COPY_BROKER_POSITION_SYNCED" if str(broker.id) != str(deployment.broker_account_id) else "BROKER_POSITION_SYNCED",
+        "CTRADER account positions refreshed over persistent session",
+        "INFO",
+        {
+            "broker_account_id": str(broker.id),
+            "provider_code": "CTRADER",
+            "transport": "PERSISTENT_SESSION",
+            "broker_positions": len(positions),
+            **result,
+        },
+    )
+    return {"provider_code": "CTRADER", "positions_count": len(positions), **result}
 
 
 async def sync_copy_target_positions(db: AsyncSession, deployment: StrategyDeployment) -> dict[str, Any]:

@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_current_user, get_db
-from ...db.models import BrokerAccount, LiveOrder, LivePosition, MT5Agent, MT5AgentCommand, PriceAlert
+from ...db.models import BrokerAccount, LiveOrder, LivePosition, LivePositionManagementState, MT5Agent, MT5AgentCommand, PriceAlert
 from ...schemas.mt5_agent import MT5AgentCommandOut, MT5AgentCommandResultIn, MT5AgentHeartbeatIn, MT5AgentOrderResultIn, MT5AgentOut, MT5AgentRegisterIn, MT5AgentRegisterOut
 from ...schemas.alerts import MT5QuoteBatchIn
 from ...utils.api_response import success_response
@@ -145,16 +145,16 @@ async def alert_symbols(authorization: str | None = Header(default=None), db: As
     agent = await _agent_from_token(db, _extract_token(None, authorization))
     rows = (await db.execute(
         select(PriceAlert.symbol)
-        .where(
-            PriceAlert.user_id == agent.user_id,
-            PriceAlert.provider == "MT5",
-            PriceAlert.broker_account_id == agent.broker_account_id,
-            PriceAlert.status == "ACTIVE",
-        )
+        .where(PriceAlert.user_id == agent.user_id, PriceAlert.provider == "MT5", PriceAlert.broker_account_id == agent.broker_account_id, PriceAlert.status == "ACTIVE")
         .distinct()
-        .order_by(PriceAlert.symbol.asc())
     )).scalars().all()
-    return success_response({"symbols": [str(x) for x in rows], "broker_account_id": str(agent.broker_account_id)})
+    managed = (await db.execute(
+        select(LivePosition.symbol).join(LivePositionManagementState, LivePositionManagementState.live_position_id == LivePosition.id)
+        .where(LivePosition.broker_account_id == agent.broker_account_id, LivePosition.status == "OPEN", LivePositionManagementState.partial_status.in_(["PENDING", "TRIGGERED", "FAILED_RETRYABLE"]))
+        .distinct()
+    )).scalars().all()
+    symbols = sorted({str(x) for x in [*rows, *managed] if str(x or "").strip()})
+    return success_response({"symbols": symbols, "broker_account_id": str(agent.broker_account_id)})
 
 
 @router.post("/quotes")
@@ -258,6 +258,7 @@ async def _store_command_result(payload: MT5AgentCommandResultIn, authorization:
             }
 
             if cmd.command_type == "CLOSE_POSITION" and payload.success:
+                close_action = str(raw_payload.get("action") or "FULL_EXIT").upper()
                 position = None
                 local_position_id = old_raw.get("local_position_id") if isinstance(old_raw, dict) else None
                 if local_position_id:
@@ -282,9 +283,24 @@ async def _store_command_result(payload: MT5AgentCommandResultIn, authorization:
                             ).limit(1)
                         )).scalar_one_or_none()
                 if position is not None:
-                    position.status = "CLOSED"
-                    position.closed_at = datetime.now(timezone.utc)
-                    position.unrealized_pnl = 0
+                    if close_action == "PARTIAL_EXIT":
+                        # Broker truth/reconciliation owns the remaining quantity. Never close the local position here.
+                        management_id = raw_payload.get("position_management_state_id")
+                        if management_id:
+                            try:
+                                mgmt = (await db.execute(select(LivePositionManagementState).where(LivePositionManagementState.id == UUID(str(management_id))))).scalar_one_or_none()
+                                if mgmt is not None:
+                                    mgmt.partial_status = "AWAITING_RECONCILE"
+                                    mgmt.partial_close_broker_order_id = str(payload.broker_order_id or cmd.id)
+                                    mgmt.sent_at = mgmt.sent_at or datetime.now(timezone.utc)
+                            except Exception:
+                                pass
+                        live_order.action = "PARTIAL_EXIT"
+                    else:
+                        live_order.action = "FULL_EXIT"
+                        position.status = "CLOSED"
+                        position.closed_at = datetime.now(timezone.utc)
+                        position.unrealized_pnl = 0
                     if payload.executed_price is not None:
                         position.current_price = payload.executed_price
 

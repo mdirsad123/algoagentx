@@ -1,6 +1,6 @@
 {
   "API_BASE_URL": "http://localhost:8000",
-  "AGENT_TOKEN": "aax_mt5_-4NIc1_sZViJHBuVua_-IT1N14tSDM_FiGrDkeuofJh9ks3d9mlG0A",
+  "AGENT_TOKEN": "aax_mt5_jHqb3ARwFgfbzobRbMMkmyn15WQyZuQj72uul8GOMjWcBlysU6c83w",
   "POLL_INTERVAL_SECONDS": 1,
   "ENABLE_ORDER_EXECUTION": true,
   "MT5_PATH": "",

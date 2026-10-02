@@ -226,6 +226,9 @@ class StrategyDeploymentCreate(LiveBaseModel):
     capital: Optional[Decimal] = None
     risk_per_trade: Decimal = Decimal("0.01")
     rr_ratio: Decimal = Decimal("2")
+    partial_exit_enabled: bool = False
+    partial_exit_at_r: Decimal = Decimal("1.0")
+    partial_exit_percent: Decimal = Decimal("0.5")
     price_risk_pct: Decimal = Decimal("0.002")
     max_daily_loss: Optional[Decimal] = None
     max_trades_per_day: Optional[int] = None
@@ -300,6 +303,15 @@ class StrategyDeploymentCreate(LiveBaseModel):
             raise ValueError("funded_fixed_risk_pct must be <= 10%")
         return self
 
+    @model_validator(mode="after")
+    def validate_partial_exit(self):
+        if self.partial_exit_enabled:
+            if self.partial_exit_at_r is None or self.partial_exit_at_r <= 0:
+                raise ValueError("partial_exit_at_r must be greater than 0 when partial exit is enabled")
+            if self.partial_exit_percent is None or not (Decimal("0") < self.partial_exit_percent < Decimal("1")):
+                raise ValueError("partial_exit_percent must be greater than 0 and less than 1")
+        return self
+
 
 class StrategyDeploymentUpdate(LiveBaseModel):
     broker_account_id: Optional[UUID] = None
@@ -324,6 +336,9 @@ class StrategyDeploymentUpdate(LiveBaseModel):
     capital: Optional[Decimal] = None
     risk_per_trade: Optional[Decimal] = None
     rr_ratio: Optional[Decimal] = None
+    partial_exit_enabled: Optional[bool] = None
+    partial_exit_at_r: Optional[Decimal] = None
+    partial_exit_percent: Optional[Decimal] = None
     price_risk_pct: Optional[Decimal] = None
     max_daily_loss: Optional[Decimal] = None
     max_trades_per_day: Optional[int] = None
@@ -363,6 +378,14 @@ class StrategyDeploymentUpdate(LiveBaseModel):
         if value not in allowed:
             raise ValueError(f"Invalid {info.field_name}. Allowed: {sorted(allowed)}")
         return value
+
+    @model_validator(mode="after")
+    def validate_partial_exit_update(self):
+        if self.partial_exit_at_r is not None and self.partial_exit_at_r <= 0:
+            raise ValueError("partial_exit_at_r must be greater than 0")
+        if self.partial_exit_percent is not None and not (Decimal("0") < self.partial_exit_percent < Decimal("1")):
+            raise ValueError("partial_exit_percent must be greater than 0 and less than 1")
+        return self
 
 
 class FundedRiskTierPlanInput(LiveBaseModel):
@@ -444,6 +467,9 @@ class StrategyDeploymentOut(LiveBaseModel):
     capital: Decimal
     risk_per_trade: Decimal
     rr_ratio: Decimal
+    partial_exit_enabled: bool = False
+    partial_exit_at_r: Decimal = Decimal("1.0")
+    partial_exit_percent: Decimal = Decimal("0.5")
     price_risk_pct: Decimal
     max_daily_loss: Optional[Decimal] = None
     max_trades_per_day: Optional[int] = None
@@ -558,6 +584,7 @@ class LiveOrderOut(LiveBaseModel):
     symbol: str
     side: str
     order_type: str
+    action: str = "ENTRY"
     qty: Decimal
     entry_price: Optional[Decimal] = None
     executed_price: Optional[Decimal] = None
@@ -601,6 +628,14 @@ class LivePositionOut(LiveBaseModel):
     closed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    partial_exit_enabled: Optional[bool] = None
+    partial_exit_at_r: Optional[Decimal] = None
+    partial_exit_percent: Optional[Decimal] = None
+    partial_status: Optional[str] = None
+    partial_trigger_price: Optional[Decimal] = None
+    planned_runner_size: Optional[Decimal] = None
+    planned_close_size: Optional[Decimal] = None
+    managed_by: Optional[str] = None
 
 
 class LiveTradeLogOut(LiveBaseModel):

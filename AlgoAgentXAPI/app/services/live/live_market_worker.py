@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from ...core.config import settings
 from ...core.redis_manager import redis_manager
-from ...db.models import BrokerAccount, BrokerOrderEvent, LiveBrokerOrderIntent, LiveMarketCandle, StrategyDeployment
+from ...db.models import BrokerAccount, BrokerOrderEvent, LiveBrokerOrderIntent, LiveMarketCandle, LivePosition, LivePositionManagementState, StrategyDeployment
 from ...db.session import async_session
 from ...utils.credential_crypto import decrypt_credential
 from ..brokers.ctrader import CTraderAdapter, _money_value, _without_secret
@@ -36,6 +36,7 @@ from ..brokers.ctrader_connection_manager import (
     ctrader_connection_manager,
 )
 from ..brokers.factory import get_broker_code
+from ..alerts.quote_bus import publish_quote
 from .live_event_bus import LiveEventBus, StreamMessage, utc_iso, worker_identity
 from .live_latency_trace_service import (
     LiveLatencyTraceService,
@@ -81,6 +82,18 @@ MINUTES_BY_TIMEFRAME = {
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _is_transient_ctrader_connection_error(exc: Exception | str) -> bool:
+    text = str(exc or "").lower()
+    return any(token in text for token in (
+        "connection interrupted",
+        "connection lost",
+        "no close frame received or sent",
+        "socket is unavailable",
+        "send/receive/heartbeat loop stopped",
+        "reconnecting",
+    ))
 
 
 def _normalize_timeframe(value: Any) -> str:
@@ -167,6 +180,7 @@ class LiveMarketWorker:
         self.trace = LiveLatencyTraceService(redis_client)
         self.worker_id = worker_identity("live-market")
         self.feeds: dict[UUID, FeedRegistration] = {}
+        self.managed_quote_feeds: dict[str, FeedRegistration] = {}
         self.current_bars: dict[tuple[str, int, int, int], dict[str, Any]] = {}
         self._registered_handlers: set[str] = set()
         self._candle_queue: asyncio.Queue[tuple[FeedRegistration, dict[str, Any], str, datetime]] = asyncio.Queue(maxsize=10000)
@@ -268,8 +282,11 @@ class LiveMarketWorker:
         for row, result in zip(ctrader_rows, registrations):
             deployment, _broker = row
             if isinstance(result, Exception):
-                self._last_error = f"deployment {deployment.id}: {result}"
-                logger.error("Could not register cTrader deployment %s: %s", deployment.id, result)
+                transient = _is_transient_ctrader_connection_error(result)
+                if not transient:
+                    self._last_error = f"deployment {deployment.id}: {result}"
+                log = logger.warning if transient else logger.error
+                log("Could not register cTrader deployment %s: %s", deployment.id, result)
                 # Preserve an already-live feed across a transient registry/auth
                 # refresh error.  A deployment removed from the query is still
                 # unregistered below.
@@ -295,8 +312,12 @@ class LiveMarketWorker:
             try:
                 await task
             except Exception as exc:
-                self._last_error = f"deployment {result.deployment_id}: {exc}"
-                logger.exception("Could not activate cTrader deployment %s", result.deployment_id)
+                transient = _is_transient_ctrader_connection_error(exc)
+                if not transient:
+                    self._last_error = f"deployment {result.deployment_id}: {exc}"
+                    logger.exception("Could not activate cTrader deployment %s", result.deployment_id)
+                else:
+                    logger.warning("cTrader deployment %s activation deferred while persistent connection reconnects: %s", result.deployment_id, exc)
                 if previous is None:
                     self.feeds.pop(result.deployment_id, None)
                     active_ids.discard(result.deployment_id)
@@ -313,6 +334,80 @@ class LiveMarketWorker:
                         await connection.unsubscribe_live_trendbar(removed.account_id, removed.symbol_id, removed.period)
                     except Exception:
                         logger.warning("Could not unsubscribe removed cTrader feed %s", removed.subscription_key)
+
+        await self._refresh_managed_quote_feeds()
+
+    async def _build_managed_quote_registration(self, deployment: StrategyDeployment, broker: BrokerAccount, symbol: str, key: str) -> FeedRegistration:
+        metadata = broker.metadata_json if isinstance(broker.metadata_json, dict) else {}
+        selected = metadata.get("ctrader_selected_account") or metadata.get("selected_account")
+        if not isinstance(selected, dict):
+            raise ValueError("selected cTrader account is missing")
+        account_raw = selected.get("ctrader_account_id") or selected.get("account_number")
+        if account_raw in (None, ""):
+            raise ValueError("selected cTrader account id is missing")
+        environment = "LIVE" if bool(selected.get("is_live")) or str(selected.get("account_type") or broker.mode).upper() == "LIVE" else "DEMO"
+        client_id = str(broker.oauth_client_id or settings.ctrader_client_id or "").strip()
+        account_secret = decrypt_credential(broker.encrypted_client_secret)
+        client_secret = str(account_secret or settings.ctrader_client_secret or "").strip()
+        access_token = str(decrypt_credential(broker.encrypted_token) or "").strip()
+        if not client_id or not client_secret or not access_token:
+            raise ValueError("cTrader client credentials/access token are incomplete")
+        symbol = str(symbol or deployment.broker_symbol or deployment.instrument).strip().upper()
+        symbol_id = self._symbol_id_from_metadata(metadata, symbol)
+        connection = await ctrader_connection_manager.get_connection(environment=environment, client_id=client_id, client_secret=client_secret)
+        await connection.authorize_account(int(account_raw), access_token)
+        if symbol_id is None:
+            symbol_id = await self._resolve_symbol_id(connection, int(account_raw), symbol)
+        return FeedRegistration(deployment_id=deployment.id, broker_account_id=broker.id, environment=environment, account_id=int(account_raw), symbol=symbol, symbol_id=int(symbol_id), timeframe="M5", period=PERIOD_BY_TIMEFRAME["M5"], client_id=client_id, client_secret=client_secret, access_token=access_token)
+
+    async def _refresh_managed_quote_feeds(self) -> None:
+        async with async_session() as db:
+            rows = (await db.execute(
+                select(LivePositionManagementState, LivePosition, StrategyDeployment, BrokerAccount)
+                .join(LivePosition, LivePosition.id == LivePositionManagementState.live_position_id)
+                .join(StrategyDeployment, StrategyDeployment.id == LivePositionManagementState.deployment_id)
+                .join(BrokerAccount, BrokerAccount.id == LivePositionManagementState.broker_account_id)
+                .where(
+                    LivePosition.status == "OPEN",
+                    StrategyDeployment.status == "RUNNING",
+                    LivePositionManagementState.partial_status.in_(["PENDING", "TRIGGERED", "FAILED_RETRYABLE"]),
+                    BrokerAccount.status == "CONNECTED",
+                )
+            )).all()
+        active: set[str] = set()
+        for state, position, deployment, broker in rows:
+            if get_broker_code(broker) not in {"CTRADER", "CTRADER_API"}:
+                continue
+            key = f"{broker.id}:{str(position.symbol).upper()}"
+            active.add(key)
+            if key in self.managed_quote_feeds:
+                continue
+            # If the normal primary strategy feed already supplies this exact account/symbol,
+            # no second subscription is needed.
+            if any(str(f.broker_account_id) == str(broker.id) and str(f.symbol).upper() == str(position.symbol).upper() for f in self.feeds.values()):
+                continue
+            try:
+                feed = await self._build_managed_quote_registration(deployment, broker, position.symbol, key)
+                connection = ctrader_connection_manager.connection(feed.environment)
+                if connection is None:
+                    continue
+                if feed.environment not in self._registered_handlers:
+                    connection.add_event_handler(PT_SPOT_EVENT, lambda message, env=feed.environment: self._handle_spot_event(env, message))
+                    connection.add_event_handler(PT_EXECUTION_EVENT, lambda message, env=feed.environment: self._handle_execution_event(env, message))
+                    connection.add_reconnect_handler(lambda reconnect, env=feed.environment: self._on_connection_ready(env, reconnect))
+                    self._registered_handlers.add(feed.environment)
+                await connection.subscribe_spots(feed.account_id, [feed.symbol_id])
+                self.managed_quote_feeds[key] = feed
+                logger.info("Registered managed cTrader quote feed account=%s symbol=%s", broker.id, position.symbol)
+            except Exception as exc:
+                self._last_error = f"managed quote {key}: {exc}"[:1000]
+                logger.warning("Could not register managed cTrader quote feed %s: %s", key, exc)
+        # cTrader spot unsubscribe is not required for correctness; remove local routing
+        # immediately so stale management states no longer consume the quote. The shared
+        # persistent connection can retain the broker subscription until reconnect.
+        for key in list(self.managed_quote_feeds):
+            if key not in active:
+                self.managed_quote_feeds.pop(key, None)
 
     async def _build_registration(self, deployment: StrategyDeployment, broker: BrokerAccount) -> FeedRegistration:
         metadata = broker.metadata_json if isinstance(broker.metadata_json, dict) else {}
@@ -521,6 +616,16 @@ class LiveMarketWorker:
         symbol_id = int(payload.get("symbolId") or 0)
         account_value = payload.get("ctidTraderAccountId")
         account_id = int(account_value) if account_value not in (None, "") else None
+        quote_candidates = [feed for feed in [*self.feeds.values(), *self.managed_quote_feeds.values()] if feed.environment == environment and feed.symbol_id == symbol_id and (account_id is None or feed.account_id == account_id)]
+        if quote_candidates and (payload.get("bid") is not None or payload.get("ask") is not None):
+            # Publish once per broker account/symbol even when several deployments share the same cTrader feed.
+            seen_accounts = set()
+            for feed in quote_candidates:
+                key = (str(feed.broker_account_id), feed.symbol)
+                if key in seen_accounts:
+                    continue
+                seen_accounts.add(key)
+                self._spawn(self._publish_spot_quote(feed, payload, received_at), name=f"ctrader-quote-{feed.broker_account_id}-{feed.symbol}")
         trendbars = payload.get("trendbar") or payload.get("trendbars") or []
         for raw_bar in trendbars if isinstance(trendbars, list) else []:
             if not isinstance(raw_bar, dict):
@@ -550,6 +655,22 @@ class LiveMarketWorker:
                         self._candle_queue.put_nowait((feed, previous, "CTRADER_LIVE_TRENDBAR", received_at))
                     except asyncio.QueueFull:
                         self._last_error = "closed-candle queue is full; watchdog recovery required"
+
+    async def _publish_spot_quote(self, feed: FeedRegistration, payload: dict[str, Any], received_at: datetime) -> None:
+        bid = Decimal(str(payload.get("bid"))) / Decimal("100000") if payload.get("bid") is not None else None
+        ask = Decimal(str(payload.get("ask"))) / Decimal("100000") if payload.get("ask") is not None else None
+        price = bid if bid is not None else ask
+        if price is None:
+            return
+        market_ts = received_at
+        if payload.get("timestamp") not in (None, ""):
+            try:
+                raw = int(payload.get("timestamp")); market_ts = datetime.fromtimestamp(raw / 1000 if raw > 10_000_000_000 else raw, tz=timezone.utc)
+            except Exception:
+                pass
+        async with async_session() as db:
+            await publish_quote(db, provider="CTRADER", broker_account_id=str(feed.broker_account_id), symbol=feed.symbol, price=price, bid=bid, ask=ask, market_timestamp=market_ts, raw={"symbolId": payload.get("symbolId"), "ctidTraderAccountId": payload.get("ctidTraderAccountId")})
+            await db.commit()
 
     def _handle_execution_event(self, environment: str, message: dict[str, Any]) -> None:
         # Never perform database I/O in the sole WebSocket receive coroutine.

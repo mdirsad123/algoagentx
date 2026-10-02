@@ -538,6 +538,7 @@ async def _execute_demo_close(db: AsyncSession, deployment: StrategyDeployment, 
         symbol=position.symbol,
         side=close_side,
         order_type="MARKET",
+        action="FULL_EXIT",
         qty=actual_qty,
         entry_price=price,
         executed_price=result.executed_price if result.success else None,
@@ -764,7 +765,7 @@ async def _execute_ctrader_close(db: AsyncSession, deployment: StrategyDeploymen
         reconciled = LiveOrder(
             trace_id=trace_id,
             deployment_id=deployment.id, signal_id=signal.id, user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
-            broker_order_id=None, client_order_id=client_order_id, idempotency_key=idempotency_key, symbol=position.symbol, side=close_side, order_type="MARKET", qty=to_decimal(position.qty),
+            broker_order_id=None, client_order_id=client_order_id, idempotency_key=idempotency_key, symbol=position.symbol, side=close_side, order_type="MARKET", action="FULL_EXIT", qty=to_decimal(position.qty),
             entry_price=price, executed_price=None, status="RECONCILED", error_message=None,
             raw_response={"provider": "CTRADER", "broker_already_closed": True, "broker_position_id": str(broker_position_id), "message": result.message},
         )
@@ -779,7 +780,7 @@ async def _execute_ctrader_close(db: AsyncSession, deployment: StrategyDeploymen
     order = LiveOrder(
         trace_id=trace_id,
         deployment_id=deployment.id, signal_id=signal.id, user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
-        broker_order_id=result.broker_order_id, client_order_id=client_order_id, idempotency_key=idempotency_key, symbol=position.symbol, side=close_side, order_type="MARKET", qty=to_decimal(position.qty),
+        broker_order_id=result.broker_order_id, client_order_id=client_order_id, idempotency_key=idempotency_key, symbol=position.symbol, side=close_side, order_type="MARKET", action="FULL_EXIT", qty=to_decimal(position.qty),
         entry_price=price, executed_price=result.executed_price if result.success else None, status=("FILLED" if result.status == "FILLED" else "PLACED") if result.success else "ERROR",
         error_message=None if result.success else result.message, raw_response={**(result.raw_response or {}), "provider": "CTRADER"},
     )
@@ -905,7 +906,7 @@ async def _execute_upstox_close(db: AsyncSession, deployment: StrategyDeployment
     ))
     order = LiveOrder(
         deployment_id=deployment.id, signal_id=signal.id, user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
-        broker_order_id=result.broker_order_id, symbol=position.symbol, side=close_side, order_type="MARKET", qty=to_decimal(position.qty),
+        broker_order_id=result.broker_order_id, symbol=position.symbol, side=close_side, order_type="MARKET", action="FULL_EXIT", qty=to_decimal(position.qty),
         entry_price=price, executed_price=result.executed_price if result.success else None, status=result.status if result.success else "ERROR",
         error_message=None if result.success else result.message, raw_response=result.raw_response,
     )
@@ -1332,6 +1333,16 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
     # PRIMARY remains the original ORM object and original execution function.
     # Do not wrap, clone, snapshot, or otherwise alter this working path.
     primary_order = await _execute_signal_for_account(db, deployment, signal)
+
+    # CRITICAL COPY-ISOLATION BOUNDARY:
+    # Persist the primary broker result before optional copy fan-out begins.
+    # A later copy-account/network failure must never roll back the local primary
+    # order/signal row after the broker has already accepted the primary order;
+    # otherwise a reclaimed candle could legitimately send the primary again.
+    # Committing here also makes the persisted ENGINE signal visible to any
+    # concurrent/reclaimed runner, so the normal duplicate-signal guard rejects
+    # the second cycle before broker execution.
+    await db.commit()
 
     # Read the result from in-memory state only.  Never trigger an expired ORM
     # attribute loader here.

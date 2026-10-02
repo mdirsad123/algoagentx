@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.config import settings
 from ...core.redis_manager import redis_manager
 from ...core.dependencies import get_current_user, get_db
-from ...db.models import BrokerAccount, BrokerInstrument, BrokerOrderEvent, FundedLiveState, LiveEquityPoint, LiveExecutionTrace, LiveMarketCandle, LiveOrder, LivePosition, LiveSignal, LiveTradeLog, StrategyDeployment
+from ...db.models import BrokerAccount, BrokerInstrument, BrokerOrderEvent, FundedLiveState, LiveEquityPoint, LiveExecutionTrace, LiveMarketCandle, LiveOrder, LivePosition, LivePositionManagementState, LiveSignal, LiveTradeLog, StrategyDeployment
 from ...db.models.instruments import Instrument
 from ...schemas.live_trading import BrokerOrderEventOut, FundedPhaseAdvanceRequest, FundedRiskPlanUpdate, LiveOrderOut, LivePositionOut, LiveSignalOut, LiveTradeLogOut, ManualDeploymentSignalIn, RunStrategyOnceIn, StrategyDeploymentCreate, StrategyDeploymentOut, StrategyDeploymentUpdate
 from ...services.brokers.factory import get_broker_adapter, get_broker_code
@@ -782,9 +782,11 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
     # Orders Today, max-trades checks, primary PnL, or primary open-position UI.
     primary_position_filters = [LivePosition.deployment_id == deployment_id]
     primary_order_filters = [LiveOrder.deployment_id == deployment_id]
+    primary_entry_order_filters = [LiveOrder.deployment_id == deployment_id, LiveOrder.action == "ENTRY"]
     if deployment_broker_account_id is not None:
         primary_position_filters.append(LivePosition.broker_account_id == deployment_broker_account_id)
         primary_order_filters.append(LiveOrder.broker_account_id == deployment_broker_account_id)
+        primary_entry_order_filters.append(LiveOrder.broker_account_id == deployment_broker_account_id)
 
     realized = _dec((await db.execute(
         select(func.coalesce(func.sum(LivePosition.realized_pnl), 0)).where(*primary_position_filters)
@@ -801,11 +803,12 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
         select(func.count(LivePosition.id)).where(*primary_position_filters, LivePosition.status == "OPEN")
     )).scalar() or 0)
     orders_count_today = int((await db.execute(
-        select(func.count(LiveOrder.id)).where(*primary_order_filters, LiveOrder.created_at >= day_start)
+        select(func.count(LiveOrder.id)).where(*primary_entry_order_filters, LiveOrder.created_at >= day_start)
     )).scalar() or 0)
     copy_orders_count_today = int((await db.execute(
         select(func.count(LiveOrder.id)).where(
             LiveOrder.deployment_id == deployment_id,
+            LiveOrder.action == "ENTRY",
             LiveOrder.created_at >= day_start,
             LiveOrder.broker_account_id.is_not(None),
             LiveOrder.broker_account_id != deployment_broker_account_id,
@@ -813,7 +816,7 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
     )).scalar() or 0) if deployment_broker_account_id is not None else 0
     tradeable_signal_filter = LiveSignal.signal_type.in_(["BUY", "SELL", "EXIT"])
     signals_count_today = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == deployment_id, LiveSignal.created_at >= day_start, tradeable_signal_filter))).scalar() or 0)
-    total_orders = int((await db.execute(select(func.count(LiveOrder.id)).where(*primary_order_filters))).scalar() or 0)
+    total_orders = int((await db.execute(select(func.count(LiveOrder.id)).where(*primary_entry_order_filters))).scalar() or 0)
     total_signals = int((await db.execute(select(func.count(LiveSignal.id)).where(LiveSignal.deployment_id == deployment_id, tradeable_signal_filter))).scalar() or 0)
 
     latest_equity = (await db.execute(select(LiveEquityPoint.equity).where(LiveEquityPoint.deployment_id == deployment_id).order_by(LiveEquityPoint.timestamp.desc()).limit(1))).scalar_one_or_none()
@@ -829,6 +832,74 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
     recent_orders = (await db.execute(
         select(LiveOrder).where(*primary_order_filters).order_by(LiveOrder.created_at.desc()).limit(20)
     )).scalars().all()
+    management_rows = (await db.execute(
+        select(LivePositionManagementState).where(LivePositionManagementState.live_position_id.in_([p.id for p in open_positions] or [UUID(int=0)]))
+    )).scalars().all()
+    management_by_position = {str(m.live_position_id): m for m in management_rows}
+    open_position_payloads = []
+    for p in open_positions:
+        item = LivePositionOut.model_validate(p).model_dump(mode="json")
+        m = management_by_position.get(str(p.id))
+        if m is not None:
+            item.update({
+                "partial_exit_enabled": bool(m.partial_exit_enabled),
+                "partial_exit_at_r": m.partial_exit_at_r,
+                "partial_exit_percent": m.partial_exit_percent,
+                "partial_status": m.partial_status,
+                "partial_trigger_price": m.partial_trigger_price,
+                "planned_runner_size": m.planned_runner_size,
+                "planned_close_size": m.planned_close_size,
+                "managed_by": "Live Position Manager",
+            })
+        else:
+            item.update({"partial_exit_enabled": False, "partial_status": "DISABLED", "managed_by": "Broker SL/TP Sync"})
+        open_position_payloads.append(item)
+
+    copy_position_rows = []
+    if deployment_broker_account_id is not None:
+        copy_position_rows = (await db.execute(
+            select(LivePosition, BrokerAccount)
+            .join(BrokerAccount, BrokerAccount.id == LivePosition.broker_account_id, isouter=True)
+            .where(
+                LivePosition.deployment_id == deployment_id,
+                LivePosition.status == "OPEN",
+                LivePosition.broker_account_id.is_not(None),
+                LivePosition.broker_account_id != deployment_broker_account_id,
+            )
+            .order_by(LivePosition.opened_at.desc())
+            .limit(50)
+        )).all()
+    copy_position_ids = [p.id for p, _broker in copy_position_rows]
+    copy_management_rows = (await db.execute(
+        select(LivePositionManagementState).where(
+            LivePositionManagementState.live_position_id.in_(copy_position_ids or [UUID(int=0)])
+        )
+    )).scalars().all()
+    copy_management_by_position = {str(m.live_position_id): m for m in copy_management_rows}
+    copy_open_positions = []
+    for copy_position, copy_broker in copy_position_rows:
+        item = LivePositionOut.model_validate(copy_position).model_dump(mode="json")
+        m = copy_management_by_position.get(str(copy_position.id))
+        if m is not None:
+            item.update({
+                "partial_exit_enabled": bool(m.partial_exit_enabled),
+                "partial_exit_at_r": m.partial_exit_at_r,
+                "partial_exit_percent": m.partial_exit_percent,
+                "partial_status": m.partial_status,
+                "partial_trigger_price": m.partial_trigger_price,
+                "planned_runner_size": m.planned_runner_size,
+                "planned_close_size": m.planned_close_size,
+                "managed_by": "Copy Position Manager",
+            })
+        else:
+            item.update({"partial_exit_enabled": False, "partial_status": "DISABLED", "managed_by": "Copy Broker Sync"})
+        item.update({
+            "broker_account_label": getattr(copy_broker, "account_label", None) if copy_broker is not None else None,
+            "broker_code": get_broker_code(copy_broker) if copy_broker is not None else None,
+            "broker_mode": getattr(copy_broker, "mode", None) if copy_broker is not None else None,
+            "broker_login_id": getattr(copy_broker, "login_id", None) if copy_broker is not None else None,
+        })
+        copy_open_positions.append(item)
 
     copy_order_rows = []
     if deployment_broker_account_id is not None:
@@ -1041,10 +1112,11 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
         },
         "latest_signal": dump_one(LiveSignalOut, latest_signal) if latest_signal else None,
         "latest_order": dump_one(LiveOrderOut, latest_order) if latest_order else None,
-        "open_positions": dump_list(LivePositionOut, open_positions),
+        "open_positions": open_position_payloads,
         "position_events": dump_list(LiveTradeLogOut, position_events),
         "recent_orders": dump_list(LiveOrderOut, recent_orders),
         "copy_orders": copy_orders,
+        "copy_open_positions": copy_open_positions,
         "recent_signals": dump_list(LiveSignalOut, recent_signals),
         "recent_logs": dump_list(LiveTradeLogOut, recent_logs),
     }
@@ -1454,6 +1526,8 @@ async def get_deployment_pipeline_health(
         "market_worker_enabled": settings.live_market_worker_enabled,
         "strategy_stream_enabled": settings.live_strategy_stream_enabled,
         "reconcile_worker_enabled": settings.live_reconcile_worker_enabled,
+        "position_manager_worker_enabled": settings.live_position_manager_worker_enabled,
+        "position_manager_broker_send_enabled": settings.live_position_manager_broker_send_enabled,
         "persistent_ctrader_enabled": settings.ctrader_persistent_connection_enabled,
         "legacy_runner_enabled": settings.live_legacy_runner_enabled,
         "deployment_running": deployment.status == "RUNNING",
@@ -1473,6 +1547,8 @@ async def get_deployment_pipeline_health(
             if not enabled
         ],
     }
+    if bool(getattr(deployment, "partial_exit_enabled", False)) and not settings.live_position_manager_worker_enabled:
+        health["disabled_flags"].append("LIVE_POSITION_MANAGER_WORKER_ENABLED")
     deployment_environment = str(deployment.mode or "DEMO").upper()
     if deployment.broker_account_id:
         linked_broker = (
@@ -1514,7 +1590,7 @@ async def get_deployment_pipeline_health(
     if redis_manager.is_available and redis_manager.client is not None:
         bus = LiveEventBus(redis_manager.client)
         try:
-            for role in ("live_market_worker", "live_strategy_worker", "live_reconcile_worker"):
+            for role in ("live_market_worker", "live_strategy_worker", "live_reconcile_worker", "live_position_manager_worker"):
                 health["workers"][role] = await bus.get_health(role)
             market_health = health["workers"].get("live_market_worker") or {}
             connections = market_health.get("connections") if isinstance(market_health, dict) else {}
@@ -1523,7 +1599,7 @@ async def get_deployment_pipeline_health(
             # Health is observer-only. A transient Redis read must not turn the
             # entire live page into a 500/eternal CHECKING state. Return DB/flag
             # diagnostics and expose the Redis error explicitly instead.
-            for role in ("live_market_worker", "live_strategy_worker", "live_reconcile_worker"):
+            for role in ("live_market_worker", "live_strategy_worker", "live_reconcile_worker", "live_position_manager_worker"):
                 health["workers"].setdefault(role, None)
             health["connection"] = None
             health["redis_error"] = str(exc) or exc.__class__.__name__

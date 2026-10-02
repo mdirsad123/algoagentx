@@ -191,6 +191,7 @@ function LivePipelineCard({ latency, health, healthError }: { latency: LiveLaten
   const market = health?.workers?.live_market_worker;
   const strategy = health?.workers?.live_strategy_worker;
   const reconcile = health?.workers?.live_reconcile_worker;
+  const positionManager = health?.workers?.live_position_manager_worker;
   const connections = market?.connections || {};
   const connection = health?.connection || Object.values(connections)[0];
   const flagsEnabled = Boolean(
@@ -198,15 +199,17 @@ function LivePipelineCard({ latency, health, healthError }: { latency: LiveLaten
       && health?.market_worker_enabled
       && health?.strategy_stream_enabled
       && health?.reconcile_worker_enabled
+      && (health?.position_manager_worker_enabled !== false)
       && health?.persistent_ctrader_enabled
   );
   const marketStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.market_worker_enabled ? "DISABLED" : market?.status || "OFFLINE";
   const strategyStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.strategy_stream_enabled ? "DISABLED" : strategy?.status || "OFFLINE";
   const reconcileStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.reconcile_worker_enabled ? "DISABLED" : reconcile?.status || "OFFLINE";
+  const positionManagerStatus = !health ? "CHECKING" : !health.position_manager_worker_enabled ? "DISABLED" : positionManager?.status || "OFFLINE";
   const connectionStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.persistent_ctrader_enabled ? "DISABLED" : connection?.state || "OFFLINE";
   const eventMode = Boolean(
     flagsEnabled
-      && [marketStatus, strategyStatus, reconcileStatus].every((value) => value === "HEALTHY" || value === "DEGRADED")
+      && [marketStatus, strategyStatus, reconcileStatus, positionManagerStatus].every((value) => value === "HEALTHY" || value === "DEGRADED")
       && connectionStatus === "CONNECTED"
   );
   const disabledFlags = health ? [
@@ -234,6 +237,7 @@ function LivePipelineCard({ latency, health, healthError }: { latency: LiveLaten
         <MetricCard label="Market Worker" value={marketStatus} />
         <MetricCard label="Strategy Worker" value={strategyStatus} />
         <MetricCard label="Reconcile Worker" value={reconcileStatus} />
+        <MetricCard label="Position Manager" value={positionManagerStatus} />
         <MetricCard label="Close → Send p50" value={metric("close_to_order_send_ms", "p50")} />
         <MetricCard label="Close → Send p95" value={metric("close_to_order_send_ms", "p95")} />
       </div>
@@ -359,6 +363,7 @@ export default function LiveDeploymentDetailPage() {
   const recentSignals = summary?.recent_signals || [];
   const recentOrders = summary?.recent_orders || [];
   const copyOrders = summary?.copy_orders || [];
+  const copyOpenPositions = summary?.copy_open_positions || [];
   const openPositions = summary?.open_positions || [];
   const recentLogs = summary?.recent_logs || [];
   const latestCandles = candleSnapshot?.candles?.slice(0, 5) || [];
@@ -838,7 +843,7 @@ export default function LiveDeploymentDetailPage() {
           </div>
           <Badge className="border-lime-400/30 bg-lime-400/20 text-lime-100">{metrics?.broker_synced ? `${brokerProviderLabel} synced` : "DB view"}</Badge>
         </div>
-        {openPositions.length === 0 ? <NoRows label="No open positions" /> : <div className="responsive-table-wrapper overflow-x-auto"><table className="w-full min-w-[860px] text-left text-sm"><thead className="text-purple-200"><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg Entry</th><th>Current</th><th>SL</th><th>Target</th><th>Unrealized PnL</th><th>Status</th><th>Managed By</th><th>Opened At</th></tr></thead><tbody className="divide-y divide-white/10">{openPositions.map((p) => <tr key={p.id} className="text-purple-50"><td className="py-3">{p.symbol}</td><td>{p.side}</td><td>{num(p.qty)}</td><td>{num(p.avg_entry_price)}</td><td>{num(p.current_price)}</td><td>{num(p.stop_loss)}</td><td>{num(p.target)}</td><td>{formatMoney(p.unrealized_pnl, currency)}</td><td>{p.status}</td><td>Broker SL/TP Sync</td><td>{openedAtDisplay(p)}</td></tr>)}</tbody></table></div>}
+        {openPositions.length === 0 ? <NoRows label="No open positions" /> : <div className="responsive-table-wrapper overflow-x-auto"><table className="w-full min-w-[860px] text-left text-sm"><thead className="text-purple-200"><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg Entry</th><th>Current</th><th>SL</th><th>Target</th><th>Partial At</th><th>Partial %</th><th>Partial Status</th><th>Runner</th><th>Unrealized PnL</th><th>Status</th><th>Managed By</th><th>Opened At</th></tr></thead><tbody className="divide-y divide-white/10">{openPositions.map((p) => <tr key={p.id} className="text-purple-50"><td className="py-3">{p.symbol}</td><td>{p.side}</td><td>{num(p.qty)}</td><td>{num(p.avg_entry_price)}</td><td>{num(p.current_price)}</td><td>{num(p.stop_loss)}</td><td>{num(p.target)}</td><td>{p.partial_exit_enabled ? `${num(p.partial_exit_at_r)}R` : "—"}</td><td>{p.partial_exit_enabled ? `${(Number(p.partial_exit_percent || 0) * 100).toFixed(0)}%` : "—"}</td><td>{p.partial_status || "DISABLED"}</td><td>{num(p.planned_runner_size)}</td><td>{formatMoney(p.unrealized_pnl, currency)}</td><td>{p.status}</td><td>{p.managed_by || "Broker SL/TP Sync"}</td><td>{openedAtDisplay(p)}</td></tr>)}</tbody></table></div>}
       </GlassCard>
 
       <LiveFlowPanel />
@@ -931,35 +936,63 @@ export default function LiveDeploymentDetailPage() {
             </GlassCard>
           </div>
 
-          {(summary?.deployment?.copy_trading_enabled || copyOrders.length > 0) && (
-            <GlassCard className="mb-6 p-6" hoverEffect={false}>
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-xl font-bold text-white">Copy Trading Orders</h2>
-                  <p className="mt-1 text-sm text-purple-200">Replica executions are shown separately and do not increase the primary Orders Today count.</p>
+          {(summary?.deployment?.copy_trading_enabled || copyOrders.length > 0 || copyOpenPositions.length > 0) && (
+            <>
+              <GlassCard className="mb-6 p-6" hoverEffect={false}>
+                <div className="mb-4">
+                  <h2 className="text-xl font-bold text-white">Copy Trading Managed Positions</h2>
+                  <p className="mt-1 text-sm text-purple-200">Each copy broker position has its own partial trigger, broker minimum/step validation, and management state. Primary results never control copy positions.</p>
                 </div>
-                <Badge className="border-cyan-400/30 bg-cyan-400/20 text-cyan-100">Today: {metrics?.copy_orders_today ?? 0}</Badge>
-              </div>
-              {copyOrders.length === 0 ? <NoRows label="No copy-trading orders yet" /> : (
-                <div className="responsive-table-wrapper max-h-[360px] overflow-auto">
-                  <table className="w-full min-w-[1180px] text-left text-sm">
-                    <thead className="sticky top-0 bg-purple-950 text-purple-200">
-                      <tr><th className="p-3">Time</th><th>Account</th><th>Broker</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Entry</th><th>Executed</th><th>SL</th><th>Target</th><th>Status</th><th>Broker Order ID</th><th>Error</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/10">
-                      {copyOrders.map((o) => (
-                        <tr key={o.id} className="text-purple-50">
-                          <td className="p-3">{date(o.created_at)}</td>
-                          <td>{o.broker_account_label || o.broker_login_id || "Copy account"}</td>
-                          <td>{[o.broker_code, o.broker_mode].filter(Boolean).join(" · ") || "-"}</td>
-                          <td>{o.side}</td><td>{o.symbol}</td><td>{num(o.qty)}</td><td>{num(o.entry_price)}</td><td>{num(o.executed_price)}</td><td>{num(o.stop_loss)}</td><td>{num(o.target)}</td><td>{o.status}</td><td>{o.broker_order_id || "-"}</td><td className="max-w-[260px] truncate" title={o.error_message || "-"}>{o.error_message || "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                {copyOpenPositions.length === 0 ? <NoRows label="No open copy positions" /> : (
+                  <div className="responsive-table-wrapper max-h-[360px] overflow-auto">
+                    <table className="w-full min-w-[1280px] text-left text-sm">
+                      <thead className="sticky top-0 bg-purple-950 text-purple-200">
+                        <tr><th className="p-3">Account</th><th>Broker</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Current</th><th>SL</th><th>TP</th><th>Partial At</th><th>Partial %</th><th>Trigger</th><th>Partial Status</th><th>Runner</th><th>Broker Position ID</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/10">
+                        {copyOpenPositions.map((p) => (
+                          <tr key={p.id} className="text-purple-50">
+                            <td className="p-3">{p.broker_account_label || p.broker_login_id || "Copy account"}</td>
+                            <td>{[p.broker_code, p.broker_mode].filter(Boolean).join(" · ") || "-"}</td>
+                            <td>{p.symbol}</td><td>{p.side}</td><td>{num(p.qty)}</td><td>{num(p.avg_entry_price)}</td><td>{num(p.current_price)}</td><td>{num(p.stop_loss)}</td><td>{num(p.target)}</td><td>{p.partial_exit_enabled ? `${num(p.partial_exit_at_r)}R` : "—"}</td><td>{p.partial_exit_enabled ? `${(Number(p.partial_exit_percent || 0) * 100).toFixed(0)}%` : "—"}</td><td>{num(p.partial_trigger_price)}</td><td>{p.partial_status || "DISABLED"}</td><td>{num(p.planned_runner_size)}</td><td>{p.broker_position_id || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </GlassCard>
+
+              <GlassCard className="mb-6 p-6" hoverEffect={false}>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-bold text-white">Copy Trading Orders</h2>
+                    <p className="mt-1 text-sm text-purple-200">Replica entries and copy-position exits are shown separately. Only ENTRY rows count toward Today.</p>
+                  </div>
+                  <Badge className="border-cyan-400/30 bg-cyan-400/20 text-cyan-100">Entries Today: {metrics?.copy_orders_today ?? 0}</Badge>
                 </div>
-              )}
-            </GlassCard>
+                {copyOrders.length === 0 ? <NoRows label="No copy-trading orders yet" /> : (
+                  <div className="responsive-table-wrapper max-h-[360px] overflow-auto">
+                    <table className="w-full min-w-[1240px] text-left text-sm">
+                      <thead className="sticky top-0 bg-purple-950 text-purple-200">
+                        <tr><th className="p-3">Time</th><th>Account</th><th>Broker</th><th>Action</th><th>Side</th><th>Symbol</th><th>Qty</th><th>Entry</th><th>Executed</th><th>SL</th><th>Target</th><th>Status</th><th>Broker Order ID</th><th>Error</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/10">
+                        {copyOrders.map((o) => (
+                          <tr key={o.id} className="text-purple-50">
+                            <td className="p-3">{date(o.created_at)}</td>
+                            <td>{o.broker_account_label || o.broker_login_id || "Copy account"}</td>
+                            <td>{[o.broker_code, o.broker_mode].filter(Boolean).join(" · ") || "-"}</td>
+                            <td>{o.action || "ENTRY"}</td>
+                            <td>{o.side}</td><td>{o.symbol}</td><td>{num(o.qty)}</td><td>{num(o.entry_price)}</td><td>{num(o.executed_price)}</td><td>{num(o.stop_loss)}</td><td>{num(o.target)}</td><td>{o.status}</td><td>{o.broker_order_id || "-"}</td><td className="max-w-[260px] truncate" title={o.error_message || "-"}>{o.error_message || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </GlassCard>
+            </>
           )}
 
           <GlassCard className="p-6" hoverEffect={false}>

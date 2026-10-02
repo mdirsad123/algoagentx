@@ -79,6 +79,7 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
                 LiveOrder.broker_account_id == deployment.broker_account_id,
                 LiveOrder.created_at >= day_start,
                 LiveOrder.status.in_(["FILLED", "PLACED", "PENDING_DEMO"]),
+                LiveOrder.action == "ENTRY",
             )
         )).scalar() or 0
         max_trades_per_day = getattr(deployment, "max_trades_per_day", None)
@@ -105,6 +106,7 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
             LiveSignal.candle_time == signal.candle_time,
             LiveSignal.signal_type == signal.signal_type,
             LiveOrder.status.in_(["FILLED", "PLACED", "PENDING_DEMO"]),
+            LiveOrder.action == "ENTRY",
         )
         .limit(1)
     )).scalar_one_or_none()

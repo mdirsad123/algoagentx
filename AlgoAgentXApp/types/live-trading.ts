@@ -352,6 +352,9 @@ export interface StrategyDeployment {
   capital: number | string;
   risk_per_trade: number | string;
   rr_ratio: number | string;
+  partial_exit_enabled?: boolean;
+  partial_exit_at_r?: number | string;
+  partial_exit_percent?: number | string;
   price_risk_pct: number | string;
   max_daily_loss: number | string | null;
   max_trades_per_day: number | null;
@@ -422,6 +425,9 @@ export interface DeploymentPayload {
   capital?: number;
   risk_per_trade: number;
   rr_ratio: number;
+  partial_exit_enabled?: boolean;
+  partial_exit_at_r?: number;
+  partial_exit_percent?: number;
   price_risk_pct: number;
   max_daily_loss: number | null;
   max_trades_per_day: number | null;
@@ -496,6 +502,7 @@ export interface LiveOrder {
   symbol: string;
   side: "BUY" | "SELL";
   order_type: string;
+  action?: "ENTRY" | "FULL_EXIT" | "PARTIAL_EXIT" | string;
   qty: number | string;
   entry_price?: number | string | null;
   executed_price?: number | string | null;
@@ -509,6 +516,13 @@ export interface LiveOrder {
 }
 
 export interface CopyTradingOrder extends LiveOrder {
+  broker_account_label?: string | null;
+  broker_code?: string | null;
+  broker_mode?: string | null;
+  broker_login_id?: string | null;
+}
+
+export interface CopyTradingPosition extends LivePosition {
   broker_account_label?: string | null;
   broker_code?: string | null;
   broker_mode?: string | null;
@@ -537,6 +551,14 @@ export interface LivePosition {
   closed_at?: string | null;
   created_at?: string;
   updated_at?: string;
+  partial_exit_enabled?: boolean;
+  partial_exit_at_r?: number | string | null;
+  partial_exit_percent?: number | string | null;
+  partial_status?: string | null;
+  partial_trigger_price?: number | string | null;
+  planned_runner_size?: number | string | null;
+  planned_close_size?: number | string | null;
+  managed_by?: string | null;
 }
 
 export interface LiveTradeLog {
@@ -666,6 +688,7 @@ export interface LiveDeploymentSummary {
   open_positions?: LivePosition[];
   recent_orders?: LiveOrder[];
   copy_orders?: CopyTradingOrder[];
+  copy_open_positions?: CopyTradingPosition[];
   recent_signals?: LiveSignal[];
   recent_logs?: LiveTradeLog[];
   position_events?: LiveTradeLog[];
@@ -950,6 +973,8 @@ export interface LivePipelineHealth {
   market_worker_enabled: boolean;
   strategy_stream_enabled: boolean;
   reconcile_worker_enabled: boolean;
+  position_manager_worker_enabled?: boolean;
+  position_manager_broker_send_enabled?: boolean;
   persistent_ctrader_enabled: boolean;
   legacy_runner_enabled: boolean;
   deployment_running: boolean;
