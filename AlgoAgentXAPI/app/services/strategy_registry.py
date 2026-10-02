@@ -71,6 +71,21 @@ def _filter_init_params(strategy_class: Any, params: Dict[str, Any]) -> Dict[str
 
 
 def resolve_strategy(strategy_id: str | None, strategy_name: str | None, db_parameters: Dict[str, Any] | None = None) -> Tuple[Any, Dict[str, Any], str]:
+    db_params = db_parameters if isinstance(db_parameters, dict) else {}
+    source_code = str(db_params.get("source_code") or "").strip()
+    engine_mode = str(db_params.get("engine_mode") or "").strip().upper()
+
+    # Backtests already support strategies stored as validated source code in the
+    # Strategy.parameters JSON. Live execution must resolve the exact same strategy
+    # contract; otherwise a DB strategy can be marked deployable in the UI but fail
+    # only when the live worker calls this registry. Prefer DYNAMIC_DB explicitly,
+    # and retain a dynamic fallback for older DB rows that contain source_code but
+    # pre-date the engine_mode flag.
+    if source_code and engine_mode == "DYNAMIC_DB":
+        from .dynamic_strategy_loader import build_dynamic_strategy_entry
+
+        return build_dynamic_strategy_entry(strategy_id, strategy_name, db_params)
+
     normalized_id = _normalize(strategy_id)
     normalized_name = _normalize(strategy_name)
     haystack = f"{normalized_id} {normalized_name}".strip()
@@ -118,6 +133,18 @@ def resolve_strategy(strategy_id: str | None, strategy_name: str | None, db_para
         key = "rsi_strategy"
     elif "ema" in haystack:
         key = "ema_crossover"
+
+    if key is None and source_code:
+        from .dynamic_strategy_loader import build_dynamic_strategy_entry
+
+        try:
+            return build_dynamic_strategy_entry(strategy_id, strategy_name, db_params)
+        except ValueError as dynamic_exc:
+            available = ", ".join(entry.canonical_name for entry in _REGISTRY.values())
+            raise ValueError(
+                f"No static mapping found for '{strategy_name or strategy_id}' and dynamic strategy load failed: "
+                f"{dynamic_exc}. Available static engine strategies: {available}"
+            ) from dynamic_exc
 
     if key is None:
         available = ", ".join(entry.canonical_name for entry in _REGISTRY.values())

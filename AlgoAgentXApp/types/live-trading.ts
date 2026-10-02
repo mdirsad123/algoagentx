@@ -353,8 +353,8 @@ export interface StrategyDeployment {
   risk_per_trade: number | string;
   rr_ratio: number | string;
   price_risk_pct: number | string;
-  max_daily_loss: number | string;
-  max_trades_per_day: number;
+  max_daily_loss: number | string | null;
+  max_trades_per_day: number | null;
   max_open_positions: number;
   allow_short: boolean;
   auto_trade_enabled: boolean;
@@ -423,8 +423,8 @@ export interface DeploymentPayload {
   risk_per_trade: number;
   rr_ratio: number;
   price_risk_pct: number;
-  max_daily_loss: number;
-  max_trades_per_day: number;
+  max_daily_loss: number | null;
+  max_trades_per_day: number | null;
   max_open_positions: number;
   allow_short: boolean;
   auto_trade_enabled: boolean;

@@ -10,6 +10,7 @@ try:
     from app.services.trading.pnl_engine import calculate_trade_pnl
     from app.services.trading.sl_tp_engine import calculate_sl_tp, enrich_sl_tp_indicators
     from app.services.trading.guardrails import RISK_ENGINE_VERSION, PNL_ENGINE_VERSION
+    from app.services.trading.partial_exit_engine import calculate_broker_partial_split
 except Exception:  # pragma: no cover - keeps legacy isolated script usage safe
     calculate_position_size = None
     calculate_trade_pnl = None
@@ -17,6 +18,7 @@ except Exception:  # pragma: no cover - keeps legacy isolated script usage safe
     enrich_sl_tp_indicators = None
     RISK_ENGINE_VERSION = "legacy"
     PNL_ENGINE_VERSION = "legacy"
+    calculate_broker_partial_split = None
 
 
 @dataclass
@@ -350,6 +352,7 @@ def run_backtest_engine(
     lifecycle_events: List[Dict[str, Any]] = []
     breakeven_moved = False
     partial_exit_done = False
+    partial_exit_skipped = False
     partial_pnl_total = 0.0
     original_quantity: Optional[float] = None
     original_lot_size: Optional[float] = None
@@ -363,7 +366,7 @@ def run_backtest_engine(
     def close_active_position(exit_price_value: float, reason_value: str, current_dt_value: Any) -> None:
         nonlocal capital, position, entry_price, entry_dt, stop_loss, target, quantity, lot_size
         nonlocal entry_signal_reason, entry_risk_result, entry_sl_result, initial_stop_loss, initial_target
-        nonlocal initial_risk_points, lifecycle_events, breakeven_moved, partial_exit_done, partial_pnl_total
+        nonlocal initial_risk_points, lifecycle_events, breakeven_moved, partial_exit_done, partial_exit_skipped, partial_pnl_total
         nonlocal original_quantity, original_lot_size
 
         if position == 0 or entry_price is None or stop_loss is None or target is None:
@@ -451,6 +454,7 @@ def run_backtest_engine(
         lifecycle_events = []
         breakeven_moved = False
         partial_exit_done = False
+        partial_exit_skipped = False
         partial_pnl_total = 0.0
         original_quantity = None
         original_lot_size = None
@@ -505,36 +509,102 @@ def run_backtest_engine(
                             breakeven_moved = True
                             lifecycle_events.append(_event("BREAK_EVEN_MOVED", current_dt, old_sl=old_sl, new_sl=stop_loss, reason="Reached breakeven trigger R", price=open_price, r_value=current_r))
 
-                # Partial exit: close a part of the active position at a configured R, keep the remainder running.
-                if bool(tm_cfg.get("partial_exit_enabled", False)) and not partial_exit_done:
+                # Partial exit: close a broker-valid part of the active position at configured R.
+                # If the requested runner is below broker minimum, skip the partial for this
+                # trade and keep the full position running to the original final target.
+                if bool(tm_cfg.get("partial_exit_enabled", False)) and not partial_exit_done and not partial_exit_skipped:
                     partial_at_r = float(tm_cfg.get("partial_exit_at_r") or 1.0)
                     partial_pct = float(tm_cfg.get("partial_exit_percent") or 0.5)
                     if current_r >= partial_at_r and 0 < partial_pct < 1:
                         partial_exit_price = float(entry_price) + (float(initial_risk_points) * partial_at_r) if position == 1 else float(entry_price) - (float(initial_risk_points) * partial_at_r)
-                        partial_qty = _partial_size(quantity if quantity_mode != "LOTS" else None, partial_pct)
-                        partial_lot = _partial_size(lot_size if quantity_mode == "LOTS" else None, partial_pct)
-                        if professional_mode and calculate_trade_pnl:
-                            partial_result = calculate_trade_pnl(
-                                entry_price=float(entry_price),
-                                exit_price=float(partial_exit_price),
-                                side=_normalize_side(position),
+
+                        split: Dict[str, Any] | None = None
+                        if professional_mode:
+                            total_size = lot_size if quantity_mode == "LOTS" else quantity
+                            split = calculate_broker_partial_split(
+                                total_size=total_size,
+                                percent=partial_pct,
                                 quantity_mode=quantity_mode,
-                                quantity=partial_qty if quantity_mode != "LOTS" else None,
-                                lot_size=partial_lot,
                                 instrument_spec=instrument_spec,
-                            )
-                            partial_pnl = float(partial_result.get("pnl") or 0.0) if partial_result.get("status") == "OK" else 0.0
-                        else:
-                            partial_pnl = (float(partial_exit_price) - float(entry_price)) * position * float(partial_qty or 0.0)
-                        if partial_pnl or partial_qty or partial_lot:
-                            partial_pnl_total += partial_pnl
-                            capital += partial_pnl
-                            if quantity_mode == "LOTS" and partial_lot is not None and lot_size is not None:
-                                lot_size = max(0.0, float(lot_size) - float(partial_lot))
-                            elif partial_qty is not None:
-                                quantity = max(0.0, float(quantity) - float(partial_qty))
-                            partial_exit_done = True
-                            lifecycle_events.append(_event("PARTIAL_EXIT", current_dt, reason="Partial exit reached configured R", price=partial_exit_price, r_value=current_r, extra={"partial_exit_percent": partial_pct, "partial_pnl": partial_pnl, "remaining_quantity": quantity, "remaining_lot_size": lot_size}))
+                            ) if calculate_broker_partial_split else {"eligible": False, "reason": "PARTIAL_SPLIT_ENGINE_UNAVAILABLE"}
+                            if not split.get("eligible"):
+                                partial_exit_skipped = True
+                                lifecycle_events.append(
+                                    _event(
+                                        "PARTIAL_EXIT_SKIPPED_MIN_SIZE",
+                                        current_dt,
+                                        reason=str(split.get("reason") or "No broker-valid partial split"),
+                                        price=partial_exit_price,
+                                        r_value=current_r,
+                                        extra={
+                                            "configured_partial_exit_percent": partial_pct,
+                                            "requested_close_size": split.get("requested_close_size"),
+                                            "requested_runner_size": split.get("requested_runner_size"),
+                                            "broker_minimum_size": split.get("minimum_size"),
+                                            "broker_step_size": split.get("step_size"),
+                                            "quantity_mode": quantity_mode,
+                                            "action": "KEEP_FULL_POSITION_TO_FINAL_TARGET",
+                                        },
+                                    )
+                                )
+                                split = None
+
+                        if not partial_exit_skipped:
+                            if split is not None:
+                                partial_qty = float(split["partial_close_size"]) if quantity_mode != "LOTS" else None
+                                partial_lot = float(split["partial_close_size"]) if quantity_mode == "LOTS" else None
+                                next_quantity = float(split["runner_size"]) if quantity_mode != "LOTS" else quantity
+                                next_lot_size = float(split["runner_size"]) if quantity_mode == "LOTS" else lot_size
+                                effective_partial_pct = float(split["effective_partial_percent"])
+                            else:
+                                # Legacy mode has no broker min/step metadata, so preserve the
+                                # historical percentage behavior exactly.
+                                partial_qty = _partial_size(quantity if quantity_mode != "LOTS" else None, partial_pct)
+                                partial_lot = _partial_size(lot_size if quantity_mode == "LOTS" else None, partial_pct)
+                                next_quantity = max(0.0, float(quantity) - float(partial_qty or 0.0)) if partial_qty is not None else quantity
+                                next_lot_size = max(0.0, float(lot_size) - float(partial_lot or 0.0)) if partial_lot is not None and lot_size is not None else lot_size
+                                effective_partial_pct = partial_pct
+
+                            if professional_mode and calculate_trade_pnl:
+                                partial_result = calculate_trade_pnl(
+                                    entry_price=float(entry_price),
+                                    exit_price=float(partial_exit_price),
+                                    side=_normalize_side(position),
+                                    quantity_mode=quantity_mode,
+                                    quantity=partial_qty if quantity_mode != "LOTS" else None,
+                                    lot_size=partial_lot,
+                                    instrument_spec=instrument_spec,
+                                )
+                                partial_pnl = float(partial_result.get("pnl") or 0.0) if partial_result.get("status") == "OK" else 0.0
+                            else:
+                                partial_pnl = (float(partial_exit_price) - float(entry_price)) * position * float(partial_qty or 0.0)
+
+                            if partial_pnl or partial_qty or partial_lot:
+                                partial_pnl_total += partial_pnl
+                                capital += partial_pnl
+                                quantity = float(next_quantity or 0.0)
+                                lot_size = float(next_lot_size) if next_lot_size is not None else None
+                                partial_exit_done = True
+                                lifecycle_events.append(
+                                    _event(
+                                        "PARTIAL_EXIT",
+                                        current_dt,
+                                        reason="Partial exit reached configured R",
+                                        price=partial_exit_price,
+                                        r_value=current_r,
+                                        extra={
+                                            "partial_exit_percent": partial_pct,
+                                            "effective_partial_exit_percent": effective_partial_pct,
+                                            "partial_close_quantity": partial_qty,
+                                            "partial_close_lot_size": partial_lot,
+                                            "partial_pnl": partial_pnl,
+                                            "remaining_quantity": quantity,
+                                            "remaining_lot_size": lot_size,
+                                            "broker_minimum_size": split.get("minimum_size") if split else None,
+                                            "broker_step_size": split.get("step_size") if split else None,
+                                        },
+                                    )
+                                )
 
                 # Trailing stop: only starts after configured R and never loosens stop.
                 if bool(tm_cfg.get("trailing_enabled", False)):
@@ -691,6 +761,7 @@ def run_backtest_engine(
             lifecycle_events = [_event("ENTRY", current_dt, old_sl=None, new_sl=stop_loss, reason="Position opened", price=entry_price, r_value=0.0, extra={"target": target, "quantity": quantity, "lot_size": lot_size})]
             breakeven_moved = False
             partial_exit_done = False
+            partial_exit_skipped = False
             partial_pnl_total = 0.0
             entry_signal_reason = pending_signal_reason
             trades_by_day[trade_day] = trades_by_day.get(trade_day, 0) + 1

@@ -18,8 +18,12 @@ from ...db.models import (
     StrategyDeployment,
 )
 from ..brokers.factory import get_broker_code
-from ..live.order_preview_service import build_live_order_preview, find_live_instrument_spec
+from ..live.order_preview_service import build_live_order_preview, find_live_instrument_spec, resolve_live_runtime_config
+from ..live.broker_candle_service import get_latest_closed_candles
+from ..live.strategy_runner import _candles_to_dataframe, _run_strategy_generate, extract_latest_signal_payload
+from ..strategy_registry import resolve_strategy
 from ..trading.guardrails import validate_instrument_spec
+from ..trading.runtime_config_service import validate_runtime_config
 from ..live.trading_safety import day_start_utc, get_platform_trading_settings
 from ..live.compatibility_service import run_live_compatibility_check
 from ..live.funded_guard_service import (
@@ -164,6 +168,28 @@ async def check_market_data_ready(db: AsyncSession, deployment: StrategyDeployme
     ]
 
 
+def _runtime_sl_mode(config: dict[str, Any] | None) -> str:
+    sl_tp = (config or {}).get("sl_tp") if isinstance(config, dict) else {}
+    if not isinstance(sl_tp, dict):
+        sl_tp = {}
+    return str(sl_tp.get("sl_mode") or "ATR").upper().replace(" ", "_")
+
+
+async def _latest_strategy_signal_payload(db: AsyncSession, deployment: StrategyDeployment) -> dict[str, Any]:
+    strategy = (await db.execute(select(Strategy).where(Strategy.id == deployment.strategy_id))).scalar_one_or_none()
+    if strategy is None:
+        raise ValueError("Strategy was not found.")
+    strategy_params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
+    strategy_class, params, _ = resolve_strategy(str(strategy.id), str(strategy.name), strategy_params)
+    candles = await get_latest_closed_candles(db, deployment.id, limit=300)
+    if len(candles) < 2:
+        raise ValueError("Not enough closed candles to evaluate the latest strategy signal.")
+    generated = _run_strategy_generate(strategy_class(_candles_to_dataframe(candles), **params))
+    if generated is None or getattr(generated, "empty", True):
+        raise ValueError("Strategy did not return a valid DataFrame.")
+    return extract_latest_signal_payload(generated)
+
+
 async def check_risk_preview_ready(db: AsyncSession, deployment: StrategyDeployment) -> list[dict[str, Any]]:
     latest = (await db.execute(select(LiveMarketCandle).where(LiveMarketCandle.deployment_id == deployment.id, LiveMarketCandle.is_closed.is_(True)).order_by(LiveMarketCandle.candle_time.desc()).limit(1))).scalar_one_or_none()
     entry = _dec(getattr(latest, "close", None), "0") if latest is not None else Decimal("0")
@@ -172,11 +198,13 @@ async def check_risk_preview_ready(db: AsyncSession, deployment: StrategyDeploym
             _check("latest_entry_plan_ok", "Latest entry plan OK", FAIL, "Entry plan needs a latest candle close price. Refresh candles first.", "Refresh Candles", f"/live-trading/{deployment.id}"),
             _check("risk_preview_ok", "Risk preview OK", FAIL, "Risk preview needs a latest candle close price. Refresh candles first.", "Preview Order", f"/live-trading/{deployment.id}/settings"),
         ]
+
     broker = None
     broker_code = None
     if deployment.broker_account_id:
         broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
         broker_code = get_broker_code(broker) if broker is not None else None
+
     funded_decision = None
     if str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED":
         funded_decision = await evaluate_funded_guard(
@@ -187,11 +215,72 @@ async def check_risk_preview_ready(db: AsyncSession, deployment: StrategyDeploym
             auto_pause_on_breach=False,
         )
 
+    try:
+        runtime_config = await resolve_live_runtime_config(db, deployment=deployment)
+    except Exception as exc:
+        message = f"Runtime config could not be resolved for risk preview: {exc}"
+        return [
+            _check("latest_entry_plan_ok", "Latest entry plan OK", FAIL, message, "Open Settings", f"/live-trading/{deployment.id}/settings"),
+            _check("risk_preview_ok", "Risk preview OK", FAIL, message, "Open Settings", f"/live-trading/{deployment.id}/settings"),
+        ]
+
+    config_validation = validate_runtime_config(runtime_config)
+    if not config_validation.get("valid"):
+        message = "Runtime config is invalid: " + "; ".join(config_validation.get("errors") or [])
+        return [
+            _check("latest_entry_plan_ok", "Latest entry plan OK", FAIL, message, "Open Settings", f"/live-trading/{deployment.id}/settings"),
+            _check("risk_preview_ok", "Risk preview OK", FAIL, message, "Open Settings", f"/live-trading/{deployment.id}/settings"),
+        ]
+
+    sl_mode = _runtime_sl_mode(runtime_config)
+    preview_side = "BUY"
+    strategy_stop_loss = None
+    strategy_target = None
+
+    # A STRATEGY_SUGGESTED stop cannot be validated by inventing a BUY order.
+    # Evaluate the real latest strategy row instead. If it is HOLD/EXIT, there is
+    # no entry to size yet and readiness should not fail just because no SL exists
+    # on a non-entry row. On a real BUY/SELL row, pass the strategy's actual SL/TP
+    # into the same order-preview/risk-sizing engine used for execution.
+    if sl_mode == "STRATEGY_SUGGESTED":
+        try:
+            signal_payload = await _latest_strategy_signal_payload(db, deployment)
+        except Exception as exc:
+            message = f"Strategy could not be evaluated for STRATEGY_SUGGESTED risk preview: {exc}"
+            return [
+                _check("latest_entry_plan_ok", "Latest entry plan OK", FAIL, message, "Open Compatibility", f"/live-trading/{deployment.id}"),
+                _check("risk_preview_ok", "Risk preview OK", FAIL, message, "Open Compatibility", f"/live-trading/{deployment.id}"),
+            ]
+
+        signal_type = str(signal_payload.get("signal_type") or "HOLD").upper()
+        if signal_type not in {"BUY", "SELL"}:
+            message = (
+                f"Latest strategy signal is {signal_type}; no entry order exists, so strategy_stop_loss is not required yet. "
+                "Risk sizing will run automatically on the next BUY/SELL signal."
+            )
+            return [
+                _check("latest_entry_plan_ok", "Latest entry plan OK", PASS, message, "Preview Order", f"/live-trading/{deployment.id}/settings"),
+                _check("risk_preview_ok", "Risk preview OK", PASS, message, "Preview Order", f"/live-trading/{deployment.id}/settings"),
+            ]
+
+        preview_side = signal_type
+        strategy_stop_loss = signal_payload.get("strategy_stop_loss")
+        strategy_target = signal_payload.get("strategy_target")
+        if strategy_stop_loss in (None, "", 0):
+            message = f"Latest {signal_type} signal did not produce strategy_stop_loss required by STRATEGY_SUGGESTED mode."
+            return [
+                _check("latest_entry_plan_ok", "Latest entry plan OK", FAIL, message, "Open Compatibility", f"/live-trading/{deployment.id}"),
+                _check("risk_preview_ok", "Risk preview OK", FAIL, message, "Open Compatibility", f"/live-trading/{deployment.id}"),
+            ]
+
     preview = await build_live_order_preview(
         db,
         deployment=deployment,
         broker_code=broker_code,
-        side="BUY",
+        side=preview_side,
+        stop_loss=strategy_stop_loss,
+        strategy_target=strategy_target,
+        runtime_config=runtime_config,
         preview_mode="AUTO_LATEST_PRICE",
         strict_instrument=True,
         funded_guard=funded_decision.to_dict() if funded_decision is not None else None,

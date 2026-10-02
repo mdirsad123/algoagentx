@@ -81,7 +81,8 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
                 LiveOrder.status.in_(["FILLED", "PLACED", "PENDING_DEMO"]),
             )
         )).scalar() or 0
-        if int(orders_today) >= int(deployment.max_trades_per_day or 10) and signal.signal_type != "EXIT":
+        max_trades_per_day = getattr(deployment, "max_trades_per_day", None)
+        if max_trades_per_day is not None and int(orders_today) >= int(max_trades_per_day) and signal.signal_type != "EXIT":
             return RiskResult(False, "Max trades per day reached")
 
         realized_today = to_decimal((await db.execute(
@@ -91,7 +92,8 @@ async def validate_signal_for_execution(db: AsyncSession, deployment: StrategyDe
                 LivePosition.closed_at >= day_start,
             )
         )).scalar())
-        if realized_today <= (to_decimal(deployment.max_daily_loss, "5000") * Decimal("-1")):
+        max_daily_loss = getattr(deployment, "max_daily_loss", None)
+        if max_daily_loss is not None and realized_today <= (to_decimal(max_daily_loss) * Decimal("-1")):
             return RiskResult(False, "Max daily loss reached")
 
     duplicate = (await db.execute(

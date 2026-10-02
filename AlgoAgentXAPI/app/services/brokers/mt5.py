@@ -152,10 +152,11 @@ class MT5Adapter(BrokerAdapter):
         volume_min: Decimal = limits["volume_min"]
         volume_max: Decimal = limits["volume_max"]
         volume_step: Decimal = limits["volume_step"]
-        demo_max_lot = self._demo_max_lot(max_lot)
+        # A deployment-level max lot is optional. None means no extra AlgoAgentX
+        # cap; MT5's native volume_max/min/step remain authoritative. QA micro-order
+        # tests pass an explicit max_lot and therefore remain capped.
+        demo_max_lot = Decimal("0") if max_lot in (None, "") else self._demo_max_lot(max_lot)
 
-        # Phase 12 is DEMO-only execution. Entry orders are capped by deployment/env.
-        # Close orders pass apply_demo_cap=False so they can close the exact MT5 open lot.
         effective_max = volume_max
         if apply_demo_cap and demo_max_lot > 0:
             effective_max = min(volume_max, max(demo_max_lot, volume_min))

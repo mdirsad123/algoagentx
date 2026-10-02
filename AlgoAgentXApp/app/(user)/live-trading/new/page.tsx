@@ -24,14 +24,9 @@ const riskOptions = [
   { label: "5%", value: 0.05 },
 ];
 
-const priceRiskOptions = [
-  { label: "0.2%", value: 0.002 },
-  { label: "0.5%", value: 0.005 },
-  { label: "1%", value: 0.01 },
-  { label: "1.5%", value: 0.015 },
-  { label: "2%", value: 0.02 },
-  { label: "3%", value: 0.03 },
-];
+const rrOptions = [1, 1.5, 2, 2.5, 3, 4, 5];
+const maxDailyLossOptions = [25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000];
+const maxTradesPerDayOptions = [1, 2, 3, 5, 10, 20, 50, 100];
 
 const defaults = {
   name: "",
@@ -41,7 +36,7 @@ const defaults = {
   instrument_key: "",
   exchange: "",
   segment: "",
-  timeframe: "M15",
+  timeframe: "M5",
   mode: "DEMO" as LiveMode,
   broker_account_id: "",
   account_policy_type: "STANDARD" as AccountPolicyType,
@@ -55,9 +50,9 @@ const defaults = {
   funded_initialization_json: {} as Record<string, number | string>,
   risk_per_trade: 0.01,
   rr_ratio: 2,
-  price_risk_pct: 0.02,
-  max_daily_loss: 5000,
-  max_trades_per_day: 10,
+  price_risk_pct: 0.002,
+  max_daily_loss: null as number | null,
+  max_trades_per_day: null as number | null,
   max_open_positions: 1,
   allow_short: true,
   auto_trade_enabled: false,
@@ -683,10 +678,9 @@ export default function NewLiveDeploymentPage() {
               })}</select><p className="text-xs text-purple-300">Risk is calculated from broker account balance/equity where available.</p></Field>
 
               {form.account_policy_type === "STANDARD" && <Field label="Risk per trade" help="Percent of broker balance/equity risked on one trade. Example: 1% means 0.01 internally."><select className={selectClass} value={form.risk_per_trade} onChange={(e) => setForm({ ...form, risk_per_trade: Number(e.target.value) })}>{riskOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><p className="text-xs text-purple-300">Displayed as percent. Stored internally as decimal fraction.</p></Field>}
-              <Field label="RR ratio" help="Reward-to-risk target used when the strategy or runtime engine calculates target price."><input type="number" step="0.1" className={inputClass} value={form.rr_ratio} onChange={(e) => setForm({ ...form, rr_ratio: Number(e.target.value) })} /></Field>
-              <Field label="Price risk %" help="Fallback fixed stop-loss distance when strategy does not provide SL. Example: 2% means 0.02 internally."><select className={selectClass} value={form.price_risk_pct} onChange={(e) => setForm({ ...form, price_risk_pct: Number(e.target.value) })}>{priceRiskOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><p className="text-xs text-purple-300">Displayed as percent. Stored internally as decimal fraction.</p></Field>
-              {form.account_policy_type === "STANDARD" && <Field label="Max daily loss" help="Maximum additional AlgoAgentX daily-loss guard for a standard broker deployment."><input type="number" className={inputClass} value={form.max_daily_loss} onChange={(e) => setForm({ ...form, max_daily_loss: Number(e.target.value) })} /></Field>}
-              <Field label="Max trades per day" help="Maximum number of orders the runner is allowed to place in one day."><input type="number" className={inputClass} value={form.max_trades_per_day} onChange={(e) => setForm({ ...form, max_trades_per_day: Number(e.target.value) })} /></Field>
+              <Field label="RR ratio" help="Reward-to-risk target used when the strategy or runtime engine calculates target price."><select className={selectClass} value={form.rr_ratio} onChange={(e) => setForm({ ...form, rr_ratio: Number(e.target.value) })}>{rrOptions.map((value) => <option key={value} value={value}>1:{value}</option>)}</select></Field>
+              {form.account_policy_type === "STANDARD" && <Field label="Max daily loss" help="Optional AlgoAgentX daily-loss guard. None means no extra deployment-level daily-loss cap; broker/funded rules still apply where relevant."><select className={selectClass} value={form.max_daily_loss == null ? "NONE" : String(form.max_daily_loss)} onChange={(e) => setForm({ ...form, max_daily_loss: e.target.value === "NONE" ? null : Number(e.target.value) })}><option value="NONE">None / Unlimited</option>{maxDailyLossOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></Field>}
+              <Field label="Max trades per day" help="Optional deployment-level trade-count cap. None means AlgoAgentX will not add a daily trade limit; the strategy may emit all valid signals subject to the other live risk checks."><select className={selectClass} value={form.max_trades_per_day == null ? "NONE" : String(form.max_trades_per_day)} onChange={(e) => setForm({ ...form, max_trades_per_day: e.target.value === "NONE" ? null : Number(e.target.value) })}><option value="NONE">None / Strategy signals</option>{maxTradesPerDayOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></Field>
               <Field label="Max open positions" help="Maximum open positions allowed at the same time for this deployment."><input type="number" className={inputClass} value={form.max_open_positions} onChange={(e) => setForm({ ...form, max_open_positions: Number(e.target.value) })} /></Field>
             </div>
 
@@ -708,7 +702,7 @@ export default function NewLiveDeploymentPage() {
                   {form.funded_risk_mode === "FIXED" && <Field label="Fixed funded risk" help="Requested risk per entry. The funded guard may reduce it near a DD boundary."><select className={selectClass} value={form.funded_fixed_risk_pct} onChange={(e) => setForm({ ...form, funded_fixed_risk_pct: Number(e.target.value) })}>{riskOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></Field>}
                   <Field label="Safety Buffer %" help="AlgoAgentX conservative buffer applied to remaining daily/max drawdown capacity. 5 means 5% of remaining capacity is reserved."><input type="number" min="0" max="99" step="0.5" className={inputClass} value={form.funded_safety_buffer_pct * 100} onChange={(e) => setForm({ ...form, funded_safety_buffer_pct: Number(e.target.value) / 100 })} /></Field>
                   <Field label="Configured maximum risk %" help="Optional hard cap above dynamic/fixed requested risk."><input type="number" min="0.01" max="10" step="0.25" className={inputClass} value={form.funded_configured_max_risk_pct * 100} onChange={(e) => setForm({ ...form, funded_configured_max_risk_pct: Number(e.target.value) / 100 })} /></Field>
-                  <Field label="Additional AlgoAgentX Daily Safety Cap" help="Optional extra AlgoAgentX loss cap. This is not the prop firm's daily drawdown rule; the funded profile remains authoritative."><input type="number" min="0" step="1" className={inputClass} value={form.max_daily_loss} onChange={(e) => setForm({ ...form, max_daily_loss: Number(e.target.value) })} /></Field>
+                  <Field label="Additional AlgoAgentX Daily Safety Cap" help="Optional extra AlgoAgentX loss cap. None means no extra deployment-level cap; the funded profile remains authoritative."><select className={selectClass} value={form.max_daily_loss == null ? "NONE" : String(form.max_daily_loss)} onChange={(e) => setForm({ ...form, max_daily_loss: e.target.value === "NONE" ? null : Number(e.target.value) })}><option value="NONE">None / Funded rules only</option>{maxDailyLossOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></Field>
                 </div>
 
                 {selectedFundedProfile && <div className="grid gap-3 rounded-xl border border-white/10 bg-black/10 p-4 text-xs md:grid-cols-2 xl:grid-cols-4">

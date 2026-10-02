@@ -1113,12 +1113,14 @@ async def _execute_signal_for_account(db: AsyncSession, deployment: StrategyDepl
 
             # Additional user safety caps remain stricter guards, but they are not
             # the prop-firm DD calculation. Evaluate them only for the new entry.
-            funded_orders_today = await current_funded_trades_count(db, deployment)
-            if funded_orders_today >= int(deployment.max_trades_per_day or 10):
-                signal.status = "REJECTED"
-                signal.rejection_reason = "Max trades per day reached"
-                await _log(db, deployment, "MAX_TRADES_REACHED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id)})
-                return latest_order
+            max_trades_per_day = getattr(deployment, "max_trades_per_day", None)
+            if max_trades_per_day is not None:
+                funded_orders_today = await current_funded_trades_count(db, deployment)
+                if funded_orders_today >= int(max_trades_per_day):
+                    signal.status = "REJECTED"
+                    signal.rejection_reason = "Max trades per day reached"
+                    await _log(db, deployment, "MAX_TRADES_REACHED", signal.rejection_reason, "WARNING", {"signal_id": str(signal.id)})
+                    return latest_order
 
         current_open_positions = await get_open_positions(db, deployment.id, deployment.broker_account_id)
         max_open_positions = int(getattr(deployment, "max_open_positions", 1) or 1)

@@ -14,7 +14,7 @@ const RISK_PERCENT_OPTIONS: NumberOption[] = [
   { label: "0.25%", value: 0.0025 }, { label: "0.50%", value: 0.005 }, { label: "1.00%", value: 0.01 },
   { label: "1.50%", value: 0.015 }, { label: "2.00%", value: 0.02 }, { label: "3.00%", value: 0.03 }, { label: "5.00%", value: 0.05 },
 ];
-const RR_RATIO_OPTIONS = numberOptions([1, 1.5, 2, 3, 4, 5]);
+const RR_RATIO_OPTIONS = numberOptions([1, 1.5, 1.7, 2, 3, 4, 5]);
 const ATR_PERIOD_OPTIONS = numberOptions([7, 10, 14, 20, 21, 50]);
 const ATR_MULTIPLIER_OPTIONS = numberOptions([1, 1.5, 2, 2.5, 3]);
 const SWING_LOOKBACK_OPTIONS = numberOptions([3, 5, 10, 20]);
@@ -153,7 +153,7 @@ export function RuntimeSettingsForm({
       {trailingEnabled && renderPresetSelect("Trail Start R", config.trade_management?.trail_start_r, TRAIL_START_R_OPTIONS, (value) => updateSection("trade_management", "trail_start_r", value), "Trailing starts only after this R multiple.")}
       {trailingEnabled && renderPresetSelect("Trail ATR Multiplier", config.trade_management?.trail_atr_multiplier, TRAIL_ATR_MULTIPLIER_OPTIONS, (value) => updateSection("trade_management", "trail_atr_multiplier", value), "Used when trailing mode is ATR Trail.")}
       {partialExitEnabled && renderPresetSelect("Partial Exit At R", config.trade_management?.partial_exit_at_r, PARTIAL_EXIT_R_OPTIONS, (value) => updateSection("trade_management", "partial_exit_at_r", value), "Close part of the position after this R multiple.")}
-      {partialExitEnabled && <div className="space-y-2"><Label className="text-muted-foreground"><FieldLabel label="Partial Exit Percent" /></Label><Select value={String(config.trade_management?.partial_exit_percent ?? 0.5)} onValueChange={(value) => updateSection("trade_management", "partial_exit_percent", safeNumber(value, 0.5))}><SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger><SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">{PARTIAL_EXIT_PERCENT_OPTIONS.map((option) => <SelectItem key={String(option.value)} value={String(option.value)}>{option.label}</SelectItem>)}</SelectContent></Select><p className="text-[11px] leading-relaxed text-muted-foreground">Remaining position continues to TP/trailing stop.</p></div>}
+      {partialExitEnabled && <div className="space-y-2"><Label className="text-muted-foreground"><FieldLabel label="Partial Exit Percent" /></Label><Select value={String(config.trade_management?.partial_exit_percent ?? 0.5)} onValueChange={(value) => updateSection("trade_management", "partial_exit_percent", safeNumber(value, 0.5))}><SelectTrigger className="h-11 rounded-xl border-border/50 bg-card/20 text-foreground"><SelectValue /></SelectTrigger><SelectContent className="z-[130] rounded-xl border-border/60 bg-[#34135c] text-foreground">{PARTIAL_EXIT_PERCENT_OPTIONS.map((option) => <SelectItem key={String(option.value)} value={String(option.value)}>{option.label}</SelectItem>)}</SelectContent></Select><p className="text-[11px] leading-relaxed text-muted-foreground">Remaining position continues to TP/trailing stop. For broker-sized LOTS/quantities, the backtest only executes the partial when both the close size and runner are valid after minimum-size/step normalization; otherwise the full position continues to the final TP.</p></div>}
     </div>;
   }
 

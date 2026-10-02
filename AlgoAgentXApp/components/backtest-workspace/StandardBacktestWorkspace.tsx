@@ -131,7 +131,7 @@ const RISK_PERCENT_OPTIONS: PresetNumberOption[] = [
   { label: "5.00%", value: 0.05 },
 ];
 
-const RR_RATIO_OPTIONS: PresetNumberOption[] = [1, 1.5, 2, 3, 4, 5].map((value) => ({ label: String(value), value }));
+const RR_RATIO_OPTIONS: PresetNumberOption[] = [1, 1.5, 1.7, 2, 3, 4, 5].map((value) => ({ label: String(value), value }));
 const ATR_PERIOD_OPTIONS: PresetNumberOption[] = [7, 10, 14, 20, 21, 50].map((value) => ({ label: String(value), value }));
 const ATR_MULTIPLIER_OPTIONS: PresetNumberOption[] = [1, 1.5, 2, 2.5, 3].map((value) => ({ label: String(value), value }));
 const SWING_LOOKBACK_OPTIONS: PresetNumberOption[] = [3, 5, 10, 20].map((value) => ({ label: String(value), value }));

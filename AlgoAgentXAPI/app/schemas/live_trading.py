@@ -227,8 +227,8 @@ class StrategyDeploymentCreate(LiveBaseModel):
     risk_per_trade: Decimal = Decimal("0.01")
     rr_ratio: Decimal = Decimal("2")
     price_risk_pct: Decimal = Decimal("0.002")
-    max_daily_loss: Decimal = Decimal("5000")
-    max_trades_per_day: int = 10
+    max_daily_loss: Optional[Decimal] = None
+    max_trades_per_day: Optional[int] = None
     max_open_positions: int = 1
     allow_short: bool = True
     auto_trade_enabled: bool = False
@@ -445,8 +445,8 @@ class StrategyDeploymentOut(LiveBaseModel):
     risk_per_trade: Decimal
     rr_ratio: Decimal
     price_risk_pct: Decimal
-    max_daily_loss: Decimal
-    max_trades_per_day: int
+    max_daily_loss: Optional[Decimal] = None
+    max_trades_per_day: Optional[int] = None
     max_open_positions: int
     allow_short: bool
     auto_trade_enabled: bool

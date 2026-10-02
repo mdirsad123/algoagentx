@@ -384,10 +384,10 @@ def _validate_safe_deployment_values(values: dict, current: StrategyDeployment |
         raise HTTPException(status_code=400, detail="RR ratio must be greater than 0.")
     if "price_risk_pct" in merged and dec("price_risk_pct") <= 0:
         raise HTTPException(status_code=400, detail="Fixed price risk percent must be greater than 0.")
-    if "max_daily_loss" in merged and dec("max_daily_loss") < 0:
+    if "max_daily_loss" in merged and merged.get("max_daily_loss") is not None and dec("max_daily_loss") < 0:
         raise HTTPException(status_code=400, detail="Max daily loss cannot be negative.")
-    if "max_trades_per_day" in merged and int(merged.get("max_trades_per_day") or 0) < 1:
-        raise HTTPException(status_code=400, detail="Max trades per day must be at least 1.")
+    if "max_trades_per_day" in merged and merged.get("max_trades_per_day") is not None and int(merged.get("max_trades_per_day")) < 1:
+        raise HTTPException(status_code=400, detail="Max trades per day must be at least 1 when enabled.")
     if "max_open_positions" in merged and int(merged.get("max_open_positions") or 0) < 1:
         raise HTTPException(status_code=400, detail="Max open positions must be at least 1.")
     if merged.get("mt5_demo_max_lot") is not None and dec("mt5_demo_max_lot") <= 0:
@@ -1575,6 +1575,12 @@ async def sync_deployment_broker(deployment_id: UUID, db: AsyncSession = Depends
     except ValueError as exc:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        await db.rollback()
+        message = str(exc)
+        if "busy processing a live candle" in message.lower():
+            raise HTTPException(status_code=409, detail=message)
+        raise
 
 
 @router.get("/{deployment_id}/broker-events")

@@ -32,8 +32,9 @@ const FIELD_HELP: Record<string, string> = {
   "ATR Multiplier": "Multiplier applied to ATR to calculate stop loss distance. Example: 1.5. Higher multiplier means wider stop and usually smaller position size.",
   "Swing Lookback": "Number of candles used to find recent swing high/low for stop loss placement. Example: 5 or 10 candles.",
   "Fixed Price Risk %": "Stop loss distance as a fixed percent of entry price. Example: 0.20% means SL is 0.20% away from entry. Too tight can cause noisy exits.",
-  "Max Daily Loss": "Daily loss guardrail for this deployment. If losses reach this amount, trading should stop according to backend safety rules.",
-  "Max Trades / Day": "Limits number of trades per day to avoid overtrading. Example: 3 trades/day.",
+  "Max Daily Loss": "Optional deployment-level daily loss guardrail. None means no extra AlgoAgentX daily-loss cap; broker/funded rules still apply where relevant.",
+  "Max Trades / Day": "Optional deployment-level daily trade cap. None means AlgoAgentX allows all valid strategy signals subject to the other live risk checks.",
+  "Broker Max Lot (MT5/cTrader)": "Optional extra AlgoAgentX lot cap applied after risk-based sizing. None means no extra app cap; the broker's native minimum, step, margin checks and maximum lot still apply.",
   "Max Open Positions": "Limits simultaneous open positions. Example: 1 keeps live risk controlled.",
   "MT5 DEMO Max Lot": "Maximum lot allowed for lot-based brokers such as MT5 and cTrader. Example: 0.02. Keep this low while testing.",
   "Quantity Mode": "Risk Based calculates size from stop loss and risk percent. Fixed Quantity uses the same quantity for each trade.",
@@ -57,22 +58,22 @@ const FALLBACK_SYMBOL_OPTIONS = ["XAUUSD", "BTCUSD", "EURUSD", "GBPUSD", "USDJPY
 const USD_CAPITAL = [100, 500, 1000, 5000, 10000, 100000];
 const INR_CAPITAL = [10000, 25000, 50000, 100000, 500000, 1000000];
 const RISK_OPTIONS = [0.0025, 0.005, 0.01, 0.015, 0.02, 0.03];
-const RR_OPTIONS = [1, 1.5, 2, 3, 4, 5];
+const RR_OPTIONS = [1, 1.5, 1.7, 2, 3, 4, 5];
 const SL_MODES = ["ATR", "SWING", "FIXED_PERCENT", "STRATEGY_SUGGESTED"];
 const ATR_PERIODS = [7, 10, 14, 20, 21];
 const ATR_MULTIPLIERS = [1, 1.5, 2, 2.5, 3];
 const FIXED_RISK_OPTIONS = [0.001, 0.002, 0.003, 0.005, 0.01];
 const USD_DAILY_LOSS = [25, 50, 100, 250, 500, 1000];
 const INR_DAILY_LOSS = [500, 1000, 2500, 5000, 10000, 25000];
-const MAX_TRADES = [1, 2, 3, 5, 10, 20];
+const MAX_TRADES = [1, 2, 3, 5, 10, 20, 50, 100];
 const MAX_OPEN_POSITIONS = [1, 2, 3, 5];
-const MT5_LOT_CAPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1];
+const MT5_LOT_CAPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200];
 
 type FormState = {
   name: string; instrument: string; timeframe: string; mode: "PAPER" | "DEMO" | "LIVE"; broker_account_id: string;
   capital: number; risk_per_trade: number; rr_ratio: number; sl_mode: string; atr_period: number; atr_multiplier: number; swing_lookback: number; price_risk_pct: number;
-  max_daily_loss: number; max_trades_per_day: number; max_open_positions: number; allow_short: boolean; auto_trade_enabled: boolean; auto_runner_enabled: boolean;
-  mt5_demo_max_lot: number; broker_symbol: string; instrument_key: string; exchange: string; segment: string; product_type: string; order_variety: string;
+  max_daily_loss: number | null; max_trades_per_day: number | null; max_open_positions: number; allow_short: boolean; auto_trade_enabled: boolean; auto_runner_enabled: boolean;
+  mt5_demo_max_lot: number | null; broker_symbol: string; instrument_key: string; exchange: string; segment: string; product_type: string; order_variety: string;
   quantity_mode: string; fixed_quantity: number; max_quantity: number; max_order_value: number; square_off_time: string; upstox_order_confirmed: boolean;
   copy_trading_enabled: boolean; copy_broker_account_ids: string[];
   break_even_enabled: boolean; break_even_trigger_r: number; trailing_enabled: boolean; trailing_mode: string; trail_start_r: number; trail_atr_multiplier: number; partial_exit_enabled: boolean; partial_exit_at_r: number; partial_exit_percent: number;
@@ -80,7 +81,7 @@ type FormState = {
 
 const money = (value: number | string | null | undefined, currency = "USD") => new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", { style: "currency", currency, maximumFractionDigits: 2 }).format(Number(value || 0));
 const percent = (value: number) => `${(Number(value || 0) * 100).toFixed(value < 0.01 ? 2 : 1)}%`;
-const selectValue = (value: number, options: number[]) => options.some((item) => Number(item) === Number(value)) ? String(value) : "CUSTOM";
+const selectValue = (value: number | null | undefined, options: number[]) => value == null ? "NONE" : options.some((item) => Number(item) === Number(value)) ? String(value) : "CUSTOM";
 
 const normalizeSymbol = (value: unknown) => String(value || "").trim().toUpperCase();
 const hasSpecValue = (value: unknown) => value !== null && value !== undefined && value !== "";
@@ -243,8 +244,8 @@ export default function LiveDeploymentSettingsPage() {
   const [initialRouting, setInitialRouting] = useState({ broker_account_id: "", instrument: "" });
   const [form, setForm] = useState<FormState>({
     name: "", instrument: "", timeframe: "", mode: "PAPER", broker_account_id: "", capital: 100000, risk_per_trade: 0.01, rr_ratio: 2,
-    sl_mode: "FIXED_PERCENT", atr_period: 14, atr_multiplier: 2, swing_lookback: 10, price_risk_pct: 0.002, max_daily_loss: 5000,
-    max_trades_per_day: 10, max_open_positions: 1, allow_short: true, auto_trade_enabled: false, auto_runner_enabled: false, mt5_demo_max_lot: 0.02,
+    sl_mode: "FIXED_PERCENT", atr_period: 14, atr_multiplier: 2, swing_lookback: 10, price_risk_pct: 0.002, max_daily_loss: null,
+    max_trades_per_day: null, max_open_positions: 1, allow_short: true, auto_trade_enabled: false, auto_runner_enabled: false, mt5_demo_max_lot: null,
     broker_symbol: "", instrument_key: "", exchange: "NSE_EQ", segment: "EQ", product_type: "MIS", order_variety: "REGULAR", quantity_mode: "FIXED_QTY",
     fixed_quantity: 1, max_quantity: 1, max_order_value: 5000, square_off_time: "15:15", upstox_order_confirmed: false,
     copy_trading_enabled: false, copy_broker_account_ids: [],
@@ -321,8 +322,8 @@ export default function LiveDeploymentSettingsPage() {
         setForm((prev) => ({ ...prev,
           name: row.name, instrument: row.instrument, timeframe: row.timeframe, mode: (row.mode === "LIVE" ? "LIVE" : row.mode === "DEMO" ? "DEMO" : "PAPER"), broker_account_id: row.broker_account_id || "",
           capital: Number(row.capital), risk_per_trade: Number(row.risk_per_trade), rr_ratio: Number(row.rr_ratio), price_risk_pct: Number(row.price_risk_pct),
-          max_daily_loss: Number(row.max_daily_loss), max_trades_per_day: Number(row.max_trades_per_day), max_open_positions: Number(row.max_open_positions),
-          allow_short: Boolean(row.allow_short), auto_trade_enabled: Boolean(row.auto_trade_enabled), auto_runner_enabled: Boolean(row.auto_runner_enabled), mt5_demo_max_lot: Number(row.mt5_demo_max_lot ?? 0.02),
+          max_daily_loss: row.max_daily_loss == null ? null : Number(row.max_daily_loss), max_trades_per_day: row.max_trades_per_day == null ? null : Number(row.max_trades_per_day), max_open_positions: Number(row.max_open_positions),
+          allow_short: Boolean(row.allow_short), auto_trade_enabled: Boolean(row.auto_trade_enabled), auto_runner_enabled: Boolean(row.auto_runner_enabled), mt5_demo_max_lot: row.mt5_demo_max_lot == null ? null : Number(row.mt5_demo_max_lot),
           broker_symbol: row.broker_symbol || "", instrument_key: row.instrument_key || "", exchange: row.exchange || "NSE_EQ", segment: row.segment || "EQ", product_type: row.product_type || "MIS",
           order_variety: row.order_variety || "REGULAR", quantity_mode: row.quantity_mode || "FIXED_QTY", fixed_quantity: Number(row.fixed_quantity ?? 1), max_quantity: Number(row.max_quantity ?? 1),
           max_order_value: Number(row.max_order_value ?? 5000), square_off_time: row.square_off_time || "15:15", upstox_order_confirmed: Boolean(row.upstox_order_confirmed),
@@ -353,11 +354,11 @@ export default function LiveDeploymentSettingsPage() {
       risk_percent: Number(form.risk_per_trade),
       position_size_mode: form.quantity_mode === "RISK_BASED" ? "RISK_BASED" : "FIXED_QUANTITY",
       fixed_quantity: Number(form.fixed_quantity),
-      max_lot_cap: form.mt5_demo_max_lot ? Number(form.mt5_demo_max_lot) : null,
+      max_lot_cap: form.mt5_demo_max_lot == null ? null : Number(form.mt5_demo_max_lot),
       max_quantity_cap: form.max_quantity ? Number(form.max_quantity) : null,
     },
     sl_tp: { rr_ratio: Number(form.rr_ratio), sl_mode: form.sl_mode, atr_period: Number(form.atr_period), atr_multiplier: Number(form.atr_multiplier), swing_lookback: Number(form.swing_lookback), fixed_price_risk_pct: Number(form.price_risk_pct) },
-    execution: { entry_mode: "NEXT_CANDLE_OPEN", exit_on_opposite_signal: true, allow_long: true, allow_short: Boolean(form.allow_short), max_trades_per_day: Number(form.max_trades_per_day), max_open_positions: Number(form.max_open_positions), intraday_square_off: supportsLiveSquareOff, square_off_time: form.square_off_time },
+    execution: { entry_mode: "NEXT_CANDLE_OPEN", exit_on_opposite_signal: true, allow_long: true, allow_short: Boolean(form.allow_short), max_trades_per_day: form.max_trades_per_day == null ? null : Number(form.max_trades_per_day), max_open_positions: Number(form.max_open_positions), intraday_square_off: supportsLiveSquareOff, square_off_time: form.square_off_time },
     trade_management: { break_even_enabled: form.break_even_enabled, break_even_trigger_r: form.break_even_trigger_r, trailing_enabled: form.trailing_enabled, trailing_mode: form.trailing_mode, trail_start_r: form.trail_start_r, trail_atr_multiplier: form.trail_atr_multiplier, partial_exit_enabled: form.partial_exit_enabled, partial_exit_at_r: form.partial_exit_at_r, partial_exit_percent: form.partial_exit_percent },
     strategy_params: {},
   });
@@ -368,16 +369,19 @@ export default function LiveDeploymentSettingsPage() {
       else if (key === "risk_percent") setForm((prev) => ({ ...prev, risk_per_trade: Number(value) }));
       else if (key === "position_size_mode") setForm((prev) => ({ ...prev, quantity_mode: value === "RISK_BASED" ? "RISK_BASED" : "FIXED_QTY" }));
       else if (key === "fixed_quantity") setForm((prev) => ({ ...prev, fixed_quantity: Number(value || 0) }));
-      else if (key === "max_lot_cap") setForm((prev) => ({ ...prev, mt5_demo_max_lot: Number(value || 0) }));
+      else if (key === "max_lot_cap") setForm((prev) => ({ ...prev, mt5_demo_max_lot: value == null || value === "" ? null : Number(value) }));
       else if (key === "max_quantity_cap") setForm((prev) => ({ ...prev, max_quantity: Number(value || 0) }));
     } else if (section === "sl_tp") {
       const map: Record<string, keyof FormState> = { rr_ratio: "rr_ratio", sl_mode: "sl_mode", atr_period: "atr_period", atr_multiplier: "atr_multiplier", swing_lookback: "swing_lookback", fixed_price_risk_pct: "price_risk_pct" };
       const target = map[key];
       if (target) setForm((prev) => ({ ...prev, [target]: key === "sl_mode" ? value : Number(value) }));
     } else if (section === "execution") {
-      const map: Record<string, keyof FormState> = { allow_short: "allow_short", max_trades_per_day: "max_trades_per_day", max_open_positions: "max_open_positions", square_off_time: "square_off_time" };
-      const target = map[key];
-      if (target) setForm((prev) => ({ ...prev, [target]: typeof prev[target] === "boolean" ? Boolean(value) : key === "square_off_time" ? value : Number(value || 0) }));
+      if (key === "max_trades_per_day") setForm((prev) => ({ ...prev, max_trades_per_day: value == null || value === "" ? null : Number(value) }));
+      else {
+        const map: Record<string, keyof FormState> = { allow_short: "allow_short", max_open_positions: "max_open_positions", square_off_time: "square_off_time" };
+        const target = map[key];
+        if (target) setForm((prev) => ({ ...prev, [target]: typeof prev[target] === "boolean" ? Boolean(value) : key === "square_off_time" ? value : Number(value || 0) }));
+      }
     } else if (section === "trade_management") {
       const map: Record<string, keyof FormState> = { break_even_enabled: "break_even_enabled", break_even_trigger_r: "break_even_trigger_r", trailing_enabled: "trailing_enabled", trailing_mode: "trailing_mode", trail_start_r: "trail_start_r", trail_atr_multiplier: "trail_atr_multiplier", partial_exit_enabled: "partial_exit_enabled", partial_exit_at_r: "partial_exit_at_r", partial_exit_percent: "partial_exit_percent" };
       const target = map[key];
@@ -404,10 +408,10 @@ export default function LiveDeploymentSettingsPage() {
     if (!isFunded && form.risk_per_trade > 0.03) return "Normal UI blocks risk above 3%. Use a lower safe risk value.";
     if (form.rr_ratio <= 0) return "RR ratio must be greater than 0.";
     if (form.price_risk_pct <= 0) return "Fixed price risk percent must be greater than 0.";
-    if (form.max_daily_loss < 0) return "Max daily loss cannot be negative.";
-    if (form.max_trades_per_day < 1) return "Max trades per day must be at least 1.";
+    if (form.max_daily_loss != null && form.max_daily_loss < 0) return "Max daily loss cannot be negative.";
+    if (form.max_trades_per_day != null && form.max_trades_per_day < 1) return "Max trades per day must be at least 1 when enabled.";
     if (form.max_open_positions < 1) return "Max open positions must be at least 1.";
-    if (form.mt5_demo_max_lot <= 0) return "Broker max lot must be greater than 0.";
+    if (form.mt5_demo_max_lot != null && form.mt5_demo_max_lot <= 0) return "Broker max lot must be greater than 0 when enabled.";
     if ((form.mode === "DEMO" || form.mode === "LIVE") && !form.broker_account_id) return "Broker account is required for DEMO and LIVE.";
     return null;
   };
@@ -603,9 +607,9 @@ export default function LiveDeploymentSettingsPage() {
                 {!isFunded && <FieldShell label="Risk per Trade" hint={form.risk_per_trade > 0.02 ? "Warning: above 2% is aggressive." : "Default recommended: 1%."}><SelectBox value={selectValue(form.risk_per_trade, RISK_OPTIONS)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, risk_per_trade: Number(e.target.value) }) : setAdvancedMode(true)}>{RISK_OPTIONS.map((value) => <option key={value} value={value}>{percent(value)}</option>)}<option value="CUSTOM">Custom Advanced</option></SelectBox>{advancedMode && selectValue(form.risk_per_trade, RISK_OPTIONS) === "CUSTOM" && <InputBox type="number" step="0.001" max="0.10" value={form.risk_per_trade} onChange={(e) => setForm({ ...form, risk_per_trade: Number(e.target.value) })} />}</FieldShell>}
                 <FieldShell label="RR Ratio"><SelectBox value={form.rr_ratio} onChange={(e) => setForm({ ...form, rr_ratio: Number(e.target.value) })}>{RR_OPTIONS.map((value) => <option key={value} value={value}>1:{value}</option>)}</SelectBox></FieldShell>
                 <FieldShell label="SL Mode"><SelectBox value={liveSlMode} onChange={(e) => setForm({ ...form, sl_mode: e.target.value })}>{SL_MODES.map((value) => <option key={value} value={value}>{value.replace(/_/g, " ")}</option>)}</SelectBox></FieldShell>
-                {!isFunded && <FieldShell label="Max Daily Loss"><SelectBox value={selectValue(form.max_daily_loss, dailyLossOptions)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, max_daily_loss: Number(e.target.value) }) : setAdvancedMode(true)}>{dailyLossOptions.map((value) => <option key={value} value={value}>{money(value, currency)}</option>)}<option value="CUSTOM">Custom</option></SelectBox>{advancedMode && selectValue(form.max_daily_loss, dailyLossOptions) === "CUSTOM" && <InputBox type="number" min="0" value={form.max_daily_loss} onChange={(e) => setForm({ ...form, max_daily_loss: Number(e.target.value) })} />}</FieldShell>}
-                <FieldShell label="Max Trades / Day"><SelectBox value={form.max_trades_per_day} onChange={(e) => setForm({ ...form, max_trades_per_day: Number(e.target.value) })}>{MAX_TRADES.map((value) => <option key={value} value={value}>{value}</option>)}</SelectBox></FieldShell>
-                <FieldShell label="Broker Max Lot (MT5/cTrader)"><SelectBox value={selectValue(form.mt5_demo_max_lot, MT5_LOT_CAPS)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, mt5_demo_max_lot: Number(e.target.value) }) : setAdvancedMode(true)}>{MT5_LOT_CAPS.map((value) => <option key={value} value={value}>{value.toFixed(2)}</option>)}<option value="CUSTOM">Custom Advanced</option></SelectBox>{advancedMode && selectValue(form.mt5_demo_max_lot, MT5_LOT_CAPS) === "CUSTOM" && <InputBox type="number" step="0.01" min="0.01" value={form.mt5_demo_max_lot} onChange={(e) => setForm({ ...form, mt5_demo_max_lot: Number(e.target.value) })} />}</FieldShell>
+                {!isFunded && <FieldShell label="Max Daily Loss" hint={form.max_daily_loss == null ? "None = no extra AlgoAgentX daily-loss cap." : undefined}><SelectBox value={selectValue(form.max_daily_loss, dailyLossOptions)} onChange={(e) => e.target.value === "NONE" ? setForm({ ...form, max_daily_loss: null }) : e.target.value !== "CUSTOM" ? setForm({ ...form, max_daily_loss: Number(e.target.value) }) : setAdvancedMode(true)}><option value="NONE">None / Unlimited</option>{dailyLossOptions.map((value) => <option key={value} value={value}>{money(value, currency)}</option>)}<option value="CUSTOM">Custom</option></SelectBox>{advancedMode && selectValue(form.max_daily_loss, dailyLossOptions) === "CUSTOM" && <InputBox type="number" min="0" value={form.max_daily_loss ?? ""} onChange={(e) => setForm({ ...form, max_daily_loss: e.target.value === "" ? null : Number(e.target.value) })} />}</FieldShell>}
+                <FieldShell label="Max Trades / Day" hint={form.max_trades_per_day == null ? "None = no extra daily trade-count cap; valid strategy signals can proceed." : undefined}><SelectBox value={form.max_trades_per_day == null ? "NONE" : String(form.max_trades_per_day)} onChange={(e) => setForm({ ...form, max_trades_per_day: e.target.value === "NONE" ? null : Number(e.target.value) })}><option value="NONE">None / Strategy signals</option>{MAX_TRADES.map((value) => <option key={value} value={value}>{value}</option>)}</SelectBox></FieldShell>
+                <FieldShell label="Broker Max Lot (MT5/cTrader)" hint={form.mt5_demo_max_lot == null ? "None = no extra AlgoAgentX lot cap. Risk sizing still respects broker-native min/step/max limits." : undefined}><SelectBox value={selectValue(form.mt5_demo_max_lot, MT5_LOT_CAPS)} onChange={(e) => e.target.value === "NONE" ? setForm({ ...form, mt5_demo_max_lot: null }) : e.target.value !== "CUSTOM" ? setForm({ ...form, mt5_demo_max_lot: Number(e.target.value) }) : setAdvancedMode(true)}><option value="NONE">None / Broker native max</option>{MT5_LOT_CAPS.map((value) => <option key={value} value={value}>{value.toFixed(2)}</option>)}<option value="CUSTOM">Custom Advanced</option></SelectBox>{advancedMode && selectValue(form.mt5_demo_max_lot, MT5_LOT_CAPS) === "CUSTOM" && <InputBox type="number" step="0.01" min="0.01" value={form.mt5_demo_max_lot ?? ""} onChange={(e) => setForm({ ...form, mt5_demo_max_lot: e.target.value === "" ? null : Number(e.target.value) })} />}</FieldShell>
               </div>
             </div>
 
@@ -632,7 +636,7 @@ export default function LiveDeploymentSettingsPage() {
                 {isUpstox && <><FieldShell label="Upstox Instrument Key"><InputBox disabled value={form.instrument_key} placeholder="NSE_EQ|INE040A01034" /></FieldShell><FieldShell label="Exchange"><InputBox disabled value={form.exchange} /></FieldShell><FieldShell label="Segment"><InputBox disabled value={form.segment} /></FieldShell></>}
                 <FieldShell label="Product Type"><SelectBox value={form.product_type} onChange={(e) => setForm({ ...form, product_type: e.target.value })}><option value="MIS">MIS / Intraday</option><option value="CNC">CNC / Delivery</option></SelectBox></FieldShell>
               </div>}
-              <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-500/10 p-3 text-xs text-amber-100">{isFunded ? "Funded hard rules, broker balance/equity, safety buffer and deployment risk plan remain authoritative. Runtime UI cannot bypass the funded guard." : "Live safety remains enforced by broker readiness, broker max-lot/quantity caps and daily loss guardrails. Runtime UI cannot bypass backend caps."}</div>
+              <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-500/10 p-3 text-xs text-amber-100">{isFunded ? "Funded hard rules, broker balance/equity, safety buffer and deployment risk plan remain authoritative. Runtime UI cannot bypass the funded guard." : "Live safety remains enforced by broker readiness, broker-native limits, max-open-position checks, and any optional caps you configure. Runtime UI cannot bypass broker/funded rules."}</div>
             </div>}
 
             <div className="rounded-2xl border border-cyan-300/20 bg-cyan-500/10 p-5">
