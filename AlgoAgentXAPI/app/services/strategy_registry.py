@@ -13,6 +13,8 @@ from strategies.simple_trendline import SimpleTrendlineStrategy
 from strategies.every_two_candle_color_demo import EveryTwoCandleColorDemoStrategy
 from strategies.every_candle_color_live_latency_test import EveryCandleColorLiveLatencyTestStrategy
 from strategies.xauusd_5m_resistance_rejection_v1 import XAUUSD5MResistanceRejectionV1
+from strategies.xauusd_5m_resistance_rejection_v3_5 import XAUUSD5MSupplyDemandRejectionV35CandidateA
+from strategies.xauusd_5m_trend_breakout_v1_37 import XAUUSD5MTrendBreakoutV137
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,16 @@ _REGISTRY: dict[str, StrategyRegistryEntry] = {
         XAUUSD5MResistanceRejectionV1,
         {"entry_confirmation": "BREAK_REJECTION_LOW", "sl_mode": "REJECTION_HIGH", "tp_mode": "FIXED_RR", "minimum_rr": 1.5, "target_rr": 2.0, "debug_mode": False},
         "XAUUSD 5M Resistance Rejection V1",
+    ),
+    "xauusd_5m_resistance_rejection_v3_5": StrategyRegistryEntry(
+        XAUUSD5MSupplyDemandRejectionV35CandidateA,
+        {},
+        "XAUUSD 5M Resistance Rejection V3.5",
+    ),
+    "xauusd_5m_trend_breakout_v1_37": StrategyRegistryEntry(
+        XAUUSD5MTrendBreakoutV137,
+        {},
+        "Trend-Following Breakout V1.37",
     ),
     "every_two_candle_color_demo": StrategyRegistryEntry(
         EveryTwoCandleColorDemoStrategy,
@@ -75,30 +87,48 @@ def resolve_strategy(strategy_id: str | None, strategy_name: str | None, db_para
     source_code = str(db_params.get("source_code") or "").strip()
     engine_mode = str(db_params.get("engine_mode") or "").strip().upper()
 
-    # Backtests already support strategies stored as validated source code in the
-    # Strategy.parameters JSON. Live execution must resolve the exact same strategy
-    # contract; otherwise a DB strategy can be marked deployable in the UI but fail
-    # only when the live worker calls this registry. Prefer DYNAMIC_DB explicitly,
-    # and retain a dynamic fallback for older DB rows that contain source_code but
-    # pre-date the engine_mode flag.
-    if source_code and engine_mode == "DYNAMIC_DB":
+    # DB-attached source code is authoritative. Admin-created, duplicated, and
+    # versioned strategies must execute the exact code stored on that Strategy
+    # row in both backtest and live trading. Never silently fall back to a
+    # similarly named static strategy (for example V3.5 -> V1).
+    if source_code:
         from .dynamic_strategy_loader import build_dynamic_strategy_entry
 
-        return build_dynamic_strategy_entry(strategy_id, strategy_name, db_params)
+        try:
+            return build_dynamic_strategy_entry(strategy_id, strategy_name, db_params)
+        except ValueError as exc:
+            raise ValueError(
+                f"Dynamic strategy source for '{strategy_name or strategy_id}' could not be loaded: {exc}. "
+                "Static fallback is disabled when source_code is attached."
+            ) from exc
+
+    if engine_mode == "DYNAMIC_DB":
+        raise ValueError(
+            f"Strategy '{strategy_name or strategy_id}' is marked DYNAMIC_DB but has no source_code. "
+            "Save the strategy source again before backtest/live deployment."
+        )
 
     normalized_id = _normalize(strategy_id)
     normalized_name = _normalize(strategy_name)
     haystack = f"{normalized_id} {normalized_name}".strip()
 
+    # Exact static mappings first. Versioned strategies only use a static class
+    # when that exact version is explicitly registered.
+    exact_static_names = {
+        _normalize(entry.canonical_name): key
+        for key, entry in _REGISTRY.items()
+    }
     key = None
-    if (
+    if normalized_id in _REGISTRY:
+        key = normalized_id
+    elif normalized_name in exact_static_names:
+        key = exact_static_names[normalized_name]
+    elif (
         "every candle" in haystack
         or "live latency test" in haystack
         or ("latency" in haystack and "candle color" in haystack)
     ):
         key = "every_candle_color_live_latency_test"
-    elif "resistance rejection" in haystack or "xauusd 5m resistance" in haystack:
-        key = "xauusd_5m_resistance_rejection_v1"
     elif (
         "every 2 candle" in haystack
         or "every two candle" in haystack
@@ -127,28 +157,18 @@ def resolve_strategy(strategy_id: str | None, strategy_name: str | None, db_para
         key = "smc_strategy"
     elif "ema" in haystack and "rsi" in haystack:
         key = "ema_crossover"
-    elif normalized_id in _REGISTRY:
-        key = normalized_id
     elif "rsi" in haystack:
         key = "rsi_strategy"
     elif "ema" in haystack:
         key = "ema_crossover"
 
-    if key is None and source_code:
-        from .dynamic_strategy_loader import build_dynamic_strategy_entry
-
-        try:
-            return build_dynamic_strategy_entry(strategy_id, strategy_name, db_params)
-        except ValueError as dynamic_exc:
-            available = ", ".join(entry.canonical_name for entry in _REGISTRY.values())
-            raise ValueError(
-                f"No static mapping found for '{strategy_name or strategy_id}' and dynamic strategy load failed: "
-                f"{dynamic_exc}. Available static engine strategies: {available}"
-            ) from dynamic_exc
-
     if key is None:
         available = ", ".join(entry.canonical_name for entry in _REGISTRY.values())
-        raise ValueError(f"No executable strategy mapping found for '{strategy_name or strategy_id}'. Available engine strategies: {available}")
+        raise ValueError(
+            f"No executable strategy mapping found for '{strategy_name or strategy_id}'. "
+            f"Available static engine strategies: {available}. "
+            "Admin/custom versions must include source_code and execute through DYNAMIC_DB."
+        )
 
     entry = _REGISTRY[key]
     params = dict(entry.default_params)
@@ -158,3 +178,4 @@ def resolve_strategy(strategy_id: str | None, strategy_name: str | None, db_para
                 params[k] = v
     params = _filter_init_params(entry.strategy_class, params)
     return entry.strategy_class, params, entry.canonical_name
+

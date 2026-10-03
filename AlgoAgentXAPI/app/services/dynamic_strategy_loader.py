@@ -5,6 +5,7 @@ import builtins
 import inspect
 import math
 import sys
+from functools import lru_cache
 import types
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
@@ -223,7 +224,8 @@ def extract_dynamic_strategy_params(parameters: dict[str, Any] | None) -> dict[s
     return result
 
 
-def load_dynamic_strategy_class(source_code: str) -> type:
+@lru_cache(maxsize=64)
+def _load_dynamic_strategy_class_cached(source_code: str) -> type:
     validate_dynamic_strategy_source(source_code)
     safe_builtins = dict(ALLOWED_BUILTINS)
     safe_builtins["__import__"] = _safe_import
@@ -255,6 +257,14 @@ def load_dynamic_strategy_class(source_code: str) -> type:
             sys.modules[module_name] = previous_module
 
     return _find_strategy_class(namespace)
+
+
+def load_dynamic_strategy_class(source_code: str) -> type:
+    # Source text is the cache key. Editing/saving strategy code automatically
+    # creates a new cache entry, while unchanged live candles avoid recompiling
+    # large strategy modules on every runner invocation.
+    source = str(source_code or "").strip()
+    return _load_dynamic_strategy_class_cached(source)
 
 
 def build_dynamic_strategy_entry(

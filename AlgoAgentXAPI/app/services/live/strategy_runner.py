@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 import math
 import logging
+import hashlib
 from uuid import UUID
 
 import pandas as pd
@@ -718,6 +719,10 @@ async def run_strategy_for_deployment(
 
         strategy_params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
         strategy_class, params, canonical_name = resolve_strategy(strategy.id, strategy.name, strategy_params)
+        source_code = str(strategy_params.get("source_code") or "").strip()
+        source_code_sha256 = str(strategy_params.get("source_code_sha256") or "").strip()
+        if source_code and not source_code_sha256:
+            source_code_sha256 = hashlib.sha256(source_code.encode("utf-8")).hexdigest()
         strategy_instance = strategy_class(df, **params)
         generated = _run_strategy_generate(strategy_instance)
         if generated is None or not isinstance(generated, pd.DataFrame) or generated.empty:
@@ -839,6 +844,9 @@ async def run_strategy_for_deployment(
                 "strategy_id": strategy.id,
                 "strategy_name": strategy.name,
                 "canonical_strategy": canonical_name,
+                "resolved_strategy_class": getattr(strategy_class, "__name__", str(strategy_class)),
+                "engine_mode": str(strategy_params.get("engine_mode") or ("DYNAMIC_DB" if source_code else "STATIC_REGISTRY")),
+                "source_code_sha256": source_code_sha256 or None,
                 "execute_requested": execute,
                 "latest_candle_time": latest_candle_time.isoformat(),
                 "resolved_symbol": latest_symbol,

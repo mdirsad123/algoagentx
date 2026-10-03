@@ -30,6 +30,7 @@ from ...db.models import (
 )
 from ...services.backtest_service import BacktestService
 from ...services.dynamic_strategy_loader import validate_dynamic_strategy_source, DynamicStrategyLoadError, DynamicStrategySecurityError
+from ...services.strategy_registry import resolve_strategy
 from ...services.trading.runtime_config_service import get_system_default_runtime_config, get_default_runtime_config_schema, normalize_runtime_config
 from ...utils.api_response import success_response
 from .strategies import (
@@ -635,7 +636,39 @@ def _serialize_strategy(item: Strategy) -> dict[str, Any]:
 
 
 
+def _runtime_contract_snapshot(params: dict[str, Any]) -> dict[str, Any]:
+    """Values that can change strategy signals or live/backtest execution."""
+    keys = (
+        "source_code", "engine_mode", "strategy_params", "rr_ratio",
+        "capital_risk_pct", "price_risk_pct", "max_bars_in_trade",
+        "entry_rules", "exit_rules", "confirmation_rules", "risk_rules",
+        "invalidation_rules", "trade_management_rules", "market", "timeframe",
+    )
+    return {key: params.get(key) for key in keys}
+
+
+def _normalize_dynamic_runtime_metadata(params: dict[str, Any]) -> dict[str, Any]:
+    """Keep Admin-created/versioned strategy source self-registering in the DB.
+
+    The live/backtest registry reads source_code directly from Strategy.parameters.
+    Any non-empty source is therefore a DYNAMIC_DB executable and must never rely
+    on a manually edited Python registry entry.
+    """
+    source_code = str(params.get("source_code") or "").strip()
+    if source_code:
+        params["source_code"] = source_code
+        params["engine_mode"] = "DYNAMIC_DB"
+        params["source_code_sha256"] = hashlib.sha256(source_code.encode("utf-8")).hexdigest()
+    else:
+        params.pop("source_code_sha256", None)
+        if str(params.get("engine_mode") or "").upper() == "DYNAMIC_DB":
+            params.pop("engine_mode", None)
+    return params
+
+
 def _apply_payload_to_parameters(params: dict[str, Any], payload: StrategyCreateIn | StrategyUpdateIn) -> dict[str, Any]:
+    before = _runtime_contract_snapshot(dict(params))
+
     if payload.parameters is not None:
         params.update(payload.parameters)
 
@@ -661,15 +694,15 @@ def _apply_payload_to_parameters(params: dict[str, Any], payload: StrategyCreate
         _set_or_remove(params, "notes", _clean(payload.notes))
     if getattr(payload, "source_code", None) is not None:
         _set_or_remove(params, "source_code", _clean(payload.source_code), remove_if_none=False)
-        if _clean(payload.source_code):
-            params["engine_mode"] = "DYNAMIC_DB"
-        else:
-            params.pop("engine_mode", None)
 
     if payload.performance_metrics is not None:
         _set_or_remove(params, "performance_metrics", payload.performance_metrics)
 
-    if any(getattr(payload, field, None) is not None for field in ["source_code", "entry_rules", "exit_rules", "confirmation_rules", "risk_rules", "invalidation_rules", "trade_management_rules", "market", "timeframe"]):
+    params = _normalize_dynamic_runtime_metadata(params)
+
+    # Invalidate Verify/Sandbox evidence only when signal/runtime-affecting content
+    # actually changed. Merely pressing Save with identical code no longer wipes it.
+    if before != _runtime_contract_snapshot(params):
         params["_workflow"] = {}
 
     return params
@@ -1367,20 +1400,37 @@ async def update_strategy(
     if payload.description is not None:
         strategy.description = _clean(payload.description)
 
-    params = dict(strategy.parameters or {})
-    params = _append_version_history(params, strategy, admin_user, reason="save")
+    original_params = dict(strategy.parameters or {})
+    original_contract = _runtime_contract_snapshot(original_params)
+    params = _append_version_history(original_params, strategy, admin_user, reason="save")
     params = _apply_payload_to_parameters(params, payload)
     strategy.parameters = params
     await _ensure_default_runtime_preset(db, strategy, admin_user)
 
-    if payload.visibility is not None:
-        strategy.visibility = _normalize_visibility(payload.visibility)
+    requested_visibility = (
+        _normalize_visibility(payload.visibility)
+        if payload.visibility is not None
+        else (getattr(strategy, "visibility", None) or PRIVATE_VISIBILITY)
+    )
+    contract_changed = original_contract != _runtime_contract_snapshot(params)
 
-    if strategy.visibility == PUBLIC_VISIBILITY:
-        _ensure_publish_gate(params)
-        strategy.published_by = as_uuid_or_str(admin_user["user_id"])
-    elif payload.visibility is not None:
+    # Editing executable code/config on a published strategy must not leave an
+    # already-live strategy silently marked as the previously verified version.
+    # Save succeeds, but the changed strategy becomes private until Verify +
+    # Sandbox + Publish are completed for the new source hash.
+    if contract_changed and requested_visibility == PUBLIC_VISIBILITY:
+        strategy.visibility = PRIVATE_VISIBILITY
         strategy.published_by = None
+        if getattr(strategy, "lifecycle_status", None) == "PUBLISHED":
+            strategy.lifecycle_status = "UNDER_DEVELOPMENT"
+    else:
+        strategy.visibility = requested_visibility
+        if strategy.visibility == PUBLIC_VISIBILITY:
+            _ensure_publish_gate(params)
+            _ensure_strategy_runtime_resolvable(strategy)
+            strategy.published_by = as_uuid_or_str(admin_user["user_id"])
+        elif payload.visibility is not None:
+            strategy.published_by = None
 
     if payload.source_request_id is not None:
         strategy.source_request_id = as_uuid_or_str(payload.source_request_id) if _clean(payload.source_request_id) else None
@@ -1389,7 +1439,12 @@ async def update_strategy(
     await db.commit()
     await db.refresh(strategy)
 
-    return success_response(_serialize_strategy(strategy), "Strategy updated successfully")
+    message = (
+        "Strategy updated and moved to Private because executable code/config changed. Run Verify Code + Sandbox, then Publish again."
+        if contract_changed and requested_visibility == PUBLIC_VISIBILITY
+        else "Strategy updated successfully"
+    )
+    return success_response(_serialize_strategy(strategy), message)
 
 
 ARCHIVED_STRATEGY_LIFECYCLE = "ARCHIVED"
@@ -1751,7 +1806,13 @@ async def rollback_strategy_version(
             else:
                 params[key] = payload.get(key)
     params["_workflow"] = {}
+    params = _normalize_dynamic_runtime_metadata(params)
     strategy.parameters = params
+    # A rollback changes executable source/config and therefore must be
+    # re-verified before becoming deployable again.
+    strategy.visibility = PRIVATE_VISIBILITY
+    strategy.published_by = None
+    strategy.lifecycle_status = "UNDER_DEVELOPMENT"
     await db.commit()
     await db.refresh(strategy)
     return success_response(_serialize_strategy(strategy), "Strategy rolled back successfully")
@@ -1788,7 +1849,7 @@ def _next_duplicate_strategy_name(name: str) -> str:
 
 
 def _duplicate_parameters(source: Strategy) -> dict[str, Any]:
-    params = dict(source.parameters or {})
+    params = _normalize_dynamic_runtime_metadata(dict(source.parameters or {}))
     # A duplicate is a new research candidate. Source/config is copied, but verification
     # and sandbox evidence must never be inherited from the parent strategy.
     params["_workflow"] = {}
@@ -1796,6 +1857,30 @@ def _duplicate_parameters(source: Strategy) -> dict[str, Any]:
     params["_duplicated_from_strategy_id"] = str(source.id)
     params["_duplicated_from_strategy_name"] = str(source.name)
     return params
+
+
+def _ensure_strategy_runtime_resolvable(strategy: Strategy) -> None:
+    params = _normalize_dynamic_runtime_metadata(dict(strategy.parameters or {}))
+    strategy.parameters = params
+    try:
+        _strategy_class, _strategy_params, canonical_name = resolve_strategy(
+            str(strategy.id), str(strategy.name), params
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Strategy runtime resolution failed: {exc}",
+        ) from exc
+
+    # Dynamic DB resolution must preserve the selected Strategy row/name exactly.
+    if str(params.get("source_code") or "").strip() and str(canonical_name) != str(strategy.name):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Strategy runtime mismatch: selected '{strategy.name}' but resolved "
+                f"'{canonical_name}'. Deployment blocked."
+            ),
+        )
 
 
 def _ensure_publish_gate(params: dict[str, Any]) -> None:
@@ -1818,6 +1903,7 @@ async def deploy_private_strategy(
     strategy = await _get_strategy_or_404(db, strategy_id)
     params = dict(strategy.parameters or {})
     _ensure_publish_gate(params)
+    _ensure_strategy_runtime_resolvable(strategy)
     await _ensure_default_runtime_preset(db, strategy, admin_user)
     strategy.visibility = PRIVATE_VISIBILITY
     strategy.published_by = None
@@ -1913,6 +1999,7 @@ async def publish_strategy(
     strategy = await _get_strategy_or_404(db, strategy_id)
     params = dict(strategy.parameters or {})
     _ensure_publish_gate(params)
+    _ensure_strategy_runtime_resolvable(strategy)
     await _ensure_default_runtime_preset(db, strategy, admin_user)
     strategy.visibility = PUBLIC_VISIBILITY
     strategy.published_by = as_uuid_or_str(admin_user["user_id"])

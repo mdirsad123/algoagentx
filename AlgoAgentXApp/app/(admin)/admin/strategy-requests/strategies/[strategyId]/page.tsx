@@ -546,7 +546,13 @@ export default function AdminStrategyWorkspacePage() {
       const updated = await adminApi.updateAdminStrategyById(strategyId, payload);
       setStrategy(updated);
       setForm(strategyToForm(updated));
-      toast.success("Strategy saved successfully");
+      const wasPublished = String(form.visibility || "").toUpperCase() === "PUBLIC";
+      const isNowPrivate = String(updated.visibility || "").toUpperCase() !== "PUBLIC";
+      toast.success(
+        wasPublished && isNowPrivate
+          ? "Strategy saved. Executable code/config changed, so it was moved to Private. Verify + Sandbox + Publish again."
+          : "Strategy saved successfully",
+      );
       await refreshWorkflowAndVersions();
     } catch (error: any) {
       toast.error(error?.message || "Failed to save strategy");
