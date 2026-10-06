@@ -561,7 +561,10 @@ export default function LiveDeploymentDetailPage() {
       setCandleBusy(true);
       const result = await liveTradingApi.refreshDeploymentCandles(deploymentId, 300);
       setCandleSnapshot(result);
-      showToast(`Stored ${result.upserted_count ?? 0} broker candles`, "success");
+      const required = Number((result as any).history_required_count || 0);
+      const stored = Number((result as any).history_stored_count ?? result.stored_count ?? 0);
+      const ready = Boolean((result as any).history_ready);
+      showToast(required ? `Strategy history ${ready ? "ready" : "incomplete"}: ${stored}/${required} closed candles` : `Stored ${result.upserted_count ?? 0} broker candles`, ready || !required ? "success" : "warning");
       await loadSummary(true);
     } catch (error: any) {
       showToast(error.message || "Failed to refresh broker candles", "error");

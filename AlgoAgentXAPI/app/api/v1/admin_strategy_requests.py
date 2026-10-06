@@ -31,6 +31,7 @@ from ...db.models import (
 from ...services.backtest_service import BacktestService
 from ...services.dynamic_strategy_loader import validate_dynamic_strategy_source, DynamicStrategyLoadError, DynamicStrategySecurityError
 from ...services.strategy_registry import resolve_strategy
+from ...services.live.strategy_history_profile import resolve_live_strategy_profile
 from ...services.trading.runtime_config_service import get_system_default_runtime_config, get_default_runtime_config_schema, normalize_runtime_config
 from ...utils.api_response import success_response
 from .strategies import (
@@ -301,7 +302,7 @@ def _build_default_runtime_config(params: dict[str, Any] | None = None, strategy
     })
     config.setdefault("execution", {}).update({
         "entry_mode": "NEXT_CANDLE_OPEN",
-        "exit_on_opposite_signal": True,
+        "exit_on_opposite_signal": False,
         "allow_long": True,
         "allow_short": True,
         "max_open_positions": 1,
@@ -329,10 +330,45 @@ def _build_default_runtime_config(params: dict[str, Any] | None = None, strategy
     return normalize_runtime_config(config)
 
 
+def _set_runtime_config_path(config: dict[str, Any], dotted: str, value: Any) -> None:
+    node = config
+    parts = str(dotted).split(".")
+    for part in parts[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            node[part] = child
+        node = child
+    node[parts[-1]] = value
+
+
+def _apply_strategy_live_runtime_contract(strategy: Strategy, config: dict[str, Any]) -> dict[str, Any]:
+    """Overlay code-declared/known live-contract settings onto runtime defaults.
+
+    This keeps Admin Save/duplicate/version flows aligned with the executable
+    strategy. It does not guess arbitrary strategy settings: only an explicit
+    class contract or a vetted known-class profile is applied.
+    """
+    params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
+    try:
+        strategy_class, _, _ = resolve_strategy(str(strategy.id), str(strategy.name), params)
+        profile = resolve_live_strategy_profile(strategy_class, params)
+    except Exception:
+        return normalize_runtime_config(config)
+    merged = dict(config or {})
+    for path, expected in (profile.runtime_contract or {}).items():
+        _set_runtime_config_path(merged, path, expected)
+    return normalize_runtime_config(merged)
+
+
 async def _ensure_default_runtime_preset(db: AsyncSession, strategy: Strategy, admin_user: dict | None = None) -> None:
     params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
-    default_config = _build_default_runtime_config(params, strategy.name)
-    strategy.default_runtime_config = strategy.default_runtime_config or default_config
+    default_config = _apply_strategy_live_runtime_contract(
+        strategy, _build_default_runtime_config(params, strategy.name)
+    )
+    strategy.default_runtime_config = _apply_strategy_live_runtime_contract(
+        strategy, strategy.default_runtime_config or default_config
+    )
     strategy.runtime_config_schema = strategy.runtime_config_schema or get_default_runtime_config_schema(
         " ".join([str(strategy.name or ""), str(params.get("strategy_type") or "")])
     )
@@ -350,8 +386,9 @@ async def _ensure_default_runtime_preset(db: AsyncSession, strategy: Strategy, a
     ).scalar_one_or_none()
 
     if existing_default:
-        if not existing_default.config_json:
-            existing_default.config_json = default_config
+        existing_default.config_json = _apply_strategy_live_runtime_contract(
+            strategy, existing_default.config_json or default_config
+        )
         return
 
     row = StrategyRuntimePreset(

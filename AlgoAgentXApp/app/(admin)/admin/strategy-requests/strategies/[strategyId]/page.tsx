@@ -173,7 +173,7 @@ const DEFAULT_RUNTIME_PRESET_CONFIG: Record<string, any> = {
   },
   execution: {
     entry_mode: "NEXT_CANDLE_OPEN",
-    exit_on_opposite_signal: true,
+    exit_on_opposite_signal: false,
     allow_long: true,
     allow_short: true,
     max_trades_per_day: null,
@@ -1173,7 +1173,7 @@ export default function AdminStrategyWorkspacePage() {
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div><p className="mb-2 text-xs text-muted-foreground"><HelpLabel label="Entry Mode" /></p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"execution.entry_mode","NEXT_CANDLE_OPEN")} onChange={(e)=>updateRuntimePresetConfig("execution.entry_mode", e.target.value)}><option value="NEXT_CANDLE_OPEN">Next Candle Open</option></select></div>
                 <div><p className="mb-2 text-xs text-muted-foreground"><HelpLabel label="Max Open Positions" /></p><select className={fieldClass} value={getConfigValue(runtimePresetConfig,"execution.max_open_positions",1)} onChange={(e)=>updateRuntimePresetConfig("execution.max_open_positions", Number(e.target.value))}>{[1,2,3,5].map((v)=><option key={v} value={v}>{v}</option>)}</select></div>
-                <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(getConfigValue(runtimePresetConfig,"execution.exit_on_opposite_signal",true))} onChange={(e)=>updateRuntimePresetConfig("execution.exit_on_opposite_signal", e.target.checked)} /> <HelpLabel label="Exit on opposite signal" /></label>
+                <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(getConfigValue(runtimePresetConfig,"execution.exit_on_opposite_signal",false))} onChange={(e)=>updateRuntimePresetConfig("execution.exit_on_opposite_signal", e.target.checked)} /> <HelpLabel label="Exit on opposite signal" /></label>
                 <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(getConfigValue(runtimePresetConfig,"execution.allow_long",true))} onChange={(e)=>updateRuntimePresetConfig("execution.allow_long", e.target.checked)} /> <HelpLabel label="Allow Long" /></label>
                 <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(getConfigValue(runtimePresetConfig,"execution.allow_short",true))} onChange={(e)=>updateRuntimePresetConfig("execution.allow_short", e.target.checked)} /> <HelpLabel label="Allow Short" /></label>
                 <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={Boolean(getConfigValue(runtimePresetConfig,"execution.intraday_square_off",false))} onChange={(e)=>updateRuntimePresetConfig("execution.intraday_square_off", e.target.checked)} /> <HelpLabel label="Intraday Square Off" /></label>

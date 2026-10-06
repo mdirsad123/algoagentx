@@ -22,6 +22,7 @@ from ..live.order_preview_service import build_live_order_preview, find_live_ins
 from ..live.broker_candle_service import get_latest_closed_candles
 from ..live.strategy_runner import _candles_to_dataframe, _run_strategy_generate, extract_latest_signal_payload
 from ..strategy_registry import resolve_strategy
+from ..live.strategy_history_profile import resolve_live_strategy_profile, runtime_contract_violations
 from ..trading.guardrails import validate_instrument_spec
 from ..trading.runtime_config_service import validate_runtime_config
 from ..live.trading_safety import day_start_utc, get_platform_trading_settings
@@ -49,12 +50,14 @@ def _is_admin(user: dict) -> bool:
     return bool(user.get("is_admin")) or role == "ADMIN"
 
 
-def _check(key: str, label: str, status: str, message: str, action_label: str | None = None, action_href: str | None = None) -> dict[str, Any]:
+def _check(key: str, label: str, status: str, message: str, action_label: str | None = None, action_href: str | None = None, data: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = {"key": key, "label": label, "status": status, "message": message}
     if action_label:
         payload["action_label"] = action_label
     if action_href:
         payload["action_href"] = action_href
+    if data:
+        payload["data"] = data
     return payload
 
 
@@ -161,10 +164,31 @@ async def check_instrument_ready(db: AsyncSession, deployment: StrategyDeploymen
 async def check_market_data_ready(db: AsyncSession, deployment: StrategyDeployment) -> list[dict[str, Any]]:
     count = int((await db.execute(select(func.count(LiveMarketCandle.id)).where(LiveMarketCandle.deployment_id == deployment.id, LiveMarketCandle.is_closed.is_(True)))).scalar() or 0)
     latest = (await db.execute(select(LiveMarketCandle).where(LiveMarketCandle.deployment_id == deployment.id, LiveMarketCandle.is_closed.is_(True)).order_by(LiveMarketCandle.candle_time.desc()).limit(1))).scalar_one_or_none()
-    enough = count >= 50
+    required = 50
+    resolved_class = None
+    resolution_error = None
+    strategy = (await db.execute(select(Strategy).where(Strategy.id == deployment.strategy_id))).scalar_one_or_none()
+    if strategy is None:
+        resolution_error = "Strategy was not found."
+    else:
+        params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
+        try:
+            strategy_class, _, _ = resolve_strategy(str(strategy.id), str(strategy.name), params)
+            profile = resolve_live_strategy_profile(strategy_class, params)
+            required = profile.required_history_bars
+            resolved_class = strategy_class.__name__
+        except Exception as exc:
+            resolution_error = str(exc)
+    enough = resolution_error is None and count >= required
+    if resolution_error:
+        history_message = f"Strategy resolution failed; live execution is blocked: {resolution_error}"
+    elif enough:
+        history_message = f"{count}/{required} required closed candles are stored."
+    else:
+        history_message = f"Only {count}/{required} required closed candles are stored. Live execution is blocked until strategy warm-up is complete."
     return [
         _check("latest_candles_available", "Latest candles available", PASS if latest else FAIL, f"Latest closed candle is {latest.candle_time}." if latest else "No closed live candles stored yet. Refresh candles first.", "Refresh Candles", f"/live-trading/{deployment.id}"),
-        _check("enough_candles_for_strategy", "Enough candles for strategy", PASS if enough else WARNING, f"{count} closed candles are stored." if enough else f"Only {count} closed candles are stored. Many strategies need at least 50 candles.", "Refresh Candles", f"/live-trading/{deployment.id}"),
+        _check("enough_candles_for_strategy", "Enough candles for strategy", PASS if enough else FAIL, history_message, "Refresh Candles", f"/live-trading/{deployment.id}", data={"stored_history_bars": count, "required_history_bars": required, "resolved_strategy_class": resolved_class, "resolution_error": resolution_error}),
     ]
 
 
@@ -181,9 +205,14 @@ async def _latest_strategy_signal_payload(db: AsyncSession, deployment: Strategy
         raise ValueError("Strategy was not found.")
     strategy_params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
     strategy_class, params, _ = resolve_strategy(str(strategy.id), str(strategy.name), strategy_params)
-    candles = await get_latest_closed_candles(db, deployment.id, limit=300)
-    if len(candles) < 2:
-        raise ValueError("Not enough closed candles to evaluate the latest strategy signal.")
+    profile = resolve_live_strategy_profile(strategy_class, strategy_params)
+    runtime_config = await resolve_live_runtime_config(db, deployment=deployment)
+    violations = runtime_contract_violations(strategy_class, runtime_config, strategy_params)
+    if violations:
+        raise ValueError(f"Runtime contract mismatch: {violations}")
+    candles = await get_latest_closed_candles(db, deployment.id, limit=profile.required_history_bars)
+    if len(candles) < profile.required_history_bars:
+        raise ValueError(f"Not enough closed candles to evaluate the latest strategy signal: {len(candles)}/{profile.required_history_bars}.")
     generated = _run_strategy_generate(strategy_class(_candles_to_dataframe(candles), **params))
     if generated is None or getattr(generated, "empty", True):
         raise ValueError("Strategy did not return a valid DataFrame.")

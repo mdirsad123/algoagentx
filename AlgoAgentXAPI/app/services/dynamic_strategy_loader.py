@@ -206,6 +206,7 @@ _META_PARAM_KEYS = {
     "source_code", "strategy_type", "market", "timeframe", "entry_rules", "exit_rules",
     "confirmation_rules", "risk_rules", "invalidation_rules", "trade_management_rules", "notes",
     "performance_metrics", "runtime_config", "default_runtime_config", "runtime_config_schema", "engine_mode",
+    "source_code_sha256", "live_history_bars", "required_history_bars",
 }
 
 

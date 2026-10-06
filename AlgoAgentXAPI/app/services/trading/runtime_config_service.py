@@ -21,7 +21,7 @@ SYSTEM_DEFAULT_RUNTIME_CONFIG: dict[str, Any] = {
     },
     "execution": {
         "entry_mode": "NEXT_CANDLE_OPEN",
-        "exit_on_opposite_signal": True,
+        "exit_on_opposite_signal": False,
         "allow_long": True,
         "allow_short": True,
         "max_trades_per_day": None,
@@ -226,7 +226,7 @@ def normalize_runtime_config(config: Any) -> dict[str, Any]:
 
     execution = normalized.setdefault("execution", {})
     execution["entry_mode"] = str(execution.get("entry_mode") or "NEXT_CANDLE_OPEN").upper()
-    execution["exit_on_opposite_signal"] = _bool(execution.get("exit_on_opposite_signal"), True)
+    execution["exit_on_opposite_signal"] = _bool(execution.get("exit_on_opposite_signal"), False)
     execution["allow_long"] = _bool(execution.get("allow_long"), True)
     execution["allow_short"] = _bool(execution.get("allow_short"), True)
     execution["max_trades_per_day"] = _int(execution.get("max_trades_per_day"), None)

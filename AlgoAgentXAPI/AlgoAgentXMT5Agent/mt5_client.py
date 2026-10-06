@@ -372,6 +372,7 @@ class MT5Client:
         timeframe = str(payload.get("timeframe") or "").strip().upper()
         count = max(1, min(int(payload.get("count") or 300), 5000))
         skip_forming = bool(payload.get("skip_forming", True))
+        explicit_start_pos = payload.get("start_pos")
 
         if not symbol:
             return {"success": False, "message": "FETCH_RATES requires symbol.", "raw": payload}
@@ -402,7 +403,7 @@ class MT5Client:
             if not resolved_symbol:
                 return {"success": False, "message": f"MT5 symbol resolution failed for {requested_symbol}. In Market Watch, right click → Show All, then try again.", "raw": {"last_error": str(self.mt5.last_error()), "requested_symbol": requested_symbol}}
             symbol = resolved_symbol
-            start_pos = 1 if skip_forming else 0
+            start_pos = max(0, int(explicit_start_pos)) if explicit_start_pos not in (None, "") else (1 if skip_forming else 0)
             rates = self.mt5.copy_rates_from_pos(symbol, timeframe_const, start_pos, count)
             if rates is None or len(rates) == 0:
                 return {

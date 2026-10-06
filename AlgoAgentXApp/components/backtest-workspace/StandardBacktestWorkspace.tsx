@@ -226,7 +226,7 @@ const SYSTEM_RUNTIME_DEFAULTS: RuntimeConfig = {
   },
   execution: {
     entry_mode: "NEXT_CANDLE_OPEN",
-    exit_on_opposite_signal: true,
+    exit_on_opposite_signal: false,
     allow_long: true,
     allow_short: true,
     max_trades_per_day: null,

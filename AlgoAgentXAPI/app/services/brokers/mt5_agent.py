@@ -212,7 +212,7 @@ class MT5AgentAdapter(BrokerAdapter):
     async def get_orders(self) -> list[dict[str, Any]]:
         return []
 
-    async def get_rates(self, symbol: str, timeframe: str, count: int = 300) -> list[dict[str, Any]]:
+    async def _get_rates_page(self, symbol: str, timeframe: str, count: int, *, start_pos: int = 0) -> list[dict[str, Any]]:
         if self.db is None:
             raise RuntimeError("MT5 Agent database session is not available for candle requests.")
 
@@ -220,18 +220,14 @@ class MT5AgentAdapter(BrokerAdapter):
         if not _is_fresh(agent):
             raise RuntimeError(FRIENDLY_DISCONNECTED)
 
-        safe_count = max(1, min(int(count or 300), 2000))
+        safe_count = max(1, min(int(count or 300), 5000))
         requested_timeframe = str(timeframe or "").strip().upper()
-        # Fetch the current MT5 bar too. The API candle service is the single
-        # authority that decides whether a bar is closed from its OPEN timestamp
-        # + timeframe. Using start_pos=1 here can become one-bar late around a
-        # rollover when MT5 has not yet created the next forming bar.
-        requested_count = min(safe_count + 1, 2000)
         payload = {
             "symbol": str(symbol or "").strip(),
             "timeframe": requested_timeframe,
-            "count": requested_count,
+            "count": safe_count,
             "skip_forming": False,
+            "start_pos": max(0, int(start_pos or 0)),
         }
         if not payload["symbol"]:
             raise RuntimeError("MT5 Agent candle request requires a symbol.")
@@ -248,8 +244,6 @@ class MT5AgentAdapter(BrokerAdapter):
         )
         self.db.add(command)
         await self.db.flush()
-        # Commit so the Windows MT5 Agent, which polls using a separate request/session,
-        # can see the command immediately. The caller continues with a clean transaction.
         await self.db.commit()
 
         timeout_seconds = 30
@@ -259,8 +253,9 @@ class MT5AgentAdapter(BrokerAdapter):
             status = str(command.status or "").upper()
             if status == "COMPLETED":
                 result = command.result_payload or {}
-                candles = self._extract_candles_from_result(result)
-                return [row for row in candles if isinstance(row, dict)]
+                candles = [row for row in self._extract_candles_from_result(result) if isinstance(row, dict)]
+                candles.sort(key=lambda row: str(row.get("candle_time") or ""))
+                return candles
             if status == "ERROR":
                 result = command.result_payload or {}
                 message = command.error_message or result.get("message") or (result.get("raw_response") or {}).get("message")
@@ -270,6 +265,38 @@ class MT5AgentAdapter(BrokerAdapter):
         command.error_message = "MT5 Agent candle request timed out. Check agent is running and polling commands."
         await self.db.commit()
         raise RuntimeError(command.error_message)
+
+    async def get_rates(self, symbol: str, timeframe: str, count: int = 300) -> list[dict[str, Any]]:
+        # Fetch the current MT5 bar too. The API candle service is the single
+        # authority that decides whether a bar is closed from OPEN time + timeframe.
+        return await self._get_rates_page(symbol, timeframe, min(int(count or 300) + 1, 5000), start_pos=0)
+
+    async def get_rates_history(self, symbol: str, timeframe: str, count: int = 5000) -> list[dict[str, Any]]:
+        """Fetch large MT5 history in 5k-bar pages through the desktop agent."""
+        from ...core.config import settings
+
+        max_total = max(1, int(getattr(settings, "live_strategy_history_max_bars", 100000) or 100000))
+        total = max(1, min(int(count or 5000), max_total))
+        page_size = max(100, min(int(getattr(settings, "live_strategy_history_page_size", 2000) or 2000), 5000))
+        rows_by_time: dict[str, dict[str, Any]] = {}
+        offset = 0
+        while len(rows_by_time) < total:
+            wanted = min(page_size, total - len(rows_by_time))
+            page = await self._get_rates_page(symbol, timeframe, wanted, start_pos=offset)
+            if not page:
+                break
+            before = len(rows_by_time)
+            for row in page:
+                key = str(row.get("candle_time") or "")
+                if key:
+                    rows_by_time[key] = row
+            if len(rows_by_time) == before:
+                break
+            offset += wanted
+            if len(page) < wanted:
+                break
+        rows = sorted(rows_by_time.values(), key=lambda row: str(row.get("candle_time") or ""))
+        return rows[-total:]
 
     @staticmethod
     def _extract_candles_from_result(result_payload: dict[str, Any]) -> list[dict[str, Any]]:

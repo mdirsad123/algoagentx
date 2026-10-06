@@ -358,7 +358,7 @@ export default function LiveDeploymentSettingsPage() {
       max_quantity_cap: form.max_quantity ? Number(form.max_quantity) : null,
     },
     sl_tp: { rr_ratio: Number(form.rr_ratio), sl_mode: form.sl_mode, atr_period: Number(form.atr_period), atr_multiplier: Number(form.atr_multiplier), swing_lookback: Number(form.swing_lookback), fixed_price_risk_pct: Number(form.price_risk_pct) },
-    execution: { entry_mode: "NEXT_CANDLE_OPEN", exit_on_opposite_signal: true, allow_long: true, allow_short: Boolean(form.allow_short), max_trades_per_day: form.max_trades_per_day == null ? null : Number(form.max_trades_per_day), max_open_positions: Number(form.max_open_positions), intraday_square_off: supportsLiveSquareOff, square_off_time: form.square_off_time },
+    execution: { entry_mode: "NEXT_CANDLE_OPEN", exit_on_opposite_signal: false, allow_long: true, allow_short: Boolean(form.allow_short), max_trades_per_day: form.max_trades_per_day == null ? null : Number(form.max_trades_per_day), max_open_positions: Number(form.max_open_positions), intraday_square_off: supportsLiveSquareOff, square_off_time: form.square_off_time },
     trade_management: { break_even_enabled: form.break_even_enabled, break_even_trigger_r: form.break_even_trigger_r, trailing_enabled: form.trailing_enabled, trailing_mode: form.trailing_mode, trail_start_r: form.trail_start_r, trail_atr_multiplier: form.trail_atr_multiplier, partial_exit_enabled: form.partial_exit_enabled, partial_exit_at_r: form.partial_exit_at_r, partial_exit_percent: form.partial_exit_percent },
     strategy_params: {},
   });

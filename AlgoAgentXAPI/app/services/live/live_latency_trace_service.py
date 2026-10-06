@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import settings
-from ...db.models import LiveExecutionTrace, LiveOrder, LiveSignal
+from ...db.models import LiveExecutionTrace, LiveOrder, LiveSignal, StrategyDeployment
 from .live_event_bus import TRACE_KEY_PREFIX, json_dumps
 
 
@@ -238,6 +238,25 @@ class LiveLatencyTraceService:
             else:
                 values[field] = value
         values.setdefault("t0_expected_close_at", values.get("expected_close_at"))
+
+        # A Redis candle event can outlive its deployment row (for example when
+        # a STOPPED deployment is deleted while older/pending candle messages
+        # are still queued). Never persist a trace with a dangling deployment_id:
+        # the FK would fail, leave the stream message pending, and create an
+        # infinite reclaim/error loop that can make the worker DEGRADED and burn
+        # CPU/DB resources. The worker will ACK the stale event after this no-op.
+        deployment_id = values.get("deployment_id")
+        if deployment_id is not None:
+            deployment_exists = (await db.execute(
+                select(StrategyDeployment.id).where(StrategyDeployment.id == deployment_id).limit(1)
+            )).scalar_one_or_none()
+            if deployment_exists is None:
+                return {
+                    "persisted": False,
+                    "deployment_missing": True,
+                    "deployment_id": str(deployment_id),
+                    "status": str(trace.get("status") or "DEPLOYMENT_NOT_FOUND"),
+                }
 
         # Redis tracing can outlive a failed strategy transaction. In that case
         # t8/t15 may contain UUIDs for a signal/order that was rolled back. Never

@@ -18,14 +18,15 @@ from ...db.models import BrokerAccount, LiveOrder, LiveSignal, LiveTradeLog, Str
 from ...core.redis_manager import redis_manager
 from ..strategy_registry import resolve_strategy
 from .execution_engine import execute_signal
-from .order_preview_service import build_live_order_preview
+from .order_preview_service import build_live_order_preview, resolve_live_runtime_config
 from ..brokers.factory import get_broker_code
-from .broker_candle_service import get_latest_closed_candles, load_live_candles_for_runner, refresh_deployment_candles
+from .broker_candle_service import ensure_deployment_candle_history, get_latest_closed_candles, load_live_candles_for_runner, refresh_deployment_candles
 from .pnl_service import to_decimal
 from .runner_scheduler import calculate_next_runner_after_candle, calculate_next_runner_at, ensure_utc
 from ..live_trading.paper_position_manager import process_paper_positions_for_deployment
 from .live_latency_trace_service import LiveLatencyTraceService
 from .deployment_lock import try_deployment_xact_lock
+from .strategy_history_profile import resolve_live_strategy_profile, runtime_contract_violations
 
 logger = logging.getLogger(__name__)
 
@@ -475,21 +476,33 @@ async def run_full_dry_test_for_deployment(db: AsyncSession, deployment_id: UUID
         step("Loaded strategy", "FAIL", "Strategy not found.")
         return {"success": False, "deployment_id": str(deployment.id), "steps": steps, "final_action": "REJECTED", "message": "Strategy not found."}
     _validate_strategy_gate(strategy, mode)
-    step("Loaded strategy", "PASS", f"Strategy {strategy.name} is deployable for {mode}.")
+    strategy_params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
+    strategy_class, params, canonical_name = resolve_strategy(strategy.id, strategy.name, strategy_params)
+    profile = resolve_live_strategy_profile(strategy_class, strategy_params)
+    runtime_config = await resolve_live_runtime_config(db, deployment=deployment)
+    contract_issues = runtime_contract_violations(strategy_class, runtime_config, strategy_params)
+    if contract_issues:
+        step("Runtime contract", "FAIL", "Deployment runtime settings do not match this strategy's validated research/live contract.", {"violations": contract_issues})
+        return {"success": False, "deployment_id": str(deployment.id), "steps": steps, "final_action": "REJECTED", "message": "Fix runtime-contract mismatches before live execution.", "runtime_contract_violations": contract_issues}
+    step("Loaded strategy", "PASS", f"Strategy {strategy.name} is deployable for {mode}.", {"resolved_strategy_class": strategy_class.__name__, "required_history_bars": profile.required_history_bars})
 
     refresh_warning = None
     if mode in {"DEMO", "LIVE"}:
         try:
-            await refresh_deployment_candles(db, deployment.id, count=300)
-            step("Refreshed broker candles", "PASS", f"Latest broker candles refreshed for {mode} dry test.")
+            history = await ensure_deployment_candle_history(db, deployment, profile.required_history_bars)
+            if not history.get("ready"):
+                step("Strategy history", "FAIL", f"Only {history.get('stored_count', 0)}/{profile.required_history_bars} required closed candles are available.", history)
+                return {"success": False, "deployment_id": str(deployment.id), "steps": steps, "final_action": "REJECTED", "message": "Strategy warm-up history is insufficient.", "history": history}
+            await refresh_deployment_candles(db, deployment.id, count=min(profile.required_history_bars, 300))
+            step("Refreshed broker candles", "PASS", f"Latest broker candles refreshed for {mode} dry test.", history)
         except Exception as exc:
             refresh_warning = str(exc)
             step("Refreshed broker candles", "WARNING", f"Could not refresh broker candles: {str(exc)[:180]}. Existing stored candles will be used if available.")
 
-    candles = await load_live_candles_for_runner(db, deployment, limit=300)
-    if len(candles) < 20:
-        step("Loaded candles", "FAIL", f"Only {len(candles)} closed broker candles found by deployment_id. Required 20.")
-        return {"success": False, "ok": False, "error_code": "NOT_ENOUGH_LIVE_CANDLES", "deployment_id": str(deployment.id), "instrument": deployment.instrument, "instrument_key": getattr(deployment, "instrument_key", None), "timeframe": deployment.timeframe, "loaded_candles": len(candles), "steps": steps, "final_action": "REJECTED", "message": f"HOLD - Not enough live candles. Loaded {len(candles)} candles, required 20.", "refresh_warning": refresh_warning}
+    candles = await load_live_candles_for_runner(db, deployment, limit=profile.required_history_bars)
+    if len(candles) < profile.required_history_bars:
+        step("Loaded candles", "FAIL", f"Only {len(candles)} closed broker candles found by deployment_id. Required {profile.required_history_bars}.")
+        return {"success": False, "ok": False, "error_code": "NOT_ENOUGH_LIVE_CANDLES", "deployment_id": str(deployment.id), "instrument": deployment.instrument, "instrument_key": getattr(deployment, "instrument_key", None), "timeframe": deployment.timeframe, "loaded_candles": len(candles), "steps": steps, "final_action": "REJECTED", "message": f"HOLD - Not enough live candles. Loaded {len(candles)} candles, required {profile.required_history_bars}.", "refresh_warning": refresh_warning}
     latest_candle = candles[0]
     latest_candle_time = _normalize_dt(latest_candle.get("candle_time"))
     latest_close = to_decimal(latest_candle.get("close"))
@@ -497,8 +510,6 @@ async def run_full_dry_test_for_deployment(db: AsyncSession, deployment_id: UUID
     step("Loaded candles", "PASS", f"Loaded {len(candles)} candles. Latest close {latest_close} at {latest_candle_time}.", {"latest_candle_time": latest_candle_time.isoformat(), "latest_price": float(latest_close), "symbol": latest_symbol})
 
     df = _candles_to_dataframe(candles)
-    strategy_params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
-    strategy_class, params, canonical_name = resolve_strategy(strategy.id, strategy.name, strategy_params)
     generated = _run_strategy_generate(strategy_class(df, **params))
     signal_payload = extract_latest_signal_payload(generated)
     signal_type = str(signal_payload.get("signal_type") or "HOLD")
@@ -654,6 +665,44 @@ async def run_strategy_for_deployment(
         if strategy is None:
             raise HTTPException(status_code=404, detail="Strategy not found")
         _validate_strategy_gate(strategy, mode)
+        strategy_params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
+        strategy_class, params, canonical_name = resolve_strategy(strategy.id, strategy.name, strategy_params)
+        profile = resolve_live_strategy_profile(strategy_class, strategy_params)
+        runtime_config = await resolve_live_runtime_config(db, deployment=deployment)
+        contract_issues = runtime_contract_violations(strategy_class, runtime_config, strategy_params)
+        if contract_issues:
+            detail = {
+                "ok": False,
+                "error_code": "RUNTIME_CONTRACT_MISMATCH",
+                "message": "HOLD - Deployment runtime settings do not match the strategy research/live contract.",
+                "violations": contract_issues,
+                "resolved_strategy_class": strategy_class.__name__,
+            }
+            await _log(db, deployment, "RUNNER_RUNTIME_CONTRACT_MISMATCH", detail["message"], "ERROR", detail)
+            await db.commit()
+            return {"success": False, **detail, "final_action": "HOLD_RUNTIME_CONTRACT_MISMATCH"}
+
+        authoritative_candle_time = _normalize_dt(candle_time) if candle_time is not None else None
+        history_status = None
+        if mode in {"DEMO", "LIVE"}:
+            history_status = await ensure_deployment_candle_history(
+                db,
+                deployment,
+                profile.required_history_bars,
+                through_candle_time=authoritative_candle_time,
+            )
+            if not history_status.get("ready"):
+                detail = {
+                    "ok": False,
+                    "error_code": "STRATEGY_HISTORY_INSUFFICIENT",
+                    "message": f"HOLD - Strategy requires {profile.required_history_bars} closed candles; only {history_status.get('stored_count', 0)} are available.",
+                    "required_history_bars": profile.required_history_bars,
+                    "stored_history_bars": history_status.get("stored_count", 0),
+                    "history": history_status,
+                }
+                await _log(db, deployment, "RUNNER_STRATEGY_HISTORY_INSUFFICIENT", detail["message"], "WARNING", detail)
+                await db.commit()
+                return {"success": False, **detail, "final_action": "HOLD_STRATEGY_HISTORY"}
 
         refresh_warning = None
         if mode in {"DEMO", "LIVE"} and refresh_broker_candles:
@@ -664,18 +713,17 @@ async def run_strategy_for_deployment(
                 refresh_warning = str(getattr(exc, "detail", None) or exc)
                 await _log(db, deployment, "RUNNER_CANDLE_REFRESH_WARNING", f"Broker candle refresh failed; using stored candles if available: {refresh_warning}", "WARNING", {"deployment_id": str(deployment.id), "instrument": deployment.instrument, "instrument_key": getattr(deployment, "instrument_key", None)})
 
-        authoritative_candle_time = _normalize_dt(candle_time) if candle_time is not None else None
         candles = await load_live_candles_for_runner(
             db,
             deployment,
-            limit=300,
+            limit=profile.required_history_bars,
             through_candle_time=authoritative_candle_time,
         )
-        if len(candles) < 20:
+        if len(candles) < profile.required_history_bars:
             detail = {
                 "ok": False,
                 "error_code": "NOT_ENOUGH_LIVE_CANDLES",
-                "message": f"HOLD - Not enough live candles. Loaded {len(candles)} candles, required 20.",
+                "message": f"HOLD - Not enough live candles. Loaded {len(candles)} candles, required {profile.required_history_bars}.",
                 "loaded_candles": len(candles),
                 "deployment_id": str(deployment.id),
                 "instrument": deployment.instrument,
@@ -713,12 +761,10 @@ async def run_strategy_for_deployment(
             deployment,
             "RUNNER_CANDLES_LOADED",
             f"Loaded {len(df)} closed broker candles for strategy run",
-            metadata={"latest_candle_time": latest_candle_time.isoformat(), "symbol": latest_symbol, "next_run_at": deployment.next_run_at.isoformat() if deployment.next_run_at else None},
+            metadata={"latest_candle_time": latest_candle_time.isoformat(), "symbol": latest_symbol, "next_run_at": deployment.next_run_at.isoformat() if deployment.next_run_at else None, "required_history_bars": profile.required_history_bars, "loaded_history_bars": len(df), "history_status": history_status},
         )
         await latency_trace.mark(trace_id, "t6", status="STRATEGY_STARTED")
 
-        strategy_params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
-        strategy_class, params, canonical_name = resolve_strategy(strategy.id, strategy.name, strategy_params)
         source_code = str(strategy_params.get("source_code") or "").strip()
         source_code_sha256 = str(strategy_params.get("source_code_sha256") or "").strip()
         if source_code and not source_code_sha256:
@@ -847,6 +893,9 @@ async def run_strategy_for_deployment(
                 "resolved_strategy_class": getattr(strategy_class, "__name__", str(strategy_class)),
                 "engine_mode": str(strategy_params.get("engine_mode") or ("DYNAMIC_DB" if source_code else "STATIC_REGISTRY")),
                 "source_code_sha256": source_code_sha256 or None,
+                "required_history_bars": profile.required_history_bars,
+                "loaded_history_bars": len(df),
+                "history_ready": len(df) >= profile.required_history_bars,
                 "execute_requested": execute,
                 "latest_candle_time": latest_candle_time.isoformat(),
                 "resolved_symbol": latest_symbol,

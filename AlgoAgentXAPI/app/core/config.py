@@ -125,8 +125,11 @@ class Settings(BaseSettings):
     live_candle_fallback_first_seconds: int = Field(default=3, description="First missing-candle recovery delay")
     live_candle_fallback_second_seconds: int = Field(default=8, description="Second missing-candle recovery delay")
     live_market_deployment_scan_seconds: int = Field(default=15, description="Seconds between active deployment registry refreshes")
-    live_market_bootstrap_candles: int = Field(default=300, description="Initial cTrader closed-candle bootstrap count")
+    live_market_bootstrap_candles: int = Field(default=1000, description="Initial cTrader closed-candle bootstrap count")
     live_market_backfill_candles: int = Field(default=5, description="Small reconnect/watchdog backfill count")
+    live_strategy_history_default_bars: int = Field(default=20000, description="Default closed-candle history passed to live dynamic strategies")
+    live_strategy_history_max_bars: int = Field(default=100000, description="Hard cap for per-strategy live history loading/backfill")
+    live_strategy_history_page_size: int = Field(default=2000, description="Broker history page size used for live warm-up backfill")
 
     ctrader_heartbeat_seconds: int = Field(default=8, description="Persistent cTrader application heartbeat interval")
     ctrader_request_timeout_seconds: int = Field(default=15, description="Persistent cTrader request timeout")

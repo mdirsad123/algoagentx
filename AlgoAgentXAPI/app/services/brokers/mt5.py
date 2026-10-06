@@ -752,6 +752,95 @@ class MT5Adapter(BrokerAdapter):
 
         return None, attempts
 
+    async def get_rates_history(self, symbol: str, timeframe: str, count: int = 5000) -> list[dict[str, Any]]:
+        """Fetch large local-terminal MT5 history in broker-safe pages.
+
+        ``get_rates`` intentionally keeps its small snapshot behavior. This
+        method is used by live strategy warm-up and pages backwards by
+        ``start_pos`` so strategies that need multi-day/month context are not
+        silently evaluated on only ~2k bars.
+        """
+        from ...core.config import settings
+
+        ok, message = self._initialize()
+        if not ok:
+            return [{"success": False, "message": message, "symbol": symbol, "timeframe": timeframe}]
+
+        tf = self._timeframe_constant(timeframe)
+        if tf is None:
+            return [{"success": False, "message": f"Unsupported MT5 timeframe: {timeframe}", "symbol": symbol, "timeframe": timeframe}]
+
+        requested_symbol = str(symbol or "").strip()
+        if not requested_symbol:
+            return [{"success": False, "message": "Symbol is required for MT5 candle history", "symbol": symbol, "timeframe": timeframe}]
+
+        max_total = max(1, int(getattr(settings, "live_strategy_history_max_bars", 100000) or 100000))
+        total = max(1, min(int(count or 5000), max_total))
+        page_size = max(100, min(int(getattr(settings, "live_strategy_history_page_size", 2000) or 2000), 5000))
+
+        for candidate in self._candidate_symbols(requested_symbol):
+            if not candidate:
+                continue
+            try:
+                if not bool(self.mt5.symbol_select(candidate, True)):
+                    continue
+            except Exception:
+                continue
+
+            rows_by_time: dict[str, dict[str, Any]] = {}
+            # start_pos=1 skips the current forming bar. Older pages continue
+            # from the next offset.
+            offset = 1
+            while len(rows_by_time) < total:
+                wanted = min(page_size, total - len(rows_by_time))
+                try:
+                    rates = self.mt5.copy_rates_from_pos(candidate, tf, offset, wanted)
+                except Exception:
+                    rates = None
+                if self._rate_count(rates) <= 0:
+                    break
+
+                before = len(rows_by_time)
+                for rate in rates:
+                    raw = _safe_obj(rate)
+                    if not isinstance(raw, dict):
+                        continue
+                    timestamp = raw.get("time")
+                    if timestamp is None:
+                        continue
+                    candle_time = datetime.fromtimestamp(int(timestamp), tz=timezone.utc).isoformat()
+                    rows_by_time[candle_time] = {
+                        "success": True,
+                        "symbol": candidate,
+                        "requested_symbol": requested_symbol,
+                        "timeframe": timeframe,
+                        "candle_time": candle_time,
+                        "open": raw.get("open"),
+                        "high": raw.get("high"),
+                        "low": raw.get("low"),
+                        "close": raw.get("close"),
+                        "volume": raw.get("tick_volume") or raw.get("real_volume") or raw.get("volume"),
+                        "raw_payload": raw,
+                    }
+                if len(rows_by_time) == before:
+                    break
+                returned = self._rate_count(rates)
+                offset += returned
+                if returned < wanted:
+                    break
+
+            if rows_by_time:
+                rows = sorted(rows_by_time.values(), key=lambda row: str(row.get("candle_time") or ""))
+                return rows[-total:]
+
+        return [{
+            "success": False,
+            "message": f"No MT5 candle history returned for {requested_symbol} {timeframe}.",
+            "symbol": requested_symbol,
+            "timeframe": timeframe,
+            "last_error": self._last_error(),
+        }]
+
     async def get_rates(self, symbol: str, timeframe: str, count: int = 300) -> list[dict[str, Any]]:
         ok, message = self._initialize()
         if not ok:

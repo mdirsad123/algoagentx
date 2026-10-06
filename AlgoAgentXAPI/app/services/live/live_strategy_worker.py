@@ -143,7 +143,8 @@ class LiveStrategyWorker:
                             select(StrategyDeployment).where(StrategyDeployment.id == deployment_id)
                         )
                     ).scalar_one_or_none()
-                    if deployment is None:
+                    deployment_missing = deployment is None
+                    if deployment_missing:
                         should_ack = True
                         await self.trace.annotate(trace_id, status="DEPLOYMENT_NOT_FOUND")
                     elif deployment.status != "RUNNING" or not deployment.auto_runner_enabled:
@@ -187,7 +188,11 @@ class LiveStrategyWorker:
                         "candle_open_time": candle_time.isoformat(),
                     })
                     await self.trace.mark(trace_id, "t17", at=published_at)
-                    if trace_id:
+                    # Do not write a relational execution trace for a deployment
+                    # that has already been deleted. The Redis trace may remain
+                    # briefly for diagnostics, but the stream event is terminal
+                    # and must be ACKed instead of reclaimed forever.
+                    if trace_id and not deployment_missing:
                         await self.trace.persist(db, trace_id)
                         await db.commit()
                 self._processed += 1

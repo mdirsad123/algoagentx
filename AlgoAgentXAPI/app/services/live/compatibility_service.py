@@ -11,6 +11,7 @@ from ...db.models import BrokerAccount, LiveMarketCandle, Strategy, StrategyDepl
 from ..brokers.factory import get_broker_code
 from ..trading.guardrails import validate_instrument_spec
 from .broker_candle_service import get_latest_closed_candles
+from .strategy_history_profile import resolve_live_strategy_profile, runtime_contract_violations
 from .capital_service import get_effective_trading_capital
 from .order_preview_service import find_live_instrument_spec, resolve_live_runtime_config
 from .strategy_runner import _candles_to_dataframe, _run_strategy_generate, extract_latest_signal_payload
@@ -75,7 +76,8 @@ async def run_live_compatibility_check(db: AsyncSession, deployment_id: UUID | s
     strategy_params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
     try:
         strategy_class, params, canonical_name = resolve_strategy(strategy.id, strategy.name, strategy_params)
-        checks.append(_check("Strategy code", PASS, f"Strategy code resolved as {canonical_name}.", {"canonical_strategy": canonical_name}))
+        profile = resolve_live_strategy_profile(strategy_class, strategy_params)
+        checks.append(_check("Strategy code", PASS, f"Strategy code resolved as {canonical_name}.", {"canonical_strategy": canonical_name, "resolved_strategy_class": strategy_class.__name__, "required_history_bars": profile.required_history_bars}))
     except Exception as exc:
         checks.append(_check("Strategy code", FAIL, f"Strategy code could not be resolved: {exc}"))
         return {"status": FAIL, "summary": "Live compatibility failed", "checks": checks}
@@ -93,7 +95,8 @@ async def run_live_compatibility_check(db: AsyncSession, deployment_id: UUID | s
     try:
         runtime_config = await resolve_live_runtime_config(db, deployment=deployment)
         sl_mode = _sl_mode(runtime_config)
-        checks.append(_check("Runtime config", PASS, f"Runtime config resolved. SL mode = {sl_mode}.", {"sl_mode": sl_mode, "runtime_config": runtime_config}))
+        contract_issues = runtime_contract_violations(strategy_class, runtime_config, strategy_params)
+        checks.append(_check("Runtime config", FAIL if contract_issues else PASS, "Runtime config violates the strategy research/live contract." if contract_issues else f"Runtime config resolved. SL mode = {sl_mode}.", {"sl_mode": sl_mode, "runtime_config": runtime_config, "contract_violations": contract_issues}))
     except Exception as exc:
         runtime_config = {}
         sl_mode = "ATR"
@@ -115,9 +118,9 @@ async def run_live_compatibility_check(db: AsyncSession, deployment_id: UUID | s
     else:
         checks.append(_check("Broker capital", WARNING, "PAPER deployments are deprecated. Create a DEMO or LIVE broker deployment."))
 
-    candles = await get_latest_closed_candles(db, deployment.id, limit=300)
-    if len(candles) < 2:
-        checks.append(_check("Strategy generates DataFrame", FAIL, f"Only {len(candles)} closed candles found. Refresh broker candles before compatibility check."))
+    candles = await get_latest_closed_candles(db, deployment.id, limit=profile.required_history_bars)
+    if len(candles) < profile.required_history_bars:
+        checks.append(_check("Strategy generates DataFrame", FAIL, f"Only {len(candles)}/{profile.required_history_bars} required closed candles found. Complete broker-history warm-up before compatibility check."))
         checks.append(_check("Signal contract", FAIL, "Cannot validate signal contract without generated strategy output."))
         checks.append(_check("Strategy SL output", FAIL if sl_mode == "STRATEGY_SUGGESTED" else WARNING, "Cannot validate strategy SL output without generated strategy output."))
         status = _overall(checks)

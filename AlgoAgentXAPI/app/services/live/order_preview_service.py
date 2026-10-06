@@ -12,7 +12,9 @@ from ...db.models import BrokerAccount, Instrument, Strategy, StrategyDeployment
 from ..brokers.factory import get_broker_code
 from ..trading.risk_engine import calculate_position_size
 from ..trading.partial_exit_engine import calculate_broker_partial_split
-from ..trading.runtime_config_service import deep_merge_runtime_config, resolve_runtime_config, validate_runtime_config
+from ..trading.runtime_config_service import deep_merge_runtime_config, resolve_runtime_config, validate_runtime_config, normalize_runtime_config
+from ..strategy_registry import resolve_strategy
+from .strategy_history_profile import resolve_live_strategy_profile
 from .pnl_service import to_decimal
 from .capital_service import get_effective_trading_capital
 from ..trading.guardrails import validate_instrument_spec, MAX_BACKTEST_RISK_PERCENT, RISK_ENGINE_VERSION
@@ -334,6 +336,7 @@ async def resolve_live_runtime_config(
             },
             "sl_tp": _deployment_sl_tp_override(deployment),
             "execution": {
+                "exit_on_opposite_signal": False,
                 "allow_short": bool(getattr(deployment, "allow_short", True)),
                 "max_trades_per_day": getattr(deployment, "max_trades_per_day", None),
                 "max_open_positions": getattr(deployment, "max_open_positions", None),
@@ -346,7 +349,12 @@ async def resolve_live_runtime_config(
             },
         }
     merged_override = deep_merge_runtime_config(deployment_override, user_override or {})
-    return resolve_runtime_config(strategy=strategy, instrument=instrument, user_override=merged_override, strategy_preset=preset)
+    resolved = resolve_runtime_config(strategy=strategy, instrument=instrument, user_override=merged_override, strategy_preset=preset)
+
+    # Runtime settings remain deployment/preset-driven. Do not overwrite user
+    # RR/SL/partial-exit settings from a strategy-name-specific profile.
+
+    return normalize_runtime_config(resolved)
 
 
 async def _latest_candles(db: AsyncSession, deployment: StrategyDeployment | None, symbol: str | None, timeframe: str | None, limit: int = 120) -> list[LiveMarketCandle]:

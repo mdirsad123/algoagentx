@@ -16,13 +16,11 @@ from strategies.xauusd_5m_resistance_rejection_v1 import XAUUSD5MResistanceRejec
 from strategies.xauusd_5m_resistance_rejection_v3_5 import XAUUSD5MSupplyDemandRejectionV35CandidateA
 from strategies.xauusd_5m_trend_breakout_v1_37 import XAUUSD5MTrendBreakoutV137
 
-
 @dataclass(frozen=True)
 class StrategyRegistryEntry:
     strategy_class: Any
     default_params: Dict[str, Any]
     canonical_name: str
-
 
 _REGISTRY: dict[str, StrategyRegistryEntry] = {
     "ema_crossover": StrategyRegistryEntry(EMACrossover, {"rr_ratio": 2.0}, "EMA Crossover"),

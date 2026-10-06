@@ -17,6 +17,7 @@ from ...core.config import settings
 from ...core.redis_manager import redis_manager
 from ...core.dependencies import get_current_user, get_db
 from ...db.models import BrokerAccount, BrokerInstrument, BrokerOrderEvent, FundedLiveState, LiveEquityPoint, LiveExecutionTrace, LiveMarketCandle, LiveOrder, LivePosition, LivePositionManagementState, LiveSignal, LiveTradeLog, StrategyDeployment
+from ...db.models.strategies import Strategy
 from ...db.models.instruments import Instrument
 from ...schemas.live_trading import BrokerOrderEventOut, FundedPhaseAdvanceRequest, FundedRiskPlanUpdate, LiveOrderOut, LivePositionOut, LiveSignalOut, LiveTradeLogOut, ManualDeploymentSignalIn, RunStrategyOnceIn, StrategyDeploymentCreate, StrategyDeploymentOut, StrategyDeploymentUpdate
 from ...services.brokers.factory import get_broker_adapter, get_broker_code
@@ -34,6 +35,9 @@ from ...services.live.funded_guard_service import (
 from ...services.funded_backtest.snapshots import build_profile_snapshot
 from ...services.funded_backtest.rule_engine import calculate_daily_floor, calculate_max_loss_floor
 from ...services.live.broker_candle_service import get_candle_snapshot, refresh_deployment_candles
+from ...services.live.broker_candle_service import ensure_deployment_candle_history
+from ...services.live.strategy_history_profile import resolve_live_strategy_profile
+from ...services.strategy_registry import resolve_strategy
 from ...services.live.strategy_runner import run_strategy_for_deployment, run_full_dry_test_for_deployment
 from ...services.live.compatibility_service import run_live_compatibility_check, compatibility_failed
 from ...services.live.auto_runner_service import run_deployment_if_due
@@ -1159,7 +1163,10 @@ async def create_deployment(payload: StrategyDeploymentCreate, db: AsyncSession 
     # legacy DB column populated only as a safe fallback for older code paths.
     payload_values["capital"] = Decimal("100000")
     _validate_safe_deployment_values(payload_values)
-    await get_deployable_strategy_or_400(db, payload.strategy_id, mode)
+    strategy = await get_deployable_strategy_or_400(db, payload.strategy_id, mode)
+
+    # Deployment runtime settings remain user/preset-driven. Strategy code resolution
+    # must never overwrite RR/SL/partial-exit settings during deployment creation.
 
     broker = await get_broker_account_or_404(db, payload.broker_account_id, current_user)
     await _resolve_and_validate_broker_mapping(db, payload_values, broker)
@@ -1861,10 +1868,34 @@ async def run_deployment_auto_runner_now(deployment_id: UUID, db: AsyncSession =
 
 @router.post("/{deployment_id}/refresh-candles")
 async def refresh_deployment_broker_candles(deployment_id: UUID, count: int = 300, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    # Access check first; candle service validates linked broker and stores rates in live_market_candles.
-    await get_deployment_or_404(db, deployment_id, current_user)
-    result = await refresh_deployment_candles(db, deployment_id, count=count)
-    return success_response(result, f"Stored {result.get('upserted_count', 0)} broker candles")
+    # Refresh is strategy-aware: first satisfy the strategy warm-up contract,
+    # then refresh the latest broker bars.  The response still returns a normal
+    # candle snapshot, augmented with warm-up status for the UI.
+    deployment = await get_deployment_or_404(db, deployment_id, current_user)
+    strategy = (await db.execute(select(Strategy).where(Strategy.id == deployment.strategy_id))).scalar_one_or_none()
+    if strategy is None:
+        raise HTTPException(status_code=400, detail="Deployment strategy was not found")
+    params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
+    try:
+        strategy_class, _, _ = resolve_strategy(str(strategy.id), str(strategy.name), params)
+        profile = resolve_live_strategy_profile(strategy_class, params)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Strategy warm-up profile could not be resolved: {exc}") from exc
+
+    history = await ensure_deployment_candle_history(db, deployment, profile.required_history_bars)
+    latest = await refresh_deployment_candles(db, deployment_id, count=max(20, min(int(count or 300), 300)))
+    latest["history_required_count"] = profile.required_history_bars
+    latest["history_stored_count"] = int(history.get("stored_count") or latest.get("stored_count") or 0)
+    latest["history_ready"] = bool(history.get("ready"))
+    latest["history_backfilled"] = int(history.get("backfilled") or 0)
+    if history.get("error"):
+        latest["history_error"] = str(history.get("error"))
+    message = (
+        f"Strategy history ready: {latest['history_stored_count']}/{profile.required_history_bars} closed candles"
+        if latest["history_ready"]
+        else f"Strategy history incomplete: {latest['history_stored_count']}/{profile.required_history_bars} closed candles"
+    )
+    return success_response(latest, message)
 
 
 @router.get("/{deployment_id}/candles")

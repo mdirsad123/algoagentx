@@ -1498,6 +1498,120 @@ class CTraderAdapter(BrokerAdapter):
         result.sort(key=lambda item: item["candle_time"])
         return result[-safe_count:]
 
+
+    async def get_rates_history(self, symbol: str, timeframe: str, count: int = 5000) -> list[dict[str, Any]]:
+        """Fetch a large closed-candle history in broker-safe pages.
+
+        cTrader trendbar requests are capped well below the live strategy warm-up
+        ceiling, so one huge ``count`` must never be trusted. This method pages
+        backwards using the oldest returned candle as the next cursor and keeps
+        one authorized Open API session for the complete bootstrap.
+        """
+        selected = self._selected_account()
+        if not selected:
+            raise ValueError("Select a cTrader trading account before requesting candles.")
+        account_id = selected.get("ctrader_account_id") or selected.get("account_number")
+        if not account_id:
+            raise ValueError("Selected cTrader account does not contain an account id.")
+        token = self._access_token()
+        if not token:
+            raise ValueError("cTrader OAuth token is missing. Please reconnect cTrader.")
+
+        period_map = {"M1": 1, "M2": 2, "M3": 3, "M4": 4, "M5": 5, "M10": 6, "M15": 7, "M30": 8, "H1": 9, "H4": 10, "H12": 11, "D1": 12, "W1": 13, "MN1": 14}
+        minutes_map = {"M1": 1, "M2": 2, "M3": 3, "M4": 4, "M5": 5, "M10": 10, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "H12": 720, "D1": 1440, "W1": 10080, "MN1": 43200}
+        clean_tf = str(timeframe or "M5").strip().upper()
+        if clean_tf not in period_map:
+            raise ValueError(f"Unsupported cTrader timeframe {timeframe}.")
+
+        max_total = max(1, int(getattr(settings, "live_strategy_history_max_bars", 100000) or 100000))
+        total = max(1, min(int(count or 5000), max_total))
+        page_size = max(100, min(int(getattr(settings, "live_strategy_history_page_size", 2000) or 2000), 2000))
+        symbol_meta = await self._resolve_symbol_meta(symbol)
+        symbol_id = int(symbol_meta.get("symbol_id") or symbol_meta.get("id"))
+        is_live = bool(selected.get("is_live") or str(selected.get("account_type") or "").upper() == "LIVE")
+        numeric_id = int(account_id)
+        rows_by_time: dict[str, dict[str, Any]] = {}
+        cursor_to = datetime.now(timezone.utc)
+        previous_oldest: datetime | None = None
+
+        client = None
+        last_connect_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                client = await self._openapi_authorized_client(is_live=is_live)
+                await client.request(PT_ACCOUNT_AUTH_REQ, {"ctidTraderAccountId": numeric_id, "accessToken": token}, PT_ACCOUNT_AUTH_RES)
+                last_connect_error = None
+                break
+            except Exception as exc:
+                last_connect_error = exc
+                if client is not None:
+                    try:
+                        await client.__aexit__(None, None, None)
+                    except Exception:
+                        pass
+                    client = None
+                if attempt < 2:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+        if client is None:
+            raise last_connect_error or TimeoutError("cTrader history connection failed")
+
+        try:
+            while len(rows_by_time) < total:
+                wanted = min(page_size, total - len(rows_by_time))
+                # Widen the wall-clock request window to survive weekends/market
+                # closures while still asking cTrader for only ``wanted`` bars.
+                from_at = cursor_to - timedelta(minutes=minutes_map[clean_tf] * (wanted * 4 + 50))
+                payload = await client.request(PT_GET_TRENDBARS_REQ, {
+                    "ctidTraderAccountId": numeric_id,
+                    "fromTimestamp": int(from_at.timestamp() * 1000),
+                    "toTimestamp": int(cursor_to.timestamp() * 1000),
+                    "period": period_map[clean_tf],
+                    "symbolId": symbol_id,
+                    "count": wanted,
+                }, PT_GET_TRENDBARS_RES)
+                bars = payload.get("trendbar") or payload.get("trendbars") or []
+                page: list[dict[str, Any]] = []
+                for bar in bars if isinstance(bars, list) else []:
+                    if not isinstance(bar, dict) or bar.get("low") is None:
+                        continue
+                    low_rel = int(bar.get("low") or 0)
+                    open_rel = low_rel + int(bar.get("deltaOpen") or 0)
+                    high_rel = low_rel + int(bar.get("deltaHigh") or 0)
+                    close_rel = low_rel + int(bar.get("deltaClose") or 0)
+                    ts_minutes = int(bar.get("utcTimestampInMinutes") or 0)
+                    if not ts_minutes:
+                        continue
+                    candle_time = datetime.fromtimestamp(ts_minutes * 60, tz=timezone.utc)
+                    item = {
+                        "success": True,
+                        "symbol": str(symbol).upper(),
+                        "timeframe": clean_tf,
+                        "candle_time": candle_time.isoformat(),
+                        "open": float(Decimal(open_rel) / Decimal("100000")),
+                        "high": float(Decimal(high_rel) / Decimal("100000")),
+                        "low": float(Decimal(low_rel) / Decimal("100000")),
+                        "close": float(Decimal(close_rel) / Decimal("100000")),
+                        "volume": bar.get("volume"),
+                        "raw_payload": _without_secret(bar),
+                    }
+                    rows_by_time[item["candle_time"]] = item
+                    page.append(item)
+                if not page:
+                    break
+                oldest = min(datetime.fromisoformat(str(item["candle_time"]).replace("Z", "+00:00")) for item in page)
+                if previous_oldest is not None and oldest >= previous_oldest:
+                    break
+                previous_oldest = oldest
+                cursor_to = oldest - timedelta(seconds=1)
+                if len(page) < wanted and from_at.year <= 1971:
+                    break
+        finally:
+            if client is not None:
+                await client.__aexit__(None, None, None)
+
+        result = sorted(rows_by_time.values(), key=lambda item: item["candle_time"])
+        return result[-total:]
+
 async def place_ctrader_demo_order(
     broker_account: BrokerAccount,
     *,
