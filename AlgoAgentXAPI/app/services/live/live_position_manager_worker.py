@@ -27,10 +27,23 @@ class LivePositionManagerWorker:
         health=asyncio.create_task(self._health()); recovery=asyncio.create_task(self._recovery())
         try:
             while not self.stop_event.is_set():
-                msg=await pub.get_message(ignore_subscribe_messages=True,timeout=1.0)
-                if msg and msg.get('data'): await self._quote(msg['data'])
+                try:
+                    msg=await pub.get_message(ignore_subscribe_messages=True,timeout=1.0)
+                    if msg and msg.get('data'): await self._quote(msg['data'])
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # Pub/sub connections can recover after a short Redis/Docker
+                    # DNS interruption.  Do not terminate the position manager.
+                    self.last_error=str(exc)[:1000]
+                    logger.warning('Position-manager Redis read temporarily failed: %s', exc)
+                    await asyncio.sleep(1)
         finally:
-            health.cancel(); recovery.cancel(); await asyncio.gather(health,recovery,return_exceptions=True); await pub.unsubscribe(QUOTE_CHANNEL); await pub.close()
+            health.cancel(); recovery.cancel(); await asyncio.gather(health,recovery,return_exceptions=True)
+            try: await pub.unsubscribe(QUOTE_CHANNEL)
+            except Exception: pass
+            try: await pub.close()
+            except Exception: pass
     async def _recovery(self):
         while not self.stop_event.is_set():
             try:
@@ -66,7 +79,7 @@ class LivePositionManagerWorker:
                         if not dep: continue
                         if not await try_deployment_xact_lock(db,dep.id): await db.rollback(); continue
                         await refresh_account_truth(db,dep,st.broker_account_id); repaired += 1 if await finalize_from_broker_truth(db,st,dep) else 0
-                    await db.commit(); self.last_result={'states_created_or_seen':created,'reconciled':repaired,'closed_states_repaired':closed_repaired}
+                    await db.commit(); self.last_result={'states_created_or_seen':created,'reconciled':repaired,'closed_states_repaired':closed_repaired}; self.last_error=None
             except Exception as exc: self.last_error=str(exc); logger.exception('Position-manager recovery failed')
             try: await asyncio.wait_for(self.stop_event.wait(),timeout=max(1,int(settings.live_position_manager_recovery_scan_seconds)))
             except asyncio.TimeoutError: pass
@@ -103,7 +116,12 @@ class LivePositionManagerWorker:
         except Exception as exc: self.last_error=str(exc); logger.exception('Position-manager quote handling failed')
     async def _health(self):
         while not self.stop_event.is_set():
-            await self.bus.heartbeat('live_position_manager_worker',self.worker_id,{'status':'DEGRADED' if self.last_error else 'HEALTHY','last_error':self.last_error,'last_result':self.last_result,'broker_send_enabled':settings.live_position_manager_broker_send_enabled,'demo_only':settings.live_position_manager_demo_only})
+            try:
+                await self.bus.heartbeat('live_position_manager_worker',self.worker_id,{'status':'DEGRADED' if self.last_error else 'HEALTHY','last_error':self.last_error,'last_result':self.last_result,'broker_send_enabled':settings.live_position_manager_broker_send_enabled,'demo_only':settings.live_position_manager_demo_only})
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning('Position-manager heartbeat temporarily failed: %s', exc)
             try: await asyncio.wait_for(self.stop_event.wait(),timeout=5)
             except asyncio.TimeoutError: pass
 

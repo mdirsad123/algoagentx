@@ -586,20 +586,27 @@ class LiveMarketWorker:
 
     async def _store_historical(self, feed: FeedRegistration, bars: list[dict[str, Any]]) -> None:
         async with async_session() as db:
-            for candle in bars:
-                values = self._candle_values(feed, candle, source="CTRADER_BOOTSTRAP")
-                stmt = insert(LiveMarketCandle).values(**values).on_conflict_do_update(
+            values_list = [self._candle_values(feed, candle, source="CTRADER_BOOTSTRAP") for candle in bars]
+            # A startup bootstrap must not issue hundreds/thousands of individual
+            # INSERT round trips. Batch the same idempotent upsert contract used
+            # by the dedicated history worker.
+            for offset in range(0, len(values_list), 250):
+                batch = values_list[offset : offset + 250]
+                if not batch:
+                    continue
+                stmt = insert(LiveMarketCandle).values(batch)
+                stmt = stmt.on_conflict_do_update(
                     constraint="uq_live_market_candles_dep_symbol_tf_time",
                     set_={
-                        "broker_account_id": values["broker_account_id"],
-                        "open": values["open"],
-                        "high": values["high"],
-                        "low": values["low"],
-                        "close": values["close"],
-                        "volume": values["volume"],
-                        "source": values["source"],
+                        "broker_account_id": stmt.excluded.broker_account_id,
+                        "open": stmt.excluded.open,
+                        "high": stmt.excluded.high,
+                        "low": stmt.excluded.low,
+                        "close": stmt.excluded.close,
+                        "volume": stmt.excluded.volume,
+                        "source": stmt.excluded.source,
                         "is_closed": True,
-                        "raw_payload": values["raw_payload"],
+                        "raw_payload": stmt.excluded.raw_payload,
                         "updated_at": func.now(),
                     },
                 )
@@ -819,10 +826,16 @@ class LiveMarketWorker:
         await self.trace.mark(trace_id, "t2", status="CANDLE_NORMALIZED")
 
         async with async_session() as db:
-            deployment = (
-                await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == feed.deployment_id))
-            ).scalar_one_or_none()
-            if deployment is None or deployment.status != "RUNNING" or not deployment.auto_runner_enabled:
+            deployment_state = (
+                await db.execute(
+                    select(
+                        StrategyDeployment.status,
+                        StrategyDeployment.auto_runner_enabled,
+                        StrategyDeployment.last_processed_candle_time,
+                    ).where(StrategyDeployment.id == feed.deployment_id)
+                )
+            ).one_or_none()
+            if deployment_state is None or deployment_state.status != "RUNNING" or not deployment_state.auto_runner_enabled:
                 await self.trace.annotate(trace_id, status="DEPLOYMENT_INACTIVE")
                 return
             values = self._candle_values(feed, candle, source=source, trace_id=trace_id)
@@ -842,7 +855,7 @@ class LiveMarketWorker:
                 },
             )
             await db.execute(stmt)
-            processed_at = deployment.last_processed_candle_time
+            processed_at = deployment_state.last_processed_candle_time
             if processed_at is not None and processed_at.tzinfo is None:
                 processed_at = processed_at.replace(tzinfo=timezone.utc)
             already_processed = bool(processed_at and processed_at >= candle_time)
@@ -915,11 +928,16 @@ class LiveMarketWorker:
             await self._store_historical(feed, closed)
             return
         async with async_session() as db:
-            deployment = (
-                await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == feed.deployment_id))
-            ).scalar_one_or_none()
-            processed = deployment.last_processed_candle_time if deployment else None
-            started_at = deployment.started_at if deployment else None
+            deployment_state = (
+                await db.execute(
+                    select(
+                        StrategyDeployment.last_processed_candle_time,
+                        StrategyDeployment.started_at,
+                    ).where(StrategyDeployment.id == feed.deployment_id)
+                )
+            ).one_or_none()
+            processed = deployment_state.last_processed_candle_time if deployment_state else None
+            started_at = deployment_state.started_at if deployment_state else None
             if processed is not None and processed.tzinfo is None:
                 processed = processed.replace(tzinfo=timezone.utc)
             if started_at is not None and started_at.tzinfo is None:
@@ -1399,23 +1417,28 @@ class LiveMarketWorker:
 
     async def _health_loop(self) -> None:
         while not self._stop.is_set():
-            connection_health = ctrader_connection_manager.health()
-            degraded = any(feed.watchdog_attempts for feed in self.feeds.values()) or bool(self._last_error)
-            await self.bus.heartbeat(
-                "live_market_worker",
-                self.worker_id,
-                {
-                    "status": "DEGRADED" if degraded else "HEALTHY",
-                    "feeds": len(self.feeds),
-                    "feed_deployments": [str(deployment_id) for deployment_id in self.feeds],
-                    "candle_queue_depth": self._candle_queue.qsize(),
-                    "last_market_event_at": self._last_market_event_at.isoformat() if self._last_market_event_at else None,
-                    "last_candle_published_at": self._last_candle_published_at.isoformat() if self._last_candle_published_at else None,
-                    "last_order_at": self._last_order_at.isoformat() if self._last_order_at else None,
-                    "last_error": self._last_error,
-                    "connections": connection_health,
-                },
-            )
+            try:
+                connection_health = ctrader_connection_manager.health()
+                degraded = any(feed.watchdog_attempts for feed in self.feeds.values()) or bool(self._last_error)
+                await self.bus.heartbeat(
+                    "live_market_worker",
+                    self.worker_id,
+                    {
+                        "status": "DEGRADED" if degraded else "HEALTHY",
+                        "feeds": len(self.feeds),
+                        "feed_deployments": [str(deployment_id) for deployment_id in self.feeds],
+                        "candle_queue_depth": self._candle_queue.qsize(),
+                        "last_market_event_at": self._last_market_event_at.isoformat() if self._last_market_event_at else None,
+                        "last_candle_published_at": self._last_candle_published_at.isoformat() if self._last_candle_published_at else None,
+                        "last_order_at": self._last_order_at.isoformat() if self._last_order_at else None,
+                        "last_error": self._last_error,
+                        "connections": connection_health,
+                    },
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Market-worker heartbeat temporarily failed: %s", exc)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=5)
             except asyncio.TimeoutError:

@@ -265,7 +265,10 @@ export const liveTradingApi = {
 
   async getDeploymentSummary(id: string, options?: { refreshBroker?: boolean }): Promise<LiveDeploymentSummary> {
     const response = await axiosInstance.get<Envelope<LiveDeploymentSummary>>(`/api/v1/live/deployments/${id}/summary`, {
-      params: { refresh_broker: options?.refreshBroker ?? true },
+      // Summary polling is observer-only. Broker refresh is an explicit/manual
+      // action; silently opening cTrader requests from every page poll can
+      // compete with the persistent market worker.
+      params: { refresh_broker: options?.refreshBroker ?? false },
     });
     return unwrap(response.data);
   },

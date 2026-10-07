@@ -577,15 +577,16 @@ export default function LiveDeploymentDetailPage() {
 
   useEffect(() => {
     if (!deploymentId) return;
-    const timer = setInterval(() => loadRuntime(true), 5000);
+    // 15s keeps the observer UI responsive while avoiding four concurrent API
+    // reads every 10 seconds on small local/Oracle instances. Trading execution is
+    // event-driven and is not delayed by this browser polling interval.
+    const timer = setInterval(() => loadRuntime(true), 15000);
     return () => clearInterval(timer);
   }, [deploymentId]);
 
-  useEffect(() => {
-    if (deployment?.broker_account_id) refreshBroker(true);
-    // broker status refresh runs once after a linked broker is known, not every 5 sec
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deployment?.broker_account_id]);
+  // Do not auto-open a broker network refresh merely because this page mounted.
+  // Persistent market/reconcile workers own broker connectivity. The user can
+  // still use the explicit Refresh/Sync broker actions when needed.
 
   const action = async (type: "start" | "pause" | "stop") => {
     if (!deploymentId) return;

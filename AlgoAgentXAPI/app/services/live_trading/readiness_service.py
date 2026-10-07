@@ -19,10 +19,8 @@ from ...db.models import (
 )
 from ..brokers.factory import get_broker_code
 from ..live.order_preview_service import build_live_order_preview, find_live_instrument_spec, resolve_live_runtime_config
-from ..live.broker_candle_service import get_latest_closed_candles
-from ..live.strategy_runner import _candles_to_dataframe, _run_strategy_generate, extract_latest_signal_payload
 from ..strategy_registry import resolve_strategy
-from ..live.strategy_history_profile import resolve_live_strategy_profile, runtime_contract_violations
+from ..live.strategy_history_profile import resolve_live_strategy_profile
 from ..trading.guardrails import validate_instrument_spec
 from ..trading.runtime_config_service import validate_runtime_config
 from ..live.trading_safety import day_start_utc, get_platform_trading_settings
@@ -163,7 +161,12 @@ async def check_instrument_ready(db: AsyncSession, deployment: StrategyDeploymen
 
 async def check_market_data_ready(db: AsyncSession, deployment: StrategyDeployment) -> list[dict[str, Any]]:
     count = int((await db.execute(select(func.count(LiveMarketCandle.id)).where(LiveMarketCandle.deployment_id == deployment.id, LiveMarketCandle.is_closed.is_(True)))).scalar() or 0)
-    latest = (await db.execute(select(LiveMarketCandle).where(LiveMarketCandle.deployment_id == deployment.id, LiveMarketCandle.is_closed.is_(True)).order_by(LiveMarketCandle.candle_time.desc()).limit(1))).scalar_one_or_none()
+    latest = (await db.execute(
+        select(LiveMarketCandle.candle_time)
+        .where(LiveMarketCandle.deployment_id == deployment.id, LiveMarketCandle.is_closed.is_(True))
+        .order_by(LiveMarketCandle.candle_time.desc())
+        .limit(1)
+    )).scalar_one_or_none()
     required = 50
     resolved_class = None
     resolution_error = None
@@ -187,7 +190,7 @@ async def check_market_data_ready(db: AsyncSession, deployment: StrategyDeployme
     else:
         history_message = f"Only {count}/{required} required closed candles are stored. Live execution is blocked until strategy warm-up is complete."
     return [
-        _check("latest_candles_available", "Latest candles available", PASS if latest else FAIL, f"Latest closed candle is {latest.candle_time}." if latest else "No closed live candles stored yet. Refresh candles first.", "Refresh Candles", f"/live-trading/{deployment.id}"),
+        _check("latest_candles_available", "Latest candles available", PASS if latest else FAIL, f"Latest closed candle is {latest}." if latest else "No closed live candles stored yet. Refresh candles first.", "Refresh Candles", f"/live-trading/{deployment.id}"),
         _check("enough_candles_for_strategy", "Enough candles for strategy", PASS if enough else FAIL, history_message, "Refresh Candles", f"/live-trading/{deployment.id}", data={"stored_history_bars": count, "required_history_bars": required, "resolved_strategy_class": resolved_class, "resolution_error": resolution_error}),
     ]
 
@@ -199,29 +202,14 @@ def _runtime_sl_mode(config: dict[str, Any] | None) -> str:
     return str(sl_tp.get("sl_mode") or "ATR").upper().replace(" ", "_")
 
 
-async def _latest_strategy_signal_payload(db: AsyncSession, deployment: StrategyDeployment) -> dict[str, Any]:
-    strategy = (await db.execute(select(Strategy).where(Strategy.id == deployment.strategy_id))).scalar_one_or_none()
-    if strategy is None:
-        raise ValueError("Strategy was not found.")
-    strategy_params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
-    strategy_class, params, _ = resolve_strategy(str(strategy.id), str(strategy.name), strategy_params)
-    profile = resolve_live_strategy_profile(strategy_class, strategy_params)
-    runtime_config = await resolve_live_runtime_config(db, deployment=deployment)
-    violations = runtime_contract_violations(strategy_class, runtime_config, strategy_params)
-    if violations:
-        raise ValueError(f"Runtime contract mismatch: {violations}")
-    candles = await get_latest_closed_candles(db, deployment.id, limit=profile.required_history_bars)
-    if len(candles) < profile.required_history_bars:
-        raise ValueError(f"Not enough closed candles to evaluate the latest strategy signal: {len(candles)}/{profile.required_history_bars}.")
-    generated = _run_strategy_generate(strategy_class(_candles_to_dataframe(candles), **params))
-    if generated is None or getattr(generated, "empty", True):
-        raise ValueError("Strategy did not return a valid DataFrame.")
-    return extract_latest_signal_payload(generated)
-
-
 async def check_risk_preview_ready(db: AsyncSession, deployment: StrategyDeployment) -> list[dict[str, Any]]:
-    latest = (await db.execute(select(LiveMarketCandle).where(LiveMarketCandle.deployment_id == deployment.id, LiveMarketCandle.is_closed.is_(True)).order_by(LiveMarketCandle.candle_time.desc()).limit(1))).scalar_one_or_none()
-    entry = _dec(getattr(latest, "close", None), "0") if latest is not None else Decimal("0")
+    latest = (await db.execute(
+        select(LiveMarketCandle.close)
+        .where(LiveMarketCandle.deployment_id == deployment.id, LiveMarketCandle.is_closed.is_(True))
+        .order_by(LiveMarketCandle.candle_time.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    entry = _dec(latest, "0") if latest is not None else Decimal("0")
     if entry <= 0:
         return [
             _check("latest_entry_plan_ok", "Latest entry plan OK", FAIL, "Entry plan needs a latest candle close price. Refresh candles first.", "Refresh Candles", f"/live-trading/{deployment.id}"),
@@ -266,41 +254,20 @@ async def check_risk_preview_ready(db: AsyncSession, deployment: StrategyDeploym
     strategy_stop_loss = None
     strategy_target = None
 
-    # A STRATEGY_SUGGESTED stop cannot be validated by inventing a BUY order.
-    # Evaluate the real latest strategy row instead. If it is HOLD/EXIT, there is
-    # no entry to size yet and readiness should not fail just because no SL exists
-    # on a non-entry row. On a real BUY/SELL row, pass the strategy's actual SL/TP
-    # into the same order-preview/risk-sizing engine used for execution.
+    # Readiness is polled from the live page and must stay lightweight. A
+    # STRATEGY_SUGGESTED stop cannot be validated by inventing a BUY order, and
+    # running a full pandas strategy here previously held the API DB session for
+    # seconds/minutes. The explicit Full Dry Test and the real BUY/SELL execution
+    # path validate the actual strategy-provided SL/TP.
     if sl_mode == "STRATEGY_SUGGESTED":
-        try:
-            signal_payload = await _latest_strategy_signal_payload(db, deployment)
-        except Exception as exc:
-            message = f"Strategy could not be evaluated for STRATEGY_SUGGESTED risk preview: {exc}"
-            return [
-                _check("latest_entry_plan_ok", "Latest entry plan OK", FAIL, message, "Open Compatibility", f"/live-trading/{deployment.id}"),
-                _check("risk_preview_ok", "Risk preview OK", FAIL, message, "Open Compatibility", f"/live-trading/{deployment.id}"),
-            ]
-
-        signal_type = str(signal_payload.get("signal_type") or "HOLD").upper()
-        if signal_type not in {"BUY", "SELL"}:
-            message = (
-                f"Latest strategy signal is {signal_type}; no entry order exists, so strategy_stop_loss is not required yet. "
-                "Risk sizing will run automatically on the next BUY/SELL signal."
-            )
-            return [
-                _check("latest_entry_plan_ok", "Latest entry plan OK", PASS, message, "Preview Order", f"/live-trading/{deployment.id}/settings"),
-                _check("risk_preview_ok", "Risk preview OK", PASS, message, "Preview Order", f"/live-trading/{deployment.id}/settings"),
-            ]
-
-        preview_side = signal_type
-        strategy_stop_loss = signal_payload.get("strategy_stop_loss")
-        strategy_target = signal_payload.get("strategy_target")
-        if strategy_stop_loss in (None, "", 0):
-            message = f"Latest {signal_type} signal did not produce strategy_stop_loss required by STRATEGY_SUGGESTED mode."
-            return [
-                _check("latest_entry_plan_ok", "Latest entry plan OK", FAIL, message, "Open Compatibility", f"/live-trading/{deployment.id}"),
-                _check("risk_preview_ok", "Risk preview OK", FAIL, message, "Open Compatibility", f"/live-trading/{deployment.id}"),
-            ]
+        message = (
+            "STRATEGY_SUGGESTED is configured. Readiness does not execute the strategy on every page poll; "
+            "the actual strategy SL/TP and risk sizing are validated by Full Dry Test and on the next BUY/SELL signal."
+        )
+        return [
+            _check("latest_entry_plan_ok", "Latest entry plan OK", PASS, message, "Run Full Dry Test", f"/live-trading/{deployment.id}"),
+            _check("risk_preview_ok", "Risk preview OK", PASS, message, "Run Full Dry Test", f"/live-trading/{deployment.id}"),
+        ]
 
     preview = await build_live_order_preview(
         db,
@@ -328,7 +295,7 @@ async def check_risk_preview_ready(db: AsyncSession, deployment: StrategyDeploym
 
 
 async def check_live_compatibility_ready(db: AsyncSession, deployment: StrategyDeployment) -> list[dict[str, Any]]:
-    result = await run_live_compatibility_check(db, deployment.id)
+    result = await run_live_compatibility_check(db, deployment.id, deep_strategy_check=False)
     status = str(result.get("status") or FAIL).upper()
     message = result.get("summary") or "Live compatibility checked."
     checks = result.get("checks") or []

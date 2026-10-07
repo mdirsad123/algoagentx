@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db.models import BrokerAccount, LiveMarketCandle, Strategy, StrategyDeployment
@@ -12,6 +12,7 @@ from ..brokers.factory import get_broker_code
 from ..trading.guardrails import validate_instrument_spec
 from .broker_candle_service import get_latest_closed_candles
 from .strategy_history_profile import resolve_live_strategy_profile, runtime_contract_violations
+from .history_warmup_queue import enqueue_history_warmup
 from .capital_service import get_effective_trading_capital
 from .order_preview_service import find_live_instrument_spec, resolve_live_runtime_config
 from .strategy_runner import _candles_to_dataframe, _run_strategy_generate, extract_latest_signal_payload
@@ -60,7 +61,12 @@ def _positive(value: Any) -> bool:
         return False
 
 
-async def run_live_compatibility_check(db: AsyncSession, deployment_id: UUID | str) -> dict[str, Any]:
+async def run_live_compatibility_check(
+    db: AsyncSession,
+    deployment_id: UUID | str,
+    *,
+    deep_strategy_check: bool = True,
+) -> dict[str, Any]:
     deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
     if deployment is None:
         return {"status": FAIL, "summary": "Deployment not found", "checks": [_check("Deployment", FAIL, "Deployment was not found.")]}
@@ -118,9 +124,59 @@ async def run_live_compatibility_check(db: AsyncSession, deployment_id: UUID | s
     else:
         checks.append(_check("Broker capital", WARNING, "PAPER deployments are deprecated. Create a DEMO or LIVE broker deployment."))
 
+    if not deep_strategy_check:
+        stored_count = int((await db.execute(
+            select(func.count(LiveMarketCandle.id)).where(
+                LiveMarketCandle.deployment_id == deployment.id,
+                LiveMarketCandle.is_closed.is_(True),
+            )
+        )).scalar() or 0)
+        if stored_count < profile.required_history_bars:
+            queued = enqueue_history_warmup(deployment.id, profile.required_history_bars)
+            checks.append(_check("Strategy generates DataFrame", FAIL, f"Only {stored_count}/{profile.required_history_bars} required closed candles found. Background broker-history warm-up is queued/running.", {"warmup_queue": queued, "stored_count": stored_count, "required_count": profile.required_history_bars}))
+            checks.append(_check("Signal contract", FAIL, "Cannot validate signal contract until required history is available."))
+            checks.append(_check("Strategy SL output", FAIL if sl_mode == "STRATEGY_SUGGESTED" else WARNING, "Cannot validate strategy SL readiness until required history is available."))
+            status = _overall(checks)
+            return {"status": status, "summary": "Live compatibility failed" if status == FAIL else "Live compatibility has warnings", "checks": checks}
+
+        # Readiness/page polling must be observer-only. Running a dynamic pandas
+        # strategy inside an API health/readiness request can hold an API DB
+        # session for seconds/minutes and starve the connection pool. The
+        # explicit Compatibility / Full Dry Test actions still use the deep
+        # strategy execution path below.
+        checks.append(_check(
+            "Strategy generates DataFrame",
+            PASS,
+            f"{stored_count}/{profile.required_history_bars} required candles are available. Deep strategy execution is deferred to the explicit Compatibility/Full Dry Test action.",
+            {"stored_count": stored_count, "required_count": profile.required_history_bars, "deferred": True},
+        ))
+        checks.append(_check(
+            "Signal contract",
+            PASS,
+            "Dynamic strategy source resolved successfully; signal-output execution check is deferred to the explicit dry test.",
+            {"resolved_strategy_class": strategy_class.__name__, "deferred": True},
+        ))
+        checks.append(_check(
+            "Strategy SL output",
+            PASS,
+            (
+                "STRATEGY_SUGGESTED SL/TP will be validated on the next explicit dry test or BUY/SELL execution."
+                if sl_mode == "STRATEGY_SUGGESTED"
+                else f"SL mode is {sl_mode}; no strategy SL output is required for lightweight readiness."
+            ),
+            {"deferred": True, "sl_mode": sl_mode},
+        ))
+        status = _overall(checks)
+        return {
+            "status": status,
+            "summary": "Live compatible" if status == PASS else "Live compatible with warnings" if status == WARNING else "Live compatibility failed",
+            "checks": checks,
+        }
+
     candles = await get_latest_closed_candles(db, deployment.id, limit=profile.required_history_bars)
     if len(candles) < profile.required_history_bars:
-        checks.append(_check("Strategy generates DataFrame", FAIL, f"Only {len(candles)}/{profile.required_history_bars} required closed candles found. Complete broker-history warm-up before compatibility check."))
+        queued = enqueue_history_warmup(deployment.id, profile.required_history_bars)
+        checks.append(_check("Strategy generates DataFrame", FAIL, f"Only {len(candles)}/{profile.required_history_bars} required closed candles found. Background broker-history warm-up is queued/running.", {"warmup_queue": queued, "stored_count": len(candles), "required_count": profile.required_history_bars}))
         checks.append(_check("Signal contract", FAIL, "Cannot validate signal contract without generated strategy output."))
         checks.append(_check("Strategy SL output", FAIL if sl_mode == "STRATEGY_SUGGESTED" else WARNING, "Cannot validate strategy SL output without generated strategy output."))
         status = _overall(checks)

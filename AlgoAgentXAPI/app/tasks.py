@@ -578,14 +578,23 @@ def _fresh_async_engine_and_sessionmaker():
     from sqlalchemy.orm import sessionmaker as _sessionmaker
     from .core.config import settings
 
-    connect_args = {"command_timeout": 14400} if settings.database_url.startswith("postgresql+asyncpg") else {}
+    connect_args = {}
+    if settings.database_url.startswith("postgresql+asyncpg"):
+        connect_args = {
+            "command_timeout": 14400,
+            "timeout": max(3, int(settings.db_connect_timeout_seconds)),
+        }
     worker_engine = create_async_engine(
         settings.database_url,
         echo=False,
         future=True,
         pool_pre_ping=True,
         pool_recycle=1800,
-        pool_timeout=60,
+        # Background workers do one/few jobs at a time.  Bound their DB pools so
+        # a full live stack cannot create dozens of idle/overflow connections.
+        pool_size=max(1, min(2, int(settings.db_pool_size))),
+        max_overflow=max(0, min(1, int(settings.db_max_overflow))),
+        pool_timeout=max(3, int(settings.db_pool_timeout_seconds)),
         connect_args=connect_args,
     )
     factory = _sessionmaker(bind=worker_engine, class_=_AsyncSession, expire_on_commit=False)
@@ -793,3 +802,93 @@ def run_funded_backtest_v2_task(self, run_id: str, user_id: str, payload_dict: D
 def run_funded_backtest_v2_fallback(run_id: str, user_id: str, payload_dict: Dict[str, Any], user_role: str = ""):
     """Threaded FastAPI background fallback for funded simulations."""
     return asyncio.run(_run_funded_backtest_v2_async(run_id, user_id, payload_dict, user_role))
+
+
+async def _warm_live_strategy_history_async(deployment_id: str, required_count: int) -> dict[str, Any]:
+    """Background-only broker history warm-up for one live deployment."""
+    from uuid import UUID
+    from .db.models import StrategyDeployment
+    from .services.live.broker_candle_service import (
+        ensure_deployment_candle_history,
+        get_deployment_candle_history_status,
+    )
+
+    worker_engine, session_factory = _fresh_async_engine_and_sessionmaker()
+    try:
+        async with session_factory() as db:
+            deployment = await db.get(StrategyDeployment, UUID(str(deployment_id)))
+            if deployment is None:
+                return {
+                    "deployment_id": str(deployment_id),
+                    "status": "deployment_not_found",
+                    "ready": False,
+                }
+            status = await get_deployment_candle_history_status(db, deployment, int(required_count))
+            if status.get("ready"):
+                return {"deployment_id": str(deployment_id), "status": "already_ready", **status}
+            result = await ensure_deployment_candle_history(db, deployment, int(required_count))
+            return {"deployment_id": str(deployment_id), "status": "completed" if result.get("ready") else "incomplete", **result}
+    finally:
+        await worker_engine.dispose()
+
+
+@celery_app.task(
+    name="app.tasks.warm_live_strategy_history_task",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=30,
+)
+def warm_live_strategy_history_task(self, deployment_id: str, required_count: int):
+    """Fetch large strategy history off the FastAPI/live-strategy worker path.
+
+    A Redis lock keeps repeated Refresh/Compatibility clicks from starting
+    concurrent 20k backfills for the same deployment. The dedicated
+    ``live_history`` Celery queue should be consumed with concurrency=1.
+    """
+    import redis
+    from .core.config import settings
+
+    lock_key = f"live:history:warmup:lock:{deployment_id}"
+    status_key = f"live:history:warmup:status:{deployment_id}"
+    r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    acquired = bool(r.set(lock_key, "1", nx=True, ex=3600))
+    if not acquired:
+        return {"deployment_id": str(deployment_id), "status": "already_queued_or_running"}
+
+    try:
+        r.hset(status_key, mapping={
+            "status": "RUNNING",
+            "required_count": str(int(required_count)),
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+        })
+        r.expire(status_key, 7200)
+        result = asyncio.run(_warm_live_strategy_history_async(str(deployment_id), int(required_count)))
+        r.hset(status_key, mapping={
+            "status": "READY" if result.get("ready") else str(result.get("status") or "INCOMPLETE").upper(),
+            "stored_count": str(int(result.get("stored_count") or 0)),
+            "required_count": str(int(result.get("required_count") or required_count)),
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+        })
+        r.expire(status_key, 7200)
+        if result.get("error") and not result.get("ready"):
+            raise self.retry(exc=RuntimeError(str(result.get("error"))), countdown=30)
+        return result
+    except Exception as exc:
+        retries = int(getattr(getattr(self, "request", None), "retries", 0) or 0)
+        max_retries = int(getattr(self, "max_retries", 3) or 3)
+        terminal = retries >= max_retries
+        r.hset(status_key, mapping={
+            "status": "FAILED" if terminal else "RETRYING",
+            "error": str(exc)[:1000],
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+        })
+        r.expire(status_key, 7200)
+        if terminal:
+            raise
+        raise self.retry(exc=exc, countdown=30)
+    finally:
+        try:
+            r.delete(lock_key)
+            r.delete(f"live:history:warmup:queued:{deployment_id}")
+        except Exception:
+            pass

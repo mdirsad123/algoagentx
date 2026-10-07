@@ -339,6 +339,8 @@ class ActiveSetup:
 
 
 class XAUUSD5MSupplyDemandRejectionV35CandidateA:
+    LIVE_HISTORY_BARS = 2000
+
     """V3.5 research candidate built on frozen V3.4 research logic."""
 
     @staticmethod

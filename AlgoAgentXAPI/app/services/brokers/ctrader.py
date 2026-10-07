@@ -1499,7 +1499,7 @@ class CTraderAdapter(BrokerAdapter):
         return result[-safe_count:]
 
 
-    async def get_rates_history(self, symbol: str, timeframe: str, count: int = 5000) -> list[dict[str, Any]]:
+    async def get_rates_history(self, symbol: str, timeframe: str, count: int = 5000, before: datetime | None = None) -> list[dict[str, Any]]:
         """Fetch a large closed-candle history in broker-safe pages.
 
         cTrader trendbar requests are capped well below the live strategy warm-up
@@ -1531,7 +1531,9 @@ class CTraderAdapter(BrokerAdapter):
         is_live = bool(selected.get("is_live") or str(selected.get("account_type") or "").upper() == "LIVE")
         numeric_id = int(account_id)
         rows_by_time: dict[str, dict[str, Any]] = {}
-        cursor_to = datetime.now(timezone.utc)
+        cursor_to = before if isinstance(before, datetime) else datetime.now(timezone.utc)
+        if cursor_to.tzinfo is None:
+            cursor_to = cursor_to.replace(tzinfo=timezone.utc)
         previous_oldest: datetime | None = None
 
         client = None

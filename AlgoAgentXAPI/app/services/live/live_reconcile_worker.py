@@ -43,7 +43,15 @@ class LiveReconcileWorker:
         health_task = asyncio.create_task(self._health_loop())
         try:
             while not self._stop.is_set():
-                await self._run_cycle()
+                try:
+                    await self._run_cycle()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # DB/Redis/Docker DNS interruptions are recoverable.  The old
+                    # loop exited the whole worker on one failed cycle.
+                    self._last_error = str(exc)[:1000]
+                    logger.warning("Reconcile cycle temporarily failed: %s", exc)
                 try:
                     await asyncio.wait_for(
                         self._stop.wait(),
@@ -158,15 +166,20 @@ class LiveReconcileWorker:
 
     async def _health_loop(self) -> None:
         while not self._stop.is_set():
-            await self.bus.heartbeat(
-                "live_reconcile_worker",
-                self.worker_id,
-                {
-                    "status": "DEGRADED" if self._last_error else "HEALTHY",
-                    "last_error": self._last_error,
-                    "last_result": self._last_result,
-                },
-            )
+            try:
+                await self.bus.heartbeat(
+                    "live_reconcile_worker",
+                    self.worker_id,
+                    {
+                        "status": "DEGRADED" if self._last_error else "HEALTHY",
+                        "last_error": self._last_error,
+                        "last_result": self._last_result,
+                    },
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Reconcile-worker heartbeat temporarily failed: %s", exc)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=5)
             except asyncio.TimeoutError:

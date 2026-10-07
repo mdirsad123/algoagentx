@@ -413,7 +413,7 @@ async def run_due_deployments(db: AsyncSession | None = None) -> dict[str, Any]:
 
 
 async def auto_runner_loop() -> None:
-    interval = 1
+    interval = max(1, int(getattr(settings, "live_runner_interval_seconds", 1) or 1))
     logger.info("Live auto runner loop started, scheduler scan interval=%ss", interval)
     while True:
         try:

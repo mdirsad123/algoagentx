@@ -52,6 +52,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_DB: 0
+      # Resource-safe defaults for the full live stack. Override in .env.prod on
+      # larger Oracle instances if you intentionally want more API workers.
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
     depends_on:
       postgres_prod:
         condition: service_healthy
@@ -90,6 +93,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Worker containers do not expose HTTP /health. Docker checks only process
+    # liveness; application readiness/Redis status is reported by the live UI.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib; assert 'app.services.alerts.worker' in pathlib.Path('/proc/1/cmdline').read_bytes().decode('utf-8','ignore')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   live_market_worker:
     build:
@@ -113,11 +124,14 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import os, redis; r=redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')); assert r.exists('live:worker_health:live_market_worker')"]
+      # Do not make Docker liveness depend on a Redis heartbeat key. A transient
+      # Redis/DNS stall should show DEGRADED in the app and recover in-place, not
+      # mark every worker container unhealthy.
+      test: ["CMD", "python", "-c", "import pathlib; assert 'app.services.live.live_market_worker' in pathlib.Path('/proc/1/cmdline').read_bytes().decode('utf-8','ignore')"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 20s
+      retries: 10
+      start_period: 120s
 
   live_strategy_worker:
     build:
@@ -141,11 +155,14 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import os, redis; r=redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')); assert r.exists('live:worker_health:live_strategy_worker')"]
+      # Do not make Docker liveness depend on a Redis heartbeat key. A transient
+      # Redis/DNS stall should show DEGRADED in the app and recover in-place, not
+      # mark every worker container unhealthy.
+      test: ["CMD", "python", "-c", "import pathlib; assert 'app.services.live.live_strategy_worker' in pathlib.Path('/proc/1/cmdline').read_bytes().decode('utf-8','ignore')"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 20s
+      retries: 5
+      start_period: 60s
 
   live_reconcile_worker:
     build:
@@ -168,14 +185,20 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # Reconciliation can start independently and report its own health.
+      # Do not make the whole Compose startup fail while the market worker is
+      # still establishing broker feeds / writing its first heartbeat.
       live_market_worker:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
-      test: ["CMD", "python", "-c", "import os, redis; r=redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')); assert r.exists('live:worker_health:live_reconcile_worker')"]
+      # Do not make Docker liveness depend on a Redis heartbeat key. A transient
+      # Redis/DNS stall should show DEGRADED in the app and recover in-place, not
+      # mark every worker container unhealthy.
+      test: ["CMD", "python", "-c", "import pathlib; assert 'app.services.live.live_reconcile_worker' in pathlib.Path('/proc/1/cmdline').read_bytes().decode('utf-8','ignore')"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 20s
+      retries: 5
+      start_period: 60s
 
   live_position_manager_worker:
     build:
@@ -199,11 +222,14 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import os, redis; r=redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://redis:6379/0')); assert r.exists('live:worker_health:live_position_manager_worker')"]
+      # Do not make Docker liveness depend on a Redis heartbeat key. A transient
+      # Redis/DNS stall should show DEGRADED in the app and recover in-place, not
+      # mark every worker container unhealthy.
+      test: ["CMD", "python", "-c", "import pathlib; assert 'app.services.live.live_position_manager_worker' in pathlib.Path('/proc/1/cmdline').read_bytes().decode('utf-8','ignore')"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 20s
+      retries: 5
+      start_period: 60s
 
   # Optional worker. Enable only if you use Celery jobs/background queues.
   celery_worker:
@@ -226,8 +252,46 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib; assert 'celery' in pathlib.Path('/proc/1/cmdline').read_bytes().decode('utf-8','ignore')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     profiles:
       - worker
+
+  # Dedicated low-concurrency worker for large broker candle warm-ups.
+  # Keeps 20k+ history downloads off FastAPI and the live strategy event worker.
+  live_history_worker:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile.prod
+    container_name: algoagentx_live_history_worker
+    restart: unless-stopped
+    stop_grace_period: 60s
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_prod:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=1", "--prefetch-multiplier=1", "--max-tasks-per-child=1", "--without-gossip", "--without-mingle", "-Q", "live_history", "-n", "live_history@%h"]
+    depends_on:
+      postgres_prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Process liveness only. The task queue itself reports READY/RETRYING/FAILED
+    # through Redis status; avoid inspect-ping chatter and false unhealthy states.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib; c=pathlib.Path('/proc/1/cmdline').read_bytes().decode('utf-8','ignore'); assert 'celery' in c and 'live_history' in c"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   web:
     build:

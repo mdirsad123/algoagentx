@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://algo_user:algo_password@localhost:5432/algo_db"
+    db_pool_size: int = Field(default=3, description="Per-process SQLAlchemy pool size")
+    db_max_overflow: int = Field(default=2, description="Per-process SQLAlchemy max overflow connections")
+    db_pool_timeout_seconds: int = Field(default=10, description="Seconds to wait for a pooled DB connection")
+    db_connect_timeout_seconds: int = Field(default=10, description="Seconds to wait for a new PostgreSQL connection")
     
     # Environment detection - supports both 'env' and 'ENVIRONMENT' variables
     env: str = Field(default="development", description="Environment: development, staging, production")
@@ -117,9 +121,9 @@ class Settings(BaseSettings):
     live_strategy_consumer_group: str = Field(default="live-strategy-runners", description="Closed-candle strategy consumer group")
     live_order_consumer_group: str = Field(default="live-ctrader-order-gateway", description="cTrader order gateway consumer group")
     live_stream_maxlen: int = Field(default=100000, description="Approximate max Redis Stream length")
-    live_worker_concurrency: int = Field(default=8, description="Maximum concurrently processed deployment events")
+    live_worker_concurrency: int = Field(default=2, description="Maximum concurrently processed deployment events; keep low for live stability")
     live_pending_reclaim_idle_ms: int = Field(default=30000, description="Minimum idle time before reclaiming pending stream entries")
-    live_worker_health_ttl_seconds: int = Field(default=30, description="Worker health heartbeat TTL")
+    live_worker_health_ttl_seconds: int = Field(default=90, description="Worker health heartbeat TTL; tolerates short Redis/network stalls")
     live_order_dedupe_ttl_seconds: int = Field(default=86400, description="TTL for atomic external-order claims/results")
 
     live_candle_fallback_first_seconds: int = Field(default=3, description="First missing-candle recovery delay")
@@ -127,9 +131,17 @@ class Settings(BaseSettings):
     live_market_deployment_scan_seconds: int = Field(default=15, description="Seconds between active deployment registry refreshes")
     live_market_bootstrap_candles: int = Field(default=1000, description="Initial cTrader closed-candle bootstrap count")
     live_market_backfill_candles: int = Field(default=5, description="Small reconnect/watchdog backfill count")
-    live_strategy_history_default_bars: int = Field(default=20000, description="Default closed-candle history passed to live dynamic strategies")
+    live_strategy_history_default_bars: int = Field(default=2000, description="Default closed-candle history passed to live dynamic strategies")
+    live_strategy_history_override_bars: int = Field(
+        default=0,
+        description=(
+            "Optional temporary live-history override. 0 keeps the strategy-specific "
+            "requirement; a positive value forces that many bars for stability testing."
+        ),
+    )
     live_strategy_history_max_bars: int = Field(default=100000, description="Hard cap for per-strategy live history loading/backfill")
-    live_strategy_history_page_size: int = Field(default=2000, description="Broker history page size used for live warm-up backfill")
+    live_strategy_history_page_size: int = Field(default=1000, description="Per-request cTrader trendbar page size")
+    live_strategy_history_chunk_bars: int = Field(default=5000, description="Bars fetched per history-worker broker session before DB commit/progress")
 
     ctrader_heartbeat_seconds: int = Field(default=8, description="Persistent cTrader application heartbeat interval")
     ctrader_request_timeout_seconds: int = Field(default=15, description="Persistent cTrader request timeout")

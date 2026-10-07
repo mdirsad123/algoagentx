@@ -20,13 +20,14 @@ from ..strategy_registry import resolve_strategy
 from .execution_engine import execute_signal
 from .order_preview_service import build_live_order_preview, resolve_live_runtime_config
 from ..brokers.factory import get_broker_code
-from .broker_candle_service import ensure_deployment_candle_history, get_latest_closed_candles, load_live_candles_for_runner, refresh_deployment_candles
+from .broker_candle_service import get_deployment_candle_history_status, get_latest_closed_candles, load_live_candles_for_runner, refresh_deployment_candles
 from .pnl_service import to_decimal
 from .runner_scheduler import calculate_next_runner_after_candle, calculate_next_runner_at, ensure_utc
 from ..live_trading.paper_position_manager import process_paper_positions_for_deployment
 from .live_latency_trace_service import LiveLatencyTraceService
 from .deployment_lock import try_deployment_xact_lock
 from .strategy_history_profile import resolve_live_strategy_profile, runtime_contract_violations
+from .history_warmup_queue import enqueue_history_warmup
 
 logger = logging.getLogger(__name__)
 
@@ -489,11 +490,13 @@ async def run_full_dry_test_for_deployment(db: AsyncSession, deployment_id: UUID
     refresh_warning = None
     if mode in {"DEMO", "LIVE"}:
         try:
-            history = await ensure_deployment_candle_history(db, deployment, profile.required_history_bars)
+            history = await get_deployment_candle_history_status(db, deployment, profile.required_history_bars)
             if not history.get("ready"):
-                step("Strategy history", "FAIL", f"Only {history.get('stored_count', 0)}/{profile.required_history_bars} required closed candles are available.", history)
-                return {"success": False, "deployment_id": str(deployment.id), "steps": steps, "final_action": "REJECTED", "message": "Strategy warm-up history is insufficient.", "history": history}
-            await refresh_deployment_candles(db, deployment.id, count=min(profile.required_history_bars, 300))
+                queued = enqueue_history_warmup(deployment.id, profile.required_history_bars)
+                history["warmup_queue"] = queued
+                step("Strategy history", "FAIL", f"Only {history.get('stored_count', 0)}/{profile.required_history_bars} required closed candles are available. Background warm-up queued; retry after it completes.", history)
+                return {"success": False, "deployment_id": str(deployment.id), "steps": steps, "final_action": "REJECTED", "message": "Strategy warm-up history is still running in background.", "history": history}
+            await refresh_deployment_candles(db, deployment.id, count=300)
             step("Refreshed broker candles", "PASS", f"Latest broker candles refreshed for {mode} dry test.", history)
         except Exception as exc:
             refresh_warning = str(exc)
@@ -685,17 +688,18 @@ async def run_strategy_for_deployment(
         authoritative_candle_time = _normalize_dt(candle_time) if candle_time is not None else None
         history_status = None
         if mode in {"DEMO", "LIVE"}:
-            history_status = await ensure_deployment_candle_history(
+            history_status = await get_deployment_candle_history_status(
                 db,
                 deployment,
                 profile.required_history_bars,
                 through_candle_time=authoritative_candle_time,
             )
             if not history_status.get("ready"):
+                history_status["warmup_queue"] = enqueue_history_warmup(deployment.id, profile.required_history_bars)
                 detail = {
                     "ok": False,
                     "error_code": "STRATEGY_HISTORY_INSUFFICIENT",
-                    "message": f"HOLD - Strategy requires {profile.required_history_bars} closed candles; only {history_status.get('stored_count', 0)} are available.",
+                    "message": f"HOLD - Strategy requires {profile.required_history_bars} closed candles; only {history_status.get('stored_count', 0)} are available. Background warm-up is queued/running.",
                     "required_history_bars": profile.required_history_bars,
                     "stored_history_bars": history_status.get("stored_count", 0),
                     "history": history_status,

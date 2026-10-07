@@ -3,6 +3,7 @@ Redis connection manager with health checks and fallback support.
 """
 
 import logging
+import asyncio
 import redis.asyncio as aioredis
 from typing import Optional, Any
 from contextlib import asynccontextmanager
@@ -18,41 +19,48 @@ class RedisManager:
         self._redis_client: Optional[aioredis.Redis] = None
         self._is_connected = False
         self._connection_error = None
+        self._connect_lock = asyncio.Lock()
 
     async def initialize(self) -> bool:
-        """
-        Initialize Redis connection with health check.
-        
-        Returns:
-            bool: True if Redis is available, False otherwise
-        """
-        try:
-            # Parse Redis URL from environment
-            redis_url = self._get_redis_url()
-            logger.debug("Initializing Redis connection")
-            
-            # Create Redis client
-            self._redis_client = aioredis.from_url(
-                redis_url,
-                decode_responses=False,  # Keep binary for Celery compatibility
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                retry_on_timeout=True
-            )
-            
-            # Test connection
-            await self._redis_client.ping()
-            self._is_connected = True
-            self._connection_error = None
-            logger.debug("Redis connection established successfully")
-            return True
-            
-        except Exception as e:
-            self._is_connected = False
-            self._connection_error = str(e)
-            logger.error(f"Redis connection failed: {e}")
-            logger.error("Redis is unavailable - will use fallback background execution")
-            return False
+        """Initialize/reconnect Redis without racing concurrent callers."""
+        async with self._connect_lock:
+            try:
+                if self._redis_client is not None:
+                    try:
+                        await self._redis_client.close()
+                    except Exception:
+                        pass
+                redis_url = self._get_redis_url()
+                logger.debug("Initializing Redis connection")
+                self._redis_client = aioredis.from_url(
+                    redis_url,
+                    decode_responses=False,
+                    socket_connect_timeout=5,
+                    socket_timeout=5,
+                    retry_on_timeout=True,
+                    health_check_interval=15,
+                )
+                await self._redis_client.ping()
+                self._is_connected = True
+                self._connection_error = None
+                logger.debug("Redis connection established successfully")
+                return True
+            except Exception as e:
+                self._is_connected = False
+                self._connection_error = str(e)
+                logger.error(f"Redis connection failed: {e}")
+                return False
+
+    async def ensure_connected(self) -> bool:
+        """Return a healthy Redis client, reconnecting after transient DNS/network loss."""
+        if self._redis_client is not None and self._is_connected:
+            try:
+                await self._redis_client.ping()
+                return True
+            except Exception as exc:
+                self._is_connected = False
+                self._connection_error = str(exc)
+        return await self.initialize()
 
     def _get_redis_url(self) -> str:
         """Get Redis URL from environment variables with fallback logic."""

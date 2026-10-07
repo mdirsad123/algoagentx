@@ -9,9 +9,9 @@ class ExplicitContractStrategy:
     LIVE_RUNTIME_CONTRACT = {"execution.exit_on_opposite_signal": False}
 
 
-def test_v137_has_universal_history_without_implicit_runtime_forcing():
+def test_generic_strategy_uses_platform_default_without_name_based_history_forcing():
     profile = resolve_live_strategy_profile(XAUUSD5MTrendBreakoutV137, {})
-    assert profile.required_history_bars == 20000
+    assert profile.required_history_bars == 2000
     assert profile.runtime_contract is None
 
 

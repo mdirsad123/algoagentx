@@ -35,8 +35,9 @@ from ...services.live.funded_guard_service import (
 from ...services.funded_backtest.snapshots import build_profile_snapshot
 from ...services.funded_backtest.rule_engine import calculate_daily_floor, calculate_max_loss_floor
 from ...services.live.broker_candle_service import get_candle_snapshot, refresh_deployment_candles
-from ...services.live.broker_candle_service import ensure_deployment_candle_history
+from ...services.live.broker_candle_service import get_deployment_candle_history_status
 from ...services.live.strategy_history_profile import resolve_live_strategy_profile
+from ...services.live.history_warmup_queue import enqueue_history_warmup
 from ...services.strategy_registry import resolve_strategy
 from ...services.live.strategy_runner import run_strategy_for_deployment, run_full_dry_test_for_deployment
 from ...services.live.compatibility_service import run_live_compatibility_check, compatibility_failed
@@ -1315,6 +1316,14 @@ async def create_deployment(payload: StrategyDeploymentCreate, db: AsyncSession 
         await add_funded_event(db, row, "FUNDED_POLICY_ATTACHED", "Funded account policy attached to deployment", metadata={"profile_id": str(row.funded_profile_id), "phase_number": row.funded_phase_number, "risk_mode": row.funded_risk_mode, "attach_mode": row.funded_attach_mode})
     await db.commit()
     await db.refresh(row)
+    if mode in {"DEMO", "LIVE"}:
+        try:
+            strategy_params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
+            strategy_class, _, _ = resolve_strategy(strategy.id, strategy.name, strategy_params)
+            profile = resolve_live_strategy_profile(strategy_class, strategy_params)
+            enqueue_history_warmup(row.id, profile.required_history_bars)
+        except Exception as exc:
+            logger.warning("Could not queue initial history warm-up for deployment %s: %s", row.id, exc)
     return success_response(dump_one(StrategyDeploymentOut, row), "Deployment created")
 
 
@@ -1451,7 +1460,9 @@ async def process_deployment_paper_positions(deployment_id: UUID, db: AsyncSessi
 @router.get("/{deployment_id}/summary")
 async def get_deployment_summary(
     deployment_id: UUID,
-    refresh_broker: bool = Query(default=True),
+    # Observer endpoint: never perform broker network I/O unless explicitly
+    # requested. Dedicated reconcile/market workers own live broker sync.
+    refresh_broker: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -1573,7 +1584,7 @@ async def get_deployment_pipeline_health(
     # separate candles request completing first.
     candle_row = (
         await db.execute(
-            select(LiveMarketCandle)
+            select(LiveMarketCandle.candle_time, LiveMarketCandle.source)
             .where(
                 LiveMarketCandle.deployment_id == deployment.id,
                 LiveMarketCandle.is_closed.is_(True),
@@ -1581,7 +1592,7 @@ async def get_deployment_pipeline_health(
             .order_by(LiveMarketCandle.candle_time.desc())
             .limit(1)
         )
-    ).scalar_one_or_none()
+    ).one_or_none()
     candle_count = int((await db.execute(
         select(func.count(LiveMarketCandle.id)).where(
             LiveMarketCandle.deployment_id == deployment.id,
@@ -1882,18 +1893,24 @@ async def refresh_deployment_broker_candles(deployment_id: UUID, count: int = 30
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Strategy warm-up profile could not be resolved: {exc}") from exc
 
-    history = await ensure_deployment_candle_history(db, deployment, profile.required_history_bars)
+    # Never fetch a large warm-up inside this HTTP request. Queue the expensive
+    # work and only refresh a small recent snapshot so the browser stays fast.
+    history = await get_deployment_candle_history_status(db, deployment, profile.required_history_bars)
+    queued = {"queued": False}
+    if not history.get("ready"):
+        queued = enqueue_history_warmup(deployment.id, profile.required_history_bars)
     latest = await refresh_deployment_candles(db, deployment_id, count=max(20, min(int(count or 300), 300)))
+    # Re-read cheap DB status because the background worker may already have advanced.
+    history = await get_deployment_candle_history_status(db, deployment, profile.required_history_bars)
     latest["history_required_count"] = profile.required_history_bars
     latest["history_stored_count"] = int(history.get("stored_count") or latest.get("stored_count") or 0)
     latest["history_ready"] = bool(history.get("ready"))
-    latest["history_backfilled"] = int(history.get("backfilled") or 0)
-    if history.get("error"):
-        latest["history_error"] = str(history.get("error"))
+    latest["history_missing_count"] = int(history.get("missing_count") or 0)
+    latest["history_warmup_queue"] = queued
     message = (
         f"Strategy history ready: {latest['history_stored_count']}/{profile.required_history_bars} closed candles"
         if latest["history_ready"]
-        else f"Strategy history incomplete: {latest['history_stored_count']}/{profile.required_history_bars} closed candles"
+        else f"Background history warm-up queued/running: {latest['history_stored_count']}/{profile.required_history_bars} closed candles"
     )
     return success_response(latest, message)
 

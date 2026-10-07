@@ -5,6 +5,8 @@ import pandas as pd
 
 
 class XAUUSD5MTrendBreakoutV137:
+    LIVE_HISTORY_BARS = 20000
+
     """XAUUSD 5M Trend-Following Breakout / Breakdown V1.37.
 
     V1.27 retains the complete locally verified V1.26 stack and adds one new

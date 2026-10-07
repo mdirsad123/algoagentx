@@ -23,6 +23,18 @@ from .middleware.security import (
 logger = logging.getLogger(__name__)
 
 
+async def _redis_reconnect_loop() -> None:
+    """Keep observer/API Redis access recoverable after Docker DNS hiccups."""
+    while True:
+        try:
+            await redis_manager.ensure_connected()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Redis reconnect attempt failed: %s", exc)
+        await asyncio.sleep(5)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.debug("Starting AlgoAgentX API")
@@ -44,6 +56,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.error("Redis unavailable; using fallback background execution")
 
+    redis_reconnect_task = asyncio.create_task(_redis_reconnect_loop(), name="api-redis-reconnect")
     runner_task = None
     broker_sync_task = None
     event_strategy_active = bool(
@@ -78,6 +91,11 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         logger.debug("Shutting down AlgoAgentX API")
+        redis_reconnect_task.cancel()
+        try:
+            await redis_reconnect_task
+        except asyncio.CancelledError:
+            pass
         if runner_task is not None:
             runner_task.cancel()
             try:

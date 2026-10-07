@@ -254,18 +254,18 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
     }
 
 
-async def ensure_deployment_candle_history(
+async def get_deployment_candle_history_status(
     db: AsyncSession,
     deployment: StrategyDeployment,
     required_count: int,
     *,
     through_candle_time: datetime | None = None,
 ) -> dict[str, Any]:
-    """Ensure a deployment has enough same-broker closed candles for strategy warm-up.
+    """Return history readiness without performing any broker I/O.
 
-    This is deliberately strategy-aware and broker-paged. A single broker call is
-    commonly capped around 2k-5k bars, so asking for 20k/100k in one request is
-    not considered a successful warm-up.
+    This is intentionally cheap and is safe to call from compatibility checks,
+    dry tests and the strategy runner. Heavy history backfill belongs to the
+    dedicated background history worker.
     """
     max_bars = max(1000, int(getattr(settings, "live_strategy_history_max_bars", 100000) or 100000))
     required = max(20, min(int(required_count or 20), max_bars))
@@ -275,6 +275,49 @@ async def ensure_deployment_candle_history(
     ]
     if through_candle_time is not None:
         filters.append(LiveMarketCandle.candle_time <= through_candle_time)
+    stored = int((await db.execute(select(func.count(LiveMarketCandle.id)).where(*filters))).scalar() or 0)
+    return {
+        "required_count": required,
+        "stored_count": stored,
+        "missing_count": max(0, required - stored),
+        "ready": stored >= required,
+    }
+
+
+async def ensure_deployment_candle_history(
+    db: AsyncSession,
+    deployment: StrategyDeployment,
+    required_count: int,
+    *,
+    through_candle_time: datetime | None = None,
+) -> dict[str, Any]:
+    """Background-safe strategy warm-up with incremental cTrader commits.
+
+    This function may be expensive and should be called only by the dedicated
+    history worker. For cTrader it fetches older history in small pages and
+    commits each page so progress is visible and restarts resume from the oldest
+    stored candle instead of starting over.
+    """
+    max_bars = max(1000, int(getattr(settings, "live_strategy_history_max_bars", 100000) or 100000))
+    # Keep cTrader wire requests small, but reuse one authorized broker session
+    # for several pages.  The adapter pages internally using page_size, while
+    # this service commits progress in moderate chunks.  This avoids opening
+    # ~20 websocket sessions for a 20k warm-up and disturbing the persistent
+    # market feed.
+    page_size = max(100, min(int(getattr(settings, "live_strategy_history_page_size", 1000) or 1000), 2000))
+    chunk_bars = max(page_size, min(int(getattr(settings, "live_strategy_history_chunk_bars", 5000) or 5000), 10000))
+    required = max(20, min(int(required_count or 20), max_bars))
+
+    def _filters() -> list[Any]:
+        items: list[Any] = [
+            LiveMarketCandle.deployment_id == deployment.id,
+            LiveMarketCandle.is_closed.is_(True),
+        ]
+        if through_candle_time is not None:
+            items.append(LiveMarketCandle.candle_time <= through_candle_time)
+        return items
+
+    filters = _filters()
     existing = int((await db.execute(select(func.count(LiveMarketCandle.id)).where(*filters))).scalar() or 0)
     if existing >= required:
         return {"required_count": required, "stored_count": existing, "backfilled": 0, "ready": True}
@@ -282,99 +325,147 @@ async def ensure_deployment_candle_history(
     _, broker, source = await _get_deployment_and_broker(db, deployment.id)
     resolved_symbol = _resolve_symbol(deployment, broker)
     adapter = get_broker_adapter(broker, db)
-    fetch_total = min(max_bars, required + 5)
     history_fetch = getattr(adapter, "get_rates_history", None)
-    rates = None
-    last_error: Exception | None = None
-    for attempt in range(3):
-        try:
-            if callable(history_fetch):
-                rates = await history_fetch(resolved_symbol, deployment.timeframe, fetch_total)
-            else:
-                # Legacy adapters can still warm smaller strategies, but the final
-                # count check below prevents them from silently passing a large requirement.
-                rates = await adapter.get_rates(resolved_symbol, deployment.timeframe, fetch_total)
-            last_error = None
-            break
-        except Exception as exc:
-            last_error = exc
-            if attempt < 2:
-                await asyncio.sleep(1.0 * (attempt + 1))
-    if last_error is not None:
-        await _write_log(
-            db,
-            deployment,
-            "STRATEGY_HISTORY_BACKFILL_FAILED",
-            f"{source} history backfill failed after 3 attempts: {last_error}",
-            "ERROR",
-            {"required_count": required, "stored_count": existing, "source": source, "symbol": resolved_symbol},
-        )
-        await db.commit()
-        return {"required_count": required, "stored_count": existing, "backfilled": 0, "ready": False, "error": str(last_error)}
+    total_backfilled = 0
 
-    pending_values: list[dict[str, Any]] = []
-    now_utc = datetime.now(timezone.utc)
-    for item in rates or []:
-        if not isinstance(item, dict) or item.get("success") is False:
-            continue
-        candle_time = _parse_dt(item.get("candle_time"))
-        if not _is_candle_closed(candle_time, deployment.timeframe, now=now_utc, grace_seconds=2):
-            continue
-        pending_values.append({
-            "deployment_id": deployment.id,
-            "broker_account_id": broker.id,
-            "symbol": str(item.get("symbol") or resolved_symbol),
-            "timeframe": deployment.timeframe,
-            "candle_time": candle_time,
-            "open": _decimal(item.get("open")),
-            "high": _decimal(item.get("high")),
-            "low": _decimal(item.get("low")),
-            "close": _decimal(item.get("close")),
-            "volume": _decimal(item.get("volume")) if item.get("volume") is not None else None,
-            "source": source,
-            "is_closed": True,
-            "raw_payload": item.get("raw_payload") or {},
-        })
-
-    # Large warm-ups (for example V1.37 = 20k M5 bars) must not issue one
-    # INSERT round-trip per candle. Batch upserts keep first-run latency bounded.
-    batch_size = 500
-    for offset in range(0, len(pending_values), batch_size):
-        batch = pending_values[offset : offset + batch_size]
-        if not batch:
-            continue
-        stmt = insert(LiveMarketCandle).values(batch)
-        stmt = stmt.on_conflict_do_update(
-            constraint="uq_live_market_candles_dep_symbol_tf_time",
-            set_={
-                "broker_account_id": stmt.excluded.broker_account_id,
-                "open": stmt.excluded.open,
-                "high": stmt.excluded.high,
-                "low": stmt.excluded.low,
-                "close": stmt.excluded.close,
-                "volume": stmt.excluded.volume,
-                "source": stmt.excluded.source,
+    async def persist_rates(rates: list[dict[str, Any]] | None) -> int:
+        pending_values: list[dict[str, Any]] = []
+        now_utc = datetime.now(timezone.utc)
+        for item in rates or []:
+            if not isinstance(item, dict) or item.get("success") is False:
+                continue
+            candle_time = _parse_dt(item.get("candle_time"))
+            if through_candle_time is not None and candle_time > through_candle_time:
+                continue
+            if not _is_candle_closed(candle_time, deployment.timeframe, now=now_utc, grace_seconds=2):
+                continue
+            pending_values.append({
+                "deployment_id": deployment.id,
+                "broker_account_id": broker.id,
+                "symbol": str(item.get("symbol") or resolved_symbol),
+                "timeframe": deployment.timeframe,
+                "candle_time": candle_time,
+                "open": _decimal(item.get("open")),
+                "high": _decimal(item.get("high")),
+                "low": _decimal(item.get("low")),
+                "close": _decimal(item.get("close")),
+                "volume": _decimal(item.get("volume")) if item.get("volume") is not None else None,
+                "source": source,
                 "is_closed": True,
-                "raw_payload": stmt.excluded.raw_payload,
-                "updated_at": func.now(),
-            },
-        )
-        await db.execute(stmt)
+                "raw_payload": item.get("raw_payload") or {},
+            })
+        if not pending_values:
+            return 0
+        for offset in range(0, len(pending_values), 500):
+            batch = pending_values[offset : offset + 500]
+            stmt = insert(LiveMarketCandle).values(batch)
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_live_market_candles_dep_symbol_tf_time",
+                set_={
+                    "broker_account_id": stmt.excluded.broker_account_id,
+                    "open": stmt.excluded.open,
+                    "high": stmt.excluded.high,
+                    "low": stmt.excluded.low,
+                    "close": stmt.excluded.close,
+                    "volume": stmt.excluded.volume,
+                    "source": stmt.excluded.source,
+                    "is_closed": True,
+                    "raw_payload": stmt.excluded.raw_payload,
+                    "updated_at": func.now(),
+                },
+            )
+            await db.execute(stmt)
+        await db.commit()
+        return len(pending_values)
 
-    upserted = len(pending_values)
-    await db.flush()
-    final_count = int((await db.execute(select(func.count(LiveMarketCandle.id)).where(*filters))).scalar() or 0)
-    ready = final_count >= required
+    # cTrader supports a true backwards cursor. Fetch one page at a time, persist
+    # immediately, then continue from the oldest stored candle. This keeps memory
+    # flat and makes 20k warm-ups resumable/progress-visible.
+    if source in {"CTRADER", "CTRADER_API"} and callable(history_fetch):
+        no_progress_rounds = 0
+        while existing < required:
+            oldest = (await db.execute(
+                select(func.min(LiveMarketCandle.candle_time)).where(*filters)
+            )).scalar_one_or_none()
+            before = oldest - timedelta(seconds=1) if isinstance(oldest, datetime) else None
+            wanted = min(chunk_bars, required - existing + 5)
+            rates = None
+            last_error: Exception | None = None
+            for attempt in range(3):
+                try:
+                    rates = await history_fetch(resolved_symbol, deployment.timeframe, wanted, before=before)
+                    last_error = None
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if attempt < 2:
+                        await asyncio.sleep(1.0 * (attempt + 1))
+            if last_error is not None:
+                await _write_log(
+                    db, deployment, "STRATEGY_HISTORY_BACKFILL_FAILED",
+                    f"{source} history page failed after 3 attempts: {last_error}", "ERROR",
+                    {"required_count": required, "stored_count": existing, "source": source, "symbol": resolved_symbol},
+                )
+                await db.commit()
+                return {"required_count": required, "stored_count": existing, "backfilled": total_backfilled, "ready": False, "error": str(last_error)}
+
+            before_count = existing
+            total_backfilled += await persist_rates(rates)
+            existing = int((await db.execute(select(func.count(LiveMarketCandle.id)).where(*filters))).scalar() or 0)
+            await _write_log(
+                db, deployment, "STRATEGY_HISTORY_PROGRESS",
+                f"Strategy history warm-up progress: {existing}/{required} closed {deployment.timeframe} candles",
+                metadata={"required_count": required, "stored_count": existing, "page_size": wanted, "source": source},
+            )
+            await db.commit()
+            if existing <= before_count:
+                no_progress_rounds += 1
+                if no_progress_rounds >= 2:
+                    break
+            else:
+                no_progress_rounds = 0
+            if not rates:
+                break
+    else:
+        # MT5/legacy adapters already paginate internally. Run them only on the
+        # dedicated worker so API/live strategy threads remain responsive.
+        fetch_total = min(max_bars, required + 5)
+        rates = None
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                if callable(history_fetch):
+                    rates = await history_fetch(resolved_symbol, deployment.timeframe, fetch_total)
+                else:
+                    rates = await adapter.get_rates(resolved_symbol, deployment.timeframe, fetch_total)
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                if attempt < 2:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+        if last_error is not None:
+            await _write_log(
+                db, deployment, "STRATEGY_HISTORY_BACKFILL_FAILED",
+                f"{source} history backfill failed after 3 attempts: {last_error}", "ERROR",
+                {"required_count": required, "stored_count": existing, "source": source, "symbol": resolved_symbol},
+            )
+            await db.commit()
+            return {"required_count": required, "stored_count": existing, "backfilled": 0, "ready": False, "error": str(last_error)}
+        total_backfilled += await persist_rates(rates)
+        existing = int((await db.execute(select(func.count(LiveMarketCandle.id)).where(*filters))).scalar() or 0)
+
+    ready = existing >= required
     await _write_log(
         db,
         deployment,
         "STRATEGY_HISTORY_READY" if ready else "STRATEGY_HISTORY_INSUFFICIENT",
-        f"Strategy history {'ready' if ready else 'insufficient'}: {final_count}/{required} closed {deployment.timeframe} candles",
+        f"Strategy history {'ready' if ready else 'insufficient'}: {existing}/{required} closed {deployment.timeframe} candles",
         "INFO" if ready else "WARNING",
-        {"required_count": required, "stored_count": final_count, "backfilled": upserted, "source": source, "symbol": resolved_symbol},
+        {"required_count": required, "stored_count": existing, "backfilled": total_backfilled, "source": source, "symbol": resolved_symbol},
     )
     await db.commit()
-    return {"required_count": required, "stored_count": final_count, "backfilled": upserted, "ready": ready}
+    return {"required_count": required, "stored_count": existing, "backfilled": total_backfilled, "ready": ready}
 
 
 async def load_live_candles_for_runner(
@@ -399,12 +490,26 @@ async def load_live_candles_for_runner(
     ]
     if through_candle_time is not None:
         filters.append(LiveMarketCandle.candle_time <= through_candle_time)
+    # IMPORTANT: never hydrate the LiveMarketCandle ORM here. Its relationships
+    # are configured as joined eager loads, which turns a 2k/20k candle request
+    # into a very large join across deployments/users/strategies/brokers. The
+    # live strategy only needs the compact OHLCV payload below.
     rows = (await db.execute(
-        select(LiveMarketCandle)
+        select(
+            LiveMarketCandle.candle_time,
+            LiveMarketCandle.open,
+            LiveMarketCandle.high,
+            LiveMarketCandle.low,
+            LiveMarketCandle.close,
+            LiveMarketCandle.volume,
+            LiveMarketCandle.symbol,
+            LiveMarketCandle.timeframe,
+            LiveMarketCandle.source,
+        )
         .where(*filters)
         .order_by(LiveMarketCandle.candle_time.desc())
         .limit(safe_limit)
-    )).scalars().all()
+    )).all()
 
     # De-duplicate by candle_time defensively in case historical imports created
     # rows with different symbol values for the same deployment/candle.
@@ -415,7 +520,18 @@ async def load_live_candles_for_runner(
         if key in seen:
             continue
         seen.add(key)
-        payloads.append(_candle_payload(row))
+        payloads.append({
+            "candle_time": row.candle_time,
+            "open": row.open,
+            "high": row.high,
+            "low": row.low,
+            "close": row.close,
+            "volume": row.volume,
+            "symbol": row.symbol,
+            "timeframe": row.timeframe,
+            "source": row.source,
+            "is_closed": True,
+        })
     return payloads
 
 
@@ -423,12 +539,36 @@ async def get_latest_closed_candles(db: AsyncSession, deployment_id: UUID, limit
     max_bars = max(1000, int(getattr(settings, "live_strategy_history_max_bars", 100000) or 100000))
     safe_limit = max(1, min(int(limit or 300), max_bars))
     rows = (await db.execute(
-        select(LiveMarketCandle)
+        select(
+            LiveMarketCandle.candle_time,
+            LiveMarketCandle.open,
+            LiveMarketCandle.high,
+            LiveMarketCandle.low,
+            LiveMarketCandle.close,
+            LiveMarketCandle.volume,
+            LiveMarketCandle.symbol,
+            LiveMarketCandle.timeframe,
+            LiveMarketCandle.source,
+        )
         .where(LiveMarketCandle.deployment_id == deployment_id, LiveMarketCandle.is_closed.is_(True))
         .order_by(LiveMarketCandle.candle_time.desc())
         .limit(safe_limit)
-    )).scalars().all()
-    return [_candle_payload(row) for row in rows]
+    )).all()
+    return [
+        {
+            "candle_time": row.candle_time,
+            "open": row.open,
+            "high": row.high,
+            "low": row.low,
+            "close": row.close,
+            "volume": row.volume,
+            "symbol": row.symbol,
+            "timeframe": row.timeframe,
+            "source": row.source,
+            "is_closed": True,
+        }
+        for row in rows
+    ]
 
 
 async def get_candle_snapshot(db: AsyncSession, deployment_id: UUID, limit: int = 300) -> dict[str, Any]:

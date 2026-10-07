@@ -53,7 +53,11 @@ class LiveStrategyWorker:
     async def run(self) -> None:
         stream = settings.live_candle_stream
         group = settings.live_strategy_consumer_group
-        await self.bus.ensure_group(stream, group)
+        # A newly-created strategy group should start at the live edge. Crash
+        # recovery is handled through the group's pending entries; replaying the
+        # entire pre-existing stream after a rebuild can burn CPU for minutes and
+        # re-evaluate already-processed candles.
+        await self.bus.ensure_group(stream, group, start_id="$")
         health_task = asyncio.create_task(self._health_loop(), name="live-strategy-health")
         loop = asyncio.get_running_loop()
         last_reclaim = 0.0
@@ -116,6 +120,18 @@ class LiveStrategyWorker:
     def _task_done(self, task: asyncio.Task, message_id: str) -> None:
         self._tasks.discard(task)
         self._inflight_ids.discard(message_id)
+        # Always retrieve task exceptions.  A transient Redis/DNS outage can
+        # happen between stream-read and trace-write; leaving the exception
+        # unretrieved produces noisy "Task exception was never retrieved" logs.
+        if task.cancelled():
+            return
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            self._last_error = f"task {message_id}: {exc}"[:500]
+            logger.warning("Live strategy task %s ended with retryable error: %s", message_id, exc)
 
     async def _process_message(self, message: StreamMessage) -> None:
         try:
@@ -132,53 +148,71 @@ class LiveStrategyWorker:
             payload = message.payload
             trace_id = str(payload.get("trace_id") or "") or None
             self._last_event_at = datetime.now(timezone.utc)
-            await self.trace.mark(trace_id, "t5", status="STRATEGY_EVENT_RECEIVED", redis_message_id=message.message_id)
             should_ack = False
             try:
+                # Trace writes are observer-only.  Keep them inside the guarded
+                # section so a short Redis outage leaves the durable stream event
+                # pending for reclaim instead of escaping the task.
+                await self.trace.mark(trace_id, "t5", status="STRATEGY_EVENT_RECEIVED", redis_message_id=message.message_id)
                 deployment_id = UUID(str(payload.get("deployment_id")))
                 candle_time = _parse_time(payload.get("candle_open_time"))
                 async with async_session() as db:
-                    deployment = (
+                    deployment_state = (
                         await db.execute(
-                            select(StrategyDeployment).where(StrategyDeployment.id == deployment_id)
+                            select(
+                                StrategyDeployment.status,
+                                StrategyDeployment.auto_runner_enabled,
+                                StrategyDeployment.last_processed_candle_time,
+                            ).where(StrategyDeployment.id == deployment_id)
                         )
-                    ).scalar_one_or_none()
-                    deployment_missing = deployment is None
+                    ).one_or_none()
+                    deployment_missing = deployment_state is None
                     if deployment_missing:
                         should_ack = True
                         await self.trace.annotate(trace_id, status="DEPLOYMENT_NOT_FOUND")
-                    elif deployment.status != "RUNNING" or not deployment.auto_runner_enabled:
+                    elif deployment_state.status != "RUNNING" or not deployment_state.auto_runner_enabled:
                         should_ack = True
                         await self.trace.annotate(trace_id, status="DEPLOYMENT_INACTIVE")
                     else:
-                        result = await run_strategy_for_candle(
-                            db,
-                            deployment_id,
-                            candle_time,
-                            trace_id or f"{deployment_id}:{candle_time.isoformat()}",
-                            execute=True,
-                            event_context={
-                                "event_id": payload.get("event_id"),
-                                "redis_message_id": message.message_id,
-                                "source": payload.get("source"),
-                                "environment": payload.get("environment"),
-                            },
-                        )
-                        final_action = str(result.get("final_action") or "").upper()
-                        retry_required = final_action in {"LOCK_SKIPPED", "HOLD_NOT_ENOUGH_CANDLES"}
-                        await self.trace.annotate(
-                            trace_id,
-                            status="RETRY_PENDING" if retry_required else "COMPLETED",
-                            signal_type=result.get("signal"),
-                            signal_id=result.get("signal_id"),
-                            order_id=result.get("order_id"),
-                            final_action=result.get("final_action"),
-                            duplicate=result.get("duplicate"),
-                        )
-                        # A distributed worker may still own the advisory lock.
-                        # Leave this event pending so XAUTOCLAIM retries it; ACKing
-                        # here would permanently skip a distinct candle.
-                        should_ack = not retry_required
+                        processed_at = deployment_state.last_processed_candle_time
+                        if processed_at is not None and processed_at.tzinfo is None:
+                            processed_at = processed_at.replace(tzinfo=timezone.utc)
+                        if processed_at is not None and processed_at >= candle_time:
+                            # Durable cursor says this candle already completed.
+                            # ACK stale/reclaimed Redis work before running pandas
+                            # or touching the order path again.
+                            should_ack = True
+                            await self.trace.annotate(trace_id, status="ALREADY_PROCESSED")
+                            result = {"final_action": "ALREADY_PROCESSED"}
+                        else:
+                            result = await run_strategy_for_candle(
+                                db,
+                                deployment_id,
+                                candle_time,
+                                trace_id or f"{deployment_id}:{candle_time.isoformat()}",
+                                execute=True,
+                                event_context={
+                                    "event_id": payload.get("event_id"),
+                                    "redis_message_id": message.message_id,
+                                    "source": payload.get("source"),
+                                    "environment": payload.get("environment"),
+                                },
+                            )
+                            final_action = str(result.get("final_action") or "").upper()
+                            retry_required = final_action in {"LOCK_SKIPPED", "HOLD_NOT_ENOUGH_CANDLES"}
+                            await self.trace.annotate(
+                                trace_id,
+                                status="RETRY_PENDING" if retry_required else "COMPLETED",
+                                signal_type=result.get("signal"),
+                                signal_id=result.get("signal_id"),
+                                order_id=result.get("order_id"),
+                                final_action=result.get("final_action"),
+                                duplicate=result.get("duplicate"),
+                            )
+                            # A distributed worker may still own the advisory lock.
+                            # Leave this event pending so XAUTOCLAIM retries it; ACKing
+                            # here would permanently skip a distinct candle.
+                            should_ack = not retry_required
 
                     published_at = datetime.now(timezone.utc)
                     await self.bus.publish_status({
@@ -241,19 +275,26 @@ class LiveStrategyWorker:
 
     async def _health_loop(self) -> None:
         while not self._stop.is_set():
-            await self.bus.heartbeat(
-                "live_strategy_worker",
-                self.worker_id,
-                {
-                    "status": "DEGRADED" if self._last_error else "HEALTHY",
-                    "active_tasks": len(self._tasks),
-                    "processed": self._processed,
-                    "failed": self._failed,
-                    "last_event_at": self._last_event_at.isoformat() if self._last_event_at else None,
-                    "last_completed_at": self._last_completed_at.isoformat() if self._last_completed_at else None,
-                    "last_error": self._last_error,
-                },
-            )
+            try:
+                await self.bus.heartbeat(
+                    "live_strategy_worker",
+                    self.worker_id,
+                    {
+                        "status": "DEGRADED" if self._last_error else "HEALTHY",
+                        "active_tasks": len(self._tasks),
+                        "processed": self._processed,
+                        "failed": self._failed,
+                        "last_event_at": self._last_event_at.isoformat() if self._last_event_at else None,
+                        "last_completed_at": self._last_completed_at.isoformat() if self._last_completed_at else None,
+                        "last_error": self._last_error,
+                    },
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # A heartbeat failure must never kill the heartbeat loop forever.
+                # Redis/Docker DNS can recover without restarting this worker.
+                logger.warning("Strategy-worker heartbeat temporarily failed: %s", exc)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=5)
             except asyncio.TimeoutError:
