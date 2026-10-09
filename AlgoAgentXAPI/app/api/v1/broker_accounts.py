@@ -812,6 +812,14 @@ async def create_broker_account(payload: BrokerAccountCreate, db: AsyncSession =
     values["broker_name"] = str(values.get("broker_name") or values.get("broker_code") or "MT5").upper()
     values["broker_code"] = str(values.get("broker_code") or values["broker_name"]).upper()
     values["auth_type"] = str(values.get("auth_type") or ("MT5_AGENT" if values["broker_code"] == "MT5" else "OAUTH2")).upper()
+    if values["broker_code"] == "TRADELOCKER":
+        if not provider:
+            raise HTTPException(status_code=400, detail="TradeLocker provider must be seeded and enabled by admin")
+        values["auth_type"] = "EMAIL_PASSWORD"
+        values["status"] = BROKER_STATUS_DISCONNECTED
+        values["metadata_json"] = {**(values.get("metadata_json") or {}), "provider": "TRADELOCKER"}
+        if (values["metadata_json"].get("tradelocker_environment") or "demo") not in {"demo", "live"}:
+            raise HTTPException(status_code=400, detail="Invalid TradeLocker environment")
     if values["broker_code"] in CRYPTO_BROKER_CODES:
         values["auth_type"] = "API_KEY_SECRET"
         values["mode"] = "DEMO"
@@ -859,6 +867,12 @@ async def update_broker_account(broker_account_id: UUID, payload: BrokerAccountU
         values["broker_code"] = provider.code
         values["auth_type"] = provider.auth_type
     active_code = str(values.get("broker_code") or row.broker_code or row.broker_name or "").upper()
+    if active_code == "TRADELOCKER":
+        values["auth_type"] = "EMAIL_PASSWORD"
+        values["status"] = BROKER_STATUS_DISCONNECTED
+        values["metadata_json"] = {**(row.metadata_json or {}), **(values.get("metadata_json") or {}), "provider": "TRADELOCKER"}
+        if values["metadata_json"].get("tradelocker_environment", "demo") not in {"demo", "live"}:
+            raise HTTPException(status_code=400, detail="Invalid TradeLocker environment")
     if active_code in CRYPTO_BROKER_CODES:
         values["auth_type"] = "API_KEY_SECRET"
         values["mode"] = "DEMO"
@@ -1021,6 +1035,61 @@ async def select_ctrader_account(broker_account_id: UUID, payload: dict, db: Asy
     await db.commit()
     await db.refresh(row)
     return success_response({"broker_account": dump_one(BrokerAccountOut, row), "selected_account": selected}, "cTrader account selected")
+
+
+@router.post("/tradelocker/discover")
+async def discover_tradelocker_accounts(payload: dict, current_user: dict = Depends(get_current_user)):
+    """Authenticate and list accounts without persisting or returning credentials/tokens."""
+    from types import SimpleNamespace
+    from ...services.brokers.tradelocker import TradeLockerAdapter
+    email = str(payload.get('email') or '').strip()
+    password = str(payload.get('password') or '')
+    server = str(payload.get('server') or '').strip()
+    environment = str(payload.get('environment') or 'demo').lower()
+    if not email or not password or not server or environment not in {'demo', 'live'}:
+        raise HTTPException(status_code=422, detail='Email, password, server and valid environment are required')
+    ephemeral = SimpleNamespace(login_id=email, encrypted_password=encrypt_credential(password), server_name=server,
+                                metadata_json={'tradelocker_environment': environment})
+    try:
+        accounts = await TradeLockerAdapter(ephemeral).get_available_accounts()
+        return success_response({'accounts': accounts}, 'TradeLocker accounts discovered')
+    except Exception as exc:
+        # Never echo the remote response, which might contain identifying tokens.
+        raise HTTPException(status_code=400, detail='TradeLocker account discovery failed; verify login, server and environment') from exc
+
+
+@router.get("/{broker_account_id}/tradelocker/accounts")
+async def list_tradelocker_accounts(broker_account_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_broker_account_or_404(db, broker_account_id, current_user)
+    if str(row.broker_code or row.broker_name).upper() != 'TRADELOCKER':
+        raise HTTPException(status_code=400, detail='Not a TradeLocker account')
+    from ...services.brokers.tradelocker import TradeLockerAdapter
+    try:
+        return success_response({'accounts': await TradeLockerAdapter(row).get_available_accounts()})
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail='Unable to discover TradeLocker accounts') from exc
+
+
+@router.post("/{broker_account_id}/tradelocker/sync")
+async def sync_tradelocker_account(broker_account_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Verify credentials and refresh per-account instruments without touching cTrader caches."""
+    row = await get_broker_account_or_404(db, broker_account_id, current_user)
+    if str(row.broker_code or row.broker_name).upper() != "TRADELOCKER":
+        raise HTTPException(status_code=400, detail="Not a TradeLocker account")
+    from ...services.brokers.tradelocker import TradeLockerAdapter
+    adapter = TradeLockerAdapter(row)
+    result = await adapter.test_connection()
+    row.status = BROKER_STATUS_CONNECTED if result.connected else BROKER_STATUS_ERROR
+    row.last_connection_result = _connection_payload(result)
+    if not result.connected:
+        await db.commit()
+        raise HTTPException(status_code=400, detail=result.message)
+    symbols = await adapter.get_symbols(limit=2000)
+    row.last_connected_at = datetime.now(timezone.utc)
+    row.metadata_json = {**(row.metadata_json or {}), "tradelocker_symbols_preview": symbols[:25], "tradelocker_symbols_synced": len(symbols)}
+    await db.commit()
+    await db.refresh(row)
+    return success_response({"broker_account": dump_one(BrokerAccountOut, row), "symbols_count": len(symbols)}, "TradeLocker account synced")
 
 
 @router.post("/{broker_account_id}/sync")

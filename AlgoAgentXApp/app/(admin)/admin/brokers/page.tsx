@@ -59,7 +59,7 @@ export default function AdminBrokersPage() {
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
           <div>
             <h1 className="text-2xl font-bold text-lime-300">Broker Provider Catalog</h1>
-            <p className="mt-2 text-purple-100">MT5 remains working. Upstox is visible as coming next phase. LIVE trading remains disabled.</p>
+            <p className="mt-2 text-purple-100">Manage supported broker adapters, including TradeLocker REST. Enabling a provider does not enable unvalidated order execution.</p>
           </div>
           <Button onClick={load} disabled={loading} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Refresh</Button>
         </div>

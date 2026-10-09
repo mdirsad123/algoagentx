@@ -28,6 +28,10 @@ docker compose --env-file .env.prod up -d api web         # only up app or api
 docker compose --env-file .env.prod up -d --build api web # if changes app or api then build again
 ```
 
+# if backtest is stuck then need to start celery worker
+docker compose --env-file .env.prod -f docker-compose.yml --profile worker up -d --build
+docker compose --env-file .env.prod -f docker-compose.yml --profile worker up -d celery_worker
+
 Use this especially when:
 
 ```txt

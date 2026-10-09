@@ -16,7 +16,7 @@ import { formatDateTimeIST } from "@/lib/timezone";
 const CRYPTO_CODES = new Set(["BINANCE", "BYBIT", "OKX"]);
 const CTRADER_CODES = new Set(["CTRADER", "CTRADER_API"]);
 
-type ActiveForm = null | "MT5" | "UPSTOX" | "CRYPTO" | "CTRADER";
+type ActiveForm = null | "MT5" | "UPSTOX" | "CRYPTO" | "CTRADER" | "TRADELOCKER";
 
 const emptyMt5Form = {
   account_label: "MT5 Demo",
@@ -52,6 +52,7 @@ const makeEmptyCtraderForm = () => ({
 function displayBrokerName(code?: string | null) {
   const value = String(code || "").toUpperCase();
   if (value === "UPSTOX") return "Upstox India";
+  if (value === "TRADELOCKER") return "TradeLocker REST API";
   if (value === "MT5") return "MT5 Agent / MetaTrader 5";
   if (value === "CTRADER" || value === "CTRADER_API") return "cTrader Open API";
   if (value === "ANGEL_ONE") return "Angel One";
@@ -96,6 +97,7 @@ function categoryTitle(provider: BrokerProvider) {
   const code = provider.code?.toUpperCase();
   if (CRYPTO_CODES.has(code)) return "Crypto API Broker";
   if (code === "MT5") return "MT5 Agent Broker";
+  if (code === "TRADELOCKER") return "Cloud Forex Broker";
   if (CTRADER_CODES.has(code)) return "Cloud Forex Broker";
   return provider.broker_category || "Cloud Broker";
 }
@@ -126,6 +128,9 @@ export default function BrokersPage() {
   const [upstoxForm, setUpstoxForm] = useState(makeEmptyUpstoxForm);
   const [cryptoForm, setCryptoForm] = useState(makeEmptyCryptoForm("BINANCE"));
   const [ctraderForm, setCtraderForm] = useState(makeEmptyCtraderForm);
+  const [tlForm, setTlForm] = useState({account_label: "TradeLocker", email: "", password: "", server: "", environment: "demo", account_id: "", acc_num: "0"});
+  const [tlAccounts, setTlAccounts] = useState<{id: string; accNum: number; name: string}[]>([]);
+  const [tlDiscovering, setTlDiscovering] = useState(false);
   const [connectionResults, setConnectionResults] = useState<Record<string, BrokerConnectionResult>>({});
   const [connectingUpstox, setConnectingUpstox] = useState(false);
   const [agentStatuses, setAgentStatuses] = useState<Record<string, MT5AgentStatus | null>>({});
@@ -148,7 +153,7 @@ export default function BrokersPage() {
     providers.forEach((provider) => {
       const code = provider.code.toUpperCase();
       if (CRYPTO_CODES.has(code)) groups["Crypto API Brokers"].push(provider);
-      else if (code === "MT5" || CTRADER_CODES.has(code)) groups["Forex / MT5 Brokers"].push(provider);
+      else if (code === "MT5" || code === "TRADELOCKER" || CTRADER_CODES.has(code)) groups["Forex / MT5 Brokers"].push(provider);
       else groups["Cloud Brokers"].push(provider);
     });
     return groups;
@@ -244,6 +249,56 @@ export default function BrokersPage() {
     setConnectOpen(true);
   };
 
+  const openTradeLockerForm = (broker?: BrokerAccount | null) => {
+    const meta = (broker?.metadata_json || {}) as any;
+    setEditing(broker || null);
+    setTlAccounts([]);
+    setTlForm({account_label: broker?.account_label || "TradeLocker", email: broker?.login_id || "", password: "", server: broker?.server_name || "", environment: meta.tradelocker_environment || "demo", account_id: String(meta.tradelocker_account_id || ""), acc_num: String(meta.tradelocker_acc_num ?? "0")});
+    setActiveForm("TRADELOCKER"); setConnectOpen(true);
+  };
+
+  const discoverTradeLocker = async () => {
+    if (!tlForm.email || !tlForm.server || (!tlForm.password && !editing)) { showToast('Enter email, password and server first', 'error'); return; }
+    setTlDiscovering(true);
+    try {
+      const result = editing && !tlForm.password
+        ? await liveTradingApi.listTradeLockerAccounts(editing.id)
+        : await liveTradingApi.discoverTradeLockerAccounts({email: tlForm.email, password: tlForm.password, server: tlForm.server, environment: tlForm.environment});
+      setTlAccounts(result.accounts);
+      if (result.accounts.length === 1) {
+        setTlForm(prev => ({...prev, account_id: result.accounts[0].id, acc_num: String(result.accounts[0].accNum)}));
+      }
+      showToast(`Found ${result.accounts.length} TradeLocker account(s). Select the one you want.`, 'success');
+    } catch (error: any) { showToast(error.message || 'Could not fetch TradeLocker accounts', 'error'); }
+    finally { setTlDiscovering(false); }
+  };
+
+  const submitTradeLocker = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!tlForm.account_id || !tlAccounts.some(a => a.id === tlForm.account_id && String(a.accNum) === tlForm.acc_num)) { showToast("Fetch accounts and select a verified account before saving", "error"); return; }
+    if (!editing && !tlForm.password.trim()) { showToast("TradeLocker password required", "error"); return; }
+    try {
+      setSaving(true);
+      const payload = {broker_code: "TRADELOCKER", broker_name: "TRADELOCKER", account_label: tlForm.account_label, auth_type: "EMAIL_PASSWORD", mode: "DEMO" as const,
+        server_name: tlForm.server, login_id: tlForm.email,
+        ...(tlForm.password ? {encrypted_password: tlForm.password} : {}),
+        metadata_json: {provider: "TRADELOCKER", tradelocker_environment: tlForm.environment, tradelocker_account_id: tlForm.account_id, tradelocker_acc_num: Number(tlForm.acc_num)} };
+      const account = editing ? await liveTradingApi.updateBrokerAccount(editing.id, payload) : await liveTradingApi.createBrokerAccount(payload);
+      showToast("TradeLocker account saved. Run Test and Sync to load balance, equity and symbols.", "success");
+      setConnectOpen(false); setActiveForm(null); await load();
+    } catch (error: any) {showToast(error.message || "TradeLocker save failed", "error");}
+    finally {setSaving(false);}
+  };
+
+  const syncTradeLocker = async (broker: BrokerAccount) => {
+    try {
+      setSyncingId(broker.id);
+      const result = await liveTradingApi.syncTradeLockerAccount(broker.id);
+      showToast(`TradeLocker synced: ${result.symbols_count} symbols`, "success"); await load();
+    } catch (error: any) {showToast(error.message || "TradeLocker sync failed", "error");}
+    finally {setSyncingId(null);}
+  };
+
   const openCryptoForm = (code: string, broker?: BrokerAccount | null) => {
     const normalized = code.toUpperCase();
     setEditing(broker || null);
@@ -254,6 +309,7 @@ export default function BrokersPage() {
 
   const reconnect = (broker: BrokerAccount) => {
     const code = brokerCodeOf(broker);
+    if (code === "TRADELOCKER") return openTradeLockerForm(broker);
     if (code === "MT5") return openMt5Form(broker);
     if (code === "UPSTOX") { void openUpstoxForm(broker); return; }
     if (CTRADER_CODES.has(code)) { void openCtraderForm(broker); return; }
@@ -558,9 +614,9 @@ export default function BrokersPage() {
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                       {rows.map((provider) => {
                         const code = provider.code.toUpperCase();
-                        const isReady = provider.is_enabled && (code === "MT5" || code === "UPSTOX" || CRYPTO_CODES.has(code) || CTRADER_CODES.has(code));
+                        const isReady = provider.is_enabled && (code === "MT5" || code === "UPSTOX" || CRYPTO_CODES.has(code) || CTRADER_CODES.has(code) || code === "TRADELOCKER");
                         return (
-                          <button key={provider.id} type="button" disabled={!isReady} onClick={() => code === "MT5" ? openMt5Form() : code === "UPSTOX" ? void openUpstoxForm() : CTRADER_CODES.has(code) ? void openCtraderForm() : CRYPTO_CODES.has(code) ? openCryptoForm(code) : undefined} className={`rounded-2xl border p-4 text-left transition ${isReady ? "border-white/10 bg-white/5 hover:bg-white/10" : "border-white/5 bg-white/[0.03] opacity-60"}`}>
+                          <button key={provider.id} type="button" disabled={!isReady} onClick={() => code === "MT5" ? openMt5Form() : code === "UPSTOX" ? void openUpstoxForm() : CTRADER_CODES.has(code) ? void openCtraderForm() : code === "TRADELOCKER" ? openTradeLockerForm() : CRYPTO_CODES.has(code) ? openCryptoForm(code) : undefined} className={`rounded-2xl border p-4 text-left transition ${isReady ? "border-white/10 bg-white/5 hover:bg-white/10" : "border-white/5 bg-white/[0.03] opacity-60"}`}>
                             <div className="flex items-start justify-between gap-3"><div><div className="font-bold text-white">{provider.display_name || provider.name || displayBrokerName(code)}</div><div className="mt-1 text-xs text-purple-200">{categoryTitle(provider)} • {provider.setup_mode || provider.auth_type}</div></div>{isReady ? <Badge className="bg-lime-500/20 text-lime-100">Ready</Badge> : <Badge className="bg-white/10 text-purple-100">Coming Soon</Badge>}</div>
                             <p className="mt-3 text-sm text-purple-200">{provider.description || (code === "MT5" ? "Use the Windows MT5 Agent where your terminal is running." : CRYPTO_CODES.has(code) ? "Connect with exchange API key and secret. Live orders stay disabled in this phase." : "Cloud broker OAuth/API setup.")}</p>
                           </button>
@@ -570,6 +626,30 @@ export default function BrokersPage() {
                   </div>
                 ) : null)}
               </div>
+            )}
+
+            {activeForm === "TRADELOCKER" && (
+              <form onSubmit={submitTradeLocker} className="space-y-4">
+                <p className="text-sm text-purple-200">Enter email, password and server, click Fetch Accounts, then select a trading account. Orders remain disabled until separately validated. Store credentials only on a trusted HTTPS deployment.</p>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <label className="text-sm text-purple-100">Label<input required value={tlForm.account_label} onChange={e => setTlForm({...tlForm, account_label:e.target.value})} className="mt-1 w-full rounded-xl bg-white/10 p-3" /></label>
+                  <label className="text-sm text-purple-100">Environment<select value={tlForm.environment} onChange={e => setTlForm({...tlForm, environment:e.target.value})} className="mt-1 w-full rounded-xl bg-[#2b1553] p-3"><option value="demo">Demo</option><option value="live">Live account (orders gated)</option></select></label>
+                  <label className="text-sm text-purple-100">Email<input required type="email" autoComplete="username" value={tlForm.email} onChange={e => setTlForm({...tlForm, email:e.target.value})} className="mt-1 w-full rounded-xl bg-white/10 p-3" /></label>
+                  <label className="text-sm text-purple-100">Password<input type="password" autoComplete="new-password" required={!editing} value={tlForm.password} onChange={e => setTlForm({...tlForm, password:e.target.value})} placeholder={editing ? "Leave blank to retain password" : "TradeLocker password"} className="mt-1 w-full rounded-xl bg-white/10 p-3" /></label>
+                  <label className="text-sm text-purple-100">Server<input required value={tlForm.server} onChange={e => setTlForm({...tlForm, server:e.target.value})} className="mt-1 w-full rounded-xl bg-white/10 p-3" /></label>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button type="button" disabled={tlDiscovering} onClick={() => void discoverTradeLocker()} className="bg-white/15 text-white">{tlDiscovering ? 'Fetching accounts...' : 'Fetch Accounts'}</Button>
+                  {tlAccounts.length > 0 && <label className="flex-1 text-sm text-purple-100">Select TradeLocker Account
+                    <select required value={tlForm.account_id ? `${tlForm.account_id}:${tlForm.acc_num}` : ''} onChange={e => { const found = tlAccounts.find(a => `${a.id}:${a.accNum}` === e.target.value); if (found) setTlForm(prev => ({...prev, account_id: found.id, acc_num: String(found.accNum)})); }} className="mt-1 w-full rounded-xl bg-[#2b1553] p-3">
+                      <option value="">Choose an account</option>
+                      {tlAccounts.map(a => <option key={`${a.id}:${a.accNum}`} value={`${a.id}:${a.accNum}`}>{a.id} · accNum {a.accNum} · {a.name}</option>)}
+                    </select>
+                  </label>}
+                </div>
+
+                <Button type="submit" disabled={saving} className="bg-lime-500 text-slate-950">{saving ? "Saving..." : "Save TradeLocker Account"}</Button>
+              </form>
             )}
 
             {activeForm === "MT5" && (
@@ -652,14 +732,14 @@ export default function BrokersPage() {
                   <div className="flex items-start gap-3">
                     {normalizedStatus === "CONNECTED" ? <CheckCircle className="h-5 w-5 text-green-300" /> : normalizedStatus === "ERROR" ? <AlertCircle className="h-5 w-5 text-yellow-300" /> : normalizedStatus === "AGENT_OFFLINE" ? <WifiOff className="h-5 w-5 text-orange-300" /> : <XCircle className="h-5 w-5 text-red-300" />}
                     <div>
-                      <div className="flex flex-wrap items-center gap-2"><h3 className="text-lg font-bold text-white">{broker.account_label}</h3>{statusBadge(normalizedStatus)}<Badge className="bg-white/10 text-purple-100">{code}</Badge>{isCrypto && <Badge className="bg-white/10 text-purple-100">Crypto API</Badge>}{isCtrader && <Badge className="bg-white/10 text-purple-100">Cloud Forex</Badge>}{isUpstox && <Badge className="bg-white/10 text-purple-100">Indian Equity</Badge>}{isMt5 && agentStatusBadge(agent)}</div>
+                      <div className="flex flex-wrap items-center gap-2"><h3 className="text-lg font-bold text-white">{broker.account_label}</h3>{statusBadge(normalizedStatus)}<Badge className="bg-white/10 text-purple-100">{code}</Badge>{isCrypto && <Badge className="bg-white/10 text-purple-100">Crypto API</Badge>}{(isCtrader || code === "TRADELOCKER") && <Badge className="bg-white/10 text-purple-100">Cloud Forex</Badge>}{isUpstox && <Badge className="bg-white/10 text-purple-100">Indian Equity</Badge>}{isMt5 && agentStatusBadge(agent)}</div>
                       <p className="mt-1 text-sm text-purple-200">{isMt5 ? `${agent?.mt5_account_login || "Agent waiting"} • ${agent?.server_name || broker.server_name || "MT5 Agent"}` : isCrypto ? `${displayBrokerName(code)} API • Live orders disabled` : isCtrader ? `${displayBrokerName(code)} • ${ctraderSelected?.account_number || ctraderSelected?.ctrader_account_id || "Account sync pending"} • Orders disabled` : isUpstox ? (broker.login_id || "OAuth pending") : broker.login_id} {isMt5 || isCrypto ? "" : ` • ${broker.server_name || ""}`}</p>
                       <p className="mt-1 flex items-center gap-1 text-xs text-purple-300"><Clock className="h-3 w-3" /> Last connected: {formatDate(broker.last_connected_at)}</p>
                       {isMt5 && <p className="mt-1 text-xs text-purple-300">Terminal: {agent?.terminal_status || "Waiting for Agent"} • Server: {agent?.server_name || "—"} • Last heartbeat: {formatDate(agent?.last_heartbeat_at)} • Balance/Equity: {money(agent?.balance)} / {money(agent?.equity)} {agent?.currency || ""}</p>}
                       {isCtrader && <p className="mt-1 text-xs text-purple-300">Selected: {ctraderSelected?.account_number || ctraderSelected?.ctrader_account_id || "Not selected"} • Broker: {ctraderSelected?.broker_name || "—"} • Last sync: {formatDate((broker.metadata_json as any)?.last_sync_at || broker.last_connected_at)} • Sync: {ctraderSyncStatus || "PENDING"}</p>}
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2"><Button onClick={() => testConnection(broker)} disabled={testingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Test</Button>{isCtrader && <Button onClick={() => syncBroker(broker)} disabled={syncingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Sync</Button>}{isCtrader && <Button onClick={() => openCtraderAccountSelector(broker)} disabled={syncingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15">Select Account</Button>}{isCtrader && isCtraderDemoSelected(ctraderSelected, broker) && <Button onClick={() => openCtraderDemoOrder(broker)} className="gap-2 bg-lime-500/20 text-lime-100 hover:bg-lime-500/30">Test Demo Order</Button>}{isCtrader && !isCtraderDemoSelected(ctraderSelected, broker) && <Button disabled className="gap-2 bg-white/5 text-purple-200">Live Orders Disabled</Button>}<Button onClick={() => reconnect(broker)} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Reconnect</Button><Button onClick={() => reconnect(broker)} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Edit3 className="h-4 w-4" /> Edit</Button>{isMt5 && <Button onClick={() => generateAgentToken(broker)} disabled={generatingAgentToken} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Copy className="h-4 w-4" /> Generate Token</Button>}<Button onClick={() => { setDeleteTarget(broker); setDeleteWarning(null); setDeleteForce(false); }} className="gap-2 bg-red-500/15 text-red-100 hover:bg-red-500/25"><Trash2 className="h-4 w-4" /> Delete</Button></div>
+                  <div className="flex flex-wrap gap-2"><Button onClick={() => testConnection(broker)} disabled={testingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Test</Button>{code === "TRADELOCKER" && <Button onClick={() => syncTradeLocker(broker)} disabled={syncingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15">Sync Instruments</Button>}{isCtrader && <Button onClick={() => syncBroker(broker)} disabled={syncingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Sync</Button>}{isCtrader && <Button onClick={() => openCtraderAccountSelector(broker)} disabled={syncingId === broker.id} className="gap-2 bg-white/10 text-white hover:bg-white/15">Select Account</Button>}{isCtrader && isCtraderDemoSelected(ctraderSelected, broker) && <Button onClick={() => openCtraderDemoOrder(broker)} className="gap-2 bg-lime-500/20 text-lime-100 hover:bg-lime-500/30">Test Demo Order</Button>}{isCtrader && !isCtraderDemoSelected(ctraderSelected, broker) && <Button disabled className="gap-2 bg-white/5 text-purple-200">Live Orders Disabled</Button>}<Button onClick={() => reconnect(broker)} className="gap-2 bg-white/10 text-white hover:bg-white/15"><RefreshCw className="h-4 w-4" /> Reconnect</Button><Button onClick={() => reconnect(broker)} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Edit3 className="h-4 w-4" /> Edit</Button>{isMt5 && <Button onClick={() => generateAgentToken(broker)} disabled={generatingAgentToken} className="gap-2 bg-white/10 text-white hover:bg-white/15"><Copy className="h-4 w-4" /> Generate Token</Button>}<Button onClick={() => { setDeleteTarget(broker); setDeleteWarning(null); setDeleteForce(false); }} className="gap-2 bg-red-500/15 text-red-100 hover:bg-red-500/25"><Trash2 className="h-4 w-4" /> Delete</Button></div>
                 </div>
                 {last && <div className="mt-4 rounded-xl border border-white/10 bg-black/10 p-4 text-sm text-purple-100"><div className="font-semibold text-white">Last connection result</div><p className="mt-1">{last?.message || "No details"}</p><div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3"><span>Balance: {isUpstox ? "—" : money(isCtrader && ctraderSelected ? ctraderSelected.balance : last?.balance)}</span><span>Equity: {isUpstox ? "—" : money(isCtrader && ctraderSelected ? ctraderSelected.equity : last?.equity)}</span><span>Currency: {(isCtrader && ctraderSelected?.currency) || last?.currency || (isUpstox ? "INR" : "—")}</span></div></div>}
               </div>

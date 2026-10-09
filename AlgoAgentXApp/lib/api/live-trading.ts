@@ -198,6 +198,21 @@ export const liveTradingApi = {
     return unwrap(response.data);
   },
 
+  async discoverTradeLockerAccounts(payload: {email: string; password: string; server: string; environment: string}): Promise<{accounts: {id: string; accNum: number; name: string}[]}> {
+    const response = await axiosInstance.post<Envelope<{accounts: {id: string; accNum: number; name: string}[]}>>('/api/v1/broker-accounts/tradelocker/discover', payload);
+    return unwrap(response.data);
+  },
+
+  async listTradeLockerAccounts(id: string): Promise<{accounts: {id: string; accNum: number; name: string}[]}> {
+    const response = await axiosInstance.get<Envelope<{accounts: {id: string; accNum: number; name: string}[]}>>(`/api/v1/broker-accounts/${id}/tradelocker/accounts`);
+    return unwrap(response.data);
+  },
+
+  async syncTradeLockerAccount(id: string): Promise<{broker_account: BrokerAccount; symbols_count: number}> {
+    const response = await axiosInstance.post<Envelope<{broker_account: BrokerAccount; symbols_count: number}>>(`/api/v1/broker-accounts/${id}/tradelocker/sync`, undefined, {timeout: HEAVY_API_TIMEOUT_MS});
+    return unwrap(response.data);
+  },
+
   async syncBrokerAccount(id: string): Promise<BrokerSyncResponse> {
     const response = await axiosInstance.post<Envelope<BrokerSyncResponse>>(`/api/v1/broker-accounts/${id}/sync`, undefined, { timeout: HEAVY_API_TIMEOUT_MS });
     return unwrap(response.data);

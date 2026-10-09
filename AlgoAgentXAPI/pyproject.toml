@@ -55,6 +55,7 @@ redis = { extras = ["hiredis"], version = "^7.1.0" }
 
 # Utilities
 requests = "^2.31.0"
+httpx = "^0.28.1"
 websockets = "^15.0.1"
 orjson = "^3.10.0"
 pytz = "^2024.1"
