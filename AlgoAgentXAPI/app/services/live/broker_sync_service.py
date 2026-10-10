@@ -97,7 +97,7 @@ def _extract_order_status(payload: dict[str, Any]) -> str:
 
 
 def _extract_order_price(payload: dict[str, Any]) -> Decimal | None:
-    for key in ("average_price", "avg_price", "executed_price", "price", "filled_price"):
+    for key in ("average_price", "avg_price", "avgPrice", "executed_price", "price", "filled_price"):
         if payload.get(key) not in (None, ""):
             return _dec(payload.get(key))
     data = payload.get("data")
@@ -165,6 +165,49 @@ def _mt5_position_values(position: dict[str, Any], deployment: StrategyDeploymen
         "opened_at": _mt5_opened_at(position),
         "stop_loss": _dec(position.get("sl")) if position.get("sl") not in (None, "", 0) else None,
         "target": _dec(position.get("tp")) if position.get("tp") not in (None, "", 0) else None,
+    }
+
+
+def _tradelocker_position_values(position: dict[str, Any], deployment: StrategyDeployment) -> dict[str, Any] | None:
+    """TradeLocker /positions is a configured array mapped by the adapter.
+
+    Do NOT use the Upstox parser here: TradeLocker uses qty/side/avgPrice/id,
+    and silently dropping positions is a max-position-limit safety violation.
+    """
+    if position.get('qty') is None:
+        raise RuntimeError('TradeLocker position has no quantity; refusing unsafe broker sync')
+    qty = _dec(position['qty'])
+    if qty <= 0:
+        return None
+    broker_id = str(position.get('broker_position_id') or position.get('id') or '').strip()
+    symbol = str(position.get('symbol') or '').strip()
+    side_raw = str(position.get('side') or '').strip().upper()
+    if not broker_id or not symbol or side_raw not in {'BUY', 'SELL'}:
+        raise RuntimeError('TradeLocker position missing broker ID, symbol or valid side')
+    opened_at = datetime.now(timezone.utc)
+    try:
+        if position.get('openDate') not in (None, ''):
+            iv = int(position['openDate'])
+            opened_at = datetime.fromtimestamp(iv / (1000 if iv > 10_000_000_000 else 1), tz=timezone.utc)
+    except (ValueError, TypeError, OverflowError):
+        raise RuntimeError('TradeLocker position openDate cannot be parsed safely')
+    avg = _dec(position.get('avgPrice'))
+    if avg <= 0:
+        raise RuntimeError('TradeLocker position average price is invalid')
+    return {
+        'broker_position_id': broker_id,
+        'symbol': symbol,
+        'side': 'LONG' if side_raw == 'BUY' else 'SHORT',
+        'qty': qty,
+        'avg': avg,
+        # TradeLocker does not expose a guaranteed last-price field in the
+        # positions table. Do not invent one; use avg and broker-provided PnL.
+        'current': avg,
+        'unrealized': _dec(position.get('unrealizedPl')),
+        'realized': Decimal('0'),
+        'opened_at': opened_at,
+        'stop_loss': None,  # stopLossId is an order ID, not a price.
+        'target': None,     # takeProfitId is an order ID, not a price.
     }
 
 
@@ -295,7 +338,7 @@ async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, 
     total_unrealized = Decimal("0")
     total_realized = Decimal("0")
     provider_upper = provider_code.upper()
-    normalizer = _mt5_position_values if provider_upper == "MT5" else (_ctrader_position_values if provider_upper in {"CTRADER", "CTRADER_API"} else _upstox_position_values)
+    normalizer = (_tradelocker_position_values if provider_upper == "TRADELOCKER" else _mt5_position_values if provider_upper == "MT5" else _ctrader_position_values if provider_upper in {"CTRADER", "CTRADER_API"} else _upstox_position_values)
 
     for raw in broker_positions or []:
         if not isinstance(raw, dict) or raw.get("success") is False:
@@ -506,14 +549,38 @@ async def sync_copy_target_positions(db: AsyncSession, deployment: StrategyDeplo
         or getattr(deployment, "instrument_key", None)
     )
 
-    try:
-        positions = await adapter.get_positions(symbol) or []
-    except TypeError:
+    if provider_code == "TRADELOCKER":
+        # Max-open-positions is account-wide, not restricted to the signal
+        # symbol. Sync every open position for this copy target before entry.
         positions = await adapter.get_positions() or []
+    else:
+        try:
+            positions = await adapter.get_positions(symbol) or []
+        except TypeError:
+            positions = await adapter.get_positions() or []
 
     if positions and isinstance(positions[0], dict) and positions[0].get("success") is False:
         raise RuntimeError(str(positions[0].get("message") or "Copy broker positions fetch failed"))
 
+    copy_order_result = {}
+    if provider_code == "TRADELOCKER":
+        active_orders = await adapter.get_orders() or []
+        pending_ids = (await db.execute(select(LiveOrder.broker_order_id).where(
+            LiveOrder.deployment_id == deployment.id,
+            LiveOrder.broker_account_id == deployment.broker_account_id,
+            LiveOrder.status.in_(("PLACED", "SUBMITTED", "PENDING", "PENDING_DEMO")),
+            or_(LiveOrder.action.is_(None), LiveOrder.action == "ENTRY"),
+            LiveOrder.broker_order_id.is_not(None),
+        ))).scalars().all()
+        if pending_ids:
+            try:
+                active_orders.extend(await adapter.get_order_history(pending_ids))
+            except Exception as exc:
+                # The pending-ACK entry risk gate remains blocked until broker
+                # history confirms the fill/rejection, never assume filled.
+                await _write_log(db, deployment, "COPY_ORDER_HISTORY_WARNING",
+                                 f"TradeLocker order history pending verification: {exc}", "WARNING")
+        copy_order_result = await reconcile_orders(db, deployment, active_orders, provider_code)
     result = await reconcile_positions(db, deployment, positions, provider_code)
     await _write_log(
         db,
@@ -525,10 +592,11 @@ async def sync_copy_target_positions(db: AsyncSession, deployment: StrategyDeplo
             "broker_account_id": str(deployment.broker_account_id),
             "provider_code": provider_code,
             "broker_positions": len(positions),
+            **copy_order_result,
             **result,
         },
     )
-    return {"provider_code": provider_code, "positions_count": len(positions), **result}
+    return {"provider_code": provider_code, "positions_count": len(positions), **copy_order_result, **result}
 
 
 async def sync_deployment_broker_state(db: AsyncSession, deployment_id: UUID | str) -> dict[str, Any]:
@@ -610,6 +678,22 @@ async def sync_deployment_broker_state(db: AsyncSession, deployment_id: UUID | s
         if orders and isinstance(orders[0], dict) and orders[0].get("success") is False:
             warnings.append(str(orders[0].get("message") or "Broker orders fetch failed"))
             orders = []
+        if provider_code == "TRADELOCKER" and hasattr(adapter, "get_order_history"):
+            # Final market-order fills disappear from /orders. Only fetch
+            # recent final history for locally unconfirmed broker order IDs;
+            # avoid re-ingesting hundreds of finalized orders every 10 seconds.
+            pending_ids = (await db.execute(select(LiveOrder.broker_order_id).where(
+                LiveOrder.deployment_id == deployment.id,
+                LiveOrder.broker_account_id == deployment.broker_account_id,
+                LiveOrder.status.in_(("PLACED", "SUBMITTED", "PENDING", "PENDING_DEMO")),
+                or_(LiveOrder.action.is_(None), LiveOrder.action == "ENTRY"),
+                LiveOrder.broker_order_id.is_not(None),
+            ))).scalars().all()
+            if pending_ids:
+                try:
+                    orders.extend(await adapter.get_order_history(pending_ids))
+                except Exception as exc:
+                    warnings.append(f"TradeLocker order history not available; outstanding orders remain unconfirmed: {exc}")
     if hasattr(adapter, "get_positions"):
         if provider_code == "MT5":
             try:

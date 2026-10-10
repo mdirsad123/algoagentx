@@ -1,0 +1,39 @@
+--- a/AlgoAgentXApp/app/(user)/live-trading/[deploymentId]/page.tsx
++++ b/AlgoAgentXApp/app/(user)/live-trading/[deploymentId]/page.tsx
+@@ -351,6 +351,7 @@
+   const [showLogs, setShowLogs] = useState(false);
+   const [showSignals, setShowSignals] = useState(false);
+   const [showOrders, setShowOrders] = useState(false);
++  const [showCopyOrderHistory, setShowCopyOrderHistory] = useState(false);
+   const [showAdvancedDiagnostics, setShowAdvancedDiagnostics] = useState(false);
+   // Runtime resources are polled independently. One slow endpoint (for example
+   // latency/health during broker recovery) must never freeze candle/summary UI.
+@@ -945,7 +946,7 @@
+             <>
+               <GlassCard className="mb-6 p-6" hoverEffect={false}>
+                 <div className="mb-4">
+-                  <h2 className="text-xl font-bold text-white">Copy Trading Managed Positions</h2>
++                  <h2 className="text-xl font-bold text-white">Copy Trading Open Positions ({copyOpenPositions.length})</h2>
+                   <p className="mt-1 text-sm text-purple-200">Each copy broker position has its own partial trigger, broker minimum/step validation, and management state. Primary results never control copy positions.</p>
+                 </div>
+                 {copyOpenPositions.length === 0 ? <NoRows label="No open copy positions" /> : (
+@@ -971,12 +972,15 @@
+               <GlassCard className="mb-6 p-6" hoverEffect={false}>
+                 <div className="mb-4 flex items-center justify-between gap-3">
+                   <div>
+-                    <h2 className="text-xl font-bold text-white">Copy Trading Orders</h2>
+-                    <p className="mt-1 text-sm text-purple-200">Replica entries and copy-position exits are shown separately. Only ENTRY rows count toward Today.</p>
++                    <h2 className="text-xl font-bold text-white">Copy Trading Order History</h2>
++                    <p className="mt-1 text-sm text-purple-200">Historical entries and exits, including already closed trades. These rows are not the count of currently open copy positions.</p>
+                   </div>
+-                  <Badge className="border-cyan-400/30 bg-cyan-400/20 text-cyan-100">Entries Today: {metrics?.copy_orders_today ?? 0}</Badge>
++                  <div className="flex flex-wrap items-center gap-2">
++                    <Badge className="border-cyan-400/30 bg-cyan-400/20 text-cyan-100">Entry Orders Today: {metrics?.copy_orders_today ?? 0}</Badge>
++                    <Button size="sm" onClick={() => setShowCopyOrderHistory((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{showCopyOrderHistory ? "Hide History" : "Show History"}</Button>
++                  </div>
+                 </div>
+-                {copyOrders.length === 0 ? <NoRows label="No copy-trading orders yet" /> : (
++                {!showCopyOrderHistory ? <NoRows label={`Order history hidden. ${copyOpenPositions.length} currently open copy position(s); ${copyOrders.length} recent historical order record(s).`} /> : copyOrders.length === 0 ? <NoRows label="No copy-trading orders yet" /> : (
+                   <div className="responsive-table-wrapper max-h-[360px] overflow-auto">
+                     <table className="w-full min-w-[1240px] text-left text-sm">
+                       <thead className="sticky top-0 bg-purple-950 text-purple-200">

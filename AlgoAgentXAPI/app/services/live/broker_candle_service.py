@@ -29,7 +29,8 @@ def _parse_dt(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(int(value), tz=timezone.utc)
+        timestamp = float(value)
+        return datetime.fromtimestamp(timestamp / 1000 if abs(timestamp) > 10_000_000_000 else timestamp, tz=timezone.utc)
     text = str(value or "").strip()
     if not text:
         return datetime.now(timezone.utc)
@@ -118,7 +119,7 @@ async def _get_deployment_and_broker(db: AsyncSession, deployment_id: UUID) -> t
     if broker is None:
         raise HTTPException(status_code=404, detail="Broker account not found")
     source = _broker_source(broker)
-    if source not in {"MT5", "UPSTOX", "CTRADER", "CTRADER_API"}:
+    if source not in {"MT5", "UPSTOX", "CTRADER", "CTRADER_API", "TRADELOCKER"}:
         raise HTTPException(status_code=400, detail=f"Unsupported candle broker provider: {source}")
     if broker.status != "CONNECTED":
         raise HTTPException(status_code=400, detail=f"{source} broker account must be CONNECTED before refreshing candles")

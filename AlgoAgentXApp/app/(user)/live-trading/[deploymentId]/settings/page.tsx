@@ -84,6 +84,22 @@ const percent = (value: number) => `${(Number(value || 0) * 100).toFixed(value <
 const selectValue = (value: number | null | undefined, options: number[]) => value == null ? "NONE" : options.some((item) => Number(item) === Number(value)) ? String(value) : "CUSTOM";
 
 const normalizeSymbol = (value: unknown) => String(value || "").trim().toUpperCase();
+// TradeLocker uses account-specific suffixes (BTCUSD.X, XAUUSD.X). Only
+// recognize the common 6-letter forex/metal/crypto roots; never guess among
+// multiple Instrument Master entries because risk specifications are critical.
+const canonicalBrokerKey = (value: unknown) => {
+  const symbol = normalizeSymbol(value).replace(/[^A-Z0-9]/g, "");
+  return /^[A-Z]{6}[MX]$/.test(symbol) ? symbol.slice(0, 6) : symbol;
+};
+const masterForBrokerSymbol = (symbol: string, instruments: MarketInstrument[]) => {
+  const exact = instruments.filter((item) =>
+    [item.symbol, item.broker_symbol].some((v) => normalizeSymbol(v) === normalizeSymbol(symbol)));
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return null;
+  const target = canonicalBrokerKey(symbol);
+  const matches = instruments.filter((item) => canonicalBrokerKey(item.symbol) === target);
+  return matches.length === 1 ? matches[0] : null;
+};
 const hasSpecValue = (value: unknown) => value !== null && value !== undefined && value !== "";
 const yesNo = (value: unknown) => value === true ? "Yes" : value === false ? "No" : "—";
 const displayValue = (value: unknown) => hasSpecValue(value) ? String(value) : "Missing";
@@ -221,6 +237,7 @@ export default function LiveDeploymentSettingsPage() {
   const [symbolOptions, setSymbolOptions] = useState<BrokerSymbol[]>([]);
   const [marketInstruments, setMarketInstruments] = useState<MarketInstrument[]>([]);
   const [loadingSymbols, setLoadingSymbols] = useState(false);
+  const [symbolLoadError, setSymbolLoadError] = useState<string | null>(null);
   const [advancedMode, setAdvancedMode] = useState(false);
   const [advancedPreview, setAdvancedPreview] = useState(false);
   const [liveRuntimeTab, setLiveRuntimeTab] = useState<RuntimeTab>("risk");
@@ -241,7 +258,7 @@ export default function LiveDeploymentSettingsPage() {
   const [fundedTiers, setFundedTiers] = useState<FundedRiskPlanPayload["risk_tiers"]>([]);
   const [phaseAdvanceBrokerId, setPhaseAdvanceBrokerId] = useState("");
   const [phaseAdvanceBusy, setPhaseAdvanceBusy] = useState(false);
-  const [initialRouting, setInitialRouting] = useState({ broker_account_id: "", instrument: "" });
+  const [initialRouting, setInitialRouting] = useState({ broker_account_id: "", instrument: "", broker_symbol: "" });
   const [form, setForm] = useState<FormState>({
     name: "", instrument: "", timeframe: "", mode: "PAPER", broker_account_id: "", capital: 100000, risk_per_trade: 0.01, rr_ratio: 2,
     sl_mode: "FIXED_PERCENT", atr_period: 14, atr_multiplier: 2, swing_lookback: 10, price_risk_pct: 0.002, max_daily_loss: null,
@@ -256,19 +273,23 @@ export default function LiveDeploymentSettingsPage() {
   const connectedBrokers = useMemo(() => brokers.filter((broker) => (broker.mode === "DEMO" || broker.mode === "LIVE") && broker.status === "CONNECTED"), [brokers]);
   const copyTargetBrokers = useMemo(() => connectedBrokers.filter((broker) => broker.id !== form.broker_account_id && broker.mode === selectedBroker?.mode), [connectedBrokers, form.broker_account_id, selectedBroker]);
   const isUpstox = (selectedBroker?.broker_name || selectedBroker?.broker_code || "").toUpperCase() === "UPSTOX";
+  const isTradeLocker = (selectedBroker?.broker_code || selectedBroker?.broker_name || "").toUpperCase() === "TRADELOCKER";
   const isRunning = deploymentStatus === "RUNNING";
   const isFunded = fundedStatus?.account_policy_type === "FUNDED";
   const fundedRiskLocked = isRunning || Number(summary?.metrics?.open_positions || 0) > 0;
   const isPaperDeprecated = form.mode === "PAPER";
-  const selectedMasterInstrument = useMemo(() => findSelectedMasterInstrument(form.instrument, marketInstruments), [form.instrument, marketInstruments]);
+  const selectedMasterInstrument = useMemo(() => isTradeLocker ? masterForBrokerSymbol(form.broker_symbol || form.instrument, marketInstruments) : findSelectedMasterInstrument(form.instrument, marketInstruments), [form.instrument, form.broker_symbol, marketInstruments, isTradeLocker]);
   const accountMetrics = summary?.metrics || null;
   const accountCurrency = accountMetrics?.account_currency || accountMetrics?.currency || riskPreview?.account_currency || selectedMasterInstrument?.account_currency || (isUpstox || form.instrument_key ? "INR" : "USD");
   const currency = String(accountCurrency || "USD");
   const effectiveCapital = accountMetrics?.effective_capital ?? accountMetrics?.equity ?? accountMetrics?.balance ?? form.capital;
   const effectiveCapitalSource = accountMetrics?.effective_capital_source || (accountMetrics ? "BROKER_SYNC" : "FALLBACK_DEPLOYMENT_CAPITAL");
   const dailyLossOptions = currency === "INR" ? INR_DAILY_LOSS : USD_DAILY_LOSS;
-  const selectedBrokerSymbol = useMemo(() => symbolOptions.find((item) => normalizeSymbol(item.symbol) === normalizeSymbol(form.instrument)) || null, [symbolOptions, form.instrument]);
-  const instrumentOptions = useMemo(() => buildInstrumentOptions(form.instrument, marketInstruments, symbolOptions), [form.instrument, marketInstruments, symbolOptions]);
+  const selectedBrokerSymbol = useMemo(() => symbolOptions.find((item) => normalizeSymbol(item.symbol) === normalizeSymbol(isTradeLocker ? form.broker_symbol || form.instrument : form.instrument)) || null, [symbolOptions, form.instrument, form.broker_symbol, isTradeLocker]);
+  const instrumentOptions = useMemo(() => isTradeLocker
+    ? [...symbolOptions.map((broker) => ({ key: `broker-${broker.symbol}`, value: normalizeSymbol(broker.symbol), label: `${normalizeSymbol(broker.symbol)} · Connected TradeLocker`, source: "Broker Symbol" as const, broker })),
+       ...(symbolOptions.some((row) => normalizeSymbol(row.symbol) === normalizeSymbol(form.broker_symbol || form.instrument)) ? [] : [{ key: "unavailable-current", value: normalizeSymbol(form.broker_symbol || form.instrument), label: `${normalizeSymbol(form.broker_symbol || form.instrument)} · Not in connected broker (select another)`, source: "Fallback" as const }])]
+    : buildInstrumentOptions(form.instrument, marketInstruments, symbolOptions), [form.instrument, form.broker_symbol, marketInstruments, symbolOptions, isTradeLocker]);
   const instrumentReadiness = useMemo(() => buildInstrumentReadiness(form.instrument, selectedMasterInstrument, selectedBrokerSymbol, riskPreview), [form.instrument, selectedMasterInstrument, selectedBrokerSymbol, riskPreview]);
   const instrumentSpec = instrumentReadiness.spec;
   const instrumentStatus = instrumentReadiness.status;
@@ -281,16 +302,26 @@ export default function LiveDeploymentSettingsPage() {
 
   useEffect(() => {
     const loadSymbols = async () => {
-      if ((form.mode !== "DEMO" && form.mode !== "LIVE") || !form.broker_account_id) { setSymbolOptions([]); return; }
+      if ((form.mode !== "DEMO" && form.mode !== "LIVE") || !form.broker_account_id) { setSymbolOptions([]); setSymbolLoadError(null); return; }
       try {
         setLoadingSymbols(true);
-        const query = form.instrument ? form.instrument.replace(/m$/i, "").slice(0, 6) : "";
-        const rows = await liveTradingApi.listBrokerSymbols(form.broker_account_id, query, 200);
-        setSymbolOptions(rows.filter((row) => row?.symbol && row.success !== false));
-      } catch { setSymbolOptions([]); } finally { setLoadingSymbols(false); }
+        setSymbolLoadError(null);
+        const provider = (selectedBroker?.broker_code || selectedBroker?.broker_name || "").toUpperCase();
+        // TradeLocker needs the ENTIRE connected-account catalogue, not only
+        // the previous instrument's prefix. Keep other broker UIs unchanged.
+        const tradeLocker = provider === "TRADELOCKER";
+        const query = tradeLocker ? "" : (form.instrument ? form.instrument.replace(/m$/i, "").slice(0, 6) : "");
+        const rows = await liveTradingApi.listBrokerSymbols(form.broker_account_id, query, tradeLocker ? 5000 : 200);
+        const usable = rows.filter((row) => row?.symbol && row.success !== false);
+        setSymbolOptions(usable);
+        if (tradeLocker && !usable.length) setSymbolLoadError("The selected TradeLocker account did not return any broker instruments.");
+      } catch (error: any) {
+        setSymbolOptions([]);
+        setSymbolLoadError(String(error?.message || "Could not fetch instruments from broker"));
+      } finally { setLoadingSymbols(false); }
     };
     loadSymbols();
-  }, [form.mode, form.broker_account_id]);
+  }, [form.mode, form.broker_account_id, selectedBroker]);
 
   useEffect(() => {
     const load = async () => {
@@ -317,7 +348,7 @@ export default function LiveDeploymentSettingsPage() {
           })) : []);
         } else setFundedStatus(null);
         setPhaseAdvanceBrokerId(row.broker_account_id || "");
-        setInitialRouting({ broker_account_id: row.broker_account_id || "", instrument: normalizeSymbol(row.instrument) });
+        setInitialRouting({ broker_account_id: row.broker_account_id || "", instrument: normalizeSymbol(row.instrument), broker_symbol: normalizeSymbol(row.broker_symbol) });
         if (compatRow) setCompatibility(compatRow);
         setForm((prev) => ({ ...prev,
           name: row.name, instrument: row.instrument, timeframe: row.timeframe, mode: (row.mode === "LIVE" ? "LIVE" : row.mode === "DEMO" ? "DEMO" : "PAPER"), broker_account_id: row.broker_account_id || "",
@@ -432,10 +463,15 @@ export default function LiveDeploymentSettingsPage() {
           return;
         }
       }
-      const routingChanged = String(form.broker_account_id || "") !== String(initialRouting.broker_account_id || "") || normalizeSymbol(form.instrument) !== normalizeSymbol(initialRouting.instrument);
+      const routingChanged = String(form.broker_account_id || "") !== String(initialRouting.broker_account_id || "") || normalizeSymbol(form.instrument) !== normalizeSymbol(initialRouting.instrument) || (isTradeLocker && normalizeSymbol(form.broker_symbol) !== normalizeSymbol(initialRouting.broker_symbol));
+      if (isTradeLocker && routingChanged && (!selectedBrokerSymbol || normalizeSymbol(selectedBrokerSymbol.symbol) !== normalizeSymbol(form.broker_symbol))) {
+        showToast("Select an exact symbol fetched from the connected TradeLocker account before saving.", "error");
+        return;
+      }
       await liveTradingApi.updateDeployment(deploymentId, {
         name: form.name, mode: form.mode, broker_account_id: form.broker_account_id || null, instrument: normalizeSymbol(form.instrument), timeframe: form.timeframe,
-        ...(routingChanged ? { broker_symbol: null, instrument_key: null, exchange: null, segment: null } : {}),
+        ...(isTradeLocker && routingChanged ? { broker_symbol: normalizeSymbol(form.broker_symbol), instrument_key: normalizeSymbol(form.broker_symbol) }
+           : routingChanged ? { broker_symbol: null, instrument_key: null, exchange: null, segment: null } : {}),
         risk_per_trade: form.risk_per_trade, rr_ratio: form.rr_ratio, price_risk_pct: form.price_risk_pct, max_daily_loss: form.max_daily_loss,
         max_trades_per_day: form.max_trades_per_day, max_open_positions: form.max_open_positions, allow_short: form.allow_short, auto_trade_enabled: form.auto_trade_enabled, partial_exit_enabled: form.partial_exit_enabled, partial_exit_at_r: form.partial_exit_at_r, partial_exit_percent: form.partial_exit_percent,
         auto_runner_enabled: form.auto_runner_enabled, copy_trading_enabled: form.copy_trading_enabled, copy_broker_account_ids: form.copy_broker_account_ids, mt5_demo_max_lot: form.mt5_demo_max_lot,
@@ -604,7 +640,13 @@ export default function LiveDeploymentSettingsPage() {
                 <FieldShell label="Name"><InputBox value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></FieldShell>
                 <FieldShell label="Mode" hint={isPaperDeprecated ? "PAPER deployment is deprecated. Create a broker deployment instead." : isRunning ? "Stop the deployment before changing mode." : isFunded ? "Funded deployment mode remains protected." : "You can change the broker environment while the deployment is stopped."}><SelectBox disabled={isRunning || isFunded} value={form.mode} onChange={(e) => { const mode = e.target.value as FormState["mode"]; const currentBroker = brokers.find((broker) => broker.id === form.broker_account_id); setForm((prev) => ({ ...prev, mode, broker_account_id: currentBroker && currentBroker.mode === mode ? prev.broker_account_id : "", copy_broker_account_ids: prev.copy_broker_account_ids.filter((id) => brokers.find((broker) => broker.id === id)?.mode === mode) })); }}>{isPaperDeprecated && <option value="PAPER">PAPER Deprecated</option>}<option value="DEMO">DEMO / Broker</option><option value="LIVE">LIVE / Broker</option></SelectBox></FieldShell>
                 <FieldShell label="Broker Account" hint={isRunning ? "Stop the deployment before changing the primary broker account." : isFunded ? "Funded broker changes use the funded phase workflow." : "You can switch the primary connected broker account while the deployment is stopped."}><SelectBox disabled={isRunning || isFunded} value={form.broker_account_id} onChange={(e) => setForm((prev) => ({ ...prev, broker_account_id: e.target.value, copy_broker_account_ids: prev.copy_broker_account_ids.filter((id) => id !== e.target.value) }))}><option value="">Select connected broker account</option>{connectedBrokers.filter((broker) => broker.mode === form.mode).map((broker) => <option key={broker.id} value={broker.id}>{broker.broker_code || broker.broker_name} • {broker.account_label} • {broker.mode} • {broker.status} • {broker.login_id || broker.server_name || "—"}</option>)}</SelectBox></FieldShell>
-                <FieldShell label="Instrument" hint={isRunning ? "Stop the deployment before changing instrument." : isFunded ? "Funded deployment instrument remains protected." : "You can change the deployment instrument while it is stopped."}><SelectBox disabled={isRunning || isFunded} value={normalizeSymbol(form.instrument)} onChange={(e) => setForm((prev) => ({ ...prev, instrument: normalizeSymbol(e.target.value) }))}>{instrumentOptions.length ? instrumentOptions.map((option) => <option key={option.key} value={option.value}>{option.label}</option>) : <option value={normalizeSymbol(form.instrument)}>{loadingSymbols ? "Loading symbols..." : (form.instrument || "Selected symbol")}</option>}</SelectBox><p className="mt-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-purple-100">{brokerMappingLabel}</p></FieldShell>
+                <FieldShell label="Instrument" hint={isRunning ? "Stop the deployment before changing instrument." : isFunded ? "Funded deployment instrument remains protected." : "You can change the deployment instrument while it is stopped."}><SelectBox disabled={isRunning || isFunded || (isTradeLocker && loadingSymbols)} value={normalizeSymbol(isTradeLocker ? form.broker_symbol || form.instrument : form.instrument)} onChange={(e) => {
+                  const value = normalizeSymbol(e.target.value);
+                  if (isTradeLocker) {
+                    const master = masterForBrokerSymbol(value, marketInstruments);
+                    setForm((prev) => ({ ...prev, instrument: normalizeSymbol(master?.symbol || value), broker_symbol: value, instrument_key: value }));
+                  } else setForm((prev) => ({ ...prev, instrument: value }));
+                }}>{instrumentOptions.length ? instrumentOptions.map((option) => <option key={option.key} value={option.value}>{option.label}</option>) : <option value={normalizeSymbol(isTradeLocker ? form.broker_symbol || form.instrument : form.instrument)}>{loadingSymbols ? "Loading broker instruments..." : (form.instrument || "Selected symbol")}</option>}</SelectBox><p className="mt-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-purple-100">{brokerMappingLabel}{isTradeLocker && !selectedBrokerSymbol ? " · Symbol not confirmed by selected broker" : ""}</p>{isTradeLocker && symbolLoadError && <p className="mt-2 text-xs text-rose-200">{symbolLoadError}</p>}</FieldShell>
                 <FieldShell label="Timeframe" hint={isRunning ? "Stop the deployment before changing timeframe." : isFunded ? "Funded deployment timeframe remains protected." : "You can change the candle timeframe while the deployment is stopped."}><SelectBox disabled={isRunning || isFunded} value={form.timeframe} onChange={(e) => setForm((prev) => ({ ...prev, timeframe: e.target.value }))}>{[...new Set([form.timeframe, ...(isUpstox ? UPSTOX_TIMEFRAME_OPTIONS : TIMEFRAME_OPTIONS)])].filter(Boolean).map((tf) => <option key={tf} value={tf}>{tf}</option>)}</SelectBox></FieldShell>
                 {!isFunded && <FieldShell label="Risk per Trade" hint={form.risk_per_trade > 0.02 ? "Warning: above 2% is aggressive." : "Default recommended: 1%."}><SelectBox value={selectValue(form.risk_per_trade, RISK_OPTIONS)} onChange={(e) => e.target.value !== "CUSTOM" ? setForm({ ...form, risk_per_trade: Number(e.target.value) }) : setAdvancedMode(true)}>{RISK_OPTIONS.map((value) => <option key={value} value={value}>{percent(value)}</option>)}<option value="CUSTOM">Custom Advanced</option></SelectBox>{advancedMode && selectValue(form.risk_per_trade, RISK_OPTIONS) === "CUSTOM" && <InputBox type="number" step="0.001" max="0.10" value={form.risk_per_trade} onChange={(e) => setForm({ ...form, risk_per_trade: Number(e.target.value) })} />}</FieldShell>}
                 <FieldShell label="RR Ratio"><SelectBox value={form.rr_ratio} onChange={(e) => setForm({ ...form, rr_ratio: Number(e.target.value) })}>{RR_OPTIONS.map((value) => <option key={value} value={value}>1:{value}</option>)}</SelectBox></FieldShell>

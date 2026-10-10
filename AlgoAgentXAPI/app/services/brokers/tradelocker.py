@@ -8,12 +8,15 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+import logging
 from decimal import Decimal
 from typing import Any
 import httpx
 
 from ...utils.credential_crypto import decrypt_credential
 from .base import BrokerAdapter, BrokerConnectionResult, BrokerOrderRequest, BrokerOrderResult
+
+logger = logging.getLogger(__name__)
 
 
 def _number(value):
@@ -39,6 +42,7 @@ class TradeLockerAdapter(BrokerAdapter):
         self._access_token = None
         self._access_expiry = 0.0
         self._instrument_cache = None
+        self._config_cache = None
 
     async def _request(self, method: str, path: str, *, params=None, body=None, auth=True):
         headers = {'Accept': 'application/json'}
@@ -109,16 +113,33 @@ class TradeLockerAdapter(BrokerAdapter):
         if not self.account_id or self.acc_num is None:
             raise ValueError('Select a TradeLocker accountId and accNum in broker setup before syncing or trading.')
 
+    async def _config(self):
+        if self._config_cache is None:
+            self._config_cache = (await self._request('GET', '/trade/config')).get('d') or {}
+        return self._config_cache
+
     async def get_account_info(self):
         self._require_selected()
         accounts = (await self._request('GET', '/trade/accounts')).get('d') or []
         selected = next((x for x in accounts if str(x.get('id')) == self.account_id), None)
         if not selected:
             raise ValueError('TradeLocker accountId is not available for the selected credentials/environment')
-        config = (await self._request('GET', '/trade/config')).get('d') or {}
+        config = await self._config()
         state = (await self._request('GET', f'/trade/accounts/{self.account_id}/state')).get('d') or {}
         details = self._mapped_details(config, state)
-        return {'account': selected, 'state': details, 'account_id': self.account_id, 'acc_num': self.acc_num}
+        return {
+            'connected': True,
+            'message': 'TradeLocker account state refreshed.',
+            'account_login': self.account_id,
+            'server': self.server,
+            'currency': selected.get('currency'),
+            'balance': self._account_value(details, 'balance', 'accountBalance'),
+            'equity': self._account_value(details, 'equity', 'accountEquity'),
+            'free_margin': self._account_value(details, 'freeMargin', 'availableFunds', 'marginAvailable'),
+            'unrealized_pnl': self._account_value(details, 'unrealizedPl', 'unrealizedPnl'),
+            'account': selected, 'state': details,
+            'account_id': self.account_id, 'acc_num': self.acc_num,
+        }
 
 
     async def test_connection(self):
@@ -127,8 +148,8 @@ class TradeLockerAdapter(BrokerAdapter):
             account = info['account']
             return BrokerConnectionResult(True, 'TradeLocker authenticated and selected trading account verified.',
                 account_login=self.account_id, server=self.server, currency=account.get('currency'),
-                balance=self._account_value(info['state'], 'balance', 'accountBalance'),
-                equity=self._account_value(info['state'], 'equity', 'accountEquity'),
+                balance=info['balance'],
+                equity=info['equity'],
                 raw={'environment': self.environment, 'account': account, 'state': info['state'],
                      'account_id': self.account_id, 'acc_num': self.acc_num})
         except Exception as exc:
@@ -166,6 +187,18 @@ class TradeLockerAdapter(BrokerAdapter):
         matches = [x for x in await self._instruments() if ''.join(c for c in str(x.get('name') or x.get('symbol') or '').upper() if c.isalnum()) == target]
         if len(matches) == 1:
             return matches[0]
+        if len(matches) > 1:
+            raise ValueError(f'TradeLocker symbol {symbol!r} maps to multiple broker instruments; select an exact symbol.')
+        # Allow a canonical six-letter FX/metal symbol to resolve to a single
+        # account-specific suffix (XAUUSD -> XAUUSD.X). Never guess if ambiguous.
+        if len(target) == 6 and target.isalpha():
+            suffix_matches = [inst for inst in await self._instruments()
+                              if ''.join(c for c in str(inst.get('name') or inst.get('symbol') or '').upper()
+                                         if c.isalnum()).startswith(target)]
+            if len(suffix_matches) == 1:
+                return suffix_matches[0]
+            if len(suffix_matches) > 1:
+                raise ValueError(f'TradeLocker symbol {symbol!r} has multiple suffixed matches; select exact broker symbol.')
         raise ValueError(f'TradeLocker symbol {symbol!r} not found or ambiguous. Choose the exact broker symbol.')
 
     @staticmethod
@@ -212,7 +245,9 @@ class TradeLockerAdapter(BrokerAdapter):
             if not order_id:
                 raise RuntimeError('TradeLocker did not return orderId; reconcile before retrying')
             return BrokerOrderResult(True, 'PLACED', 'TradeLocker order accepted; broker fill confirmation pending.', broker_order_id=order_id,
-                raw_response={'orderId': order_id, 'requires_reconciliation': True})
+                raw_response={'orderId': order_id, 'requires_reconciliation': True,
+                              'resolved_symbol': str(inst.get('name') or inst.get('symbol') or order_request.symbol),
+                              'tradableInstrumentId': inst['tradableInstrumentId']})
         except Exception as exc:
             return BrokerOrderResult(False, 'ERROR', str(exc))
 
@@ -227,29 +262,72 @@ class TradeLockerAdapter(BrokerAdapter):
             await self._request('DELETE', f'/trade/positions/{position_id_or_symbol}', body={'qty': float(qty)})
             return BrokerOrderResult(True, 'PLACED', 'Close requested; reconcile actual position quantity.', broker_order_id=str(position_id_or_symbol), raw_response={'requires_reconciliation': True})
         except Exception as exc:
-            return BrokerOrderResult(False, 'ERROR', str(exc))
+            # A timeout/transport failure can occur AFTER the broker accepted the
+            # DELETE. Never retry a partial close blindly; reconcile first.
+            return BrokerOrderResult(False, 'UNCERTAIN', f'TradeLocker close outcome unknown: {exc}')
 
-    async def _table(self, key, config_key):
+    async def _table(self, key, config_key, *, params=None):
         self._require_selected()
-        config = (await self._request('GET', '/trade/config')).get('d') or {}
-        rows = (await self._request('GET', f'/trade/accounts/{self.account_id}/{key}')).get('d', {}).get(key) or []
+        config = await self._config()
+        rows = (await self._request('GET', f'/trade/accounts/{self.account_id}/{key}', params=params)).get('d', {}).get(key) or []
         fields = config.get(config_key) or []
         if isinstance(fields, dict):
             fields = fields.get('columns') or fields.get('fields') or []
         columns = [str(c.get('name') or c.get('id')) if isinstance(c, dict) else str(c) for c in fields]
-        if not columns and rows:
+        if not columns:
             raise RuntimeError(f'TradeLocker {config_key} column metadata unavailable; refusing unsafe positional mapping')
-        return [dict(zip(columns, r)) if isinstance(r, list) else r for r in rows]
+        mapped = []
+        for row in rows:
+            if isinstance(row, list):
+                if len(row) != len(columns):
+                    raise RuntimeError(f'TradeLocker {key} row/schema length mismatch; position state cannot be trusted')
+                mapped.append(dict(zip(columns, row)))
+            elif isinstance(row, dict):
+                mapped.append(row)
+            else:
+                raise RuntimeError(f'TradeLocker {key} returned an unexpected row shape')
+        return mapped
 
     async def get_positions(self, symbol=None):
         positions = await self._table('positions', 'positionsConfig')
+        instruments = await self._instruments()
+        by_id = {str(inst.get('tradableInstrumentId')): inst for inst in instruments
+                 if inst.get('tradableInstrumentId') is not None}
+        selected_id = None
         if symbol:
-            inst = await self._instrument(symbol)
-            positions = [p for p in positions if str(p.get('tradableInstrumentId')) == str(inst['tradableInstrumentId'])]
-        return positions
+            selected_id = str((await self._instrument(symbol))['tradableInstrumentId'])
+        normalized = []
+        for raw in positions:
+            instrument_id = str(raw.get('tradableInstrumentId') or '')
+            if selected_id is not None and instrument_id != selected_id:
+                continue
+            if not raw.get('id') or not instrument_id or raw.get('qty') is None:
+                raise RuntimeError('TradeLocker position missing id, instrument id or quantity; refusing unsafe sync')
+            inst = by_id.get(instrument_id)
+            if inst is None:
+                # Broker truth must still count an instrument that this cached
+                # catalogue cannot name; never silently hide an open position.
+                name = f'TRADELOCKER_INSTRUMENT_{instrument_id}'
+            else:
+                name = str(inst.get('name') or inst.get('symbol') or '').strip()
+                if not name:
+                    raise RuntimeError('TradeLocker instrument has no symbol; refusing unsafe sync')
+            normalized.append({**raw, 'symbol': name, 'broker_position_id': str(raw['id'])})
+        return normalized
 
     async def get_orders(self):
+        # Non-final orders only; final fills are fetched selectively when the
+        # DB still has a PLACED/UNCONFIRMED entry.
         return await self._table('orders', 'ordersConfig')
+
+    async def get_order_history(self, broker_order_ids):
+        ids = {str(x) for x in broker_order_ids if x is not None}
+        if not ids:
+            return []
+        now_ms = int(time.time() * 1000)
+        final = await self._table('ordersHistory', 'ordersHistoryConfig',
+                                  params={'from': now_ms - 2 * 86400000, 'to': now_ms})
+        return [order for order in final if str(order.get('id') or '') in ids]
 
     async def get_rates(self, symbol, timeframe, count=300):
         inst = await self._instrument(symbol)
@@ -260,6 +338,21 @@ class TradeLockerAdapter(BrokerAdapter):
         if resolution not in seconds:
             raise ValueError(f'Unsupported TradeLocker timeframe: {timeframe}')
         end = int(time.time() * 1000)
-        start = end - (max(1, min(int(count), 20000)) + 10) * seconds[resolution] * 1000
+        start = end - (max(1, min(int(count), 6000)) * 2 + 10) * seconds[resolution] * 1000
         result = await self._request('GET', '/trade/history', params={'routeId': self._route(inst, 'INFO'), 'tradableInstrumentId': inst['tradableInstrumentId'], 'resolution': resolution, 'from': start, 'to': end})
-        return [{'time': x['t'], 'open': x['o'], 'high': x['h'], 'low': x['l'], 'close': x['c'], 'volume': x.get('v')} for x in (result.get('d') or {}).get('barDetails', [])][-count:]
+        # TradeLocker timestamps are UTC milliseconds, whereas the live-candle
+        # service consumes timezone-aware candle OPEN times. Never return `time`
+        # alone: older consumers silently substituted the current time.
+        from datetime import datetime, timezone
+        payload = result.get('d') or {}
+        rows = payload.get('barDetails') or []
+        candles = []
+        for bar in rows:
+            if not isinstance(bar, dict) or not all(k in bar for k in ('t', 'o', 'h', 'l', 'c')):
+                continue
+            timestamp = datetime.fromtimestamp(int(bar['t']) / 1000, tz=timezone.utc)
+            candles.append({'symbol': symbol, 'candle_time': timestamp, 'open': bar['o'],
+                            'high': bar['h'], 'low': bar['l'], 'close': bar['c'],
+                            'volume': bar.get('v'), 'raw_payload': {'provider': 'TRADELOCKER'}})
+        candles.sort(key=lambda row: row['candle_time'])
+        return candles[-count:]

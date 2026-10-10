@@ -6,9 +6,10 @@ from decimal import Decimal
 from sqlalchemy import select
 from ...core.config import settings
 from ...core.redis_manager import redis_manager
-from ...db.models import LivePosition, LivePositionManagementState, StrategyDeployment
+from ...db.models import BrokerAccount, LivePosition, LivePositionManagementState, StrategyDeployment
 from ...db.session import async_session
-from ..alerts.quote_bus import QUOTE_CHANNEL
+from ..alerts.quote_bus import QUOTE_CHANNEL, publish_quote
+from ..brokers.factory import get_broker_adapter, get_broker_code
 from .deployment_lock import try_deployment_xact_lock
 from .live_event_bus import LiveEventBus, worker_identity
 from .live_partial_exit_service import TERMINAL, IN_FLIGHT, ensure_management_state, execute_partial_close, finalize_from_broker_truth, norm_symbol, refresh_account_truth
@@ -20,11 +21,11 @@ def parse_dt(v):
     except Exception: return None
 
 class LivePositionManagerWorker:
-    def __init__(self, redis): self.redis=redis; self.bus=LiveEventBus(redis); self.worker_id=worker_identity('live-position-manager'); self.stop_event=asyncio.Event(); self.last_error=None; self.last_result={}
+    def __init__(self, redis): self.redis=redis; self.bus=LiveEventBus(redis); self.worker_id=worker_identity('live-position-manager'); self.stop_event=asyncio.Event(); self.last_error=None; self.last_result={}; self._tradelocker_adapters={}
     async def stop(self): self.stop_event.set()
     async def run(self):
         pub=self.redis.pubsub(); await pub.subscribe(QUOTE_CHANNEL)
-        health=asyncio.create_task(self._health()); recovery=asyncio.create_task(self._recovery())
+        health=asyncio.create_task(self._health()); recovery=asyncio.create_task(self._recovery()); tradelocker_quotes=asyncio.create_task(self._poll_tradelocker_quotes())
         try:
             while not self.stop_event.is_set():
                 try:
@@ -39,11 +40,67 @@ class LivePositionManagerWorker:
                     logger.warning('Position-manager Redis read temporarily failed: %s', exc)
                     await asyncio.sleep(1)
         finally:
-            health.cancel(); recovery.cancel(); await asyncio.gather(health,recovery,return_exceptions=True)
+            health.cancel(); recovery.cancel(); tradelocker_quotes.cancel(); await asyncio.gather(health,recovery,tradelocker_quotes,return_exceptions=True)
             try: await pub.unsubscribe(QUOTE_CHANNEL)
             except Exception: pass
             try: await pub.close()
             except Exception: pass
+    async def _poll_tradelocker_quotes(self):
+        """Poll only TradeLocker positions with pending partial exits, including copies.
+
+        Alerts normally poll only symbols that have price alerts. A managed
+        position must get quotes even when the user has no active price alert.
+        Other providers retain their existing pushed quote paths unchanged.
+        """
+        while not self.stop_event.is_set():
+            try:
+                async with async_session() as db:
+                    rows = (await db.execute(
+                        select(BrokerAccount, LivePosition.symbol)
+                        .join(LivePositionManagementState, LivePositionManagementState.broker_account_id == BrokerAccount.id)
+                        .join(LivePosition, LivePosition.id == LivePositionManagementState.live_position_id)
+                        .join(StrategyDeployment, StrategyDeployment.id == LivePositionManagementState.deployment_id)
+                        .where(LivePosition.status == 'OPEN', StrategyDeployment.status == 'RUNNING',
+                               LivePositionManagementState.partial_status.in_(['PENDING', 'TRIGGERED', 'FAILED_RETRYABLE']),
+                               BrokerAccount.status == 'CONNECTED')
+                        .distinct()
+                    )).all()
+                for broker, symbol in rows:
+                    if get_broker_code(broker) != 'TRADELOCKER':
+                        continue
+                    try:
+                        account_key = str(broker.id)
+                        adapter = self._tradelocker_adapters.get(account_key)
+                        if adapter is None:
+                            adapter = get_broker_adapter(broker)
+                            self._tradelocker_adapters[account_key] = adapter
+                        quote = await adapter.get_quote(symbol)
+                        bid, ask = quote.get('bid'), quote.get('ask')
+                        if bid is None or ask is None:
+                            raise ValueError('TradeLocker quote missing executable bid or ask')
+                        bid, ask = Decimal(str(bid)), Decimal(str(ask))
+                        if not (bid.is_finite() and ask.is_finite() and bid > 0 and ask >= bid):
+                            raise ValueError('TradeLocker returned invalid bid/ask')
+                        async with async_session() as db:
+                            await publish_quote(db, provider='TRADELOCKER', broker_account_id=str(broker.id),
+                                                symbol=symbol, price=(bid + ask) / 2, bid=bid, ask=ask)
+                            await db.commit()
+                    except Exception as exc:
+                        self._tradelocker_adapters.pop(str(broker.id), None)  # Refresh credentials/session after failure.
+                        self.last_error = f'TradeLocker managed quote {broker.id}/{symbol}: {exc}'[:1000]
+                        logger.warning('TradeLocker managed quote unavailable account=%s symbol=%s: %s', broker.id, symbol, exc)
+                # Conservative API polling (TradeLocker rate limits vary by account).
+                # For many managed symbols, increase this interval as appropriate.
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.last_error = f'TradeLocker quote loop: {exc}'[:1000]
+                logger.exception('TradeLocker managed quote polling failed')
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=3)
+            except asyncio.TimeoutError:
+                pass
+
     async def _recovery(self):
         while not self.stop_event.is_set():
             try:
@@ -73,7 +130,7 @@ class LivePositionManagerWorker:
                         st.last_error=None
                         closed_repaired += 1
 
-                    states=(await db.execute(select(LivePositionManagementState).where(LivePositionManagementState.partial_status.in_(['TRIGGERED','CLOSE_SENT','AWAITING_RECONCILE','FAILED_RETRYABLE'])))).scalars().all()
+                    states=(await db.execute(select(LivePositionManagementState).where(LivePositionManagementState.partial_status.in_(['TRIGGERED','CLOSE_SENT','AWAITING_RECONCILE','FAILED_RETRYABLE','MANUAL_REVIEW'])))).scalars().all()
                     for st in states:
                         dep=(await db.execute(select(StrategyDeployment).where(StrategyDeployment.id==st.deployment_id))).scalar_one_or_none()
                         if not dep: continue

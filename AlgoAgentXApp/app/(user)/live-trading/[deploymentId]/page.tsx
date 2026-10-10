@@ -175,7 +175,7 @@ function LiveFlowPanel() {
   );
 }
 
-function LivePipelineCard({ latency, health, healthError }: { latency: LiveLatencyResponse | null; health: LivePipelineHealth | null; healthError?: string }) {
+function LivePipelineCard({ latency, health, healthError, provider }: { latency: LiveLatencyResponse | null; health: LivePipelineHealth | null; healthError?: string; provider: string }) {
   const latest = latency?.latest;
   const timeline = latest?.timeline || {};
   const t0 = timeline.t0_expected_close_at ? new Date(timeline.t0_expected_close_at).getTime() : null;
@@ -192,6 +192,7 @@ function LivePipelineCard({ latency, health, healthError }: { latency: LiveLaten
   const strategy = health?.workers?.live_strategy_worker;
   const reconcile = health?.workers?.live_reconcile_worker;
   const positionManager = health?.workers?.live_position_manager_worker;
+  const isCTrader = provider === "CTRADER" || provider === "CTRADER_API";
   const connections = market?.connections || {};
   const connection = health?.connection || Object.values(connections)[0];
   const flagsEnabled = Boolean(
@@ -200,24 +201,24 @@ function LivePipelineCard({ latency, health, healthError }: { latency: LiveLaten
       && health?.strategy_stream_enabled
       && health?.reconcile_worker_enabled
       && (health?.position_manager_worker_enabled !== false)
-      && health?.persistent_ctrader_enabled
+      && (isCTrader ? health?.persistent_ctrader_enabled : true)
   );
   const marketStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.market_worker_enabled ? "DISABLED" : market?.status || "OFFLINE";
   const strategyStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.strategy_stream_enabled ? "DISABLED" : strategy?.status || "OFFLINE";
   const reconcileStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.reconcile_worker_enabled ? "DISABLED" : reconcile?.status || "OFFLINE";
   const positionManagerStatus = !health ? "CHECKING" : !health.position_manager_worker_enabled ? "DISABLED" : positionManager?.status || "OFFLINE";
-  const connectionStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.persistent_ctrader_enabled ? "DISABLED" : connection?.state || "OFFLINE";
+  const connectionStatus = !health ? "CHECKING" : !isCTrader ? "BROKER API" : !health.event_pipeline_enabled || !health.persistent_ctrader_enabled ? "DISABLED" : connection?.state || "OFFLINE";
   const eventMode = Boolean(
     flagsEnabled
       && [marketStatus, strategyStatus, reconcileStatus, positionManagerStatus].every((value) => value === "HEALTHY" || value === "DEGRADED")
-      && connectionStatus === "CONNECTED"
+      && isCTrader && connectionStatus === "CONNECTED"
   );
   const disabledFlags = health ? [
     !health.event_pipeline_enabled && "LIVE_EVENT_PIPELINE_ENABLED",
     !health.market_worker_enabled && "LIVE_MARKET_WORKER_ENABLED",
     !health.strategy_stream_enabled && "LIVE_STRATEGY_STREAM_ENABLED",
     !health.reconcile_worker_enabled && "LIVE_RECONCILE_WORKER_ENABLED",
-    !health.persistent_ctrader_enabled && "CTRADER_PERSISTENT_CONNECTION_ENABLED",
+    isCTrader && !health.persistent_ctrader_enabled && "CTRADER_PERSISTENT_CONNECTION_ENABLED",
   ].filter(Boolean) as string[] : [];
   const statusClass = (value?: string) => value === "HEALTHY" || value === "CONNECTED" ? "text-lime-200" : value === "DISABLED" ? "text-yellow-200" : value === "CHECKING" ? "text-purple-200" : value ? "text-amber-200" : "text-red-200";
 
@@ -233,7 +234,7 @@ function LivePipelineCard({ latency, health, healthError }: { latency: LiveLaten
         </Badge>
       </div>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-        <MetricCard label={`cTrader ${connection?.environment || health?.deployment_environment || ""}`.trim()} value={connectionStatus} />
+        <MetricCard label={isCTrader ? `cTrader ${connection?.environment || health?.deployment_environment || ""}`.trim() : `${provider} REST (not event stream)`} value={connectionStatus} />
         <MetricCard label="Market Worker" value={marketStatus} />
         <MetricCard label="Strategy Worker" value={strategyStatus} />
         <MetricCard label="Reconcile Worker" value={reconcileStatus} />
@@ -253,7 +254,7 @@ function LivePipelineCard({ latency, health, healthError }: { latency: LiveLaten
       )}
       {health && disabledFlags.length === 0 && !eventMode && (
         <div className="mt-4 rounded-xl border border-amber-400/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-          Event flags are enabled, but the runtime is not fully healthy yet. Market feeds: <span className="font-semibold">{String(market?.feeds ?? 0)}</span>.
+          Event pipeline is not fully healthy for this deployment. Market feeds: <span className="font-semibold">{String(market?.feeds ?? 0)}</span>.
           {health.redis_error ? <span> Redis health read: <span className="font-semibold">{String(health.redis_error)}</span>.</span> : null}
           {market?.last_error ? <span> Market worker: <span className="font-semibold">{String(market.last_error)}</span>.</span> : null}
           {strategy?.last_error ? <span> Strategy worker: <span className="font-semibold">{String(strategy.last_error)}</span>.</span> : null}
@@ -350,6 +351,7 @@ export default function LiveDeploymentDetailPage() {
   const [showLogs, setShowLogs] = useState(false);
   const [showSignals, setShowSignals] = useState(false);
   const [showOrders, setShowOrders] = useState(false);
+  const [showCopyOrderHistory, setShowCopyOrderHistory] = useState(false);
   const [showAdvancedDiagnostics, setShowAdvancedDiagnostics] = useState(false);
   // Runtime resources are polled independently. One slow endpoint (for example
   // latency/health during broker recovery) must never freeze candle/summary UI.
@@ -789,7 +791,7 @@ export default function LiveDeploymentDetailPage() {
         {runnerResult && <p className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-purple-100">Latest runner log: {runnerResult}</p>}
       </GlassCard>
 
-      <LivePipelineCard latency={latency} health={pipelineHealth} healthError={pipelineHealthError} />
+      <LivePipelineCard latency={latency} health={pipelineHealth} healthError={pipelineHealthError} provider={broker?.broker_code || candleSnapshot?.source || "UNKNOWN"} />
 
       <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-7">
         <MetricCard label="Equity" value={formatMoney(metrics?.equity ?? metrics?.effective_capital ?? deployment.capital, currency)} />
@@ -944,7 +946,7 @@ export default function LiveDeploymentDetailPage() {
             <>
               <GlassCard className="mb-6 p-6" hoverEffect={false}>
                 <div className="mb-4">
-                  <h2 className="text-xl font-bold text-white">Copy Trading Managed Positions</h2>
+                  <h2 className="text-xl font-bold text-white">Copy Trading Open Positions ({copyOpenPositions.length})</h2>
                   <p className="mt-1 text-sm text-purple-200">Each copy broker position has its own partial trigger, broker minimum/step validation, and management state. Primary results never control copy positions.</p>
                 </div>
                 {copyOpenPositions.length === 0 ? <NoRows label="No open copy positions" /> : (
@@ -970,12 +972,15 @@ export default function LiveDeploymentDetailPage() {
               <GlassCard className="mb-6 p-6" hoverEffect={false}>
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-xl font-bold text-white">Copy Trading Orders</h2>
-                    <p className="mt-1 text-sm text-purple-200">Replica entries and copy-position exits are shown separately. Only ENTRY rows count toward Today.</p>
+                    <h2 className="text-xl font-bold text-white">Copy Trading Order History</h2>
+                    <p className="mt-1 text-sm text-purple-200">Historical entries and exits, including already closed trades. These rows are not the count of currently open copy positions.</p>
                   </div>
-                  <Badge className="border-cyan-400/30 bg-cyan-400/20 text-cyan-100">Entries Today: {metrics?.copy_orders_today ?? 0}</Badge>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge className="border-cyan-400/30 bg-cyan-400/20 text-cyan-100">Entry Orders Today: {metrics?.copy_orders_today ?? 0}</Badge>
+                    <Button size="sm" onClick={() => setShowCopyOrderHistory((value) => !value)} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{showCopyOrderHistory ? "Hide History" : "Show History"}</Button>
+                  </div>
                 </div>
-                {copyOrders.length === 0 ? <NoRows label="No copy-trading orders yet" /> : (
+                {!showCopyOrderHistory ? <NoRows label={`Order history hidden. ${copyOpenPositions.length} currently open copy position(s); ${copyOrders.length} recent historical order record(s).`} /> : copyOrders.length === 0 ? <NoRows label="No copy-trading orders yet" /> : (
                   <div className="responsive-table-wrapper max-h-[360px] overflow-auto">
                     <table className="w-full min-w-[1240px] text-left text-sm">
                       <thead className="sticky top-0 bg-purple-950 text-purple-200">

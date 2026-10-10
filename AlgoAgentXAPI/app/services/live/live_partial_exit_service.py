@@ -17,7 +17,7 @@ from ..trading.partial_exit_engine import calculate_broker_partial_split
 from .broker_sync_service import sync_copy_target_positions, sync_ctrader_account_positions_via_gateway, sync_ctrader_deployment_via_gateway, sync_deployment_broker_state
 
 TERMINAL = {"SKIPPED_MIN_SIZE", "DONE", "FAILED_TERMINAL", "BROKER_POSITION_CLOSED"}
-IN_FLIGHT = {"CLOSE_SENT", "AWAITING_RECONCILE"}
+IN_FLIGHT = {"CLOSE_SENT", "AWAITING_RECONCILE", "MANUAL_REVIEW"}
 
 def D(v: Any) -> Decimal:
     return Decimal(str(v or 0))
@@ -41,16 +41,65 @@ async def _instrument_snapshot(db: AsyncSession, deployment: StrategyDeployment,
     if not inst: return {}
     return {k:(float(getattr(inst,k)) if getattr(inst,k,None) is not None and k not in {"quantity_mode"} else getattr(inst,k,None)) for k in ("quantity_mode","min_lot","max_lot","lot_step","min_quantity","max_quantity","quantity_step","quantity_precision") }
 
+def _linked_broker_position_id(raw: dict[str, Any] | None) -> str | None:
+    """Only broker-recorded position IDs, never a symbol/time/lot guess."""
+    if not isinstance(raw, dict): return None
+    for item in (raw.get('broker_sync'), raw.get('broker_order'), raw):
+        if isinstance(item, dict):
+            candidate = item.get('positionId') or item.get('position_id')
+            if candidate is not None and str(candidate).strip():
+                return str(candidate).strip()
+    return None
+
+async def _tradelocker_linked_entry(db: AsyncSession, position: LivePosition, candidates: list[LiveOrder]) -> LiveOrder | None:
+    """Recover entry protection only through matching TradeLocker history positionId.
+
+    TradeLocker /positions returns stopLossId (an order ID), NOT an SL price.
+    Never attribute the last same-symbol entry to a different hedged position.
+    """
+    matches = [o for o in candidates if _linked_broker_position_id(o.raw_response) == str(position.broker_position_id)]
+    if not matches:
+        broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == position.broker_account_id))).scalar_one_or_none()
+        if broker is not None:
+            ids = [str(o.broker_order_id) for o in candidates if o.broker_order_id]
+            if ids:
+                try:
+                    history = await get_broker_adapter(broker, db).get_order_history(ids)
+                    by_id = {str(o.broker_order_id): o for o in candidates if o.broker_order_id}
+                    for item in history:
+                        if not isinstance(item, dict): continue
+                        key = str(item.get('id') or item.get('orderId') or '')
+                        order = by_id.get(key)
+                        if order and _linked_broker_position_id(item) == str(position.broker_position_id):
+                            # Attach broker history as an auditable link (no secret fields).
+                            order.raw_response = {**(order.raw_response or {}), 'broker_sync': item}
+                            matches.append(order)
+                except Exception:
+                    return None  # fail closed if history lookup unavailable
+    unique = {str(o.id): o for o in matches if o.stop_loss is not None}
+    return next(iter(unique.values())) if len(unique) == 1 else None
+
 async def ensure_management_state(db: AsyncSession, deployment: StrategyDeployment, position: LivePosition) -> LivePositionManagementState|None:
     existing=(await db.execute(select(LivePositionManagementState).where(LivePositionManagementState.live_position_id==position.id))).scalar_one_or_none()
     if existing: return existing
     if not deployment.partial_exit_enabled or position.status != "OPEN" or not position.broker_account_id or not position.broker_position_id:
         return None
+    entries=(await db.execute(select(LiveOrder).where(LiveOrder.deployment_id==deployment.id,LiveOrder.broker_account_id==position.broker_account_id,LiveOrder.action=="ENTRY",LiveOrder.status.in_(["FILLED","PLACED","ACCEPTED","RECONCILED"])).order_by(LiveOrder.created_at.desc()).limit(50))).scalars().all()
+    candidates=[o for o in entries if norm_symbol(o.symbol)==norm_symbol(position.symbol) and str(o.side).upper()==('BUY' if str(position.side).upper()=='LONG' else 'SELL')]
+    broker=(await db.execute(select(BrokerAccount).where(BrokerAccount.id==position.broker_account_id))).scalar_one_or_none()
+    code=get_broker_code(broker) if broker else ''
+    if code == 'TRADELOCKER':
+        entry=await _tradelocker_linked_entry(db,position,candidates) if (position.stop_loss is None or position.target is None) else next((o for o in candidates if _linked_broker_position_id(o.raw_response)==str(position.broker_position_id)),None)
+        if position.stop_loss is None and entry is not None:
+            # This is the original algorithm-sent SL/TP, not broker-verified
+            # protective-order status; never infer an SL price from stopLossId.
+            position.stop_loss=entry.stop_loss
+            if position.target is None: position.target=entry.target
+    else:
+        entry=next(iter(candidates),None)
     if position.stop_loss is None:
-        await log_event(db,deployment,"PARTIAL_EXIT_ERROR","Cannot create management state without original strategy stop loss","ERROR",{"position_id":str(position.id)})
+        # Fail closed rather than guess another hedged position's SL/risk.
         return None
-    entry=(await db.execute(select(LiveOrder).where(LiveOrder.deployment_id==deployment.id,LiveOrder.broker_account_id==position.broker_account_id,LiveOrder.action=="ENTRY",LiveOrder.status.in_(["FILLED","PLACED","ACCEPTED","RECONCILED"])).order_by(LiveOrder.created_at.desc()).limit(20))).scalars().all()
-    entry=next((o for o in entry if norm_symbol(o.symbol)==norm_symbol(position.symbol)), None)
     spec=await _instrument_snapshot(db,deployment,position,entry)
     mode=str((entry.quantity_mode if entry else None) or spec.get("quantity_mode") or "LOTS").upper()
     risk=abs(D(position.avg_entry_price)-D(position.stop_loss))
@@ -157,10 +206,14 @@ async def execute_partial_close(db: AsyncSession, deployment: StrategyDeployment
                 await log_event(db,deployment,"PARTIAL_EXIT_CLOSE_FILLED","Broker reported partial-close command filled; awaiting position reconciliation",meta={"position_id":str(position.id),"broker_position_id":state.broker_position_id,"broker_account_id":str(state.broker_account_id),"is_copy_account":str(state.broker_account_id)!=str(deployment.broker_account_id),"close_size":str(close_size),"provider":code})
             await log_event(db,deployment,"PARTIAL_EXIT_AWAITING_RECONCILE","Waiting for broker runner quantity confirmation",meta={"management_state_id":str(state.id)})
         else:
-            state.partial_status="FAILED_RETRYABLE"; state.last_error=result.message
-            await log_event(db,deployment,"PARTIAL_EXIT_ERROR",str(result.message or "Partial close failed"),"ERROR",{"management_state_id":str(state.id)})
+            uncertain = code == 'TRADELOCKER' and str(result.status or '').upper() == 'UNCERTAIN'
+            state.partial_status="MANUAL_REVIEW" if uncertain else "FAILED_RETRYABLE"
+            state.last_error=result.message
+            await log_event(db,deployment,"PARTIAL_EXIT_UNCERTAIN" if uncertain else "PARTIAL_EXIT_ERROR",str(result.message or "Partial close failed"),"ERROR",{"management_state_id":str(state.id),"broker_account_id":str(state.broker_account_id),"requires_manual_review":uncertain})
         return order
     except Exception as exc:
-        order.status="ERROR"; order.error_message=str(exc); state.partial_status="FAILED_RETRYABLE"; state.last_error=str(exc)
-        await log_event(db,deployment,"PARTIAL_EXIT_ERROR",str(exc),"ERROR",{"management_state_id":str(state.id)})
+        order.status="ERROR"; order.error_message=str(exc)
+        uncertain = code == 'TRADELOCKER'
+        state.partial_status="MANUAL_REVIEW" if uncertain else "FAILED_RETRYABLE"; state.last_error=str(exc)
+        await log_event(db,deployment,"PARTIAL_EXIT_UNCERTAIN" if uncertain else "PARTIAL_EXIT_ERROR",str(exc),"ERROR",{"management_state_id":str(state.id),"requires_manual_review":uncertain})
         return order

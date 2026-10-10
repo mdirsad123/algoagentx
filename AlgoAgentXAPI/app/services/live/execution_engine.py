@@ -1125,6 +1125,25 @@ async def _execute_signal_for_account(db: AsyncSession, deployment: StrategyDepl
 
         current_open_positions = await get_open_positions(db, deployment.id, deployment.broker_account_id)
         max_open_positions = int(getattr(deployment, "max_open_positions", 1) or 1)
+        # A TradeLocker order acknowledgement is NOT a filled position. Prevent
+        # a second signal while the first order is still awaiting broker truth,
+        # even if /positions temporarily returns zero between request and fill.
+        # This is account-scoped and deliberately leaves cTrader/MT5 untouched.
+        if broker_for_sync is not None and get_broker_code(broker_for_sync) == "TRADELOCKER":
+            pending_entry = (await db.execute(
+                select(LiveOrder.id).where(
+                    LiveOrder.deployment_id == deployment.id,
+                    LiveOrder.broker_account_id == deployment.broker_account_id,
+                    LiveOrder.status.in_(("PLACED", "SUBMITTED", "PENDING", "PENDING_DEMO")),
+                    or_(LiveOrder.action.is_(None), LiveOrder.action == "ENTRY"),
+                ).limit(1)
+            )).scalar_one_or_none()
+            if pending_entry is not None:
+                signal.status = "REJECTED"
+                signal.rejection_reason = "TradeLocker previous entry awaiting broker fill/reconciliation; new entry blocked."
+                await _log(db, deployment, "TRADELOCKER_PENDING_ENTRY_BLOCKED", signal.rejection_reason, "WARNING",
+                           {"signal_id": str(signal.id), "broker_account_id": str(deployment.broker_account_id)})
+                return latest_order
         if len(current_open_positions) >= max_open_positions:
             signal.status = "REJECTED"
             signal.rejection_reason = "Max open positions reached."
@@ -1448,6 +1467,19 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
             target.instrument = canonical_symbol
             target.broker_symbol = canonical_symbol
             target.instrument_key = None
+        # Resolve the copy account's actual symbol independently. The primary
+        # must remain untouched (e.g. XAUUSD -> XAUUSD.X only on this target).
+        if get_broker_code(broker) == "TRADELOCKER":
+            try:
+                tl_adapter = get_broker_adapter(broker, db)
+                inst = await tl_adapter._instrument(canonical_symbol or primary_signal_symbol)
+                target.broker_symbol = str(inst.get("name") or inst.get("symbol") or "")
+                if not target.broker_symbol:
+                    raise ValueError("TradeLocker copy instrument has no broker symbol")
+            except Exception as exc:
+                await _log(db, log_deployment, "COPY_TARGET_SKIPPED", f"TradeLocker copy symbol could not be verified: {exc}", "WARNING",
+                           {"broker_account_id": str(account_id), "signal_id": str(signal_id)})
+                continue
 
         copy_signal = SimpleNamespace(**signal_snapshot)
         copy_signal.status = original_status
