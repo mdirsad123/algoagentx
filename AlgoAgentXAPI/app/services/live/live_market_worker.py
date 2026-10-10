@@ -119,14 +119,32 @@ def _parse_dt(value: Any) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def _decode_trendbar(bar: dict[str, Any], *, symbol: str, timeframe: str) -> dict[str, Any]:
-    low = int(bar.get("low") or 0)
-    opened = low + int(bar.get("deltaOpen") or 0)
-    high = low + int(bar.get("deltaHigh") or 0)
-    close = low + int(bar.get("deltaClose") or 0)
-    minute_stamp = int(bar.get("utcTimestampInMinutes") or 0)
-    if not minute_stamp:
-        raise ValueError("cTrader trendbar has no utcTimestampInMinutes")
+def _decode_trendbar(
+    bar: dict[str, Any], *, symbol: str, timeframe: str,
+    require_close: bool = True,
+) -> dict[str, Any]:
+    """Decode cTrader relative prices without inventing a missing close.
+
+    ProtoOASpotEvent live trendbars can omit deltaClose. A missing field is
+    *not* an actual deltaClose of zero; the closed candle must be recovered
+    through the authoritative historical-trendbar response instead.
+    """
+    for key in ("low", "deltaOpen", "deltaHigh", "utcTimestampInMinutes"):
+        if bar.get(key) is None:
+            raise ValueError(f"cTrader trendbar missing {key}")
+    if require_close and bar.get("deltaClose") is None:
+        raise ValueError("cTrader trendbar missing deltaClose; historical recovery required")
+    low = int(bar["low"])
+    opened = low + int(bar["deltaOpen"])
+    high = low + int(bar["deltaHigh"])
+    close = low + int(bar["deltaClose"]) if bar.get("deltaClose") is not None else None
+    minute_stamp = int(bar["utcTimestampInMinutes"])
+    if minute_stamp <= 0:
+        raise ValueError("cTrader trendbar has invalid utcTimestampInMinutes")
+    if low <= 0 or not (low <= opened <= high):
+        raise ValueError("cTrader trendbar has invalid OHLC")
+    if close is not None and not (low <= close <= high):
+        raise ValueError("cTrader trendbar close outside candle low/high")
     candle_time = datetime.fromtimestamp(minute_stamp * 60, tz=timezone.utc)
     scale = Decimal("100000")
     return {
@@ -136,7 +154,7 @@ def _decode_trendbar(bar: dict[str, Any], *, symbol: str, timeframe: str) -> dic
         "open": Decimal(opened) / scale,
         "high": Decimal(high) / scale,
         "low": Decimal(low) / scale,
-        "close": Decimal(close) / scale,
+        "close": Decimal(close) / scale if close is not None else None,
         "volume": Decimal(str(bar.get("volume"))) if bar.get("volume") not in (None, "") else None,
         "raw_payload": _without_secret(bar),
     }
@@ -182,6 +200,7 @@ class LiveMarketWorker:
         self.feeds: dict[UUID, FeedRegistration] = {}
         self.managed_quote_feeds: dict[str, FeedRegistration] = {}
         self.current_bars: dict[tuple[str, int, int, int], dict[str, Any]] = {}
+        self._spot_recovery_inflight: set[tuple[tuple[str, int, int, int], datetime]] = set()
         self._registered_handlers: set[str] = set()
         self._candle_queue: asyncio.Queue[tuple[FeedRegistration, dict[str, Any], str, datetime]] = asyncio.Queue(maxsize=10000)
         self._stop = asyncio.Event()
@@ -649,7 +668,7 @@ class LiveMarketWorker:
                 continue
             template = candidates[0]
             try:
-                current = _decode_trendbar(raw_bar, symbol=template.symbol, timeframe=template.timeframe)
+                current = _decode_trendbar(raw_bar, symbol=template.symbol, timeframe=template.timeframe, require_close=False)
             except Exception as exc:
                 self._last_error = f"trendbar normalize: {exc}"
                 continue
@@ -657,11 +676,51 @@ class LiveMarketWorker:
             previous = self.current_bars.get(cache_key)
             self.current_bars[cache_key] = current
             if previous and current["candle_time"] > previous["candle_time"]:
-                for feed in candidates:
-                    try:
-                        self._candle_queue.put_nowait((feed, previous, "CTRADER_LIVE_TRENDBAR", received_at))
-                    except asyncio.QueueFull:
-                        self._last_error = "closed-candle queue is full; watchdog recovery required"
+                # A live spot trendbar is a forming bar, NOT final candle OHLC.
+                # In real exports deltaClose was absent from all 551 live rows.
+                # The rollover is just a trigger to fetch a completed historical
+                # bar once per subscription; never persist a guessed Close=Low.
+                recovery_key = (cache_key, previous["candle_time"])
+                if recovery_key not in self._spot_recovery_inflight:
+                    self._spot_recovery_inflight.add(recovery_key)
+                    self._spawn(
+                        self._recover_spot_closed_bar(candidates, previous["candle_time"], received_at, recovery_key),
+                        name=f"ctrader-verified-close-{template.account_id}-{previous['candle_time'].isoformat()}",
+                    )
+
+    async def _recover_spot_closed_bar(
+        self,
+        feeds: list[FeedRegistration],
+        candle_time: datetime,
+        received_at: datetime,
+        recovery_key: tuple[tuple[str, int, int, int], datetime],
+    ) -> None:
+        """Fetch the completed bar once and fan out to subscribed deployments.
+
+        The existing +3s/+8s watchdog is a fallback if the historical endpoint
+        has not published the finished bar yet. Do not publish the spot bar.
+        """
+        try:
+            if not feeds or _expected_close(candle_time, feeds[0].timeframe) > _now():
+                return
+            bars = await self._fetch_bars(feeds[0], 5)
+            verified = next((bar for bar in bars if bar["candle_time"] == candle_time), None)
+            if verified is None:
+                logger.debug("cTrader historical close not ready for %s; watchdog will recover", candle_time)
+                return
+            for feed in feeds:
+                if feed.deployment_id not in self.feeds:
+                    continue
+                if feed.last_closed_time and feed.last_closed_time >= candle_time:
+                    continue
+                try:
+                    self._candle_queue.put_nowait((feed, verified, "CTRADER_LIVE_VERIFIED", received_at))
+                except asyncio.QueueFull:
+                    self._last_error = "verified closed-candle queue is full; watchdog recovery required"
+        except Exception as exc:
+            logger.warning("cTrader verified close lookup failed; watchdog will recover %s: %s", candle_time, exc)
+        finally:
+            self._spot_recovery_inflight.discard(recovery_key)
 
     async def _publish_spot_quote(self, feed: FeedRegistration, payload: dict[str, Any], received_at: datetime) -> None:
         bid = Decimal(str(payload.get("bid"))) / Decimal("100000") if payload.get("bid") is not None else None

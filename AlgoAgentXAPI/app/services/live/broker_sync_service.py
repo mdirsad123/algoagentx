@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -521,7 +522,150 @@ async def sync_ctrader_account_positions_via_gateway(
     return {"provider_code": "CTRADER", "positions_count": len(positions), **result}
 
 
-async def sync_copy_target_positions(db: AsyncSession, deployment: StrategyDeployment) -> dict[str, Any]:
+# Background-only TradeLocker close-out reconciliation. This is intentionally
+# separate from the pre-trade path: a pending exit must not cause extra REST
+# requests every time a fresh 5-minute strategy signal arrives.
+_TL_FULL_EXIT_HISTORY_INTERVAL_SECONDS = 90
+_tl_full_exit_last_check: dict[tuple[str, str], float] = {}
+
+
+async def reconcile_tradelocker_pending_full_exits(
+    db: AsyncSession,
+    deployment: StrategyDeployment,
+    *,
+    adapter: Any = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Reconcile broker-confirmed final FULL_EXIT orders for one account.
+
+    The broker account must be an explicit field of *deployment*. Never infer
+    an exit's completion just because positions are empty or the deployment
+    is stopped. Only exact order IDs with terminal TradeLocker history can
+    transition to terminal DB statuses. No commit: caller owns transaction.
+    """
+    account_id = getattr(deployment, "broker_account_id", None)
+    if not account_id:
+        return {"full_exit_unconfirmed": 0, "full_exit_orders_updated": 0}
+    pending_ids = (await db.execute(select(LiveOrder.broker_order_id).where(
+        LiveOrder.deployment_id == deployment.id,
+        LiveOrder.broker_account_id == account_id,
+        LiveOrder.action == "FULL_EXIT",
+        LiveOrder.status.in_(("PENDING", "PENDING_DEMO", "SUBMITTED", "PLACED", "ACCEPTED")),
+        LiveOrder.broker_order_id.is_not(None),
+    ))).scalars().all()
+    ids = list(dict.fromkeys(str(value) for value in pending_ids if value))
+    if not ids:
+        return {"full_exit_unconfirmed": 0, "full_exit_orders_updated": 0}
+
+    key = (str(deployment.id), str(account_id))
+    now = time.monotonic()
+    last_check = _tl_full_exit_last_check.get(key)
+    if not force and last_check is not None and now - last_check < _TL_FULL_EXIT_HISTORY_INTERVAL_SECONDS:
+        return {"full_exit_unconfirmed": len(ids), "full_exit_orders_updated": 0,
+                "full_exit_history_skipped": "rate_limit_cooldown"}
+    # Set BEFORE the request so a 429 does not produce an immediate retry storm.
+    _tl_full_exit_last_check[key] = now
+    if adapter is None:
+        broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == account_id))).scalar_one_or_none()
+        if broker is None or get_broker_code(broker) != "TRADELOCKER":
+            raise ValueError("TradeLocker exit reconciliation requires its exact broker account")
+        adapter = get_broker_adapter(broker, db)
+    history = await adapter.get_order_history(ids)
+    if not isinstance(history, list):
+        raise RuntimeError("TradeLocker final order history unavailable; exit remains unconfirmed")
+    terminal = {"FILLED", "CANCELLED", "REJECTED"}
+    wanted = set(ids)
+    verified = [record for record in history
+                if isinstance(record, dict)
+                and _extract_order_id(record) in wanted
+                and _extract_order_status(record) in terminal]
+    result = (await reconcile_orders(db, deployment, verified, "TRADELOCKER")) if verified else {}
+    return {"full_exit_unconfirmed": len(ids),
+            "full_exit_orders_updated": int(result.get("orders_updated", 0)),
+            "full_exit_history_matched": len(verified)}
+
+
+async def sync_tradelocker_pretrade_positions(db: AsyncSession, deployment: StrategyDeployment) -> dict[str, Any]:
+    """Fresh account-scoped TradeLocker position truth for primary AND copy entries.
+
+    Unlike the expensive full background sync, this hot path never fetches
+    balance/config/order lists unless a locally unconfirmed ENTRY requires
+    order reconciliation. The broker /positions read is ALWAYS fresh; a 429
+    fails closed, never interpreted as an empty position list.
+    No commit: the primary/copy caller controls the transaction boundary.
+    """
+    broker = (await db.execute(select(BrokerAccount).where(
+        BrokerAccount.id == deployment.broker_account_id,
+    ))).scalar_one_or_none()
+    if broker is None or get_broker_code(broker) != 'TRADELOCKER':
+        raise ValueError('TradeLocker pre-trade sync requires a TradeLocker broker account')
+    adapter = get_broker_adapter(broker, db)
+    # Critical: verify ALL account positions, not just the deployment's symbol.
+    # Do this BEFORE history/financial polling so a history 429 cannot leave
+    # a CLOSED-by-SL position falsely OPEN in the local DB.
+    positions = await adapter.get_positions()
+    if not isinstance(positions, list):
+        raise RuntimeError('TradeLocker position snapshot unavailable; entry blocked')
+    position_result = await reconcile_positions(db, deployment, positions, 'TRADELOCKER')
+
+    # A broker ACK is not proof of fill. Before clearing the pending-entry guard,
+    # check broker order history; if unavailable, keep PENDING/PLACED (fail closed).
+    pending = (await db.execute(select(LiveOrder.broker_order_id).where(
+        LiveOrder.deployment_id == deployment.id,
+        LiveOrder.broker_account_id == deployment.broker_account_id,
+        LiveOrder.status.in_(('PLACED', 'SUBMITTED', 'PENDING', 'PENDING_DEMO')),
+        or_(LiveOrder.action.is_(None), LiveOrder.action == 'ENTRY'),
+    ))).scalars().all()
+    pending_ids = [str(p) for p in pending if p]
+    order_result = {}
+    if pending_ids:
+        try:
+            orders = await adapter.get_orders()
+            orders.extend(await adapter.get_order_history(pending_ids))
+            order_result = await reconcile_orders(db, deployment, orders, 'TRADELOCKER')
+        except Exception as exc:
+            await _write_log(db, deployment, 'TRADELOCKER_PENDING_ORDER_UNVERIFIED',
+                             'Broker position snapshot refreshed; pending entry order could not be verified',
+                             'WARNING', {'broker_account_id': str(deployment.broker_account_id), 'error': str(exc)[:300]})
+    # Order sizing may use Broker Balance. It must not silently rely on an
+    # indefinitely stale financial snapshot when the background poll is OFF.
+    # Reuse only a recent successful sync, otherwise fetch fresh account info.
+    if hasattr(adapter, 'get_account_info'):
+        meta = dict(getattr(broker, 'metadata_json', None) or {})
+        last_test = meta.get('last_test') or {}
+        last_at = None
+        if isinstance(last_test, dict) and last_test.get('connected') is True and last_test.get('synced_at'):
+            try:
+                last_at = datetime.fromisoformat(str(last_test['synced_at']).replace('Z', '+00:00'))
+                if last_at.tzinfo is None:
+                    last_at = last_at.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                last_at = None
+        recent = bool(last_at and (datetime.now(timezone.utc) - last_at).total_seconds() <= 120
+                      and last_test.get('balance') is not None)
+        if not recent:
+            info = await adapter.get_account_info()
+            if not isinstance(info, dict) or not info.get('connected') or _dec(info.get('balance')) <= 0:
+                raise RuntimeError('TradeLocker broker balance unavailable; risk sizing blocked')
+            meta['last_test'] = {
+                'connected': True, 'message': info.get('message'),
+                'account_login': info.get('account_login'), 'server': info.get('server'),
+                'balance': str(info['balance']),
+                'equity': str(info.get('equity')) if info.get('equity') is not None else None,
+                'free_margin': str(info.get('free_margin')) if info.get('free_margin') is not None else None,
+                'currency': info.get('currency'), 'synced_at': datetime.now(timezone.utc).isoformat(),
+            }
+            broker.metadata_json = meta
+
+    await _write_log(db, deployment, 'TRADELOCKER_PRE_TRADE_POSITIONS_SYNCED',
+                     'Fresh TradeLocker account positions verified before risk/position gates',
+                     'INFO', {'broker_account_id': str(deployment.broker_account_id),
+                              'broker_positions': len(positions), **position_result, **order_result})
+    return {'provider_code': 'TRADELOCKER', 'positions_count': len(positions),
+            **position_result, **order_result}
+
+
+async def sync_copy_target_positions(db: AsyncSession, deployment: StrategyDeployment, *, reconcile_full_exits: bool = False) -> dict[str, Any]:
     """Refresh broker position truth for one copy-trading target account.
 
     Copy targets share the deployment id but have their own broker_account_id.
@@ -550,9 +694,16 @@ async def sync_copy_target_positions(db: AsyncSession, deployment: StrategyDeplo
     )
 
     if provider_code == "TRADELOCKER":
-        # Max-open-positions is account-wide, not restricted to the signal
-        # symbol. Sync every open position for this copy target before entry.
-        positions = await adapter.get_positions() or []
+        # Preserve the fast pre-trade path; background worker additionally
+        # checks the exact copy account's pending FULL_EXIT IDs at low cadence.
+        result = await sync_tradelocker_pretrade_positions(db, deployment)
+        if reconcile_full_exits:
+            try:
+                result.update(await reconcile_tradelocker_pending_full_exits(
+                    db, deployment, adapter=adapter))
+            except Exception as exc:
+                result["full_exit_history_warning"] = str(exc)[:300]
+        return result
     else:
         try:
             positions = await adapter.get_positions(symbol) or []
@@ -673,8 +824,23 @@ async def sync_deployment_broker_state(db: AsyncSession, deployment_id: UUID | s
         except Exception as exc:
             warnings.append(f"Broker account-info refresh failed: {exc}")
 
+    if provider_code == 'TRADELOCKER':
+        # Position truth must not be starved by a throttled order-history read.
+        # Other brokers keep their original sync ordering.
+        positions = await adapter.get_positions()
+        if not isinstance(positions, list):
+            raise RuntimeError('TradeLocker broker position snapshot unavailable')
+
     if hasattr(adapter, "get_orders"):
-        orders = await adapter.get_orders() or []
+        try:
+            orders = await adapter.get_orders() or []
+        except Exception as exc:
+            if provider_code != 'TRADELOCKER':
+                raise
+            # No order-state inference is permitted. Pending entries remain
+            # pending, but the independently verified positions can still sync.
+            warnings.append(f'TradeLocker active orders unavailable; outstanding orders remain unconfirmed: {exc}')
+            orders = []
         if orders and isinstance(orders[0], dict) and orders[0].get("success") is False:
             warnings.append(str(orders[0].get("message") or "Broker orders fetch failed"))
             orders = []
@@ -694,7 +860,7 @@ async def sync_deployment_broker_state(db: AsyncSession, deployment_id: UUID | s
                     orders.extend(await adapter.get_order_history(pending_ids))
                 except Exception as exc:
                     warnings.append(f"TradeLocker order history not available; outstanding orders remain unconfirmed: {exc}")
-    if hasattr(adapter, "get_positions"):
+    if provider_code != 'TRADELOCKER' and hasattr(adapter, "get_positions"):
         if provider_code == "MT5":
             try:
                 positions = await adapter.get_positions(deployment.instrument) or []
@@ -708,6 +874,14 @@ async def sync_deployment_broker_state(db: AsyncSession, deployment_id: UUID | s
 
     order_result = await reconcile_orders(db, deployment, orders, provider_code)
     position_result = await reconcile_positions(db, deployment, positions, provider_code)
+    if provider_code == "TRADELOCKER":
+        try:
+            order_result.update(await reconcile_tradelocker_pending_full_exits(
+                db, deployment, adapter=adapter))
+        except Exception as exc:
+            # Leave unresolved FULL_EXIT orders PLACED. A broker 429, missing
+            # history or timeout can NEVER prove an exit completed.
+            warnings.append(f"TradeLocker FULL_EXIT history unconfirmed: {str(exc)[:200]}")
 
     deployment.last_broker_sync_at = now
     deployment.last_live_sync_at = now
@@ -990,6 +1164,11 @@ async def should_auto_sync_deployment(db: AsyncSession, deployment: StrategyDepl
         and get_broker_code(broker) in {"CTRADER", "CTRADER_API"}
     ):
         return False, "cTrader synchronization is owned by the persistent worker", interval
+    if get_broker_code(broker) == 'TRADELOCKER':
+        # The REST provider does not have cTrader's persistent stream. Polling
+        # /accounts/state + /orders + /positions every 10s per deployment/copy
+        # exhausts the broker API. Entries STILL make fresh /positions checks.
+        interval = max(interval, 60)
     last_sync = getattr(deployment, "last_live_sync_at", None) or getattr(deployment, "last_broker_sync_at", None)
     if last_sync is not None:
         elapsed = (datetime.now(timezone.utc) - last_sync).total_seconds()

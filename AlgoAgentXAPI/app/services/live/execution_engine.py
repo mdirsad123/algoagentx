@@ -23,7 +23,7 @@ from .trading_safety import check_execution_safety, mark_heartbeat
 from .capital_service import get_effective_trading_capital
 from .order_preview_service import build_live_order_preview
 from .funded_guard_service import current_funded_trades_count, evaluate_funded_guard, record_funded_trade_count
-from .broker_sync_service import sync_copy_target_positions, sync_ctrader_deployment_via_gateway, sync_deployment_broker_state
+from .broker_sync_service import sync_copy_target_positions, sync_ctrader_deployment_via_gateway, sync_deployment_broker_state, sync_tradelocker_pretrade_positions
 from .live_latency_trace_service import LiveLatencyTraceService
 from .live_event_bus import LiveEventBus
 from ..brokers.ctrader_order_gateway import submit_close_position, submit_market_order
@@ -461,7 +461,9 @@ async def _execute_demo_entry(
         executed_price=result.executed_price if result.success else None,
         stop_loss=stop_loss,
         target=target,
-        status=(str(getattr(result, "status", "") or "PLACED").upper() if result.success else "ERROR"),
+        status=(str(getattr(result, "status", "") or "PLACED").upper() if result.success
+                else "PENDING" if get_broker_code(broker) == 'TRADELOCKER' and str(getattr(result, 'status', '')).upper() == 'UNCERTAIN'
+                else "ERROR"),
         error_message=None if result.success else result.message,
         raw_response={**(result.raw_response or {}), "client_order_id": client_order_id, **({"sizing": sizing_metadata} if sizing_metadata else {})},
     )
@@ -988,6 +990,11 @@ async def _execute_signal_for_account(db: AsyncSession, deployment: StrategyDepl
                     await _log(db, deployment, "PRE_TRADE_BROKER_CACHE", "Fresh continuously reconciled cTrader state used for risk checks", metadata={"signal_id": str(signal.id), "age_seconds": round(age_seconds or 0, 3)})
                 elif persistent_ctrader:
                     await sync_ctrader_deployment_via_gateway(db, deployment.id, commit=False)
+                elif broker_for_sync is not None and get_broker_code(broker_for_sync) == 'TRADELOCKER':
+                    # Do not perform the heavy background finance+orders sync on
+                    # every M5 entry. /positions is fresh; pending entries are
+                    # independently confirmed before position/risk checks.
+                    await sync_tradelocker_pretrade_positions(db, deployment)
                 else:
                     await sync_deployment_broker_state(db, deployment.id)
                 deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment.id))).scalar_one()

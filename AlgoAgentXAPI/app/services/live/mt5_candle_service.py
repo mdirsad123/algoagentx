@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db.models import BrokerAccount, LiveMarketCandle, LiveTradeLog, StrategyDeployment
 from ..brokers.factory import get_broker_adapter
+from .broker_candle_service import _is_candle_closed
 
 
 def _decimal(value: Any, default: str = "0") -> Decimal:
@@ -27,7 +28,8 @@ def _parse_dt(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(int(value), tz=timezone.utc)
+        timestamp = float(value)
+        return datetime.fromtimestamp(timestamp / 1000 if abs(timestamp) > 10_000_000_000 else timestamp, tz=timezone.utc)
     text = str(value or "").strip()
     if not text:
         return datetime.now(timezone.utc)
@@ -101,10 +103,17 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
         raise HTTPException(status_code=400, detail=message)
 
     upserted = 0
+    skipped_forming = 0
+    now_utc = datetime.now(timezone.utc)
     for item in rates:
-        if item.get("success") is False:
+        if item.get("success") is False or item.get("candle_time") in (None, ""):
             continue
         candle_time = _parse_dt(item.get("candle_time"))
+        # MT5 timestamps denote candle OPEN. Never mark the forming bar as
+        # closed (including at the exact timeframe boundary).
+        if not _is_candle_closed(candle_time, deployment.timeframe, now=now_utc, grace_seconds=2):
+            skipped_forming += 1
+            continue
         resolved_symbol = str(item.get("symbol") or deployment.instrument)
         values = {
             "deployment_id": deployment.id,
@@ -140,7 +149,7 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
         await db.execute(stmt)
         upserted += 1
 
-    await _write_log(db, deployment, "CANDLE_REFRESH_COMPLETED", f"MT5 candle refresh stored {upserted} candles", metadata={"count": safe_count, "stored": upserted})
+    await _write_log(db, deployment, "CANDLE_REFRESH_COMPLETED", f"MT5 candle refresh stored {upserted} closed candles", metadata={"count": safe_count, "stored": upserted, "skipped_forming": skipped_forming})
     await db.commit()
 
     latest_rows = await get_latest_closed_candles(db, deployment_id, limit=5)
@@ -154,6 +163,7 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
         "requested_count": safe_count,
         "stored_count": total_count,
         "upserted_count": upserted,
+        "skipped_forming": skipped_forming,
         "latest_candle_time": latest.get("candle_time") if latest else None,
         "latest_close": latest.get("close") if latest else None,
         "candles": latest_rows,

@@ -1372,6 +1372,129 @@ async def _refresh_open_position_accounts_before_delete(db: AsyncSession, row: S
     return warnings
 
 
+# Treat accepted/submitted orders as unresolved as well. A STOPPED deployment
+# can still have a broker-side order awaiting execution/confirmation.
+_DELETE_UNCONFIRMED_ORDER_STATUSES = ("PENDING", "PLACED", "SUBMITTED", "PENDING_DEMO", "ACCEPTED")
+
+
+async def _reconcile_tradelocker_full_exit_orders_before_delete(
+    db: AsyncSession,
+    row: StrategyDeployment,
+    account_id: UUID,
+    broker: BrokerAccount,
+) -> int:
+    """Verify local PLACED FULL_EXIT orders against this exact TradeLocker account.
+
+    The normal pre-trade sync only checks unfinished ENTRY orders and broker
+    positions; it cannot finalize FULL_EXIT order rows for deletion. Never
+    infer a completed close from a zero-position snapshot. Broker order history
+    must explicitly confirm the final status, or the delete guard stays on.
+    """
+    order_ids = (await db.execute(
+        select(LiveOrder.broker_order_id).where(
+            LiveOrder.deployment_id == row.id,
+            LiveOrder.broker_account_id == account_id,
+            LiveOrder.action == "FULL_EXIT",
+            LiveOrder.status.in_(_DELETE_UNCONFIRMED_ORDER_STATUSES),
+            LiveOrder.broker_order_id.is_not(None),
+        )
+    )).scalars().all()
+    ids = sorted({str(value) for value in order_ids if value not in (None, "")})
+    if not ids:
+        return 0  # IDs missing => unresolved rows still block deletion.
+
+    adapter = get_broker_adapter(broker, db)
+    final_orders = await adapter.get_order_history(ids)
+    if not isinstance(final_orders, list):
+        raise RuntimeError("TradeLocker final order history unavailable")
+    if not final_orders:
+        return 0  # A 48h history window may not contain older exits.
+
+    # Explicit broker status/ID mapping; preserve existing account isolation.
+    # reconcile_orders only changes a local row when broker order IDs match.
+    from ...services.live.broker_sync_service import reconcile_orders
+    target = SimpleNamespace(id=row.id, broker_account_id=account_id)
+    result = await reconcile_orders(db, target, final_orders, "TRADELOCKER")
+    return int(result.get("orders_updated") or 0)
+
+
+async def _refresh_unconfirmed_tradelocker_orders_before_delete(
+    db: AsyncSession, row: StrategyDeployment,
+) -> list[str]:
+    """Reconcile unconfirmed TradeLocker orders once per affected account.
+
+    The standard delete path refreshes only accounts with locally OPEN
+    positions. A market ENTRY may already be CLOSED at the broker while its
+    LiveOrder is still PLACED; that status won't clear unless broker order
+    history is explicitly checked. The existing copy-account sync has the
+    required account-scoped position + order-history reconciliation.
+
+    Never infer FILLED/CANCELLED from age, deployment STOPPED status or an empty
+    positions table. Missing broker confirmation must leave deletion blocked.
+    """
+    account_ids = list((await db.execute(
+        select(LiveOrder.broker_account_id)
+        .where(
+            LiveOrder.deployment_id == row.id,
+            LiveOrder.status.in_(_DELETE_UNCONFIRMED_ORDER_STATUSES),
+        )
+        .distinct()
+    )).scalars().all())
+    warnings: list[str] = []
+    seen: set[str] = set()
+    for raw_account_id in account_ids:
+        account_id = raw_account_id or row.broker_account_id
+        if account_id is None:
+            warnings.append("unconfirmed order has no broker account")
+            continue
+        if str(account_id) in seen:
+            continue
+        seen.add(str(account_id))
+        broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == account_id))).scalar_one_or_none()
+        if broker is None:
+            warnings.append(f"{account_id}: broker account missing")
+            continue
+        # Preserve all non-TradeLocker delete behavior; never apply another
+        # broker's status semantics to MT5 or cTrader orders.
+        if get_broker_code(broker) != "TRADELOCKER":
+            continue
+        target = SimpleNamespace(
+            id=row.id,
+            user_id=row.user_id,
+            broker_account_id=account_id,
+            instrument=row.instrument,
+            broker_symbol=row.broker_symbol,
+            instrument_key=row.instrument_key,
+        )
+        try:
+            async with db.begin_nested():
+                await sync_copy_target_positions(db, target)
+        except Exception as exc:
+            # Even if generic pre-trade sync is throttled, try the narrow
+            # FULL_EXIT history path; never silently clear on failure.
+            warnings.append(f"{account_id} position sync: {str(exc)[:180]}")
+        try:
+            async with db.begin_nested():
+                await _reconcile_tradelocker_full_exit_orders_before_delete(db, row, account_id, broker)
+        except Exception as exc:
+            warnings.append(f"{account_id} FULL_EXIT history: {str(exc)[:180]}")
+    return warnings
+
+
+def _deletion_order_block_message(total: int, status_counts: list[tuple[str, int]], warnings: list[str]) -> str:
+    """Actionable explanation without exposing execution secrets."""
+    details = ", ".join(f"{status}: {count}" for status, count in status_counts)
+    message = (
+        f"Cannot delete deployment: {total} unconfirmed live order(s) "
+        f"({details or 'status unknown'}). Broker status must be reconciled "
+        "before deletion; a stopped strategy and zero open positions do not "
+        "prove every order is final."
+    )
+    if warnings:
+        message += f" Broker verification warning: {warnings[0]}"
+    return message
+
+
 @router.delete("/{deployment_id}")
 async def delete_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     row = await get_deployment_or_404(db, deployment_id, current_user)
@@ -1392,11 +1515,30 @@ async def delete_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_
         suffix = f" Broker refresh warning: {delete_sync_warnings[0]}" if delete_sync_warnings else ""
         raise HTTPException(status_code=400, detail=f"Cannot delete deployment while open live positions exist.{suffix}")
 
-    active_orders_count = int((await db.execute(
-        select(func.count(LiveOrder.id)).where(LiveOrder.deployment_id == deployment_id, LiveOrder.status.in_(["PENDING", "PLACED"]))
+    # A historic TradeLocker fill may remain locally PLACED even after the
+    # broker closes the position. Refresh primary and copy order histories
+    # before deciding; never clear statuses based on an empty position list.
+    delete_order_warnings = await _refresh_unconfirmed_tradelocker_orders_before_delete(db, row)
+
+    # A broker refresh can discover real positions even when the local UI
+    # previously reported zero. Recheck exposure before destructive delete.
+    open_positions_count = int((await db.execute(
+        select(func.count(LivePosition.id)).where(LivePosition.deployment_id == deployment_id, LivePosition.status == "OPEN")
     )).scalar() or 0)
-    if active_orders_count > 0:
-        raise HTTPException(status_code=400, detail="Cannot delete deployment while pending or placed live orders exist.")
+    if open_positions_count:
+        raise HTTPException(status_code=400, detail="Cannot delete deployment: broker refresh detected an open live position.")
+
+    remaining_order_statuses = (await db.execute(
+        select(LiveOrder.status, func.count(LiveOrder.id))
+        .where(LiveOrder.deployment_id == deployment_id, LiveOrder.status.in_(_DELETE_UNCONFIRMED_ORDER_STATUSES))
+        .group_by(LiveOrder.status)
+    )).all()
+    active_orders_count = sum(int(count) for _, count in remaining_order_statuses)
+    if active_orders_count:
+        raise HTTPException(
+            status_code=400,
+            detail=_deletion_order_block_message(active_orders_count, remaining_order_statuses, delete_order_warnings),
+        )
 
     deleted_id = str(row.id)
     await _write_log(db, row, "DEPLOYMENT_DELETED", "Deployment deleted by user/admin", "INFO", {"status": row.status, "mode": row.mode, "deleted_by_role": current_user.get("role")})

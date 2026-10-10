@@ -2,23 +2,48 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from app.services.live.live_market_worker import FeedRegistration, LiveMarketWorker
+import pytest
+
+# Lightweight test-environment fallbacks only: the deployed worker still
+# requires real Redis + asyncpg. Candle unit tests do not connect to either.
+import importlib.util
+import sys
+import types
+if importlib.util.find_spec("redis") is None:
+    redis_pkg = types.ModuleType("redis")
+    redis_pkg.__path__ = []
+    redis_async = types.ModuleType("redis.asyncio")
+    redis_async.Redis = type("Redis", (), {})
+    redis_async.from_url = lambda *a, **k: None
+    redis_pkg.asyncio = redis_async
+    sys.modules.setdefault("redis", redis_pkg)
+    sys.modules.setdefault("redis.asyncio", redis_async)
+if importlib.util.find_spec("asyncpg") is None:
+    fake_session = types.ModuleType("app.db.session")
+    fake_session.async_session = lambda: None
+    sys.modules.setdefault("app.db.session", fake_session)
+
+from app.services.live.live_market_worker import (
+    FeedRegistration, LiveMarketWorker, _decode_trendbar,
+)
 
 
 class _UnusedRedis:
     pass
 
 
-def _bar(minute: int, close_delta: int = 1000):
-    return {
+def _bar(minute: int, close_delta: int | None = 1000):
+    data = {
         "period": 1,
         "utcTimestampInMinutes": minute,
         "low": 10_000_000,
         "deltaOpen": 1000,
         "deltaHigh": 2000,
-        "deltaClose": close_delta,
         "volume": 10,
     }
+    if close_delta is not None:
+        data["deltaClose"] = close_delta
+    return data
 
 
 def _feed(account_id: int = 1):
@@ -29,27 +54,76 @@ def _feed(account_id: int = 1):
     )
 
 
-def test_new_bar_closes_previous_once_for_each_deployment():
-    worker = LiveMarketWorker(_UnusedRedis())
-    first = _feed()
-    second = _feed()
-    worker.feeds = {first.deployment_id: first, second.deployment_id: second}
-    base_minute = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() // 60)
+def test_ctrader_missing_delta_close_is_never_faked_as_low():
+    minute = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() // 60)
+    raw = _bar(minute, None)
+    with pytest.raises(ValueError, match="deltaClose"):
+        _decode_trendbar(raw, symbol="EURUSD", timeframe="M1")
+    provisional = _decode_trendbar(raw, symbol="EURUSD", timeframe="M1", require_close=False)
+    assert provisional["close"] is None
+    valid_low_close = _decode_trendbar(_bar(minute, 0), symbol="EURUSD", timeframe="M1")
+    assert valid_low_close["close"] == valid_low_close["low"]
 
-    worker._handle_spot_event("DEMO", {"payload": {
-        "ctidTraderAccountId": 1, "symbolId": 100, "trendbar": [_bar(base_minute)],
-    }})
-    assert worker._candle_queue.qsize() == 0
 
-    next_event = {"payload": {
-        "ctidTraderAccountId": 1, "symbolId": 100, "trendbar": [_bar(base_minute + 1)],
-    }}
-    worker._handle_spot_event("DEMO", next_event)
-    assert worker._candle_queue.qsize() == 2
+def test_ctrader_rejects_invalid_price_range():
+    minute = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() // 60)
+    with pytest.raises(ValueError, match="outside"):
+        _decode_trendbar(_bar(minute, 9000), symbol="EURUSD", timeframe="M1")
 
-    # A duplicate update for the same new bar must not close it a second time.
-    worker._handle_spot_event("DEMO", next_event)
-    assert worker._candle_queue.qsize() == 2
+
+def test_new_bar_recovers_one_historical_close_for_each_deployment():
+    async def scenario():
+        worker = LiveMarketWorker(_UnusedRedis())
+        first = _feed()
+        second = _feed()
+        worker.feeds = {first.deployment_id: first, second.deployment_id: second}
+        base_minute = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() // 60)
+        authoritative = _decode_trendbar(_bar(base_minute, 1500), symbol="EURUSD", timeframe="M1")
+        calls = []
+
+        async def verified_fetch(_feed, count):
+            calls.append(count)
+            return [authoritative]
+
+        worker._fetch_bars = verified_fetch
+        worker._handle_spot_event("DEMO", {"payload": {
+            "ctidTraderAccountId": 1, "symbolId": 100,
+            "trendbar": [_bar(base_minute, None)],
+        }})
+        assert worker._candle_queue.qsize() == 0
+        next_event = {"payload": {
+            "ctidTraderAccountId": 1, "symbolId": 100,
+            "trendbar": [_bar(base_minute + 1, None)],
+        }}
+        worker._handle_spot_event("DEMO", next_event)
+        worker._handle_spot_event("DEMO", next_event)
+        await asyncio.gather(*worker._tasks)
+        assert calls == [5]
+        assert worker._candle_queue.qsize() == 2
+        for _ in range(2):
+            feed, candle, source, _received = worker._candle_queue.get_nowait()
+            assert feed in (first, second)
+            assert source == "CTRADER_LIVE_VERIFIED"
+            assert candle["close"] > candle["low"]
+    asyncio.run(scenario())
+
+
+def test_broker_history_not_ready_does_not_publish_fake_spot_close():
+    async def scenario():
+        worker = LiveMarketWorker(_UnusedRedis())
+        feed = _feed()
+        worker.feeds = {feed.deployment_id: feed}
+        base_minute = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() // 60)
+        worker._fetch_bars = lambda *_args: asyncio.sleep(0, result=[])
+        worker._handle_spot_event("DEMO", {"payload": {
+            "ctidTraderAccountId": 1, "symbolId": 100, "trendbar": [_bar(base_minute, None)],
+        }})
+        worker._handle_spot_event("DEMO", {"payload": {
+            "ctidTraderAccountId": 1, "symbolId": 100, "trendbar": [_bar(base_minute + 1, None)],
+        }})
+        await asyncio.gather(*worker._tasks)
+        assert worker._candle_queue.empty()
+    asyncio.run(scenario())
 
 
 def test_missing_candle_watchdog_uses_only_plus_3_and_plus_8_recovery_checks():
@@ -77,7 +151,6 @@ def test_missing_candle_watchdog_uses_only_plus_3_and_plus_8_recovery_checks():
         assert len(calls) == 2
         await worker._watchdog_check_once(close + timedelta(seconds=20))
         assert len(calls) == 2
-
     asyncio.run(scenario())
 
 
@@ -108,5 +181,4 @@ def test_slow_deployment_does_not_block_another_candle():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             await worker._candle_queue.join()
-
     asyncio.run(scenario())

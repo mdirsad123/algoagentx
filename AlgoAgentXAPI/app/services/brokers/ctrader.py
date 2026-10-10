@@ -1475,14 +1475,17 @@ class CTraderAdapter(BrokerAdapter):
         bars = payload.get("trendbar") or payload.get("trendbars") or []
         result: list[dict[str, Any]] = []
         for bar in bars if isinstance(bars, list) else []:
-            if not isinstance(bar, dict) or bar.get("low") is None:
+            if not isinstance(bar, dict) or any(bar.get(key) is None for key in ("low", "deltaOpen", "deltaHigh", "deltaClose", "utcTimestampInMinutes")):
+                # Never decode a missing deltaClose as Close == Low.
                 continue
             low_rel = int(bar.get("low") or 0)
             open_rel = low_rel + int(bar.get("deltaOpen") or 0)
             high_rel = low_rel + int(bar.get("deltaHigh") or 0)
-            close_rel = low_rel + int(bar.get("deltaClose") or 0)
-            ts_minutes = int(bar.get("utcTimestampInMinutes") or 0)
-            candle_time = datetime.fromtimestamp(ts_minutes * 60, tz=timezone.utc) if ts_minutes else now
+            close_rel = low_rel + int(bar["deltaClose"])
+            ts_minutes = int(bar["utcTimestampInMinutes"])
+            if ts_minutes <= 0 or low_rel <= 0 or not (low_rel <= open_rel <= high_rel and low_rel <= close_rel <= high_rel):
+                continue
+            candle_time = datetime.fromtimestamp(ts_minutes * 60, tz=timezone.utc)
             result.append({
                 "success": True,
                 "symbol": str(symbol).upper(),
@@ -1574,14 +1577,14 @@ class CTraderAdapter(BrokerAdapter):
                 bars = payload.get("trendbar") or payload.get("trendbars") or []
                 page: list[dict[str, Any]] = []
                 for bar in bars if isinstance(bars, list) else []:
-                    if not isinstance(bar, dict) or bar.get("low") is None:
+                    if not isinstance(bar, dict) or any(bar.get(key) is None for key in ("low", "deltaOpen", "deltaHigh", "deltaClose", "utcTimestampInMinutes")):
                         continue
                     low_rel = int(bar.get("low") or 0)
                     open_rel = low_rel + int(bar.get("deltaOpen") or 0)
                     high_rel = low_rel + int(bar.get("deltaHigh") or 0)
-                    close_rel = low_rel + int(bar.get("deltaClose") or 0)
-                    ts_minutes = int(bar.get("utcTimestampInMinutes") or 0)
-                    if not ts_minutes:
+                    close_rel = low_rel + int(bar["deltaClose"])
+                    ts_minutes = int(bar["utcTimestampInMinutes"])
+                    if ts_minutes <= 0 or low_rel <= 0 or not (low_rel <= open_rel <= high_rel and low_rel <= close_rel <= high_rel):
                         continue
                     candle_time = datetime.fromtimestamp(ts_minutes * 60, tz=timezone.utc)
                     item = {

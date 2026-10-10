@@ -9,6 +9,9 @@ import asyncio
 import os
 import time
 import logging
+import hashlib
+import math
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 import httpx
@@ -17,6 +20,26 @@ from ...utils.credential_crypto import decrypt_credential
 from .base import BrokerAdapter, BrokerConnectionResult, BrokerOrderRequest, BrokerOrderResult
 
 logger = logging.getLogger(__name__)
+
+# Adapter instances are deliberately short-lived (API, runner, sync workers).
+# Reusing JWT and stable account schema INSIDE one process avoids a fresh auth
+# and configuration request for every independent deployment/copy evaluation.
+# Account credentials and selected account must never share a cache entry.
+_SESSION_CACHE: dict[str, dict[str, Any]] = {}
+_SESSION_LOCKS: dict[str, asyncio.Lock] = {}
+_RATE_LIMIT_UNTIL: dict[str, float] = {}
+
+
+def _account_key(environment: str, email: str, server: str, account_id: str, password: str) -> str:
+    data = "\0".join((environment, email, server, account_id, password))
+    return hashlib.sha256(data.encode('utf-8')).hexdigest()
+
+
+def _retry_after_seconds(value: str | None) -> float:
+    try:
+        return max(1.0, min(120.0, float(value))) if value else 10.0
+    except (ValueError, TypeError):
+        return 10.0
 
 
 def _number(value):
@@ -43,9 +66,13 @@ class TradeLockerAdapter(BrokerAdapter):
         self._access_expiry = 0.0
         self._instrument_cache = None
         self._config_cache = None
+        self._session_key = _account_key(self.environment, self.email, self.server, self.account_id, self.password)
 
     async def _request(self, method: str, path: str, *, params=None, body=None, auth=True):
         headers = {'Accept': 'application/json'}
+        key = getattr(self, '_session_key', None)
+        if key and time.monotonic() < _RATE_LIMIT_UNTIL.get(key, 0.0):
+            raise RuntimeError('TradeLocker API rate limit cooldown active; broker state cannot be verified yet.')
         if auth:
             headers['Authorization'] = f'Bearer {await self._token()}'
         if self.acc_num is not None:
@@ -56,13 +83,16 @@ class TradeLockerAdapter(BrokerAdapter):
         async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
             response = await client.request(method, self.base + path, headers=headers, params=params, json=body)
         if response.status_code == 429:
-            raise RuntimeError('TradeLocker API rate limit reached; retry later (do not duplicate an order).')
+            wait = _retry_after_seconds(response.headers.get('Retry-After'))
+            if key:
+                _RATE_LIMIT_UNTIL[key] = max(_RATE_LIMIT_UNTIL.get(key, 0.0), time.monotonic() + wait)
+            raise RuntimeError(f'TradeLocker API rate limit reached; retry after {wait:g}s (do not duplicate an order).')
         if response.status_code >= 400:
             raise RuntimeError(f'TradeLocker {method} {path} returned HTTP {response.status_code}. Check credentials, account and trading rules.')
         if response.status_code == 204 or not response.content:
             return {'s': 'ok'}
         data = response.json()
-        if data.get('s') not in (None, 'ok'):
+        if data.get('s') not in (None, 'ok') and not (path == '/trade/history' and data.get('s') == 'no_data'):
             raise RuntimeError(f'TradeLocker API returned status {data.get("s")!r}')
         return data
 
@@ -71,12 +101,33 @@ class TradeLockerAdapter(BrokerAdapter):
             return self._access_token
         if not all((self.email, self.password, self.server)):
             raise ValueError('TradeLocker email, password and server are required')
-        payload = await self._request('POST', '/auth/jwt/token', body={'email': self.email, 'password': self.password, 'server': self.server}, auth=False)
+        key = getattr(self, '_session_key', None)
+        if key:
+            cached = _SESSION_CACHE.get(key) or {}
+            if cached.get('token') and time.monotonic() < cached.get('expiry', 0):
+                self._access_token, self._access_expiry = cached['token'], cached['expiry']
+                return self._access_token
+            lock = _SESSION_LOCKS.setdefault(key, asyncio.Lock())
+            async with lock:
+                cached = _SESSION_CACHE.get(key) or {}
+                if cached.get('token') and time.monotonic() < cached.get('expiry', 0):
+                    self._access_token, self._access_expiry = cached['token'], cached['expiry']
+                    return self._access_token
+                return await self._refresh_token(key)
+        return await self._refresh_token(None)
+
+    async def _refresh_token(self, key):
+        payload = await self._request('POST', '/auth/jwt/token', body={
+            'email': self.email, 'password': self.password, 'server': self.server,
+        }, auth=False)
         info = payload.get('d', payload)
         self._access_token = info.get('accessToken') or info.get('access_token')
         if not self._access_token:
             raise RuntimeError('TradeLocker authentication did not return accessToken')
-        self._access_expiry = time.monotonic() + min(int(info.get('expiresIn') or 600), 600) - 30
+        self._access_expiry = time.monotonic() + max(1, min(int(info.get('expiresIn') or 600), 600) - 30)
+        if key:
+            cached = _SESSION_CACHE.setdefault(key, {})
+            cached['token'], cached['expiry'] = self._access_token, self._access_expiry
         return self._access_token
 
     async def get_available_accounts(self):
@@ -115,7 +166,14 @@ class TradeLockerAdapter(BrokerAdapter):
 
     async def _config(self):
         if self._config_cache is None:
-            self._config_cache = (await self._request('GET', '/trade/config')).get('d') or {}
+            key = getattr(self, '_session_key', None)
+            cached = _SESSION_CACHE.get(key, {}) if key else {}
+            if cached.get('config') and time.monotonic() < cached.get('config_expiry', 0):
+                self._config_cache = cached['config']
+            else:
+                self._config_cache = (await self._request('GET', '/trade/config')).get('d') or {}
+                if key and self._config_cache:
+                    _SESSION_CACHE.setdefault(key, {}).update(config=self._config_cache, config_expiry=time.monotonic() + 120)
         return self._config_cache
 
     async def get_account_info(self):
@@ -159,8 +217,18 @@ class TradeLockerAdapter(BrokerAdapter):
     async def _instruments(self):
         self._require_selected()
         if self._instrument_cache is None:
-            result = await self._request('GET', f'/trade/accounts/{self.account_id}/instruments')
-            self._instrument_cache = result.get('d', {}).get('instruments') or []
+            key = getattr(self, '_session_key', None)
+            cached = _SESSION_CACHE.get(key, {}) if key else {}
+            if cached.get('instruments') and time.monotonic() < cached.get('instruments_expiry', 0):
+                self._instrument_cache = cached['instruments']
+            else:
+                result = await self._request('GET', f'/trade/accounts/{self.account_id}/instruments')
+                data = result.get('d') or {}
+                if not isinstance(data, dict) or not isinstance(data.get('instruments'), list):
+                    raise RuntimeError('TradeLocker instruments response missing valid instruments list')
+                self._instrument_cache = data['instruments']
+                if key:
+                    _SESSION_CACHE.setdefault(key, {}).update(instruments=self._instrument_cache, instruments_expiry=time.monotonic() + 120)
         return self._instrument_cache
 
     async def get_symbols(self, query=None, limit=200):
@@ -243,11 +311,16 @@ class TradeLockerAdapter(BrokerAdapter):
             result = await self._request('POST', f'/trade/accounts/{self.account_id}/orders', body=body)
             order_id = str((result.get('d') or {}).get('orderId') or '')
             if not order_id:
-                raise RuntimeError('TradeLocker did not return orderId; reconcile before retrying')
+                raise httpx.TransportError('TradeLocker order response has no orderId; reconcile before retrying')
             return BrokerOrderResult(True, 'PLACED', 'TradeLocker order accepted; broker fill confirmation pending.', broker_order_id=order_id,
                 raw_response={'orderId': order_id, 'requires_reconciliation': True,
                               'resolved_symbol': str(inst.get('name') or inst.get('symbol') or order_request.symbol),
                               'tradableInstrumentId': inst['tradableInstrumentId']})
+        except (httpx.TransportError, httpx.TimeoutException) as exc:
+            # A POST may reach the broker before the response is lost. Never
+            # permit automatic duplicate sending for this same signal.
+            return BrokerOrderResult(False, 'UNCERTAIN', f'TradeLocker entry outcome unknown; reconcile manually before retry: {exc}',
+                                     raw_response={'requires_reconciliation': True, 'order_outcome_unknown': True})
         except Exception as exc:
             return BrokerOrderResult(False, 'ERROR', str(exc))
 
@@ -269,7 +342,10 @@ class TradeLockerAdapter(BrokerAdapter):
     async def _table(self, key, config_key, *, params=None):
         self._require_selected()
         config = await self._config()
-        rows = (await self._request('GET', f'/trade/accounts/{self.account_id}/{key}', params=params)).get('d', {}).get(key) or []
+        payload = (await self._request('GET', f'/trade/accounts/{self.account_id}/{key}', params=params)).get('d')
+        if not isinstance(payload, dict) or not isinstance(payload.get(key), list):
+            raise RuntimeError(f'TradeLocker {key} response missing valid {key} list; cannot infer zero open positions')
+        rows = payload[key]
         fields = config.get(config_key) or []
         if isinstance(fields, dict):
             fields = fields.get('columns') or fields.get('fields') or []
@@ -329,30 +405,146 @@ class TradeLockerAdapter(BrokerAdapter):
                                   params={'from': now_ms - 2 * 86400000, 'to': now_ms})
         return [order for order in final if str(order.get('id') or '') in ids]
 
-    async def get_rates(self, symbol, timeframe, count=300):
-        inst = await self._instrument(symbol)
-        resolution = str(timeframe).lower()
-        supported = {'m1': '1m', 'm5': '5m', 'm15': '15m', 'm30': '30m', 'h1': '1H', 'h4': '4H', 'd1': '1D'}
-        resolution = supported.get(resolution, timeframe)
-        seconds = {'1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1H': 3600, '4H': 14400, '1D': 86400}
-        if resolution not in seconds:
+    # Broker candles are independent from the MT5/cTrader data and order paths.
+    # TradeLocker /trade/history is a date-range API, not a count-based one.
+    _HISTORY_RESOLUTIONS = {
+        'm1': ('1m', 60), '1m': ('1m', 60),
+        'm5': ('5m', 300), '5m': ('5m', 300),
+        'm15': ('15m', 900), '15m': ('15m', 900),
+        'm30': ('30m', 1800), '30m': ('30m', 1800),
+        'h1': ('1H', 3600), '1h': ('1H', 3600),
+        'h4': ('4H', 14400), '4h': ('4H', 14400),
+        'd1': ('1D', 86400), '1d': ('1D', 86400),
+    }
+
+    @classmethod
+    def _history_resolution(cls, timeframe):
+        result = cls._HISTORY_RESOLUTIONS.get(str(timeframe).strip().lower())
+        if result is None:
             raise ValueError(f'Unsupported TradeLocker timeframe: {timeframe}')
-        end = int(time.time() * 1000)
-        start = end - (max(1, min(int(count), 6000)) * 2 + 10) * seconds[resolution] * 1000
-        result = await self._request('GET', '/trade/history', params={'routeId': self._route(inst, 'INFO'), 'tradableInstrumentId': inst['tradableInstrumentId'], 'resolution': resolution, 'from': start, 'to': end})
-        # TradeLocker timestamps are UTC milliseconds, whereas the live-candle
-        # service consumes timezone-aware candle OPEN times. Never return `time`
-        # alone: older consumers silently substituted the current time.
-        from datetime import datetime, timezone
-        payload = result.get('d') or {}
-        rows = payload.get('barDetails') or []
-        candles = []
-        for bar in rows:
-            if not isinstance(bar, dict) or not all(k in bar for k in ('t', 'o', 'h', 'l', 'c')):
+        return result
+
+    @staticmethod
+    def _normalize_history_bars(raw_bars, *, symbol, before_ms=None):
+        """Only accept complete, correctly ordered, finite OHLC candles.
+
+        An M5 candle whose close equals its low is valid and MUST NOT be
+        rejected merely for that equality. Preserve raw REST OHLC for audits.
+        """
+        if not isinstance(raw_bars, list):
+            raise ValueError('TradeLocker history barDetails must be a list')
+        by_timestamp = {}
+        for bar in raw_bars:
+            if not isinstance(bar, dict) or any(k not in bar or bar[k] is None for k in ('t', 'o', 'h', 'l', 'c')):
+                logger.warning('Skipping incomplete TradeLocker history bar')
                 continue
-            timestamp = datetime.fromtimestamp(int(bar['t']) / 1000, tz=timezone.utc)
-            candles.append({'symbol': symbol, 'candle_time': timestamp, 'open': bar['o'],
-                            'high': bar['h'], 'low': bar['l'], 'close': bar['c'],
-                            'volume': bar.get('v'), 'raw_payload': {'provider': 'TRADELOCKER'}})
-        candles.sort(key=lambda row: row['candle_time'])
-        return candles[-count:]
+            try:
+                timestamp_ms = int(bar['t'])
+                open_, high, low, close = (float(bar[k]) for k in ('o', 'h', 'l', 'c'))
+                volume = float(bar['v']) if bar.get('v') is not None else None
+                valid = (
+                    timestamp_ms > 1_000_000_000_000
+                    and (before_ms is None or timestamp_ms < before_ms)
+                    and all(math.isfinite(x) and x > 0 for x in (open_, high, low, close))
+                    and low <= min(open_, close) <= high
+                    and low <= max(open_, close) <= high
+                    and (volume is None or (math.isfinite(volume) and volume >= 0))
+                )
+                if not valid:
+                    raise ValueError('invalid timestamp or OHLC range')
+                timestamp = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+            except (ValueError, TypeError, OverflowError, OSError):
+                logger.warning('Skipping invalid TradeLocker history OHLC/timestamp')
+                continue
+            by_timestamp[timestamp_ms] = {
+                'symbol': symbol, 'candle_time': timestamp,
+                'open': open_, 'high': high, 'low': low, 'close': close,
+                'volume': volume,
+                'raw_payload': {'provider': 'TRADELOCKER', 't': timestamp_ms,
+                                'o': bar['o'], 'h': bar['h'], 'l': bar['l'],
+                                'c': bar['c'], 'v': bar.get('v')},
+            }
+        return [by_timestamp[k] for k in sorted(by_timestamp)]
+
+    async def _history_page(self, instrument, resolution, start_ms, end_ms, symbol, *, before_ms=None):
+        response = await self._request('GET', '/trade/history', params={
+            'routeId': self._route(instrument, 'INFO'),
+            'tradableInstrumentId': instrument['tradableInstrumentId'],
+            'resolution': resolution, 'from': start_ms, 'to': end_ms,
+        })
+        if response.get('s') == 'no_data':
+            return [], (response.get('d') or {}).get('nb') or response.get('nb')
+        payload = response.get('d') or {}
+        return self._normalize_history_bars(payload.get('barDetails') or [], symbol=symbol, before_ms=before_ms), None
+
+    async def get_rates(self, symbol, timeframe, count=300):
+        """Keep the original single REST request for short live refreshes."""
+        inst = await self._instrument(symbol)
+        resolution, bar_seconds = self._history_resolution(timeframe)
+        requested = max(1, int(count))
+        end_ms = int(time.time() * 1000)
+        # Short current-candle refresh remains unchanged. TradeLocker rejects
+        # API windows that exceed 20,000 bars, hence the existing 6k cap.
+        start_ms = end_ms - (max(1, min(requested, 6000)) * 2 + 10) * bar_seconds * 1000
+        rows, _ = await self._history_page(inst, resolution, start_ms, end_ms, symbol)
+        return rows[-requested:]
+
+    async def get_rates_history(self, symbol, timeframe, count=300, *, before=None):
+        """Background ONLY: cursor-based TradeLocker historical warmup.
+
+        Runs on live_history_worker, not the strategy worker or every M5 tick.
+        Every request is bounded below TradeLocker's 20k-bars/window limit;
+        cursor uses the oldest returned *open timestamp*, never wall time.
+        """
+        inst = await self._instrument(symbol)
+        resolution, bar_seconds = self._history_resolution(timeframe)
+        required = max(1, min(int(count), 30_000))
+        if before is None:
+            end_ms = int(time.time() * 1000)
+        elif isinstance(before, datetime):
+            if before.tzinfo is None:
+                raise ValueError('History before cursor must have UTC timezone')
+            end_ms = int(before.timestamp() * 1000) - 1  # exclusive cursor
+        else:
+            raise ValueError('History before cursor must be a datetime')
+
+        collected = {}
+        page_bars = 1500
+        # 20k M5 bars generally spans many weeks. Limit iteration and stop if
+        # the broker repeatedly returns the same candles or no older data.
+        max_pages = max(3, min(80, (required + page_bars - 1) // page_bars + 15))
+        for _ in range(max_pages):
+            remaining = required - len(collected)
+            if remaining <= 0:
+                break
+            wanted = min(page_bars, remaining)
+            # ~3x for overnight/weekend gaps. Always <20k nominal bars/API call.
+            window_bars = min(19_000, wanted * 3 + 120)
+            start_ms = end_ms - window_bars * bar_seconds * 1000
+            rows, earlier_available = await self._history_page(
+                inst, resolution, start_ms, end_ms, symbol, before_ms=end_ms + 1,
+            )
+            if not rows:
+                # API may provide 'nb' pointing to the next available older bar.
+                try:
+                    older_ms = int(earlier_available)
+                except (ValueError, TypeError):
+                    break
+                if not 1_000_000_000_000 < older_ms < start_ms:
+                    break
+                end_ms = older_ms
+                continue
+            # Keep newest requested bars in the page, then advance before the
+            # OLDEST selected bar so an overlapping server page never loops.
+            selected = rows[-wanted:]
+            for row in selected:
+                ms = int(row['candle_time'].timestamp() * 1000)
+                collected[ms] = row
+            oldest_ms = int(selected[0]['candle_time'].timestamp() * 1000)
+            if oldest_ms >= end_ms:
+                break
+            end_ms = oldest_ms - 1
+            if len(rows) < wanted and oldest_ms <= start_ms + bar_seconds * 1000:
+                # Full requested time window was scanned, continue backwards.
+                continue
+        return [collected[k] for k in sorted(collected)][-required:]

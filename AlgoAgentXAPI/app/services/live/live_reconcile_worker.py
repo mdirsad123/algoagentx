@@ -154,7 +154,8 @@ class LiveReconcileWorker:
                             snapshot = {c.name: getattr(deployment, c.name) for c in StrategyDeployment.__table__.columns}
                             proxy = SimpleNamespace(**snapshot)
                             proxy.broker_account_id = broker.id
-                            result = await sync_copy_target_positions(db, proxy)
+                            result = await sync_copy_target_positions(
+                                db, proxy, reconcile_full_exits=(code == "TRADELOCKER"))
                         copy_results.append({"broker_account_id": str(broker.id), "synced": True, **result})
                     except Exception as exc:
                         logger.warning("Copy-account reconcile failed deployment=%s account=%s: %s", deployment_id, raw_id, exc)
