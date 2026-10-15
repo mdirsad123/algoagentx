@@ -173,14 +173,32 @@ def validate_dynamic_strategy_source(source_code: str) -> dict[str, Any]:
 
 
 def _find_strategy_class(namespace: dict[str, Any]) -> type:
+    # A custom source may use `from .base_strategy import BaseStrategy` and
+    # define `class CustomVersion(BaseStrategy): ...`.  Never select that imported
+    # base: it also exposes generate(), but its method is not implemented.
+    def is_authored_strategy(value: Any) -> bool:
+        return (
+            inspect.isclass(value)
+            and value is not _DynamicBaseStrategy
+            and value.__module__ == "dynamic_strategy"
+            and callable(getattr(value, "generate", None))
+            and "generate" in value.__dict__
+        )
+
     preferred = namespace.get("Strategy")
-    if inspect.isclass(preferred) and callable(getattr(preferred, "generate", None)):
+    if is_authored_strategy(preferred):
         return preferred
 
-    for value in namespace.values():
-        if inspect.isclass(value) and callable(getattr(value, "generate", None)):
-            return value
-    raise DynamicStrategyLoadError("No executable strategy class found. Define class Strategy or any class with generate(self).")
+    candidates = [value for value in namespace.values() if is_authored_strategy(value)]
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise DynamicStrategyLoadError(
+            "Multiple executable strategy classes found. Rename the intended class to Strategy."
+        )
+    raise DynamicStrategyLoadError(
+        "No executable strategy class found. Define class Strategy or a class with its own generate(self)."
+    )
 
 
 def _filter_init_params(strategy_class: Any, params: Dict[str, Any]) -> Dict[str, Any]:
