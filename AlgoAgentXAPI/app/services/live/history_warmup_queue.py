@@ -24,7 +24,7 @@ def enqueue_history_warmup(deployment_id: Any, required_count: int) -> dict[str,
             socket_connect_timeout=3,
             socket_timeout=3,
         )
-        if not r.set(queue_key, "1", nx=True, ex=600):
+        if not r.set(queue_key, "1", nx=True, ex=7200):
             return {"queued": True, "deduplicated": True}
         result = warm_live_strategy_history_task.apply_async(
             args=[deployment_text, int(required_count)],

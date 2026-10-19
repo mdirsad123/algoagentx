@@ -835,26 +835,30 @@ async def _warm_live_strategy_history_async(deployment_id: str, required_count: 
 @celery_app.task(
     name="app.tasks.warm_live_strategy_history_task",
     bind=True,
-    max_retries=3,
-    default_retry_delay=30,
+    max_retries=8,
+    default_retry_delay=90,
 )
 def warm_live_strategy_history_task(self, deployment_id: str, required_count: int):
-    """Fetch large strategy history off the FastAPI/live-strategy worker path.
+    """Single resumable background warm-up per deployment.
 
-    A Redis lock keeps repeated Refresh/Compatibility clicks from starting
-    concurrent 20k backfills for the same deployment. The dedicated
-    ``live_history`` Celery queue should be consumed with concurrency=1.
+    The queue marker remains set ACROSS Celery retries; only a completed or
+    terminally failed run clears it. A separate short running lock prevents
+    overlapping task bodies. Never retry a Celery Retry exception itself.
     """
     import redis
+    from celery.exceptions import Retry
     from .core.config import settings
 
     lock_key = f"live:history:warmup:lock:{deployment_id}"
+    queue_key = f"live:history:warmup:queued:{deployment_id}"
     status_key = f"live:history:warmup:status:{deployment_id}"
     r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-    acquired = bool(r.set(lock_key, "1", nx=True, ex=3600))
+    acquired = bool(r.set(lock_key, str(self.request.id), nx=True, ex=3600))
     if not acquired:
-        return {"deployment_id": str(deployment_id), "status": "already_queued_or_running"}
+        r.close()
+        return {"deployment_id": str(deployment_id), "status": "already_running"}
 
+    retry_scheduled = False
     try:
         r.hset(status_key, mapping={
             "status": "RUNNING",
@@ -863,6 +867,8 @@ def warm_live_strategy_history_task(self, deployment_id: str, required_count: in
         })
         r.expire(status_key, 7200)
         result = asyncio.run(_warm_live_strategy_history_async(str(deployment_id), int(required_count)))
+        if result.get("error") and not result.get("ready"):
+            raise RuntimeError(str(result["error"]))
         r.hset(status_key, mapping={
             "status": "READY" if result.get("ready") else str(result.get("status") or "INCOMPLETE").upper(),
             "stored_count": str(int(result.get("stored_count") or 0)),
@@ -870,12 +876,12 @@ def warm_live_strategy_history_task(self, deployment_id: str, required_count: in
             "updated_at": datetime.utcnow().isoformat() + "Z",
         })
         r.expire(status_key, 7200)
-        if result.get("error") and not result.get("ready"):
-            raise self.retry(exc=RuntimeError(str(result.get("error"))), countdown=30)
         return result
+    except Retry:
+        raise
     except Exception as exc:
-        retries = int(getattr(getattr(self, "request", None), "retries", 0) or 0)
-        max_retries = int(getattr(self, "max_retries", 3) or 3)
+        retries = int(getattr(self.request, "retries", 0) or 0)
+        max_retries = int(self.max_retries or 8)
         terminal = retries >= max_retries
         r.hset(status_key, mapping={
             "status": "FAILED" if terminal else "RETRYING",
@@ -885,10 +891,15 @@ def warm_live_strategy_history_task(self, deployment_id: str, required_count: in
         r.expire(status_key, 7200)
         if terminal:
             raise
-        raise self.retry(exc=exc, countdown=30)
+        # Slow exponential backoff reduces request storms after HTTP 429.
+        # Every successful history page was committed before this task failed.
+        countdown = min(600, 90 * (2 ** min(retries, 3)))
+        retry_scheduled = True
+        raise self.retry(exc=exc, countdown=countdown)
     finally:
         try:
             r.delete(lock_key)
-            r.delete(f"live:history:warmup:queued:{deployment_id}")
-        except Exception:
-            pass
+            if not retry_scheduled:
+                r.delete(queue_key)
+        finally:
+            r.close()

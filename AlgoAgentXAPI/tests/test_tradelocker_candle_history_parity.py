@@ -132,3 +132,25 @@ async def test_history_warmup_requests_over_20000_in_multiple_api_pages(adapter,
     assert len(rows) == 20005
     assert rows[-1]['candle_time'] == end - timedelta(minutes=5)
     assert len(calls) >= 14
+
+@pytest.mark.asyncio
+async def test_backwards_cursor_resumes_without_refetching_latest_page(adapter, monkeypatch):
+    """Regression: after storing a first page, resume strictly before oldest bar."""
+    end = datetime(2026, 10, 19, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr('app.services.brokers.tradelocker.time.time', lambda: end.timestamp())
+    all_bars = [bar(end - timedelta(minutes=5*(i + 1)), 4200 + i / 10,
+                    low=4199 + i / 10) for i in range(4000)]
+    requested = []
+
+    async def fake_request(method, path, *, params):
+        requested.append(params)
+        return {'s': 'ok', 'd': {'barDetails': [x for x in all_bars
+                                               if params['from'] <= x['t'] <= params['to']]}}
+
+    adapter._request = fake_request
+    newest = await adapter.get_rates_history('XAUUSD.X', 'M5', 1500)
+    older = await adapter.get_rates_history('XAUUSD.X', 'M5', 1500,
+                                            before=newest[0]['candle_time'])
+    assert len(newest) == len(older) == 1500
+    assert max(r['candle_time'] for r in older) < min(r['candle_time'] for r in newest)
+    assert len(set(r['candle_time'] for r in newest + older)) == 3000

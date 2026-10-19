@@ -379,32 +379,38 @@ async def ensure_deployment_candle_history(
         await db.commit()
         return len(pending_values)
 
-    # cTrader supports a true backwards cursor. Fetch one page at a time, persist
-    # immediately, then continue from the oldest stored candle. This keeps memory
-    # flat and makes 20k warm-ups resumable/progress-visible.
-    if source in {"CTRADER", "CTRADER_API"} and callable(history_fetch):
+    # cTrader and TradeLocker both support an exclusive backwards cursor. Each
+    # page is committed before requesting older candles, so a rate limit or
+    # worker restart resumes from the oldest stored candle rather than fetching
+    # the same most-recent 30,000 bars again. The legacy bulk path below remains
+    # available for MT5 and other adapters.
+    if source in {"CTRADER", "CTRADER_API", "TRADELOCKER"} and callable(history_fetch):
         no_progress_rounds = 0
         while existing < required:
             oldest = (await db.execute(
                 select(func.min(LiveMarketCandle.candle_time)).where(*filters)
             )).scalar_one_or_none()
             before = oldest - timedelta(seconds=1) if isinstance(oldest, datetime) else None
-            wanted = min(chunk_bars, required - existing + 5)
+            # TradeLocker is a rate-limited REST history API. Keep each persisted
+            # page small and never retry a 429 inside this loop: let Celery delay
+            # the next attempt while the DB checkpoint remains intact.
+            wanted = min(1500 if source == "TRADELOCKER" else chunk_bars, required - existing + 5)
             rates = None
             last_error: Exception | None = None
-            for attempt in range(3):
+            attempts = 1 if source == "TRADELOCKER" else 3
+            for attempt in range(attempts):
                 try:
                     rates = await history_fetch(resolved_symbol, deployment.timeframe, wanted, before=before)
                     last_error = None
                     break
                 except Exception as exc:
                     last_error = exc
-                    if attempt < 2:
+                    if attempt < attempts - 1:
                         await asyncio.sleep(1.0 * (attempt + 1))
             if last_error is not None:
                 await _write_log(
                     db, deployment, "STRATEGY_HISTORY_BACKFILL_FAILED",
-                    f"{source} history page failed after 3 attempts: {last_error}", "ERROR",
+                    f"{source} history page failed after {attempts} attempt(s): {last_error}", "ERROR",
                     {"required_count": required, "stored_count": existing, "source": source, "symbol": resolved_symbol},
                 )
                 await db.commit()
@@ -427,6 +433,10 @@ async def ensure_deployment_candle_history(
                 no_progress_rounds = 0
             if not rates:
                 break
+            if source == "TRADELOCKER" and existing < required:
+                # Conservative pacing applies only to background history.
+                # Other broker endpoints may share the same rate limit.
+                await asyncio.sleep(3.0)
     else:
         # MT5/legacy adapters already paginate internally. Run them only on the
         # dedicated worker so API/live strategy threads remain responsive.

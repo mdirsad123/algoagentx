@@ -16,10 +16,12 @@ docker compose --env-file .env.prod -f docker-compose.yml down -v
 docker compose --env-file .env.prod -f docker-compose.yml up -d --build
 
 # below is only for updated file restart
-docker compose --env-file .env.prod -f docker-compose.yml up -d --build --force-recreate api live_market_worker live_strategy_worker live_reconcile_worker
+docker compose --env-file .env.prod -f docker-compose.yml up -d --build --force-recreate api live_history_worker
 
 # below command live 100 logs watch
 docker compose --env-file .env.prod logs -f api web live_market_worker live_strategy_worker live_reconcile_worker live_position_manager_worker live_history_worker redis postgres_prod
+
+docker compose --env-file .env.prod logs -f --tail=100 live_history_worker
 
 ```powershell
 cd D:\Stock_market\algoagentx

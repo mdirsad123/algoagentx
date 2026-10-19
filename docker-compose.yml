@@ -278,7 +278,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_DB: 0
-    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=1", "--prefetch-multiplier=1", "--max-tasks-per-child=1", "--without-gossip", "--without-mingle", "-Q", "live_history", "-n", "live_history@%h"]
+    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=1", "--prefetch-multiplier=1", "--max-tasks-per-child=50", "--without-gossip", "--without-mingle", "-Q", "live_history", "-n", "live_history@%h"]
     depends_on:
       postgres_prod:
         condition: service_healthy
