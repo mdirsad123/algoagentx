@@ -131,7 +131,7 @@ class Settings(BaseSettings):
     live_market_deployment_scan_seconds: int = Field(default=15, description="Seconds between active deployment registry refreshes")
     live_market_bootstrap_candles: int = Field(default=1000, description="Initial cTrader closed-candle bootstrap count")
     live_market_backfill_candles: int = Field(default=5, description="Small reconnect/watchdog backfill count")
-    live_strategy_history_default_bars: int = Field(default=2000, description="Default closed-candle history passed to live dynamic strategies")
+    live_strategy_history_default_bars: int = Field(default=80000, description="Default closed-candle history passed to live dynamic strategies")
     live_strategy_history_override_bars: int = Field(
         default=0,
         description=(
@@ -139,7 +139,7 @@ class Settings(BaseSettings):
             "requirement; a positive value forces that many bars for stability testing."
         ),
     )
-    live_strategy_history_max_bars: int = Field(default=100000, description="Hard cap for per-strategy live history loading/backfill")
+    live_strategy_history_max_bars: int = Field(default=200000, description="Hard cap for per-strategy live history loading/backfill")
     live_strategy_history_page_size: int = Field(default=1000, description="Per-request cTrader trendbar page size")
     live_strategy_history_chunk_bars: int = Field(default=5000, description="Bars fetched per history-worker broker session before DB commit/progress")
 

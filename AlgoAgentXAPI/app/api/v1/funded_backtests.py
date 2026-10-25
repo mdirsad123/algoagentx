@@ -506,6 +506,7 @@ async def _execute_funded_backtest_run(
             start_date=payload.start_date, end_date=payload.end_date, initial_capital=source_runtime_capital,
             advanced_filters=payload.advanced_filters, runtime_config=payload.runtime_config, strategy_preset_id=payload.strategy_preset_id,
             opportunity_mode=True, progress_callback=source_progress, activity_label=f"FUNDED SOURCE run={run_id}",
+            warmup_candles=BacktestService.HISTORICAL_WARMUP_CANDLES,
         )
         await emit_progress(75, f"Generated {len(source.result.trades):,} strategy opportunities. Running funded rules.")
         run.runtime_config_snapshot = _json_safe(source.runtime_config or {})
@@ -577,6 +578,11 @@ async def _execute_funded_backtest_run(
         output.summary["source_trade_count"] = len(source.result.trades)
         output.summary["source_opportunity_count"] = len(source.result.trades)
         output.summary["source_generation_mode"] = "STRATEGY_OPPORTUNITY_MODE"
+        # Same historical warmup as Standard Backtest, but funded phases and
+        # risk limits only see opportunities entered in the selected period.
+        output.summary["source_warmup_context"] = _json_safe(
+            (source.result.summary or {}).get("warmup_context") or {}
+        )
         output.summary["source_reference_capital"] = str(source_runtime_capital)
         output.summary["source_rejected_trade_count"] = int(getattr(source.result, "rejected_trade_count", 0) or 0)
         output.summary["executed_funded_trade_count"] = len(output.trades)

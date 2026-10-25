@@ -33,6 +33,8 @@ class BacktestParams:
     runtime_config: Optional[Dict[str, Any]] = None
     instrument_spec: Optional[Dict[str, Any]] = None
     opportunity_mode: bool = False
+    # Optional reporting boundary; earlier bars are replayed for strategy state.
+    report_start_date: Optional[datetime.date] = None
 
 
 @dataclass
@@ -290,7 +292,12 @@ def run_backtest_engine(
     if "Position" not in df.columns:
         raise ValueError("Strategy must return a DataFrame with Position column.")
 
+    report_start = pd.Timestamp(backtest_params.report_start_date) if backtest_params.report_start_date is not None else None
+    if report_start is not None and df["Date"].dt.tz is not None and report_start.tzinfo is None:
+        report_start = report_start.tz_localize(df["Date"].dt.tz)
     position_series = pd.to_numeric(df["Position"], errors="coerce").fillna(0).astype(int)
+    if report_start is not None:
+        position_series = position_series.where(df["Date"] >= report_start, other=0)
     signal_count = int((position_series != 0).sum())
     generated_buy_signals = int((position_series == 1).sum())
     generated_sell_signals = int((position_series == -1).sum())
@@ -308,6 +315,8 @@ def run_backtest_engine(
 
     def reject_trade(reason: str) -> None:
         nonlocal rejected_trade_count, rejection_reasons
+        if not reporting_started:
+            return
         key = str(reason or "Unknown rejection")
         rejected_trade_count += 1
         rejection_reasons[key] = rejection_reasons.get(key, 0) + 1
@@ -325,10 +334,14 @@ def run_backtest_engine(
 
     capital = float(backtest_params.initial_capital)
     first_ts = df.iloc[0]["Date"] if len(df) else None
+    reporting_started = bool(report_start is None or (first_ts is not None and pd.Timestamp(first_ts) >= report_start))
+    carried_position_at_boundary = False
     equity_curve: List[float] = []
     equity_timestamps: List[Any] = []
 
     def append_equity(ts: Any, value: float) -> None:
+        if not reporting_started:
+            return
         equity_curve.append(float(value))
         equity_timestamps.append(ts)
 
@@ -387,6 +400,11 @@ def run_backtest_engine(
             remaining_pnl = (float(exit_price_value) - float(entry_price)) * position * quantity
             pnl_result = {"ticks": None, "pips": None}
         pnl = float(partial_pnl_total) + float(remaining_pnl)
+        # The carried-in warmup trade must continue occupying the single
+        # position slot, but its eventual PnL is outside the selected window.
+        # Its close must NOT credit/debit the rebased reporting account.
+        is_carry_in = bool(report_start is not None and pd.Timestamp(entry_dt) < report_start)
+        book_trade = not is_carry_in
 
         risk_points = float(entry_risk_result.get("risk_points") or initial_risk_points or abs(float(entry_price) - float(initial_stop_loss or stop_loss)))
         reward_points = float(entry_sl_result.get("reward_points") or abs(float(target) - float(entry_price)))
@@ -396,10 +414,10 @@ def run_backtest_engine(
         expected_reward_amount = actual_risk_amount * rr_ratio if actual_risk_amount else None
         reward_amount = expected_reward_amount or (reward_points * float(original_quantity or quantity or 0))
         r_multiple = (float(pnl) / actual_risk_amount) if actual_risk_amount > 0 else 0.0
-        capital += remaining_pnl
+        if not (is_carry_in and reporting_started):
+            capital += remaining_pnl
         lifecycle_events.append(_event(str(reason_value), current_dt_value, old_sl=stop_loss, new_sl=stop_loss, reason="Trade closed", price=exit_price_value, r_value=r_multiple, extra={"pnl": pnl, "remaining_pnl": remaining_pnl, "partial_pnl": partial_pnl_total}))
-        trades.append(
-            Trade(
+        completed_trade = Trade(
                 entry_datetime=entry_dt,
                 exit_datetime=current_dt_value,
                 direction="LONG" if position == 1 else "SHORT",
@@ -437,7 +455,8 @@ def run_backtest_engine(
                 sizing_rejected_reason=entry_risk_result.get("rejected_reason"),
                 lifecycle_events=list(lifecycle_events),
             )
-        )
+        if book_trade:
+            trades.append(completed_trade)
         position = 0
         entry_price = None
         entry_dt = None
@@ -464,6 +483,13 @@ def run_backtest_engine(
         signal_row = df.iloc[i - 1]
 
         current_dt = row["Date"]
+        if not reporting_started and report_start is not None and pd.Timestamp(current_dt) >= report_start:
+            # Risk/accounting starts fresh at the requested date. Warmup
+            # positions keep running solely to preserve correct occupancy.
+            carried_position_at_boundary = (position != 0)
+            reporting_started = True
+            capital = float(backtest_params.initial_capital)
+            append_equity(current_dt, capital)
         signal = int(signal_row.get("Position", 0) or 0)
 
         open_price = float(row["Open"])
@@ -581,7 +607,8 @@ def run_backtest_engine(
 
                             if partial_pnl or partial_qty or partial_lot:
                                 partial_pnl_total += partial_pnl
-                                capital += partial_pnl
+                                if not (reporting_started and report_start is not None and entry_dt is not None and pd.Timestamp(entry_dt) < report_start):
+                                    capital += partial_pnl
                                 quantity = float(next_quantity or 0.0)
                                 lot_size = float(next_lot_size) if next_lot_size is not None else None
                                 partial_exit_done = True
@@ -772,11 +799,12 @@ def run_backtest_engine(
     if position != 0 and len(df) > 0:
         last_row = df.iloc[-1]
         last_dt = last_row["Date"]
+        end_trade_in_report = bool(report_start is None or (entry_dt is not None and pd.Timestamp(entry_dt) >= report_start))
         last_exit_price = _safe_float(last_row.get("Close"), None) or _safe_float(last_row.get("Open"), None)
         if last_exit_price is not None:
             close_active_position(float(last_exit_price), "END_OF_BACKTEST", last_dt)
             append_equity(last_dt, capital)
-            forced_eod_exit_count = 1
+            forced_eod_exit_count = int(end_trade_in_report)
 
     wins = [trade for trade in trades if trade.pnl > 0]
     win_rate = len(wins) / len(trades) if trades else 0.0
@@ -809,6 +837,9 @@ def run_backtest_engine(
         if strategy_diagnostics.get("rejection_reasons"):
             summary["strategy_rejection_reasons"] = strategy_diagnostics.get("rejection_reasons")
     summary["signal_count"] = signal_count
+    summary["reporting_scope"] = "SELECTED_ENTRIES_ONLY" if report_start is not None else "FULL_INPUT"
+    summary["carry_in_position_excluded"] = bool(carried_position_at_boundary)
+    summary["report_start_date"] = str(report_start.date()) if report_start is not None else None
     summary["generated_buy_signals"] = generated_buy_signals
     summary["generated_sell_signals"] = generated_sell_signals
     summary["rejected_trade_count"] = int(rejected_trade_count)

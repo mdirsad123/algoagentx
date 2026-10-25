@@ -275,7 +275,7 @@ class MT5AgentAdapter(BrokerAdapter):
         """Fetch large MT5 history in 5k-bar pages through the desktop agent."""
         from ...core.config import settings
 
-        max_total = max(1, int(getattr(settings, "live_strategy_history_max_bars", 100000) or 100000))
+        max_total = max(1, int(getattr(settings, "live_strategy_history_max_bars", 200000) or 200000))
         total = max(1, min(int(count or 5000), max_total))
         page_size = max(100, min(int(getattr(settings, "live_strategy_history_page_size", 2000) or 2000), 5000))
         rows_by_time: dict[str, dict[str, Any]] = {}

@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.models import Instrument, MarketData, Strategy, StrategyRuntimePreset, Timeframe
 from ..services.strategy_registry import resolve_strategy
 from ..services.dynamic_strategy_loader import build_dynamic_strategy_entry, DynamicStrategyLoadError, DynamicStrategySecurityError
-from ..services.backtest_advanced_filters import apply_advanced_filters, build_filter_summary
+from ..services.backtest_advanced_filters import apply_advanced_filters, build_filter_summary, calculate_filter_impact
 from engine.backtest_engine import BacktestParams, BacktestResult, run_backtest_engine
 from .trading.runtime_config_service import resolve_runtime_config, validate_runtime_config
 from .trading.guardrails import validate_backtest_guardrails, RISK_ENGINE_VERSION, PNL_ENGINE_VERSION
@@ -85,6 +85,9 @@ class BacktestServiceResponse:
 
 
 class BacktestService:
+    # Shared by Standard and Funded Backtest; edit this one value to change both.
+    HISTORICAL_WARMUP_CANDLES = 80_000
+
     @staticmethod
     async def run_backtest(
         db: AsyncSession,
@@ -101,9 +104,10 @@ class BacktestService:
         opportunity_mode: bool = False,
         progress_callback=None,
         activity_label: str = "BACKTEST",
+        warmup_candles: int = 0,
     ) -> BacktestServiceResponse:
-        if start_date >= end_date:
-            raise InvalidDateRangeError(f"Start date {start_date} must be before end date {end_date}")
+        if start_date > end_date:
+            raise InvalidDateRangeError(f"Start date {start_date} must not be after end date {end_date}")
 
         async def emit_progress(progress: int, message: str) -> None:
             if progress_callback is None:
@@ -116,18 +120,27 @@ class BacktestService:
 
         run_started = time_module.perf_counter()
         resolved_timeframe = await BacktestService._resolve_timeframe(db, timeframe_id, timeframe)
-        await emit_progress(35, "Loading market candles from database.")
+        # Both Standard and Funded Backtest call this service. Load up to 80K
+        # preceding candles for causal strategy/engine state, but never expose
+        # them as selected-period trades or billable selected-period candles.
+        # Explicit opt-in: other legacy/admin callers keep their old scope.
+        warmup_requested = max(0, min(BacktestService.HISTORICAL_WARMUP_CANDLES, int(warmup_candles)))
+        await emit_progress(35, f"Loading selected candles and up to {warmup_requested:,} historical warmup candles.")
         fetch_started = time_module.perf_counter()
-        market_data_df = await BacktestService._fetch_market_data(db, instrument_id, resolved_timeframe, start_date, end_date)
-        fetch_seconds = time_module.perf_counter() - fetch_started
-        await emit_progress(45, f"Loaded {len(market_data_df):,} candles. Preparing strategy.")
-        activity_logger.info(
-            "%s | candles loaded=%s | timeframe=%s | range=%s..%s | %.2fs",
-            activity_label, len(market_data_df), resolved_timeframe, start_date, end_date, fetch_seconds,
+        market_data_df, selected_count, warmup_count = await BacktestService._fetch_market_data_with_warmup(
+            db, instrument_id, resolved_timeframe, start_date, end_date,
+            warmup_candles=warmup_requested,
         )
-        if market_data_df.empty:
+        fetch_seconds = time_module.perf_counter() - fetch_started
+        await emit_progress(45, f"Loaded {warmup_count:,} warmup + {selected_count:,} selected candles. Preparing strategy.")
+        activity_logger.info(
+            "%s | warmup=%s/%s | selected=%s | timeframe=%s | range=%s..%s | %.2fs",
+            activity_label, warmup_count, warmup_requested, selected_count,
+            resolved_timeframe, start_date, end_date, fetch_seconds,
+        )
+        if selected_count == 0:
             raise MarketDataNotFoundError(
-                f"No market data found for instrument {instrument_id}, timeframe {resolved_timeframe}, period {start_date} to {end_date}"
+                f"No market data found for instrument {instrument_id}, timeframe {resolved_timeframe}, selected period {start_date} to {end_date}"
             )
 
         instrument = await BacktestService._get_instrument(db, instrument_id)
@@ -142,11 +155,16 @@ class BacktestService:
             instrument_symbol=instrument_symbol,
             instrument_market=instrument_market,
         )
+        selected_after_filters = int((pd.to_datetime(market_data_df["Date"]).dt.date >= start_date).sum()) if not market_data_df.empty else 0
+        # UI filter impact and credit preview concern the user-selected period;
+        # never include free historical context in those advertised counts.
         if advanced_filter_impact is not None:
+            advanced_filter_impact.update(calculate_filter_impact(selected_count, selected_after_filters))
             advanced_filter_impact["summary"] = build_filter_summary(advanced_filters)
-        if market_data_df.empty:
+            advanced_filter_impact["historical_context_candles"] = int(len(market_data_df) - selected_after_filters)
+        if selected_after_filters == 0:
             raise MarketDataNotFoundError(
-                "Advanced filters removed all candles. Please widen the day/session/time filters."
+                "No selected-period candles remain after applying advanced filters. Please widen the selected period or filters."
             )
 
         strategy, strategy_class, strategy_params, strategy_name = await BacktestService._get_strategy_details(db, strategy_id)
@@ -173,6 +191,11 @@ class BacktestService:
         if not guardrail_result.get("valid"):
             raise BacktestError(" ".join(guardrail_result.get("errors") or []))
         guardrail_warnings = list(guardrail_result.get("warnings") or [])
+        if warmup_count < warmup_requested:
+            guardrail_warnings.append(
+                f"Only {warmup_count:,} of {warmup_requested:,} requested warmup candles were available. "
+                "Historical context may differ from a full-history replay."
+            )
         merged_strategy_params = dict(strategy_params or {})
         if isinstance(resolved_runtime_config.get("strategy_params"), dict):
             merged_strategy_params.update(resolved_runtime_config.get("strategy_params") or {})
@@ -188,6 +211,7 @@ class BacktestService:
             runtime_config=resolved_runtime_config,
             instrument_spec=instrument_spec,
             opportunity_mode=opportunity_mode,
+            report_start_date=start_date,
         )
 
         await emit_progress(55, f"Executing {strategy_name} on {len(market_data_df):,} candles.")
@@ -232,6 +256,17 @@ class BacktestService:
         result.warnings = list(dict.fromkeys([*(getattr(result, "warnings", []) or []), *guardrail_warnings]))
         result.summary = getattr(result, "summary", {}) or {}
         result.summary.update({
+            "warmup_context": {
+                "mode": "FIXED_PRECEDING_CANDLES",
+                "requested_candles": warmup_requested,
+                "loaded_candles": warmup_count,
+                "processed_before_selected_start": max(0, len(market_data_df) - selected_after_filters),
+                "selected_candles_after_filters": selected_after_filters,
+                "report_start_date": start_date.isoformat(),
+                "report_end_date": end_date.isoformat(),
+                "signals_scope": "SELECTED_ENTRY_DATES",
+                "strategy_diagnostics_scope": "FULL_WARMUP_PLUS_SELECTED_HISTORY",
+            },
             "risk_engine_version": RISK_ENGINE_VERSION,
             "pnl_engine_version": PNL_ENGINE_VERSION,
             "warnings": result.warnings,
@@ -302,6 +337,62 @@ class BacktestService:
         for column in ("Open", "High", "Low", "Close", "Volume"):
             df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0.0).astype(float)
         return df.reset_index(drop=True)
+
+    @staticmethod
+    async def _fetch_market_data_with_warmup(
+        db: AsyncSession,
+        instrument_id: int,
+        timeframe: str,
+        start_date: date,
+        end_date: date,
+        *,
+        warmup_candles: int = HISTORICAL_WARMUP_CANDLES,
+    ) -> tuple[pd.DataFrame, int, int]:
+        """Fetch exactly N available *preceding* DB bars, not N calendar minutes.
+
+        Warmup is strictly before the selected start (never future data).
+        The original _fetch_market_data API remains unchanged for billing,
+        preview, chart lookups and other callers that need selected bars only.
+        """
+        selected = await BacktestService._fetch_market_data(
+            db, instrument_id, timeframe, start_date, end_date
+        )
+        selected_count = len(selected)
+        if selected.empty or warmup_candles <= 0:
+            return selected, selected_count, 0
+
+        start_dt = datetime.combine(start_date, time.min)
+        rows = (
+            await db.execute(
+                select(
+                    MarketData.timestamp,
+                    MarketData.open,
+                    MarketData.high,
+                    MarketData.low,
+                    MarketData.close,
+                    MarketData.volume,
+                )
+                .where(
+                    MarketData.instrument_id == instrument_id,
+                    MarketData.timeframe == timeframe,
+                    MarketData.timestamp < start_dt,
+                )
+                .order_by(MarketData.timestamp.desc())
+                .limit(int(warmup_candles))
+            )
+        ).all()
+        if not rows:
+            return selected, selected_count, 0
+
+        warmup = pd.DataFrame.from_records(
+            reversed(rows), columns=["Date", "Open", "High", "Low", "Close", "Volume"]
+        )
+        warmup["Date"] = pd.to_datetime(warmup["Date"])
+        for column in ("Open", "High", "Low", "Close", "Volume"):
+            warmup[column] = pd.to_numeric(warmup[column], errors="coerce").fillna(0.0).astype(float)
+
+        combined = pd.concat([warmup, selected], ignore_index=True)
+        return combined, selected_count, len(warmup)
 
     @staticmethod
     async def _get_strategy_details(db: AsyncSession, strategy_id: str) -> Tuple[Strategy, Any, Dict[str, Any], str]:

@@ -2695,6 +2695,7 @@ async def _execute_backtest_sync(
             timeframe_id=payload.timeframe_id,
             progress_callback=progress_callback,
             activity_label=f"STANDARD BACKTEST job={job_id}",
+            warmup_candles=BacktestService.HISTORICAL_WARMUP_CANDLES,
         )
 
         progress_message = "Strategy execution finished. Calculating metrics."

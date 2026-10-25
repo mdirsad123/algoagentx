@@ -16,8 +16,8 @@ def _clamp_history_bars(value: Any) -> int:
     # One universal live-history default keeps every strategy on the same runtime
     # behavior. A strategy may explicitly request more/less history through its
     # DB parameters or class attributes; the platform never guesses from its name.
-    default_bars = max(50, int(getattr(settings, "live_strategy_history_default_bars", 2_000) or 2_000))
-    max_bars = max(default_bars, int(getattr(settings, "live_strategy_history_max_bars", 100_000) or 100_000))
+    default_bars = max(50, int(getattr(settings, "live_strategy_history_default_bars", 80_000) or 80_000))
+    max_bars = max(default_bars, int(getattr(settings, "live_strategy_history_max_bars", 200_000) or 200_000))
     try:
         parsed = int(value)
     except Exception:

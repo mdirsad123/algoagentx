@@ -268,7 +268,7 @@ async def get_deployment_candle_history_status(
     dry tests and the strategy runner. Heavy history backfill belongs to the
     dedicated background history worker.
     """
-    max_bars = max(1000, int(getattr(settings, "live_strategy_history_max_bars", 100000) or 100000))
+    max_bars = max(1000, int(getattr(settings, "live_strategy_history_max_bars", 200000) or 200000))
     required = max(20, min(int(required_count or 20), max_bars))
     filters = [
         LiveMarketCandle.deployment_id == deployment.id,
@@ -299,7 +299,7 @@ async def ensure_deployment_candle_history(
     commits each page so progress is visible and restarts resume from the oldest
     stored candle instead of starting over.
     """
-    max_bars = max(1000, int(getattr(settings, "live_strategy_history_max_bars", 100000) or 100000))
+    max_bars = max(1000, int(getattr(settings, "live_strategy_history_max_bars", 200000) or 200000))
     # Keep cTrader wire requests small, but reuse one authorized broker session
     # for several pages.  The adapter pages internally using page_size, while
     # this service commits progress in moderate chunks.  This avoids opening
@@ -493,7 +493,7 @@ async def load_live_candles_for_runner(
     never filter these rows by symbol. The query returns newest-first to keep
     compatibility with get_latest_closed_candles/_candles_to_dataframe.
     """
-    max_bars = max(1000, int(getattr(settings, "live_strategy_history_max_bars", 100000) or 100000))
+    max_bars = max(1000, int(getattr(settings, "live_strategy_history_max_bars", 200000) or 200000))
     safe_limit = max(1, min(int(limit or 300), max_bars))
     filters = [
         LiveMarketCandle.deployment_id == deployment.id,
@@ -547,7 +547,7 @@ async def load_live_candles_for_runner(
 
 
 async def get_latest_closed_candles(db: AsyncSession, deployment_id: UUID, limit: int = 300) -> list[dict[str, Any]]:
-    max_bars = max(1000, int(getattr(settings, "live_strategy_history_max_bars", 100000) or 100000))
+    max_bars = max(1000, int(getattr(settings, "live_strategy_history_max_bars", 200000) or 200000))
     safe_limit = max(1, min(int(limit or 300), max_bars))
     rows = (await db.execute(
         select(
