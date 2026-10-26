@@ -370,8 +370,15 @@ export const liveTradingApi = {
     return unwrap(response.data);
   },
 
-  async runFullDryTest(id: string): Promise<FullDryTestResponse> {
-    const response = await axiosInstance.post<Envelope<FullDryTestResponse>>(`/api/v1/live/deployments/${id}/run-full-dry-test`, undefined, { timeout: HEAVY_API_TIMEOUT_MS });
+  async runFullDryTest(id: string): Promise<{ job_id: string; status: string; deduplicated?: boolean }> {
+    const response = await axiosInstance.post<Envelope<{ job_id: string; status: string; deduplicated?: boolean }>>(
+      `/api/v1/live/deployments/${id}/run-full-dry-test`, undefined, { timeout: 15000 });
+    return unwrap(response.data);
+  },
+
+  async getFullDryTestJob(id: string, jobId: string): Promise<{ job_id: string; status: string; result?: FullDryTestResponse; error?: string }> {
+    const response = await axiosInstance.get<Envelope<{ job_id: string; status: string; result?: FullDryTestResponse; error?: string }>>(
+      `/api/v1/live/deployments/${id}/run-full-dry-test/jobs/${jobId}`, { timeout: 10000 });
     return unwrap(response.data);
   },
 

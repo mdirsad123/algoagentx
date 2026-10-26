@@ -1,0 +1,11 @@
+AlgoAgentXAPI/app/api/v1/live_deployments.py
+AlgoAgentXAPI/app/core/config.py
+AlgoAgentXAPI/app/services/live/auto_runner_service.py
+AlgoAgentXAPI/app/services/live/broker_candle_service.py
+AlgoAgentXAPI/app/services/live/execution_engine.py
+AlgoAgentXAPI/app/services/live/live_tradelocker_candle_worker.py
+AlgoAgentXApp/app/(user)/live-trading/[deploymentId]/page.tsx
+AlgoAgentXApp/types/live-trading.ts
+docker-compose.yml
+production_patch/README_TRADELOCKER_CANDLE_FIX_2026-10-27.md
+production_patch/verify_tradelocker_patch.py

@@ -187,6 +187,10 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
             "source": source,
             "is_closed": True,
             "raw_payload": item.get("raw_payload") or {},
+            # PostgreSQL now() is the *transaction start*, which may precede
+            # the broker REST call. Record the actual ingestion moment instead.
+            # ON CONFLICT intentionally preserves the original first-ingest time.
+            "created_at": datetime.now(timezone.utc),
         }
         stmt = insert(LiveMarketCandle).values(**values)
         stmt = stmt.on_conflict_do_update(
@@ -560,6 +564,7 @@ async def get_latest_closed_candles(db: AsyncSession, deployment_id: UUID, limit
             LiveMarketCandle.symbol,
             LiveMarketCandle.timeframe,
             LiveMarketCandle.source,
+            LiveMarketCandle.created_at,
         )
         .where(LiveMarketCandle.deployment_id == deployment_id, LiveMarketCandle.is_closed.is_(True))
         .order_by(LiveMarketCandle.candle_time.desc())
@@ -577,6 +582,7 @@ async def get_latest_closed_candles(db: AsyncSession, deployment_id: UUID, limit
             "timeframe": row.timeframe,
             "source": row.source,
             "is_closed": True,
+            "created_at": row.created_at,
         }
         for row in rows
     ]

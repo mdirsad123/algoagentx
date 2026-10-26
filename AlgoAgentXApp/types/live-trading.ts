@@ -577,7 +577,8 @@ export interface LiveDeploymentSummaryMetrics {
   currency?: string | null;
   account_currency?: string | null;
   balance?: number | string | null;
-  equity: number | string;
+  equity: number | string | null;
+  equity_source?: string | null;
   realized_pnl: number | string;
   unrealized_pnl: number | string;
   free_margin?: number | string | null;
@@ -969,6 +970,8 @@ export interface LiveWorkerHealth {
 }
 
 export interface LivePipelineHealth {
+  broker_code?: string;
+  pipeline_mode?: "CTRADER_STREAM" | "LEGACY_POLLING";
   event_pipeline_enabled: boolean;
   market_worker_enabled: boolean;
   strategy_stream_enabled: boolean;

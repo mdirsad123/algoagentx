@@ -192,6 +192,9 @@ function LivePipelineCard({ latency, health, healthError, provider }: { latency:
   const strategy = health?.workers?.live_strategy_worker;
   const reconcile = health?.workers?.live_reconcile_worker;
   const positionManager = health?.workers?.live_position_manager_worker;
+  const legacyRunner = health?.workers?.live_legacy_runner_worker;
+  const tradeLockerCandle = health?.workers?.live_tradelocker_candle_worker;
+  const isTradeLocker = provider === "TRADELOCKER";
   const isCTrader = provider === "CTRADER" || provider === "CTRADER_API";
   const connections = market?.connections || {};
   const connection = health?.connection || Object.values(connections)[0];
@@ -208,6 +211,8 @@ function LivePipelineCard({ latency, health, healthError, provider }: { latency:
   const reconcileStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.reconcile_worker_enabled ? "DISABLED" : reconcile?.status || "OFFLINE";
   const positionManagerStatus = !health ? "CHECKING" : !health.position_manager_worker_enabled ? "DISABLED" : positionManager?.status || "OFFLINE";
   const connectionStatus = !health ? "CHECKING" : !isCTrader ? "BROKER API" : !health.event_pipeline_enabled || !health.persistent_ctrader_enabled ? "DISABLED" : connection?.state || "OFFLINE";
+  const legacyMode = Boolean(!isCTrader && legacyRunner?.status === "HEALTHY"
+    && (!isTradeLocker || tradeLockerCandle?.status === "HEALTHY"));
   const eventMode = Boolean(
     flagsEnabled
       && [marketStatus, strategyStatus, reconcileStatus, positionManagerStatus].every((value) => value === "HEALTHY" || value === "DEGRADED")
@@ -229,32 +234,33 @@ function LivePipelineCard({ latency, health, healthError, provider }: { latency:
           <div className="flex items-center gap-2"><Activity className="h-5 w-5 text-cyan-300" /><h2 className="text-xl font-bold text-white">Connection & End-to-End Latency</h2></div>
           <p className="mt-1 text-sm text-purple-200">Observer-only diagnostics. The browser is not part of the candle → strategy → order path.</p>
         </div>
-        <Badge className={eventMode ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : !health ? "border-purple-400/30 bg-purple-400/20 text-purple-100" : "border-yellow-400/30 bg-yellow-400/20 text-yellow-100"}>
-          {eventMode ? "EVENT PIPELINE ACTIVE" : !health ? "HEALTH CHECK PENDING" : disabledFlags.length ? "EVENT PIPELINE DISABLED" : "EVENT PIPELINE STARTING / DEGRADED"}
+        <Badge className={(eventMode || legacyMode) ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : !health ? "border-purple-400/30 bg-purple-400/20 text-purple-100" : "border-yellow-400/30 bg-yellow-400/20 text-yellow-100"}>
+          {legacyMode ? "LEGACY POLLING RUNNER ACTIVE" : eventMode ? "EVENT PIPELINE ACTIVE" : !health ? "HEALTH CHECK PENDING" : disabledFlags.length && isCTrader ? "EVENT PIPELINE DISABLED" : "RUNNER STARTING / DEGRADED"}
         </Badge>
       </div>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <MetricCard label={isCTrader ? `cTrader ${connection?.environment || health?.deployment_environment || ""}`.trim() : `${provider} REST (not event stream)`} value={connectionStatus} />
-        <MetricCard label="Market Worker" value={marketStatus} />
-        <MetricCard label="Strategy Worker" value={strategyStatus} />
+        <MetricCard label={isCTrader ? "Market Worker" : isTradeLocker ? "TradeLocker Candle Worker" : "Legacy Market/Strategy"} value={isCTrader ? marketStatus : isTradeLocker ? (tradeLockerCandle?.status || "OFFLINE") : (legacyRunner?.status || "OFFLINE")} />
+        <MetricCard label={isCTrader ? "Strategy Worker" : "Legacy Strategy Runner"} value={isCTrader ? strategyStatus : (legacyRunner?.status || "OFFLINE")} />
         <MetricCard label="Reconcile Worker" value={reconcileStatus} />
         <MetricCard label="Position Manager" value={positionManagerStatus} />
         <MetricCard label="Close → Send p50" value={metric("close_to_order_send_ms", "p50")} />
         <MetricCard label="Close → Send p95" value={metric("close_to_order_send_ms", "p95")} />
       </div>
+      {!isCTrader && <p className="mt-2 text-xs text-purple-200">REST polling: close-to-send p50/p95 needs recorded real order sends; HOLD-only candles cannot produce these metrics. Broker ACK/fill appears only when confirmed by the broker.</p>}
       {healthError && (
         <div className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">
           Pipeline health API error: <span className="font-semibold">{healthError}</span>. The worker containers may still be running; check the API build/route and Redis heartbeat keys.
         </div>
       )}
-      {disabledFlags.length > 0 && (
+      {isCTrader && disabledFlags.length > 0 && (
         <div className="mt-4 rounded-xl border border-yellow-400/30 bg-yellow-500/10 p-3 text-sm text-yellow-100">
           Docker containers may be running but these workers are intentionally idle because API environment flags are OFF: <span className="font-semibold">{disabledFlags.join(", ")}</span>. Set them to true in <code>.env.prod</code> and recreate API + live workers.
         </div>
       )}
-      {health && disabledFlags.length === 0 && !eventMode && (
+      {health && (isCTrader ? disabledFlags.length === 0 && !eventMode : !legacyMode) && (
         <div className="mt-4 rounded-xl border border-amber-400/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-          Event pipeline is not fully healthy for this deployment. Market feeds: <span className="font-semibold">{String(market?.feeds ?? 0)}</span>.
+          {isCTrader ? <>Event pipeline not fully healthy. Market feeds: <span className="font-semibold">{String(market?.feeds ?? 0)}</span>.</> : "Legacy broker polling/strategy worker is not reporting all required heartbeats; broker candle delivery may be delayed."}
           {health.redis_error ? <span> Redis health read: <span className="font-semibold">{String(health.redis_error)}</span>.</span> : null}
           {market?.last_error ? <span> Market worker: <span className="font-semibold">{String(market.last_error)}</span>.</span> : null}
           {strategy?.last_error ? <span> Strategy worker: <span className="font-semibold">{String(strategy.last_error)}</span>.</span> : null}
@@ -374,7 +380,7 @@ export default function LiveDeploymentDetailPage() {
   const healthStoredCandleCount = Number(pipelineHealth?.market_data?.stored_count ?? 0);
   const marketSnapshotEmptyMessage = healthStoredCandleCount > 0
     ? `Database health reports ${healthStoredCandleCount} stored candle${healthStoredCandleCount === 1 ? "" : "s"}, but this snapshot has not refreshed yet. The independent candle poll will retry automatically; Refresh also forces an immediate read.`
-    : pipelineHealth && marketFeedCount === 0
+    : pipelineHealth && pipelineHealth.pipeline_mode === "CTRADER_STREAM" && marketFeedCount === 0
       ? "Market worker has no registered feed for this deployment yet. Keep the deployment RUNNING, Auto Runner ON, cTrader CONNECTED, and verify the market worker health/error above."
       : marketWorkerHealth?.last_error
         ? `Market worker has not stored a candle yet. Current worker error: ${String(marketWorkerHealth.last_error)}`
@@ -388,7 +394,9 @@ export default function LiveDeploymentDetailPage() {
   const candleSource = (candleSnapshot?.source || brokerProviderLabel || "MT5").toUpperCase();
   const pnlSourceLabel = metrics?.broker_pnl_source === "MT5_AGENT_POSITIONS_AND_DEALS"
     ? "PnL source: MT5 broker positions + today deal history"
-    : "PnL source: local deployment records";
+    : metrics?.broker_pnl_source && metrics.broker_pnl_source !== "LOCAL_DEPLOYMENT_RECORDS"
+      ? `PnL source: ${metrics.broker_pnl_source}`
+      : "PnL source: local deployment records (not broker account PnL)";
   const isUpstoxBroker = brokerProviderLabel === "UPSTOX";
   const connectedMt5Broker = useMemo(
     () => brokerAccounts.find((item) => item.status === "CONNECTED" && (item.mode === "DEMO" || item.mode === "LIVE")),
@@ -649,7 +657,19 @@ export default function LiveDeploymentDetailPage() {
     }
     try {
       setRunnerBusy(true);
-      const result = await liveTradingApi.runFullDryTest(deploymentId);
+      const queued = await liveTradingApi.runFullDryTest(deploymentId);
+      if (!queued.job_id) throw new Error("Dry test queued but no job ID was returned");
+      showToast(queued.deduplicated ? "Dry test already running" : "Dry test queued in background", "success");
+      let result: FullDryTestResponse | null = null;
+      // Poll only while requested by the user. Each status request is cheap;
+      // no browser request remains open during the CPU-intensive strategy test.
+      for (let attempt = 0; attempt < 360; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const job = await liveTradingApi.getFullDryTestJob(deploymentId, queued.job_id);
+        if (job.status === "SUCCESS" && job.result) { result = job.result; break; }
+        if (job.status === "FAILURE" || job.status === "REVOKED") throw new Error(job.error || "Dry test worker failed");
+      }
+      if (!result) throw new Error("Dry test still pending; check background worker logs / retry job status");
       setFullDryTest(result);
       setRunnerResult(`${result.signal || "HOLD"} • ${result.message || result.final_action}`);
       showToast(result.message || "Full dry test completed", result.success ? "success" : "error");
@@ -787,14 +807,16 @@ export default function LiveDeploymentDetailPage() {
           <Badge className={summary.deployment?.auto_runner_enabled ? "border-lime-400/30 bg-lime-400/20 text-lime-100" : "border-yellow-400/30 bg-yellow-400/20 text-yellow-100"}>Auto Runner {summary.deployment?.auto_runner_enabled ? "ON" : "OFF"}</Badge>
           <span className="text-sm text-purple-200">Last signal: {date(summary.deployment?.last_signal_at || deployment.last_signal_at)}</span>
         </div>
-        <p className="mt-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3 text-xs text-cyan-100">In event mode, the persistent cTrader stream publishes each closed candle immediately; +3s/+8s historical requests are recovery only. The legacy scheduler remains available behind rollout flags.</p>
+        <p className="mt-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3 text-xs text-cyan-100">cTrader deployments use the event stream; TradeLocker, MT5 and Upstox use a separate broker polling/strategy worker. Polling and broker candle availability introduce measurable timing variance.</p>
         {runnerResult && <p className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-purple-100">Latest runner log: {runnerResult}</p>}
       </GlassCard>
 
       <LivePipelineCard latency={latency} health={pipelineHealth} healthError={pipelineHealthError} provider={broker?.broker_code || candleSnapshot?.source || "UNKNOWN"} />
 
       <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-7">
-        <MetricCard label="Equity" value={formatMoney(metrics?.equity ?? metrics?.effective_capital ?? deployment.capital, currency)} />
+        <MetricCard label={metrics?.equity_source === "BROKER_BALANCE_PROXY" ? "Broker balance (equity unavailable)" : "Equity"}
+          value={metrics?.equity_source === "BROKER_EQUITY_UNAVAILABLE" ? "Unavailable" :
+            formatOptionalMoney(metrics?.equity, currency)} />
         <MetricCard label="Realized PnL" value={formatMoney(metrics?.realized_pnl, currency)} />
         <MetricCard label="Unrealized PnL" value={formatMoney(metrics?.unrealized_pnl, currency)} />
         <MetricCard label="Today PnL" value={formatMoney(metrics?.today_pnl, currency)} />

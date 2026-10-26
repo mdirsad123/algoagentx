@@ -114,6 +114,7 @@ class Settings(BaseSettings):
     live_reconcile_worker_enabled: bool = Field(default=False, description="Enable dedicated slow broker reconciliation worker")
     ctrader_persistent_connection_enabled: bool = Field(default=False, description="Route cTrader market/order traffic through persistent sessions")
     live_legacy_runner_enabled: bool = Field(default=True, description="Keep the legacy scheduler available for rollback")
+    live_tradelocker_candle_worker_enabled: bool = Field(default=False, description="Independent TradeLocker broker candle polling")
     live_copy_trading_enabled: bool = Field(default=True, description="Master kill switch for deployment copy-trading fan-out")
 
     live_candle_stream: str = Field(default="live:candle_closed", description="Redis Stream for closed-candle events")

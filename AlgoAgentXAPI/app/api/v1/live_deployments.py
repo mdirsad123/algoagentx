@@ -39,7 +39,8 @@ from ...services.live.broker_candle_service import get_deployment_candle_history
 from ...services.live.strategy_history_profile import resolve_live_strategy_profile
 from ...services.live.history_warmup_queue import enqueue_history_warmup
 from ...services.strategy_registry import resolve_strategy
-from ...services.live.strategy_runner import run_strategy_for_deployment, run_full_dry_test_for_deployment
+from ...services.live.strategy_runner import run_strategy_for_deployment
+from ...services.live.dry_test_jobs import enqueue as enqueue_dry_test, status as dry_test_status
 from ...services.live.compatibility_service import run_live_compatibility_check, compatibility_failed
 from ...services.live.auto_runner_service import run_deployment_if_due
 from ...services.live.runner_scheduler import calculate_next_runner_at
@@ -954,8 +955,29 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
 
     capital_snapshot = get_effective_trading_capital(row, broker_row, broker_metrics)
     capital_value = capital_snapshot.effective_capital
-    if capital_snapshot.equity is not None:
+    # TradeLocker may provide BALANCE but no account EQUITY. Do not display the
+    # stale deployment equity point ($5,000) as current broker equity ($5,101).
+    # With zero positions the current balance is a clearly labelled proxy;
+    # with open positions the actual equity remains unavailable (None).
+    trade_locker_account = bool(broker_row and get_broker_code(broker_row) == 'TRADELOCKER')
+    equity_source = 'LOCAL_EQUITY_HISTORY' if latest_equity is not None else 'LOCAL_ESTIMATE'
+    if trade_locker_account:
+        # Use exactly the same account snapshot shown in Broker Summary.
+        # Do not inherit stale equity from older selected_account metadata.
+        account_equity = broker.get('equity') if isinstance(broker, dict) else None
+        account_balance = broker.get('balance') if isinstance(broker, dict) else None
+        if account_equity is not None:
+            equity = _dec(account_equity)
+            equity_source = 'BROKER_EQUITY'
+        elif account_balance is not None and int(open_positions_count) == 0:
+            equity = _dec(account_balance)
+            equity_source = 'BROKER_BALANCE_PROXY'
+        else:
+            equity = None
+            equity_source = 'BROKER_EQUITY_UNAVAILABLE'
+    elif capital_snapshot.equity is not None:
         equity = capital_snapshot.equity
+        equity_source = 'BROKER_EQUITY'
     elif latest_equity is None:
         equity = capital_snapshot.effective_capital + realized + unrealized
     currency = (capital_snapshot.account_currency or await _deployment_currency(db, row, broker) or "USD").upper()
@@ -1035,6 +1057,7 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
             "account_currency": currency,
             "balance": capital_snapshot.balance,
             "equity": equity,
+            "equity_source": equity_source,
             "free_margin": capital_snapshot.free_margin,
             "effective_capital": capital_snapshot.effective_capital,
             "effective_capital_source": capital_snapshot.effective_capital_source,
@@ -1055,6 +1078,7 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
             "source": (broker_metrics or {}).get("broker_pnl_source") if broker_metrics is not None else "DATABASE",
             "broker_synced": bool(broker_metrics is not None),
             "broker_pnl_source": (broker_metrics or {}).get("broker_pnl_source") if broker_metrics is not None else "LOCAL_DEPLOYMENT_RECORDS",
+            "pnl_source_note": "Local deployment realized/unrealized PnL; not reconciled broker-wide PnL" if broker_metrics is None else None,
             "broker_deal_count": (broker_metrics or {}).get("deals_pnl", {}).get("deal_count") if isinstance((broker_metrics or {}).get("deals_pnl"), dict) else None,
             "broker_sync_warning": broker_sync_warning,
         },
@@ -1710,15 +1734,19 @@ async def get_deployment_pipeline_health(
     if bool(getattr(deployment, "partial_exit_enabled", False)) and not settings.live_position_manager_worker_enabled:
         health["disabled_flags"].append("LIVE_POSITION_MANAGER_WORKER_ENABLED")
     deployment_environment = str(deployment.mode or "DEMO").upper()
+    broker_code = "UNKNOWN"
     if deployment.broker_account_id:
         linked_broker = (
             await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))
         ).scalar_one_or_none()
+        broker_code = get_broker_code(linked_broker) if linked_broker else "UNKNOWN"
         metadata = linked_broker.metadata_json if linked_broker and isinstance(linked_broker.metadata_json, dict) else {}
         selected = metadata.get("ctrader_selected_account") if isinstance(metadata, dict) else None
         if isinstance(selected, dict):
             deployment_environment = "LIVE" if bool(selected.get("is_live")) or str(selected.get("account_type") or "").upper() == "LIVE" else "DEMO"
     health["deployment_environment"] = deployment_environment
+    health["broker_code"] = broker_code
+    health["pipeline_mode"] = "CTRADER_STREAM" if broker_code in {"CTRADER", "CTRADER_API"} else "LEGACY_POLLING"
 
     # Include a cheap DB-side market-data diagnostic in the same response. This
     # lets the UI distinguish "worker health endpoint failed" from "worker is up
@@ -1750,7 +1778,7 @@ async def get_deployment_pipeline_health(
     if redis_manager.is_available and redis_manager.client is not None:
         bus = LiveEventBus(redis_manager.client)
         try:
-            for role in ("live_market_worker", "live_strategy_worker", "live_reconcile_worker", "live_position_manager_worker"):
+            for role in ("live_market_worker", "live_strategy_worker", "live_reconcile_worker", "live_position_manager_worker", "live_legacy_runner_worker", "live_tradelocker_candle_worker"):
                 health["workers"][role] = await bus.get_health(role)
             market_health = health["workers"].get("live_market_worker") or {}
             connections = market_health.get("connections") if isinstance(market_health, dict) else {}
@@ -1759,7 +1787,7 @@ async def get_deployment_pipeline_health(
             # Health is observer-only. A transient Redis read must not turn the
             # entire live page into a 500/eternal CHECKING state. Return DB/flag
             # diagnostics and expose the Redis error explicitly instead.
-            for role in ("live_market_worker", "live_strategy_worker", "live_reconcile_worker", "live_position_manager_worker"):
+            for role in ("live_market_worker", "live_strategy_worker", "live_reconcile_worker", "live_position_manager_worker", "live_legacy_runner_worker", "live_tradelocker_candle_worker"):
                 health["workers"].setdefault(role, None)
             health["connection"] = None
             health["redis_error"] = str(exc) or exc.__class__.__name__
@@ -1973,8 +2001,18 @@ async def test_deployment_demo_micro_order(deployment_id: UUID, payload: QaOrder
 @router.post("/{deployment_id}/run-full-dry-test")
 async def run_live_deployment_full_dry_test(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     await get_deployment_or_404(db, deployment_id, current_user)
-    result = await run_full_dry_test_for_deployment(db, deployment_id)
-    return success_response(result, result.get("message") or "Full dry test completed")
+    job = await enqueue_dry_test(str(deployment_id))
+    return success_response(job, "Full dry test queued; poll the job status endpoint")
+
+
+@router.get("/{deployment_id}/run-full-dry-test/jobs/{job_id}")
+async def get_live_deployment_full_dry_test_job(
+    deployment_id: UUID, job_id: UUID,
+    db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user),
+):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    result = await dry_test_status(str(deployment_id), str(job_id))
+    return success_response(result, "Full dry test job status")
 
 @router.post("/{deployment_id}/run-strategy-once")
 async def run_live_strategy_once(deployment_id: UUID, payload: RunStrategyOnceIn | None = None, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):

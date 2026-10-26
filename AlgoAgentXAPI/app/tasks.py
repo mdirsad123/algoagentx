@@ -903,3 +903,44 @@ def warm_live_strategy_history_task(self, deployment_id: str, required_count: in
                 r.delete(queue_key)
         finally:
             r.close()
+
+
+@celery_app.task(name="app.tasks.run_live_full_dry_test_task", bind=True)
+def run_live_full_dry_test_task(self, deployment_id: str):
+    """Evaluate full live dry test off the HTTP event loop, without order placement.
+
+    Queued only after the authenticated deployment-scoped endpoint authorizes it.
+    The original runner computes the same strategy; no V6.4 logic is altered.
+    """
+    from uuid import UUID
+    import redis
+    from .core.config import settings
+    from .services.live.strategy_runner import run_full_dry_test_for_deployment
+
+    async def _execute():
+        # Celery runs asyncio.run() once per job. Reusing a module-level async
+        # engine across separate event loops can raise cross-loop pool errors.
+        # Use the same fresh worker engine helper as backtest/warm-up tasks.
+        worker_engine, session_factory = _fresh_async_engine_and_sessionmaker()
+        try:
+            async with session_factory() as db:
+                return await run_full_dry_test_for_deployment(db, UUID(deployment_id))
+        finally:
+            await worker_engine.dispose()
+
+    try:
+        logger.info("Full dry test started for deployment=%s job=%s", deployment_id, self.request.id)
+        # Normalize datetimes/Decimals in non-order result metadata for Celery JSON.
+        result = asyncio.run(_execute())
+        return json.loads(json.dumps(result, default=str))
+    finally:
+        # Never delete a newer job's lock after this task finishes.
+        try:
+            client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+            client.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+                1, f"live:drytest:active:{deployment_id}", str(self.request.id),
+            )
+            client.close()
+        except Exception:
+            logger.exception("Could not release dry-test dedupe marker")

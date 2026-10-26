@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import timedelta
 from typing import Any
 from uuid import UUID
@@ -16,6 +17,10 @@ from ...db.session import async_session
 from .broker_candle_service import get_latest_closed_candles, refresh_deployment_candles
 from .runner_scheduler import calculate_next_runner_after_candle, calculate_next_runner_at, ensure_utc, latest_expected_closed_candle_open, utc_now
 from .strategy_runner import run_strategy_for_deployment
+from ..brokers.factory import get_broker_code
+from .live_latency_trace_service import LiveLatencyTraceService, deterministic_trace_id
+from .live_event_bus import LiveEventBus
+from ...core.redis_manager import redis_manager
 from .trading_safety import check_platform_mode_allowed, get_platform_trading_settings
 
 logger = logging.getLogger(__name__)
@@ -221,6 +226,30 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
         # checks the local DB; if another ingestion path stores the candle, strategy
         # execution becomes eligible according to STRATEGY_RUN_DELAY_SECONDS.
         if latest_closed_candle_time is None or latest_closed_candle_time < expected_closed_open:
+            # TradeLocker dedicated data-only worker continues to poll while this
+            # scheduler spends time on the full V6.4 calculation. Prevent duplicate
+            # REST requests from competing for the same broker rate limits.
+            external_tradelocker_ingestion = False
+            if getattr(settings, 'live_tradelocker_candle_worker_enabled', False) and deployment.broker_account_id:
+                broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
+                external_tradelocker_ingestion = bool(broker and get_broker_code(broker) == 'TRADELOCKER')
+                if external_tradelocker_ingestion:
+                    # Fail safely back to the original inline broker refresh if
+                    # the dedicated fetcher is absent. Never wait unboundedly
+                    # for a Redis health read on this time-sensitive path.
+                    client = redis_manager.client if redis_manager.is_available else None
+                    try:
+                        heartbeat = await asyncio.wait_for(
+                            LiveEventBus(client).get_health('live_tradelocker_candle_worker'),
+                            timeout=0.15,
+                        ) if client is not None else None
+                        external_tradelocker_ingestion = bool(heartbeat and heartbeat.get('status') in
+                            {'HEALTHY', 'DEGRADED', 'STARTING'})
+                    except Exception:
+                        external_tradelocker_ingestion = False
+            if external_tradelocker_ingestion:
+                return await _schedule_retry(db, deployment, utc_now(),
+                    f'Waiting for dedicated TradeLocker candle worker to store {expected_closed_open.isoformat()}', result)
             attempts = int(_CANDLE_RETRY_ATTEMPTS.get(retry_key, 0))
             if attempts < MAX_CANDLE_RETRY_ATTEMPTS:
                 attempts += 1
@@ -306,7 +335,15 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
 
         # Candle is available: clear retry state before strategy execution.
         _CANDLE_RETRY_ATTEMPTS.pop(retry_key, None)
-        runner_result = await run_strategy_for_deployment(db, deployment.id, execute=True, refresh_broker_candles=False)
+        # Link the legacy REST cycle to the same trace as the data-only worker.
+        # A missing Redis trace is harmless: strategy still executes as before.
+        trace_id = None
+        if deployment.broker_account_id and getattr(settings, 'live_tradelocker_candle_worker_enabled', False):
+            broker = (await db.execute(select(BrokerAccount).where(BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
+            if broker and get_broker_code(broker) == 'TRADELOCKER':
+                trace_id = deterministic_trace_id(deployment.id, latest_closed_candle_time)
+        runner_result = await run_strategy_for_deployment(
+            db, deployment.id, execute=True, refresh_broker_candles=False, trace_id=trace_id)
         # If another request (for example Run Strategy Once) owned the per-deployment
         # runner lock, do not mark this candle processed. A skipped lock must be
         # retried, otherwise Auto Runner can silently miss an entire candle.
@@ -328,6 +365,18 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
         await _write_log(db, deployment, "AUTO_RUNNER_COMPLETED", runner_result.get("message") or "Auto runner completed", metadata={"runner": runner_result, "latest_closed_candle_time": latest_closed_candle_time.isoformat(), "next_run_at": deployment.next_run_at.isoformat()})
         await db.commit()
         result.update(ran=True, runner=runner_result, message=runner_result.get("message"), next_run_at=deployment.next_run_at.isoformat())
+        # Best-effort diagnostics after the trading cursor commit; failure here
+        # must not cause this candle to be re-executed or change its risk outcome.
+        if trace_id:
+            try:
+                client = redis_manager.client
+                trace = LiveLatencyTraceService(client if redis_manager.is_available else None)
+                if trace.enabled:
+                    async with async_session() as trace_db:
+                        await trace.persist(trace_db, trace_id)
+                        await trace_db.commit()
+            except Exception:
+                logger.exception('TradeLocker trace persistence failed (noncritical) deployment=%s', deployment_id)
         return result
     except Exception as exc:
         # Any flush/execute failure leaves SQLAlchemy in a failed transaction.
@@ -416,8 +465,17 @@ async def auto_runner_loop() -> None:
     interval = max(1, int(getattr(settings, "live_runner_interval_seconds", 1) or 1))
     logger.info("Live auto runner loop started, scheduler scan interval=%ss", interval)
     while True:
+        started = time.monotonic()
         try:
-            await run_due_deployments()
+            result = await run_due_deployments()
+            elapsed = time.monotonic() - started
+            # Lightweight timing only; never change execution/retry decisions.
+            results = result.get("results") or []
+            ran = sum(bool(item.get("ran")) for item in results)
+            if elapsed >= 30:
+                logger.warning("Legacy scheduler slow cycle: duration=%.3fs checked=%s ran=%s", elapsed, result.get("checked"), ran)
+            elif elapsed >= 5 or ran:
+                logger.info("Legacy scheduler cycle: duration=%.3fs checked=%s ran=%s", elapsed, result.get("checked"), ran)
         except asyncio.CancelledError:
             logger.info("Live auto runner loop cancelled")
             raise

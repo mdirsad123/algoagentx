@@ -55,6 +55,8 @@ services:
       # Resource-safe defaults for the full live stack. Override in .env.prod on
       # larger Oracle instances if you intentionally want more API workers.
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
+      # API is HTTP-only. Non-cTrader strategy scheduler lives in a dedicated process.
+      LIVE_LEGACY_RUNNER_ENABLED: "false"
     depends_on:
       postgres_prod:
         condition: service_healthy
@@ -230,6 +232,99 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+
+  # Non-cTrader polling/strategy scheduler: isolated from HTTP requests.
+  # Exactly ONE replica, do not scale without distributed scheduler election.
+  live_legacy_runner_worker:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile.prod
+    container_name: algoagentx_live_legacy_runner_worker
+    restart: unless-stopped
+    stop_grace_period: 90s
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_prod:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      LIVE_RUNNER_ENABLED: "true"
+      LIVE_LEGACY_RUNNER_ENABLED: "true"
+      LIVE_TRADELOCKER_CANDLE_WORKER_ENABLED: "true"
+    command: ["python", "-m", "app.services.live.live_legacy_runner_worker"]
+    depends_on:
+      postgres_prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib; assert 'app.services.live.live_legacy_runner_worker' in pathlib.Path('/proc/1/cmdline').read_bytes().decode('utf-8','ignore')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Broker candle I/O runs in its OWN process, never blocked by full V6.4 evaluation.
+  # Exactly one replica. No order execution or signal evaluation in this worker.
+  live_tradelocker_candle_worker:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile.prod
+    container_name: algoagentx_live_tradelocker_candle_worker
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_prod:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+    command: ["python", "-m", "app.services.live.live_tradelocker_candle_worker"]
+    depends_on:
+      postgres_prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib; assert 'app.services.live.live_tradelocker_candle_worker' in pathlib.Path('/proc/1/cmdline').read_bytes().decode('utf-8','ignore')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Full dry-test strategy evaluation is isolated from both the API and
+  # the time-sensitive live-trading workers. NEVER scale this without review.
+  live_dry_test_worker:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile.prod
+    container_name: algoagentx_live_dry_test_worker
+    restart: unless-stopped
+    # Background-only QA: on the measured 2-vCPU VM this hard cap prevents a
+    # full historical dry test from monopolizing a core needed for live orders.
+    cpus: "0.50"
+    stop_grace_period: 90s
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_prod:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=1", "--prefetch-multiplier=1", "--without-gossip", "--without-mingle", "-Q", "live_dry_test", "-n", "live_dry_test@%h"]
+    depends_on:
+      postgres_prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib; c=pathlib.Path('/proc/1/cmdline').read_bytes().decode('utf-8','ignore'); assert 'celery' in c and 'live_dry_test' in c"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   # Optional worker. Enable only if you use Celery jobs/background queues.
   celery_worker:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_DOWN
+import asyncio
+import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
 import hashlib
@@ -27,6 +29,19 @@ from .broker_sync_service import sync_copy_target_positions, sync_ctrader_deploy
 from .live_latency_trace_service import LiveLatencyTraceService
 from .live_event_bus import LiveEventBus
 from ..brokers.ctrader_order_gateway import submit_close_position, submit_market_order
+
+_trace_logger = logging.getLogger(__name__)
+
+
+async def _safe_tradelocker_trace(signal, stage: str, **kwargs):
+    """Best-effort observability; Redis failure must never change order execution."""
+    try:
+        if getattr(signal, "trace_id", None):
+            # A failing Redis telemetry write must not hold a broker order.
+            await asyncio.wait_for(_trace_service().mark(signal.trace_id, stage, **kwargs), timeout=0.15)
+    except Exception:
+        _trace_logger.exception("TradeLocker tracing failed at stage %s", stage)
+
 
 
 def _round(value: Decimal, places: str = "0.00000001") -> Decimal:
@@ -426,8 +441,12 @@ async def _execute_demo_entry(
         return existing_order
 
     adapter = get_broker_adapter(broker, db)
-    await _log(db, deployment, "BROKER_EXECUTION_STARTED", "MT5 demo order send started", metadata={"broker_account_id": str(broker.id), "signal_id": str(signal.id), "client_order_id": client_order_id, "sizing": sizing_metadata or {}})
+    is_tradelocker = get_broker_code(broker) == "TRADELOCKER"
+    await _log(db, deployment, "BROKER_EXECUTION_STARTED", "DEMO broker order send started", metadata={"broker_account_id": str(broker.id), "signal_id": str(signal.id), "client_order_id": client_order_id, "sizing": sizing_metadata or {}})
     broker_symbol = getattr(deployment, "broker_symbol", None) or signal.symbol
+    if is_tradelocker:
+        await _safe_tradelocker_trace(signal, "t11", status="BROKER_SEND_READY")
+        await _safe_tradelocker_trace(signal, "t12", status="BROKER_REQUEST_SENT")
     result = await adapter.place_market_order(BrokerOrderRequest(
         symbol=broker_symbol,
         side=order_side,
@@ -442,10 +461,17 @@ async def _execute_demo_entry(
         is_copy_execution=bool(getattr(deployment, "_copy_execution_target", False)),
         source_broker_code=getattr(deployment, "_copy_source_broker_code", None),
     ))
+    if is_tradelocker and result.success:
+        # PLACED/PENDING/UNCERTAIN do not prove broker acceptance or fill.
+        if str(result.status or '').upper() in {'ACCEPTED', 'FILLED'}:
+            await _safe_tradelocker_trace(signal, 't13', status='BROKER_ACCEPTED')
+        if str(result.status or '').upper() == 'FILLED':
+            await _safe_tradelocker_trace(signal, 't14', status='BROKER_FILLED')
     actual_qty = _result_volume(result, qty)
     resolved_broker_symbol = _resolved_order_symbol(result, broker_symbol)
 
     order = LiveOrder(
+        trace_id=getattr(signal, 'trace_id', None),
         deployment_id=deployment.id,
         signal_id=signal.id,
         user_id=deployment.user_id,
@@ -483,6 +509,8 @@ async def _execute_demo_entry(
                 setattr(order, field, sizing_metadata.get(key))
     db.add(order)
     await db.flush()
+    if is_tradelocker:
+        await _safe_tradelocker_trace(signal, 't15', status='LOCAL_ORDER_UPDATED', order_id=str(order.id))
 
     if not result.success:
         signal.status = "ERROR"

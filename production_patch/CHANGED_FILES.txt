@@ -1,0 +1,12 @@
+Patch file manifest; compare against the 2026-10-26 uploaded project archive.
+Runtime and trading strategy algorithms are intentionally unchanged.
+
+MODIFIED  docker-compose.yml
+MODIFIED  AlgoAgentXAPI/app/tasks.py
+MODIFIED  AlgoAgentXAPI/app/api/v1/live_deployments.py
+NEW       AlgoAgentXAPI/app/services/live/live_legacy_runner_worker.py
+MODIFIED  AlgoAgentXAPI/app/services/live/auto_runner_service.py
+NEW       AlgoAgentXAPI/app/services/live/dry_test_jobs.py
+MODIFIED  AlgoAgentXApp/types/live-trading.ts
+MODIFIED  AlgoAgentXApp/lib/api/live-trading.ts
+MODIFIED  AlgoAgentXApp/app/(user)/live-trading/[deploymentId]/page.tsx
