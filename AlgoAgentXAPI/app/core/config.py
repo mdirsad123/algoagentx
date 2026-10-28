@@ -132,6 +132,41 @@ class Settings(BaseSettings):
     live_market_deployment_scan_seconds: int = Field(default=15, description="Seconds between active deployment registry refreshes")
     live_market_bootstrap_candles: int = Field(default=1000, description="Initial cTrader closed-candle bootstrap count")
     live_market_backfill_candles: int = Field(default=5, description="Small reconnect/watchdog backfill count")
+    live_strategy_cprofile_enabled: bool = Field(default=False, description="Opt-in strategy generate cProfile logging; adds CPU overhead")
+    live_incremental_enabled: bool = Field(default=False, description="Allow only parity-verified strategies implementing incremental v1; default off")
+    # Requires independent 80K real-broker parity approval, a pinned active DB
+    # source SHA and global incremental flag. No database source mutation.
+    # Generic adapter runtime controls. These enable a registry, NOT automatic
+    # conversion of an arbitrary full-history strategy into an incremental one.
+    live_incremental_adapter_enabled: bool = Field(default=False, description="Enable registered source-pinned incremental adapters")
+    live_incremental_monitor_only: bool = Field(default=True, description="Registered adapters only calculate signals, never submit orders")
+    live_incremental_parity_approved: bool = Field(default=False, description="Operator declaration AFTER exact broker parity evidence")
+    live_incremental_authorized_source_sha256: str = Field(default="", description="Optional one-source operator authorization; registry allowlist remains mandatory")
+    live_incremental_max_advances: int = Field(default=48, description="Bounded cold rebase interval for any registered adapter")
+    live_v64_hybrid_enabled: bool = Field(default=False, description="Opt-in hybrid DEMO runner, disabled by default")
+    live_v64_hybrid_monitor_only: bool = Field(default=False, description="Research mode: hybrid evaluation and signals only; NEVER broker order submission")
+    live_v64_hybrid_max_advances: int = Field(default=48, description="Cold rebase interval for experimental hybrid; bounded 1..288")
+    live_v64_hybrid_parity_approved: bool = Field(default=False, description="Human reviewed source/parameters/broker rolling-parity report")
+    live_v64_hybrid_authorized_source_sha256: str = Field(default="", description="Exact SHA256 of active DB source, required by hybrid gate")
+    live_runner_sequential_catchup_enabled: bool = Field(default=False, description="Process queued DEMO monitor-only candles oldest first; block when a broker candle is absent")
+    live_tradelocker_gap_backfill_enabled: bool = Field(default=False, description="Read-only gap detection plus bounded TradeLocker history refetch; does not place orders")
+    live_tradelocker_session_gap_resume_enabled: bool = Field(default=False, description="DEMO only: resume after two matching broker-history snapshots confirm long no-bar interval")
+    live_runner_demo_observed_gap_resume_enabled: bool = Field(default=False, description="DEMO M5 only: bounded long gap continuation from actual consecutive stored broker candles; NOT proof of official exchange closure")
+    live_runner_demo_observed_gap_min_missing_bars: int = Field(default=6, description="Minimum absent M5 candle slots for DEMO broker-observed continuation; short holes remain blocked")
+    live_tradelocker_session_gap_min_missing_bars: int = Field(default=6, description="Never classify a 1-5 missing M5 bar run as a session closure")
+    # Per-timeframe candle-boundary polling, not per-second REST requests.
+    live_tradelocker_boundary_poll_enabled: bool = Field(default=True, description="Poll TradeLocker at candle boundaries; reduce empty-history calls on session breaks and weekends")
+    live_tradelocker_fast_empty_retries: int = Field(default=2, description="Short retry attempts at +8 seconds when a just-closed candle is late; then defer to next timeframe boundary")
+    live_tradelocker_empty_retry_seconds: int = Field(default=8, description="Seconds between limited fast retries just after candle close")
+    live_tradelocker_idle_boundary_grace_seconds: int = Field(default=10, description="After sustained market pause poll at M5 close +10s rather than +2s to catch broker candle publication")
+    live_tradelocker_registry_refresh_seconds: int = Field(default=15, description="Seconds between DB discovery scans for TradeLocker deployments")
+    live_runner_dedicated_candle_idle_enabled: bool = Field(default=True, description="Avoid strategy-runner DB/log retry storms when dedicated TradeLocker ingestion has no new closed candle")
+    live_runner_dedicated_candle_probe_seconds: int = Field(default=5, description="DB-only runner recheck interval immediately after a new candle boundary")
+    live_runner_dedicated_candle_fast_probes: int = Field(default=3, description="Number of DB-only checks before slow DB-only probing")
+    live_runner_dedicated_candle_max_idle_probe_seconds: int = Field(default=30, description="Maximum DB-only runner sleep to notice late candle ingestion without an M5-wide delay")
+
+    live_runner_stale_order_guard_enabled: bool = Field(default=False, description="Opt-in fail-closed broker-order guard for late candle evaluations")
+    live_runner_max_order_age_after_close_seconds: int = Field(default=60, description="When stale guard enabled, max seconds from candle close to order decision")
     live_strategy_history_default_bars: int = Field(default=80000, description="Default closed-candle history passed to live dynamic strategies")
     live_strategy_history_override_bars: int = Field(
         default=0,

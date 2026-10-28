@@ -20,9 +20,12 @@ def test_dynamic_source_daily_stack_infers_long_history():
     assert resolve_live_strategy_profile(DynamicStrategy, params).required_history_bars == 20_000
 
 
-def test_admin_history_override_is_supported_and_capped():
+def test_admin_history_override_is_supported_and_capped(monkeypatch):
+    # Exercise the authored cap, independently of local .env operational limits.
+    monkeypatch.setattr(history_settings, "live_strategy_history_max_bars", 200_000)
+    monkeypatch.setattr(history_settings, "live_strategy_history_override_bars", 0)
     assert resolve_live_strategy_profile(XAUUSD5MTrendBreakoutV137, {"live_history_bars": 25_000}).required_history_bars == 25_000
-    assert resolve_live_strategy_profile(XAUUSD5MTrendBreakoutV137, {"live_history_bars": 999_999}).required_history_bars == 100_000
+    assert resolve_live_strategy_profile(XAUUSD5MTrendBreakoutV137, {"live_history_bars": 999_999}).required_history_bars == 200_000
 
 
 def test_no_name_based_runtime_contract_is_forced():

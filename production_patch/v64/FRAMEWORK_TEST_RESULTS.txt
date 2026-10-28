@@ -1,0 +1,26 @@
+.........F......                                                         [100%]
+=================================== FAILURES ===================================
+_____________ test_admin_history_override_is_supported_and_capped ______________
+
+    def test_admin_history_override_is_supported_and_capped():
+        assert resolve_live_strategy_profile(XAUUSD5MTrendBreakoutV137, {"live_history_bars": 25_000}).required_history_bars == 25_000
+>       assert resolve_live_strategy_profile(XAUUSD5MTrendBreakoutV137, {"live_history_bars": 999_999}).required_history_bars == 100_000
+E       AssertionError: assert 200000 == 100000
+E        +  where 200000 = LiveStrategyProfile(required_history_bars=200000, runtime_contract=None).required_history_bars
+E        +    where LiveStrategyProfile(required_history_bars=200000, runtime_contract=None) = resolve_live_strategy_profile(XAUUSD5MTrendBreakoutV137, {'live_history_bars': 999999})
+
+tests/test_live_strategy_history_profile.py:25: AssertionError
+=============================== warnings summary ===============================
+app/core/config.py:234
+  /mnt/data/work_incremental_final/AlgoAgentXAPI/app/core/config.py:234: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    @validator('env')
+
+app/db/base.py:3
+  /mnt/data/work_incremental_final/AlgoAgentXAPI/app/db/base.py:3: MovedIn20Warning: The ``declarative_base()`` function is now available as sqlalchemy.orm.declarative_base(). (deprecated since: 2.0) (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
+    Base = declarative_base()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_live_strategy_history_profile.py::test_admin_history_override_is_supported_and_capped - AssertionError: assert 200000 == 100000
+ +  where 200000 = LiveStrategyProfile(required_history_bars=200000, runtime_contract=None).required_history_bars
+ +    where LiveStrategyProfile(required_history_bars=200000, runtime_contract=None) = resolve_live_strategy_profile(XAUUSD5MTrendBreakoutV137, {'live_history_bars': 999999})

@@ -1,0 +1,19 @@
+# ADD TO EXISTING .env.prod (do not duplicate existing keys)
+# Change TradeLocker REST polling only. No market open/close times hardcoded.
+LIVE_TRADELOCKER_BOUNDARY_POLL_ENABLED=true
+LIVE_TRADELOCKER_FAST_EMPTY_RETRIES=2
+LIVE_TRADELOCKER_EMPTY_RETRY_SECONDS=8
+LIVE_TRADELOCKER_REGISTRY_REFRESH_SECONDS=15
+
+# Dedicated TradeLocker runner: no strategy execution without NEW closed candle.
+# DB-only rechecks at 5s, then at most 30s apart to notice late arrivals.
+LIVE_RUNNER_DEDICATED_CANDLE_IDLE_ENABLED=true
+LIVE_RUNNER_DEDICATED_CANDLE_PROBE_SECONDS=5
+LIVE_RUNNER_DEDICATED_CANDLE_FAST_PROBES=3
+LIVE_RUNNER_DEDICATED_CANDLE_MAX_IDLE_PROBE_SECONDS=30
+
+# Optional: keep lightweight legacy scheduler scans at 5s, not 1s.
+LIVE_RUNNER_INTERVAL_SECONDS=5
+
+# KEEP YOUR EXISTING INCREMENTAL, SHA, DEMO AUTO TRADE, 80K WARMUP FLAGS
+# UNCHANGED. This patch does not change strategy signals or order eligibility.

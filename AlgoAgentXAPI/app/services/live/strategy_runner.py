@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 import math
 import logging
 import hashlib
+import time
 from uuid import UUID
 
 import pandas as pd
@@ -28,6 +29,16 @@ from .live_latency_trace_service import LiveLatencyTraceService
 from .deployment_lock import try_deployment_xact_lock
 from .strategy_history_profile import resolve_live_strategy_profile, runtime_contract_violations
 from .history_warmup_queue import enqueue_history_warmup
+from .runner_diagnostics import StageClock, profile_generate
+from .retained_strategy_state import retained_states, is_opted_in, signature as incremental_signature
+from .runner_cache import history_ready_cache
+from .incremental_adapter_registry import select_registered_adapter, configured_max_advances
+from .signal_contract import (
+    _normalize_signal_value, _json_safe_value, _safe_float, _first_present,
+    _safe_row_dict, extract_latest_signal_payload,
+)
+from ...core.config import settings
+from .runner_scheduler import parse_timeframe_to_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -262,134 +273,6 @@ def _candles_to_dataframe(candles: list[dict[str, Any]]) -> pd.DataFrame:
     return df
 
 
-def _normalize_signal_value(raw_value: Any) -> str:
-    if raw_value is None:
-        return "HOLD"
-    try:
-        numeric = int(float(raw_value))
-        if numeric > 0:
-            return "BUY"
-        if numeric < 0:
-            return "SELL"
-        return "HOLD"
-    except Exception:
-        text = str(raw_value or "").strip().upper()
-        if text in {"BUY", "LONG", "BULL", "1", "+1"}:
-            return "BUY"
-        if text in {"SELL", "SHORT", "BEAR", "-1"}:
-            return "SELL"
-        if text in {"EXIT", "CLOSE", "CLOSE_LONG", "CLOSE_SHORT", "FLAT"}:
-            return "EXIT"
-        return "HOLD"
-
-
-
-
-def _json_safe_value(value: Any) -> Any:
-    """Convert pandas/numpy/scalar values into JSON-safe Python values."""
-    if value is None:
-        return None
-    try:
-        if pd.isna(value):
-            return None
-    except Exception:
-        pass
-    if isinstance(value, (datetime,)):
-        return value.isoformat()
-    if hasattr(value, "item"):
-        try:
-            value = value.item()
-        except Exception:
-            pass
-    if isinstance(value, float):
-        if math.isnan(value) or math.isinf(value):
-            return None
-        return value
-    if isinstance(value, (int, bool, str)):
-        text = value.strip() if isinstance(value, str) else value
-        if text == "":
-            return None
-        return text
-    if isinstance(value, dict):
-        return {str(k): _json_safe_value(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_json_safe_value(v) for v in value]
-    return str(value)
-
-
-def _safe_float(value: Any) -> float | None:
-    value = _json_safe_value(value)
-    if value is None:
-        return None
-    try:
-        number = float(value)
-    except Exception:
-        return None
-    if math.isnan(number) or math.isinf(number):
-        return None
-    return number
-
-
-def _first_present(row: Any, columns: tuple[str, ...]) -> Any:
-    for column in columns:
-        try:
-            if column in row.index:
-                value = row[column]
-                if _json_safe_value(value) is not None:
-                    return value
-        except Exception:
-            continue
-    return None
-
-
-def _safe_row_dict(row: Any) -> dict[str, Any]:
-    try:
-        raw = row.to_dict()
-    except Exception:
-        raw = {}
-    return {str(k): _json_safe_value(v) for k, v in raw.items()}
-
-
-def extract_latest_signal_payload(generated_df: pd.DataFrame) -> dict[str, Any]:
-    """Extract the live runner contract from the latest generated strategy row.
-
-    Live-compatible strategies may return signal/Position plus strategy_stop_loss,
-    strategy_target, helper risk/reward columns and signal_reason.  This helper
-    intentionally reads only the latest closed-candle row, mirroring the live
-    runner decision point.
-    """
-    if generated_df is None or generated_df.empty:
-        return {
-            "signal_type": "HOLD",
-            "strategy_stop_loss": None,
-            "strategy_target": None,
-            "strategy_risk_points": None,
-            "strategy_reward_points": None,
-            "signal_reason": None,
-            "source_row": {},
-        }
-
-    latest = generated_df.iloc[-1]
-    signal_raw = _first_present(latest, ("signal", "Signal", "SIGNAL", "position", "Position", "POSITION"))
-    signal_type = _normalize_signal_value(signal_raw)
-    stop_loss = _safe_float(_first_present(latest, ("strategy_stop_loss", "stop_loss", "sl", "SL")))
-    target = _safe_float(_first_present(latest, ("strategy_target", "target", "take_profit", "tp", "TP")))
-    risk_points = _safe_float(_first_present(latest, ("strategy_risk_points", "risk_points", "risk", "risk_distance")))
-    reward_points = _safe_float(_first_present(latest, ("strategy_reward_points", "reward_points", "reward", "reward_distance")))
-    reason_value = _json_safe_value(_first_present(latest, ("signal_reason", "reason", "Reason", "SIGNAL_REASON")))
-    signal_reason = str(reason_value) if reason_value is not None else None
-
-    return {
-        "signal_type": signal_type,
-        "strategy_stop_loss": stop_loss,
-        "strategy_target": target,
-        "strategy_risk_points": risk_points,
-        "strategy_reward_points": reward_points,
-        "signal_reason": signal_reason,
-        "source_row": _safe_row_dict(latest),
-    }
-
-
 def _extract_latest_signal(result_df: pd.DataFrame) -> str:
     return str(extract_latest_signal_payload(result_df).get("signal_type") or "HOLD")
 
@@ -540,6 +423,7 @@ async def run_full_dry_test_for_deployment(db: AsyncSession, deployment_id: UUID
         "Strategy output extracted from latest closed candle",
         metadata={
             "signal_type": signal_type,
+            "v64_hybrid_monitor_only": force_monitor_no_orders,
             "strategy_stop_loss": signal_payload.get("strategy_stop_loss"),
             "strategy_target": signal_payload.get("strategy_target"),
             "signal_reason": signal_payload.get("signal_reason"),
@@ -615,6 +499,7 @@ async def run_strategy_for_deployment(
     candle_time: datetime | None = None,
     trace_id: str | None = None,
     event_context: dict[str, Any] | None = None,
+    suppress_broker_order_for_catchup: bool = False,
 ) -> dict[str, Any]:
     deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
     if deployment is None:
@@ -625,6 +510,8 @@ async def run_strategy_for_deployment(
     latest_candle_time: datetime | None = None
     latest_symbol: str | None = None
     latency_trace = LiveLatencyTraceService(redis_manager.client if redis_manager.is_available else None)
+    stage_clock = StageClock(str(deployment_id), logger)
+    runner_total_started = time.perf_counter()
 
     try:
         locked = await try_deployment_xact_lock(db, deployment.id)
@@ -664,6 +551,7 @@ async def run_strategy_for_deployment(
             except Exception as exc:
                 await _log(db, deployment, "PAPER_POSITION_MANAGER_ERROR", f"Paper position manager failed: {exc}", "WARNING")
 
+        timer = stage_clock.start("resolve_strategy_and_runtime")
         strategy = (await db.execute(select(Strategy).where(Strategy.id == deployment.strategy_id))).scalar_one_or_none()
         if strategy is None:
             raise HTTPException(status_code=404, detail="Strategy not found")
@@ -685,16 +573,87 @@ async def run_strategy_for_deployment(
             await db.commit()
             return {"success": False, **detail, "final_action": "HOLD_RUNTIME_CONTRACT_MISMATCH"}
 
+        # Strictly opt-in runtime adapter. The authoritative DB Strategy source
+        # remains FROZEN and used in backtests; only the DEMO runner can select
+        # this audited hybrid when all independent approval switches match.
+        # Profile/runtime contract intentionally resolved from ORIGINAL class.
+        adapter = select_registered_adapter(
+            settings=settings, source_code=str(strategy_params.get("source_code") or ""),
+            mode=mode, instrument=str(deployment.instrument),
+            timeframe_seconds=parse_timeframe_to_seconds(str(deployment.timeframe or "M5")),
+            required_history_bars=profile.required_history_bars,
+        ) if execute and not refresh_broker_candles else None
+        hybrid_class = adapter.strategy_class if adapter else None
+        hybrid_reason = adapter.reason if adapter else "disabled"
+        hybrid_selected = hybrid_class is not None
+        hybrid_monitor_only = bool(adapter and adapter.monitor_only)
+        # Operator can keep DEMO Auto Trade ON. Research monitor mode (if
+        # requested) never submits broker orders, even on full-history fallback.
+        generic_monitor_requested = (
+            bool(getattr(settings, "live_incremental_adapter_enabled", False))
+            and bool(getattr(settings, "live_incremental_monitor_only", True))
+        )
+        legacy_monitor_requested = (
+            not bool(getattr(settings, "live_incremental_adapter_enabled", False))
+            and bool(getattr(settings, "live_v64_hybrid_enabled", False))
+            and bool(getattr(settings, "live_v64_hybrid_monitor_only", False))
+        )
+        force_monitor_no_orders = mode == "DEMO" and (
+            generic_monitor_requested or legacy_monitor_requested or suppress_broker_order_for_catchup
+        )
+        if suppress_broker_order_for_catchup:
+            logger.warning("RUNNER_HISTORICAL_CATCHUP_ORDER_SUPPRESSED deployment=%s candle=%s "
+                           "reason=state_replay_not_a_current_trade", deployment_id, candle_time)
+        if hybrid_selected:
+            strategy_class = hybrid_class
+            logger.warning(
+                "RUNNER_INCREMENTAL_ADAPTER_SELECTED deployment=%s adapter=%s source_sha256=%s "
+                "bars=%s mode=%s monitor_only=%s",
+                deployment_id, adapter.adapter_id, adapter.source_sha256,
+                profile.required_history_bars, mode, hybrid_monitor_only,
+            )
+            # Preserve the existing WATCH_V64_HYBRID.ps1 log markers.
+            logger.warning(
+                "RUNNER_V64_HYBRID_SELECTED deployment=%s source_sha256=%s bars=%s "
+                "mode=%s monitor_only=%s", deployment_id, adapter.source_sha256,
+                profile.required_history_bars, mode, hybrid_monitor_only,
+            )
+        elif hybrid_reason != "disabled":
+            logger.warning("RUNNER_INCREMENTAL_ADAPTER_FALLBACK deployment=%s reason=%s "
+                           "mode=FULL_HISTORY", deployment_id, hybrid_reason)
+        stage_clock.stop("resolve_strategy_and_runtime", timer)
+        timer = stage_clock.start("history_readiness_check")
         authoritative_candle_time = _normalize_dt(candle_time) if candle_time is not None else None
         history_status = None
         if mode in {"DEMO", "LIVE"}:
-            history_status = await get_deployment_candle_history_status(
-                db,
-                deployment,
-                profile.required_history_bars,
-                through_candle_time=authoritative_candle_time,
+            history_signature = (
+                f"{deployment.strategy_id}|{deployment.broker_account_id}|"
+                f"{deployment.timeframe}|{deployment.instrument}|{getattr(deployment, 'instrument_key', None)}"
             )
+            history_cached = history_ready_cache.can_reuse(
+                deployment.id, required=profile.required_history_bars,
+                signature=history_signature, through=authoritative_candle_time,
+            )
+            if history_cached:
+                # Positive result is only a short-lived hint; every FULL_HISTORY
+                # load still verifies count and exact requested candle. No
+                # strategy BUY/SELL decision is ever read from this cache.
+                history_status = {'ready': True, 'required_count': profile.required_history_bars,
+                                  'source': 'positive_short_ttl_cache'}
+            else:
+                history_status = await get_deployment_candle_history_status(
+                    db,
+                    deployment,
+                    profile.required_history_bars,
+                    through_candle_time=authoritative_candle_time,
+                )
+                if history_status.get('ready'):
+                    history_ready_cache.remember(
+                        deployment.id, required=profile.required_history_bars,
+                        signature=history_signature, through=authoritative_candle_time,
+                    )
             if not history_status.get("ready"):
+                history_ready_cache.invalidate(deployment.id)
                 history_status["warmup_queue"] = enqueue_history_warmup(deployment.id, profile.required_history_bars)
                 detail = {
                     "ok": False,
@@ -708,6 +667,7 @@ async def run_strategy_for_deployment(
                 await db.commit()
                 return {"success": False, **detail, "final_action": "HOLD_STRATEGY_HISTORY"}
 
+        stage_clock.stop("history_readiness_check", timer)
         refresh_warning = None
         if mode in {"DEMO", "LIVE"} and refresh_broker_candles:
             await _log(db, deployment, "RUNNER_CANDLE_REFRESH_STARTED", "Refreshing latest broker closed candles before strategy run")
@@ -717,73 +677,175 @@ async def run_strategy_for_deployment(
                 refresh_warning = str(getattr(exc, "detail", None) or exc)
                 await _log(db, deployment, "RUNNER_CANDLE_REFRESH_WARNING", f"Broker candle refresh failed; using stored candles if available: {refresh_warning}", "WARNING", {"deployment_id": str(deployment.id), "instrument": deployment.instrument, "instrument_key": getattr(deployment, "instrument_key", None)})
 
-        candles = await load_live_candles_for_runner(
-            db,
-            deployment,
-            limit=profile.required_history_bars,
-            through_candle_time=authoritative_candle_time,
-        )
-        if len(candles) < profile.required_history_bars:
-            detail = {
-                "ok": False,
-                "error_code": "NOT_ENOUGH_LIVE_CANDLES",
-                "message": f"HOLD - Not enough live candles. Loaded {len(candles)} candles, required {profile.required_history_bars}.",
-                "loaded_candles": len(candles),
-                "deployment_id": str(deployment.id),
-                "instrument": deployment.instrument,
-                "instrument_key": getattr(deployment, "instrument_key", None),
-                "timeframe": deployment.timeframe,
-                "refresh_warning": refresh_warning,
-            }
-            deployment.last_runner_at = datetime.now(timezone.utc)
-            try:
-                deployment.next_run_at = calculate_next_runner_at(datetime.now(timezone.utc), deployment.timeframe, 1)
-            except Exception:
-                pass
-            await _log(db, deployment, "RUNNER_NOT_ENOUGH_CANDLES", detail["message"], "WARNING", detail)
-            await db.commit()
-            return {"success": False, **detail, "latest_runner_log": detail["message"], "final_action": "HOLD_NOT_ENOUGH_CANDLES"}
-
-        latest_candle = candles[0]
-        latest_candle_time = _normalize_dt(latest_candle.get("candle_time"))
-        if authoritative_candle_time is not None and latest_candle_time != authoritative_candle_time:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Authoritative closed candle is not available in PostgreSQL "
-                    f"(expected {authoritative_candle_time.isoformat()}, got {latest_candle_time.isoformat()})."
-                ),
-            )
-        latest_close = to_decimal(latest_candle.get("close"))
-        latest_symbol = str(latest_candle.get("symbol") or deployment.instrument)
-        df = _candles_to_dataframe(candles)
-        delay_seconds = 1
-        deployment.last_runner_at = datetime.now(timezone.utc)
-        deployment.next_run_at = calculate_next_runner_after_candle(latest_candle_time, deployment.timeframe, delay_seconds, now_utc=datetime.now(timezone.utc))
-        await _log(
-            db,
-            deployment,
-            "RUNNER_CANDLES_LOADED",
-            f"Loaded {len(df)} closed broker candles for strategy run",
-            metadata={"latest_candle_time": latest_candle_time.isoformat(), "symbol": latest_symbol, "next_run_at": deployment.next_run_at.isoformat() if deployment.next_run_at else None, "required_history_bars": profile.required_history_bars, "loaded_history_bars": len(df), "history_status": history_status},
-        )
-        await latency_trace.mark(trace_id, "t6", status="STRATEGY_STARTED")
-
+        # The shared runner is universal; incremental calculation is NOT. A
+        # strategy must implement the explicit v1 protocol and have an
+        # independently recorded parity approval. All other strategies run the
+        # original full-history generate() path without semantic changes.
         source_code = str(strategy_params.get("source_code") or "").strip()
         source_code_sha256 = str(strategy_params.get("source_code_sha256") or "").strip()
         if source_code and not source_code_sha256:
             source_code_sha256 = hashlib.sha256(source_code.encode("utf-8")).hexdigest()
-        strategy_instance = strategy_class(df, **params)
-        generated = _run_strategy_generate(strategy_instance)
+        incremental_allowed = (
+            hybrid_selected or is_opted_in(
+                strategy_class, strategy_params,
+                global_enabled=bool(getattr(settings, "live_incremental_enabled", False)),
+            )
+        ) and mode in {"DEMO", "LIVE", "PAPER"} and execute and not refresh_broker_candles
+        fingerprint = incremental_signature(
+            strategy_id=str(deployment.strategy_id), params=strategy_params,
+            runtime={**runtime_config, "_v64_hybrid_runtime": bool(hybrid_selected)},
+            history_bars=profile.required_history_bars,
+            timeframe=str(deployment.timeframe),
+            instrument=str(getattr(deployment, 'instrument_key', None) or deployment.instrument),
+        ) if incremental_allowed else ""
+        state_id = str(deployment.id)
+        if not incremental_allowed:
+            retained_states.invalidate(state_id, 'incremental_not_enabled_or_unsupported')
+
+        latest_probe = None
+        warmed = None
+        if incremental_allowed:
+            # Exact candle lookup is cheap. If a worker restarted, deployment
+            # changed, or a candle gap occurred, retained state cannot be used.
+            probe = await load_live_candles_for_runner(
+                db, deployment, limit=2, through_candle_time=authoritative_candle_time,
+            )
+            latest_probe = probe[0] if probe else None
+            if latest_probe:
+                probe_time = _normalize_dt(latest_probe.get('candle_time'))
+                if authoritative_candle_time is not None and probe_time != authoritative_candle_time:
+                    raise HTTPException(status_code=409, detail='Requested closed candle not available')
+                warmed = retained_states.get_for_next_candle(
+                    state_id, fingerprint=fingerprint,
+                    last_processed=getattr(deployment, 'last_processed_candle_time', None),
+                    next_candle_time=probe_time,
+                    timeframe_seconds=parse_timeframe_to_seconds(str(deployment.timeframe or 'M5')),
+                    previous_candle=probe[1] if len(probe) > 1 else None,
+                )
+                # Experimental adapter appends to history. Rebase from the
+                # authoritative *rolling 80K* window periodically so memory
+                # and source-history dependence cannot grow without a bound.
+                # This is a cold full evaluation, not a shortened warmup.
+                if hybrid_selected and warmed is not None:
+                    max_advances = configured_max_advances(settings)
+                    if warmed.candle_count >= profile.required_history_bars + max_advances:
+                        logger.warning('RUNNER_V64_HYBRID_REBASE deployment=%s incremental_steps=%s history=%s',
+                                       deployment_id, warmed.candle_count-profile.required_history_bars,
+                                       profile.required_history_bars)
+                        retained_states.invalidate(state_id, 'hybrid_periodic_rolling_80k_rebase')
+                        warmed = None
+
+        if warmed is None:
+            timer = stage_clock.start("load_closed_candles")
+            candles = await load_live_candles_for_runner(
+                db, deployment, limit=profile.required_history_bars,
+                through_candle_time=authoritative_candle_time,
+            )
+            stage_clock.stop("load_closed_candles", timer, bars=len(candles))
+            if len(candles) < profile.required_history_bars:
+                history_ready_cache.invalidate(deployment.id)
+                detail = {
+                    "ok": False,
+                    "error_code": "NOT_ENOUGH_LIVE_CANDLES",
+                    "message": f"HOLD - Not enough live candles. Loaded {len(candles)} candles, required {profile.required_history_bars}.",
+                    "loaded_candles": len(candles),
+                    "deployment_id": str(deployment.id),
+                    "instrument": deployment.instrument,
+                    "instrument_key": getattr(deployment, "instrument_key", None),
+                    "timeframe": deployment.timeframe,
+                    "refresh_warning": refresh_warning,
+                }
+                deployment.last_runner_at = datetime.now(timezone.utc)
+                try:
+                    deployment.next_run_at = calculate_next_runner_at(datetime.now(timezone.utc), deployment.timeframe, 1)
+                except Exception:
+                    pass
+                await _log(db, deployment, "RUNNER_NOT_ENOUGH_CANDLES", detail["message"], "WARNING", detail)
+                await db.commit()
+                return {"success": False, **detail, "latest_runner_log": detail["message"], "final_action": "HOLD_NOT_ENOUGH_CANDLES"}
+            latest_candle = candles[0]
+            latest_candle_time = _normalize_dt(latest_candle.get("candle_time"))
+            if authoritative_candle_time is not None and latest_candle_time != authoritative_candle_time:
+                raise HTTPException(status_code=409, detail=(
+                    "Authoritative closed candle is not available in PostgreSQL "
+                    f"(expected {authoritative_candle_time.isoformat()}, got {latest_candle_time.isoformat()})."
+                ))
+            timer = stage_clock.start("build_dataframe")
+            df = _candles_to_dataframe(candles)
+            stage_clock.stop("build_dataframe", timer, bars=len(df))
+            history_bars_used = len(df)
+            timer = stage_clock.start("strategy_class_init")
+            strategy_instance = strategy_class(df, **params)
+            stage_clock.stop("strategy_class_init", timer, bars=len(df))
+            timer = stage_clock.start("strategy_generate")
+            if bool(getattr(settings, "live_strategy_cprofile_enabled", False)):
+                generated = profile_generate(_run_strategy_generate, strategy_instance, logger, state_id)
+            else:
+                generated = _run_strategy_generate(strategy_instance)
+            stage_clock.stop("strategy_generate", timer, bars=len(df))
+            if incremental_allowed and isinstance(generated, pd.DataFrame) and not generated.empty:
+                retained_states.prime(
+                    state_id, fingerprint=fingerprint, candle_time=latest_candle_time,
+                    strategy=strategy_instance, generated=generated,
+                    candle_count=len(df), latest_candle=latest_candle,
+                )
+            runner_mode = 'FULL_HISTORY'
+        else:
+            latest_candle = latest_probe
+            latest_candle_time = _normalize_dt(latest_candle.get('candle_time'))
+            # Incremental strategy code receives the same canonical OHLCV names
+            # as its initial DataFrame. No implicit indicator approximations.
+            df = _candles_to_dataframe([latest_candle])
+            timer = stage_clock.start('strategy_incremental_update')
+            incremental = retained_states.advance(
+                state_id, fingerprint=fingerprint,
+                last_processed=getattr(deployment, 'last_processed_candle_time', None),
+                next_candle_time=latest_candle_time,
+                timeframe_seconds=parse_timeframe_to_seconds(str(deployment.timeframe or 'M5')),
+                candle=df.iloc[-1].to_dict(), previous_candle=probe[1] if len(probe) > 1 else None,
+            )
+            stage_clock.stop('strategy_incremental_update', timer, bars=1)
+            if incremental is None:
+                # Cannot safely use a possibly mutated state. Never guess a
+                # HOLD/signal; request an isolated cold evaluation next cycle.
+                await db.rollback()
+                logger.error('RUNNER_INCREMENTAL_RETRY_COLD deployment=%s candle=%s', state_id, latest_candle_time)
+                return {'success': False, 'final_action': 'HOLD_INCREMENTAL_RECOVERY',
+                        'message': 'Incremental state invalidated; retrying full calculation next scheduler cycle.'}
+            generated, history_bars_used = incremental
+            runner_mode = 'RETAINED_INCREMENTAL'
+            logger.info('RUNNER_INCREMENTAL_DONE deployment=%s candle=%s bars_seen=%s',
+                        state_id, latest_candle_time.isoformat(), history_bars_used)
+
+        latest_close = to_decimal(latest_candle.get("close"))
+        latest_symbol = str(latest_candle.get("symbol") or deployment.instrument)
+        deployment.last_runner_at = datetime.now(timezone.utc)
+        deployment.next_run_at = calculate_next_runner_after_candle(
+            latest_candle_time, deployment.timeframe, 1, now_utc=datetime.now(timezone.utc)
+        )
+        await _log(db, deployment, "RUNNER_CANDLES_LOADED",
+                   f"Strategy evaluated from {runner_mode} data",
+                   metadata={"latest_candle_time": latest_candle_time.isoformat(),
+                             "symbol": latest_symbol, "runner_mode": runner_mode,
+                             "required_history_bars": profile.required_history_bars,
+                             "loaded_history_bars": history_bars_used})
+        await latency_trace.mark(trace_id, "t6", status="STRATEGY_STARTED")
+        stage_clock.summary()
+        logger.warning('RUNNER_GENERATE_COMPLETE deployment=%s candle_open=%s mode=%s total_wall_s=%.3f',
+                       deployment_id, latest_candle_time.isoformat(), runner_mode,
+                       time.perf_counter() - runner_total_started)
         if generated is None or not isinstance(generated, pd.DataFrame) or generated.empty:
             raise HTTPException(status_code=400, detail="Strategy did not return a valid DataFrame")
         await latency_trace.mark(trace_id, "t7", status="STRATEGY_FINISHED")
 
+        timer = stage_clock.start("extract_latest_signal")
         signal_payload = extract_latest_signal_payload(generated)
+        stage_clock.stop("extract_latest_signal", timer)
         signal_type = str(signal_payload.get("signal_type") or "HOLD")
         side = "LONG" if signal_type == "BUY" else "SHORT" if signal_type == "SELL" else None
         output_metadata = {
             "signal_type": signal_type,
+            "v64_hybrid_monitor_only": force_monitor_no_orders,
             "strategy_stop_loss": signal_payload.get("strategy_stop_loss"),
             "strategy_target": signal_payload.get("strategy_target"),
             "strategy_risk_points": signal_payload.get("strategy_risk_points"),
@@ -812,6 +874,30 @@ async def run_strategy_for_deployment(
             metadata=output_metadata,
         )
         await _log(db, deployment, "LIVE_ENGINE_QA_SIGNAL_CONTRACT_PASS", "Live engine signal contract validated", metadata=output_metadata)
+
+        if execute and bool(getattr(settings, "live_runner_stale_order_guard_enabled", False)):
+            candle_closes_at = latest_candle_time + timedelta(
+                seconds=parse_timeframe_to_seconds(str(deployment.timeframe or "M5"))
+            )
+            max_stale_age = max(0, int(getattr(settings, "live_runner_max_order_age_after_close_seconds", 60)))
+            age = (datetime.now(timezone.utc) - candle_closes_at).total_seconds()
+            if age > max_stale_age:
+                deployment.last_heartbeat_at = datetime.now(timezone.utc)
+                _mark_candle_processed(deployment, latest_candle_time)
+                await _log(db, deployment, "RUNNER_STALE_SIGNAL_BLOCKED",
+                           "Stale candle evaluated; skipped live order to avoid executing a delayed signal",
+                           "WARNING", {"signal_type": signal_type, "candle_time": latest_candle_time.isoformat(),
+                                       "age_after_close_seconds": round(age, 3), "max_age_seconds": max_stale_age,
+                                       "generate_seconds": stage_clock.stages.get("strategy_generate")})
+                await db.commit()
+                return StrategyRunnerResult(
+                    success=True, deployment_id=str(deployment.id), strategy_name=canonical_name,
+                    latest_candle_time=latest_candle_time.isoformat(), signal=signal_type,
+                    executed=False, order_id=None, broker_order_id=None, signal_id=None,
+                    duplicate=False, message="HOLD - stale candle; order blocked by configured guard",
+                    latest_runner_log="Stale candle order blocked", symbol=latest_symbol,
+                    final_action="HOLD_STALE_CANDLE",
+                ).to_dict()
 
         # Do not persist HOLD noise into live_signals. HOLD is a heartbeat/result,
         # not a tradeable signal. Persist only BUY/SELL/EXIT so Recent Signals and
@@ -898,8 +984,8 @@ async def run_strategy_for_deployment(
                 "engine_mode": str(strategy_params.get("engine_mode") or ("DYNAMIC_DB" if source_code else "STATIC_REGISTRY")),
                 "source_code_sha256": source_code_sha256 or None,
                 "required_history_bars": profile.required_history_bars,
-                "loaded_history_bars": len(df),
-                "history_ready": len(df) >= profile.required_history_bars,
+                "loaded_history_bars": history_bars_used,
+                "history_ready": history_bars_used >= profile.required_history_bars,
                 "execute_requested": execute,
                 "latest_candle_time": latest_candle_time.isoformat(),
                 "resolved_symbol": latest_symbol,
@@ -966,7 +1052,15 @@ async def run_strategy_for_deployment(
 
         order: Optional[LiveOrder] = None
         executed = False
-        if not execute:
+        if not execute or force_monitor_no_orders:
+            # Fail-closed even when the dashboard Auto Trade flag is ON.
+            # Research monitor mode is never allowed to submit broker orders.
+            if force_monitor_no_orders:
+                logger.warning('RUNNER_INCREMENTAL_ORDER_SUPPRESSED deployment=%s candle=%s signal=%s '
+                               'historical_catchup=%s monitor_only=%s',
+                               deployment_id, latest_candle_time.isoformat(), signal_type,
+                               suppress_broker_order_for_catchup,
+                               generic_monitor_requested or legacy_monitor_requested)
             signal.status = "ACCEPTED"
             latest_log_message = _message_for_result(signal_type, execute, bool(deployment.auto_trade_enabled), None)
             await _log(db, deployment, "RUNNER_DRY_RUN_COMPLETED", latest_log_message, metadata={"signal_id": str(signal.id)})

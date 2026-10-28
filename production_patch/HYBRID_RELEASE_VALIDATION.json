@@ -1,0 +1,21 @@
+{
+  "release": "V64_HYBRID_INCREMENTAL_EXPERIMENT_2026-10-27",
+  "status": "EXPERIMENTAL_NOT_REAL_80K_PARITY_APPROVED",
+  "new_hybrid_strategy_code": true,
+  "v35_retained_state": true,
+  "trendline_full_recompute": true,
+  "portfolio_full_recompute": true,
+  "dynamic_loader": "PASS",
+  "synthetic_strict_rolling_column_comparisons": 8,
+  "project_focused_tests_passed": 16,
+  "real_80k_tradeLocker_parity": "NOT_RUN",
+  "latency_under_60s": "NOT_PROVEN",
+  "auto_trade": "DO_NOT_ENABLE_FOR_CANDIDATE_BEFORE_REAL_PARITY",
+  "default_global_incremental_enabled": false,
+  "stale_order_guard": "UNCHANGED_DISABLED_BY_DEFAULT",
+  "source_sha256": {
+    "V64_BASELINE_RESEARCH_ONLY.py": "7122bb951cd867f3cd57f66d2fef6b6307e708c7c4a5547d42aaab79a2bbb5cb",
+    "V64_OPTIMIZED_RESEARCH_ONLY.py": "0abf7be9af3cdba77b3d4d8a37abd18c0b5f603c7238416fd7e392e0a37175fc",
+    "V64_HYBRID_INCREMENTAL_EXPERIMENT.py": "26699c47e24c99f12c66d3fdba2fd05b6da940fc329c78e8e28354cd56ac2106"
+  }
+}

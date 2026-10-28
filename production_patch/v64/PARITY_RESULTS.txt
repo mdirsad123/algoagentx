@@ -1,0 +1,7 @@
+{'bars': 600, 'seed': 2, 'style': 'normal', 'baseline_s': 1.088, 'optimized_s': 0.548, 'positions': 4, 'parity': 'PASS'}
+{'bars': 1000, 'seed': 5, 'style': 'spike', 'baseline_s': 1.776, 'optimized_s': 0.725, 'positions': 5, 'parity': 'PASS'}
+{'bars': 1400, 'seed': 8, 'style': 'uptrend', 'baseline_s': 2.336, 'optimized_s': 1.077, 'positions': 9, 'parity': 'PASS'}
+{'bars': 1400, 'seed': 9, 'style': 'downtrend', 'baseline_s': 2.22, 'optimized_s': 0.94, 'positions': 6, 'parity': 'PASS'}
+{'bars': 1800, 'seed': 11, 'style': 'flat', 'baseline_s': 2.178, 'optimized_s': 1.153, 'positions': 3, 'parity': 'PASS'}
+{'bars': 2600, 'seed': 19, 'style': 'normal', 'baseline_s': 3.522, 'optimized_s': 1.615, 'positions': 13, 'parity': 'PASS'}
+{'bars': 3500, 'seed': 20, 'style': 'spike', 'baseline_s': 4.743, 'optimized_s': 2.415, 'positions': 10, 'parity': 'PASS'}

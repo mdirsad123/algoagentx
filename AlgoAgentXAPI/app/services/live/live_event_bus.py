@@ -170,6 +170,20 @@ class LiveEventBus:
         except Exception:
             return None
 
+    async def get_health_many(self, roles: tuple[str, ...]) -> dict[str, dict | None]:
+        """Observer-only batched heartbeat read; do not prolong heartbeat TTLs."""
+        values = await asyncio.wait_for(
+            self.redis.mget([f'{HEALTH_KEY_PREFIX}{role}' for role in roles]), 0.15,
+        )
+        result = {}
+        for role, raw in zip(roles, values):
+            try:
+                value = json.loads(_text(raw)) if raw else None
+                result[role] = value if isinstance(value, dict) else None
+            except (TypeError, ValueError):
+                result[role] = None
+        return result
+
     async def set_order_result(self, request_id: str, payload: dict[str, Any], *, ttl_seconds: int = 300) -> None:
         key = f"{ORDER_RESULT_KEY_PREFIX}{request_id}"
         body = json_dumps(payload)

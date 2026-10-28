@@ -211,6 +211,8 @@ function LivePipelineCard({ latency, health, healthError, provider }: { latency:
   const reconcileStatus = !health ? "CHECKING" : !health.event_pipeline_enabled || !health.reconcile_worker_enabled ? "DISABLED" : reconcile?.status || "OFFLINE";
   const positionManagerStatus = !health ? "CHECKING" : !health.position_manager_worker_enabled ? "DISABLED" : positionManager?.status || "OFFLINE";
   const connectionStatus = !health ? "CHECKING" : !isCTrader ? "BROKER API" : !health.event_pipeline_enabled || !health.persistent_ctrader_enabled ? "DISABLED" : connection?.state || "OFFLINE";
+  const legacyProcessing = legacyRunner?.status === "HEALTHY" && legacyRunner?.phase === "PROCESSING";
+  const legacyRunnerDisplay = !health ? "CHECKING" : legacyProcessing ? "PROCESSING" : (legacyRunner?.status || "OFFLINE");
   const legacyMode = Boolean(!isCTrader && legacyRunner?.status === "HEALTHY"
     && (!isTradeLocker || tradeLockerCandle?.status === "HEALTHY"));
   const eventMode = Boolean(
@@ -240,13 +242,19 @@ function LivePipelineCard({ latency, health, healthError, provider }: { latency:
       </div>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <MetricCard label={isCTrader ? `cTrader ${connection?.environment || health?.deployment_environment || ""}`.trim() : `${provider} REST (not event stream)`} value={connectionStatus} />
-        <MetricCard label={isCTrader ? "Market Worker" : isTradeLocker ? "TradeLocker Candle Worker" : "Legacy Market/Strategy"} value={isCTrader ? marketStatus : isTradeLocker ? (tradeLockerCandle?.status || "OFFLINE") : (legacyRunner?.status || "OFFLINE")} />
-        <MetricCard label={isCTrader ? "Strategy Worker" : "Legacy Strategy Runner"} value={isCTrader ? strategyStatus : (legacyRunner?.status || "OFFLINE")} />
+        <MetricCard label={isCTrader ? "Market Worker" : isTradeLocker ? "TradeLocker Candle Worker" : "Legacy Market/Strategy"} value={isCTrader ? marketStatus : isTradeLocker ? (tradeLockerCandle?.status || "OFFLINE") : legacyRunnerDisplay} />
+        <MetricCard label={isCTrader ? "Strategy Worker" : "Legacy Strategy Runner"} value={isCTrader ? strategyStatus : legacyRunnerDisplay} />
         <MetricCard label="Reconcile Worker" value={reconcileStatus} />
         <MetricCard label="Position Manager" value={positionManagerStatus} />
         <MetricCard label="Close → Send p50" value={metric("close_to_order_send_ms", "p50")} />
         <MetricCard label="Close → Send p95" value={metric("close_to_order_send_ms", "p95")} />
       </div>
+      {!isCTrader && legacyProcessing && (
+        <p className="mt-2 text-xs text-amber-100">
+          Legacy scheduler is PROCESSING (cycle started {legacyRunner?.cycle_started_at ? dateWithSeconds(String(legacyRunner.cycle_started_at)) : "unknown"}).
+          This means the worker is alive, not that the latest M5 candle has been evaluated. Check Last Processed Candle for execution lag.
+        </p>
+      )}
       {!isCTrader && <p className="mt-2 text-xs text-purple-200">REST polling: close-to-send p50/p95 needs recorded real order sends; HOLD-only candles cannot produce these metrics. Broker ACK/fill appears only when confirmed by the broker.</p>}
       {healthError && (
         <div className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">

@@ -1,0 +1,44 @@
+{
+  "source_baseline_sha256": "7122bb951cd867f3cd57f66d2fef6b6307e708c7c4a5547d42aaab79a2bbb5cb",
+  "candidate_sha256": "26699c47e24c99f12c66d3fdba2fd05b6da940fc329c78e8e28354cd56ac2106",
+  "csv": "market_data_xauusd_5m_2021_17oct2026(1).csv",
+  "bars": 600,
+  "start_utc": "2026-10-14 16:45:00+00:00",
+  "params_supplied": false,
+  "checks_requested": 3,
+  "steps": [
+    {
+      "candle_utc": "2026-10-16 20:45:00+00:00",
+      "frozen_full_s": 0.918,
+      "hybrid_incremental_s": 0.177,
+      "position": "0",
+      "match": true,
+      "differences": {}
+    },
+    {
+      "candle_utc": "2026-10-16 20:50:00+00:00",
+      "frozen_full_s": 0.799,
+      "hybrid_incremental_s": 0.236,
+      "position": "0",
+      "match": true,
+      "differences": {}
+    },
+    {
+      "candle_utc": "2026-10-16 20:55:00+00:00",
+      "frozen_full_s": 0.832,
+      "hybrid_incremental_s": 0.192,
+      "position": "0",
+      "match": true,
+      "differences": {}
+    }
+  ],
+  "limitations": "External candle CSV, may not match active TradeLocker DB. Position/SL/TP/reason compare only. Not execution parity or approval.",
+  "initial": {
+    "baseline_s": 1.012,
+    "hybrid_s": 0.392,
+    "all_signal_rows_match": true,
+    "differences": {},
+    "baseline_buy_sell_count": 4
+  },
+  "parity_pass": true
+}

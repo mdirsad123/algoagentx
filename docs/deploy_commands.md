@@ -19,9 +19,9 @@ docker compose --env-file .env.prod -f docker-compose.yml up -d --build
 docker compose --env-file .env.prod -f docker-compose.yml up -d --build --force-recreate api live_history_worker
 
 # below command live 100 logs watch
-docker compose --env-file .env.prod logs -f api web live_market_worker live_strategy_worker live_reconcile_worker live_position_manager_worker live_history_worker redis postgres_prod
+docker compose --env-file .env.prod logs -f api web live_market_worker live_strategy_worker live_reconcile_worker live_position_manager_worker live_history_worker redis postgres_prod live_legacy_runner_worker live_tradelocker_candle_worker
 
-docker compose --env-file .env.prod logs -f --tail=100 api live_tradelocker_candle_worker live_legacy_runner_worker live_dry_test_worker
+docker compose --env-file .env.prod logs -f --tail=100 api live_tradelocker_candle_worker live_legacy_runner_worker live_history_worker
 
 ```powershell
 cd D:\Stock_market\algoagentx
@@ -33,14 +33,6 @@ docker compose --env-file .env.prod up -d --build api web # if changes app or ap
 # if backtest is stuck then need to start celery worker
 docker compose --env-file .env.prod -f docker-compose.yml --profile worker up -d --build
 docker compose --env-file .env.prod -f docker-compose.yml --profile worker up -d celery_worker
-
-docker compose --env-file .env.prod up -d --no-deps api
-
-docker compose --env-file .env.prod up -d --no-deps live_tradelocker_candle_worker
-
-docker compose --env-file .env.prod up -d --no-deps live_legacy_runner_worker
-
-docker compose --env-file .env.prod up -d --no-deps live_dry_test_worker web
 
 Use this especially when:
 1. API logs — last 2 hours

@@ -1,0 +1,9 @@
+{
+  "AlgoAgentXAPI/app/core/config.py": "d631417098589cad886822150e5aa0ecceb232545a9d6c6500852f8af365a45f",
+  "AlgoAgentXAPI/app/services/live/auto_runner_service.py": "9d5b49254fb9f71237b3f5c3f8d2826402bcfef65925c6c208588ee345fdaf71",
+  "AlgoAgentXAPI/app/services/live/strategy_runner.py": "69163e6bdb2208576c3512d18887e8e4860c1c29cb9cd5659053d65b6a29cad4",
+  "AlgoAgentXAPI/app/services/live/runner_diagnostics.py": "c0add70e7b5df1146402fdd96abbe4df35a60e152289814df64b0300c478c550",
+  "production_patch/apply_runner_hotpath_patch.py": "1c5bd3a45650941d681b20efbc3701c80435f25098ae92994b1ab77fd6475192",
+  "production_patch/verify_runner_timing_fix_2026-10-27.py": "26596054c62f480a344dfe31d6426654d6706381c3988c91ea4ae35fa6033db1",
+  "production_patch/README_RUNNER_HOTPATH_FIX_2026-10-27.md": "2e7bd1f4d79583549aa96b36e653310cab4f3519ff7ae5282674a5a6295d414a"
+}

@@ -1,0 +1,3677 @@
+{
+  "included_files": 733,
+  "excluded_summary": {
+    "environment secrets": 4,
+    "private or runtime file extension": 7,
+    "local packaging helper": 1,
+    "temporary or secret directory": 1380,
+    "nested archive": 3
+  },
+  "files": [
+    {
+      "file": "docker-compose.dev.yml",
+      "size": 1526,
+      "sha256": "127dde28e0539f19a3b561c11da60498f08a97ac97d3622e2945eb9bfefd035f"
+    },
+    {
+      "file": ".env.prod.example",
+      "size": 8632,
+      "sha256": "e3e3fef695efae077c47620a10c573eb1c078f992c142ee0bc9915ed7951df40"
+    },
+    {
+      "file": "tall git-filter-repo",
+      "size": 6307,
+      "sha256": "bf0da98fcfe2854c286d315f198ff6808c8886a9c88dc03aa1a1115eef67296d"
+    },
+    {
+      "file": "Readme.md",
+      "size": 1762,
+      "sha256": "4c4e94f4704a43328a2a1bdaae0ac70b034efea8a82810c181d3b010c6345a57"
+    },
+    {
+      "file": ".gitignore",
+      "size": 3022,
+      "sha256": "913acb1aeaf4b2eb39ac469af923cf0210e2cbcca4c4f91c6f332bdd4c59af61"
+    },
+    {
+      "file": "README_Copy_Position_UI.md",
+      "size": 2048,
+      "sha256": "7161968c9934d2e9b7fadb078b22db9102596cc698f62fe423098f269136f193"
+    },
+    {
+      "file": "TRADELOCKER_WARMUP_FIX_README.md",
+      "size": 3630,
+      "sha256": "f306ef0dbf67744dccd73e349110276298ac7c0782ab78a3b3d01c9376bc4e54"
+    },
+    {
+      "file": "docker-compose.yml",
+      "size": 15638,
+      "sha256": "d6919f9a17b1e5644a93c05e6a3efdd5ee05285088a9c404f2953072ef503c0f"
+    },
+    {
+      "file": "memory-bank/activeContext.md",
+      "size": 2809,
+      "sha256": "21f008acc49d47a7cb238cf7b3d2e3667a49692bc83d7457244c60ae68dd82ef"
+    },
+    {
+      "file": "memory-bank/projectbrief.md",
+      "size": 1378,
+      "sha256": "f95507a33df7039a323e82359f0ef7cc0fbfdf84048edc32498c56e39065008d"
+    },
+    {
+      "file": "production_patch/verify_static_patch.py",
+      "size": 2352,
+      "sha256": "35b323467e493e2c87302b394afcbd0e85990a9f045f36728501709cb2c91475"
+    },
+    {
+      "file": "production_patch/apply_runner_hotpath_patch.py",
+      "size": 12049,
+      "sha256": "1c5bd3a45650941d681b20efbc3701c80435f25098ae92994b1ab77fd6475192"
+    },
+    {
+      "file": "production_patch/README_RUNNER_HOTPATH_FIX_2026-10-27.md",
+      "size": 8619,
+      "sha256": "2e7bd1f4d79583549aa96b36e653310cab4f3519ff7ae5282674a5a6295d414a"
+    },
+    {
+      "file": "production_patch/VALIDATION_RETAINED_STATE_2026-10-27.md",
+      "size": 1238,
+      "sha256": "27d286ca9f84f63fd65e2c1c26787024bf166114f3e7c0c9bdb0a9131786f6ab"
+    },
+    {
+      "file": "production_patch/README_PRODUCTION_FIX_2026-10-26.md",
+      "size": 10712,
+      "sha256": "66a82aea459606fa8ca3934ea7d617893fe79a4d8a57631b8ba127281e3895a8"
+    },
+    {
+      "file": "production_patch/README_RETAINED_STATE_2026-10-27.md",
+      "size": 6892,
+      "sha256": "3c23d1969ecee6d23463132ba11e7850f59b6a812888c6cfaa994ea1f7d6720a"
+    },
+    {
+      "file": "production_patch/verify_runner_timing_fix_2026-10-27.py",
+      "size": 3021,
+      "sha256": "26596054c62f480a344dfe31d6426654d6706381c3988c91ea4ae35fa6033db1"
+    },
+    {
+      "file": "production_patch/CHANGED_FILES_RETAINED_STATE_2026-10-27.txt",
+      "size": 654,
+      "sha256": "c3d054481f7395303813c1778a5c55047378cf2ad222626eddb5592401915057"
+    },
+    {
+      "file": "production_patch/CHANGED_FILES_V2.txt",
+      "size": 531,
+      "sha256": "7de81562847b781c627b7ff8ff44b04041df797ebeca4dbc62a5416b6180a019"
+    },
+    {
+      "file": "production_patch/README_TRADELOCKER_CANDLE_FIX_2026-10-27.md",
+      "size": 9740,
+      "sha256": "51a0cb2824659e1784bbc461812ea361367059c552757a20dfab241ad22c75aa"
+    },
+    {
+      "file": "production_patch/SHA256SUMS_V2.txt",
+      "size": 78756,
+      "sha256": "d4fd3e4948726a2e7a60ec437a9ad042b7b6b6cfbfb217cb8f203b91ee2b40a1"
+    },
+    {
+      "file": "production_patch/verify_tradelocker_patch.py",
+      "size": 2250,
+      "sha256": "8b0e2c660018522be3860087053e4d86efc267e34ee8bc2a3f99bd0232c50975"
+    },
+    {
+      "file": "production_patch/CHANGED_FILES.txt",
+      "size": 630,
+      "sha256": "86aef2ed0f085e74e42e7d13093f77e17ef7f3b7299c06ee512f0992e5418033"
+    },
+    {
+      "file": "production_patch/CHANGED_FILES_RUNNER_HOTPATH_2026-10-27.json",
+      "size": 867,
+      "sha256": "69f8de71c09d6a84a07302700fae3711d21316a2e88bd9978e84edd8d6d3684b"
+    },
+    {
+      "file": "AlgoAgentXApp/postcss.config.js",
+      "size": 81,
+      "sha256": "c3275e0c1ab2639ab056915eac2a806b997a7879c31edce8898ec443a4823a06"
+    },
+    {
+      "file": "AlgoAgentXApp/tailwind.config.js",
+      "size": 675,
+      "sha256": "1235d0fea657cbe13a0cc93dbbf9698a7e42faeb99c277ad633bc57e25dc2912"
+    },
+    {
+      "file": "AlgoAgentXApp/next.config.mjs",
+      "size": 421,
+      "sha256": "1dc7be631a3bd00ba74b70a7e69050c29b5e8aaf7d058b9770b0afc68264cf3c"
+    },
+    {
+      "file": "AlgoAgentXApp/tsconfig.json",
+      "size": 742,
+      "sha256": "eabe54dbd611f66739466a7426045681aa49fc795205ebdc54824237c251f17a"
+    },
+    {
+      "file": "AlgoAgentXApp/tsconfig.tsbuildinfo",
+      "size": 215241,
+      "sha256": "d7ec7de83ad33a2d5313b29def5f6c5740c5c2889d156bbb3887e078f9b797c0"
+    },
+    {
+      "file": "AlgoAgentXApp/package.json",
+      "size": 1895,
+      "sha256": "eb64d623b42d65a8d705746c6e08973ddd875e550d535f333c6ce3d20556db2e"
+    },
+    {
+      "file": "AlgoAgentXApp/package-lock.json",
+      "size": 194132,
+      "sha256": "8720ce2755473c902c8edb6a405f6dbe955f577e2322e2e1c0e7cce098c8c678"
+    },
+    {
+      "file": "AlgoAgentXApp/.env.local.example",
+      "size": 476,
+      "sha256": "ebc94a35182a1175f7f33d47c19a4b4fda55725725a7f2b69f19728b15cb2191"
+    },
+    {
+      "file": "AlgoAgentXApp/.dockerignore",
+      "size": 151,
+      "sha256": "544ca2a372b5d0a365506558ecd88c8c4620a89b7fdebeb63afbc2c563a36ed7"
+    },
+    {
+      "file": "AlgoAgentXApp/Dockerfile.prod",
+      "size": 2001,
+      "sha256": "d1b406c397dfb04df9451903052bbd1f4a0c2e2755a0aff06d42d1f87f1548ec"
+    },
+    {
+      "file": "AlgoAgentXApp/.gitignore",
+      "size": 682,
+      "sha256": "f644b6ea6c14630022db24780d2877da85fde142c0365f0159120ebe91759ca7"
+    },
+    {
+      "file": "AlgoAgentXApp/middleware.ts",
+      "size": 2907,
+      "sha256": "68fbcecede7a0fc1ccbee5ad684df1cb83c1bceee996079e7c2300b827e50c15"
+    },
+    {
+      "file": "AlgoAgentXApp/next-env.d.ts",
+      "size": 233,
+      "sha256": "e462a655754db9df18b4a657454a7b6a88717ffded4e89403b2b3a47c6603fc3"
+    },
+    {
+      "file": "AlgoAgentXAPI/poetry.lock",
+      "size": 398570,
+      "sha256": "3dcaea349c87977e93b9f14895f0d30f41ec0e39c1dec0f0d8defd5fbae1632a"
+    },
+    {
+      "file": "AlgoAgentXAPI/docker-compose.dev.yml",
+      "size": 901,
+      "sha256": "df8a3afe7c4368e4fa468ff8589033e11b503126cf0ebce3111da7440ccdb60b"
+    },
+    {
+      "file": "AlgoAgentXAPI/run_celery.sh",
+      "size": 276,
+      "sha256": "40e07e92b9d1fb7c267075c948c070639f1aa43e47ce4ef891f0245104beed60"
+    },
+    {
+      "file": "AlgoAgentXAPI/poetry.toml",
+      "size": 34,
+      "sha256": "ab9805d8c59ec531486a127a4ad51adf2eb61c352b456eedf24185b33661829e"
+    },
+    {
+      "file": "AlgoAgentXAPI/pyproject.toml",
+      "size": 1486,
+      "sha256": "d5b65187a5e385deb6afd229e17cf0dd8e1668dff56b1ddcd153bd006f71725e"
+    },
+    {
+      "file": "AlgoAgentXAPI/requirements.txt",
+      "size": 467,
+      "sha256": "eb06d89aadedfa606ee0c0bf56a2a2eba16a50bfcf48868f36e94e2308aafab4"
+    },
+    {
+      "file": "AlgoAgentXAPI/.env.example",
+      "size": 4838,
+      "sha256": "fa7cc9197db29d4dbf2614524f4d06ca6627888d1be2e462cd409d537d3bd667"
+    },
+    {
+      "file": "AlgoAgentXAPI/Readme.md",
+      "size": 726,
+      "sha256": "91206ce2db9c3cef044615f5695ea2ad664bf91a4ba2bb6d1553f149c21abf17"
+    },
+    {
+      "file": "AlgoAgentXAPI/.dockerignore",
+      "size": 189,
+      "sha256": "e62b26c6d339b15880aef2c6b7a25511e99079635ade21a867f7271b0f60a36b"
+    },
+    {
+      "file": "AlgoAgentXAPI/Dockerfile.prod",
+      "size": 1745,
+      "sha256": "7cdb04df345e64f3550f780def091dfb5ca8b89505afa6b48313a64ebeeba53f"
+    },
+    {
+      "file": "AlgoAgentXAPI/.gitignore",
+      "size": 356,
+      "sha256": "5d08e1181e9b4eddb9ee348294f6fad0c4c7a7e3732344d182fcce94b306e47a"
+    },
+    {
+      "file": "AlgoAgentXAPI/pytest.ini",
+      "size": 56,
+      "sha256": "8a47c537392e31dbf4dcda43d0988677a8a26f9d968c7595b1d2a533cd885d71"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic.ini",
+      "size": 2795,
+      "sha256": "925ce055e73fad60b14be93efca4272cb5d0ffe53db0110b6dcc2783de3b73ec"
+    },
+    {
+      "file": "docs/AlgoAgentX_Standard_and_Funded_Backtest_Cleanup.md",
+      "size": 9141,
+      "sha256": "347090360f55d534386b3772b93a671b7d894c4a4d4bf4f785fe2610039fbb76"
+    },
+    {
+      "file": "docs/deploy_commands.md",
+      "size": 2823,
+      "sha256": "08fed51ec96093b44174d465493a37500264d605a62a3b8c572e303a4261beab"
+    },
+    {
+      "file": "docs/oracle_cloud_ubuntu_cmd.txt",
+      "size": 1895,
+      "sha256": "35c496a54709ab8d36c335e763e7c60e326ec69481226b5e9fc4c59505299690"
+    },
+    {
+      "file": "docs/get_gold_data_database.md",
+      "size": 2584,
+      "sha256": "2c79bcb7788af89ff5b7da347dc70d091dbff00b5f8714aea170fae5fcb1de05"
+    },
+    {
+      "file": "docs/step_to_backup_db.md",
+      "size": 3974,
+      "sha256": "7136afd807383c273d9ee5cd221c9b1ae4430c8a87ba417d29cfa0b8a9cd84b2"
+    },
+    {
+      "file": "docs/study_md_files/TRADELOCKER_CANDLE_PARITY_FIX_README.md",
+      "size": 5428,
+      "sha256": "d5427f7528138d94d6771beb97b77aa735bd00f98f1abd07c08efceac29130e1"
+    },
+    {
+      "file": "docs/study_md_files/TRADELOCKER_IMPLEMENTATION.md",
+      "size": 5498,
+      "sha256": "bad88da2793960c901076af2874cdf2e89f29830444e514c8b037026689eefe4"
+    },
+    {
+      "file": "docs/study_md_files/AlgoAgentX_Oracle_Cloud_Deployment_README.md",
+      "size": 29558,
+      "sha256": "b394f5857b888954056d3242df70e5de4c212c00732cd713511c11f64c21cdbd"
+    },
+    {
+      "file": "docs/study_md_files/COPY_TRADING_SAFETY_SYNC_FIX_20260926.md",
+      "size": 6194,
+      "sha256": "c5b39f1966da9d5a61158cb0a682fdc4807a18ca8bdf5ae1631bd7aca7aa0750"
+    },
+    {
+      "file": "docs/study_md_files/COPY_TRADING_CROSS_BROKER_SYMBOL_FIX_20260925.md",
+      "size": 2678,
+      "sha256": "3dfb3d024d245eb217074b7d6b3fc576078d6df9bf498409d7d3595c7b4acf8b"
+    },
+    {
+      "file": "docs/study_md_files/algoagentx_ui_redesign.md",
+      "size": 7273,
+      "sha256": "4544c79180a6aaed19fbff1e70a9d0f5c20a593986c48af57900b3a81ab44e40"
+    },
+    {
+      "file": "docs/study_md_files/AlgoAgentX_TradeLocker_Fix_Readme_20261010.md",
+      "size": 7430,
+      "sha256": "b4e47a66affdc36748661d2fea755c94348f9ddc50ec513fc5a0071ea15235d6"
+    },
+    {
+      "file": "docs/study_md_files/COPY_TRADING_REVERT_SAFE_ORM_FIX_20260925.md",
+      "size": 2486,
+      "sha256": "828a21b233a30b8c2235212a6aafa89821ab1158eb253b9c14d7b61bcd4bc688"
+    },
+    {
+      "file": "docs/study_md_files/TRADELOCKER_LIVE_HOTFIX_README.md",
+      "size": 3198,
+      "sha256": "4d68c7e85d7721599644a1b681fbcc79cafc1e728c8da3c208d2de2bc9163b92"
+    },
+    {
+      "file": "docs/study_md_files/TRADELOCKER_ORDER_RATE_LIMIT_SAFETY_FIX_README.md",
+      "size": 7255,
+      "sha256": "3f852f19f9259430d22f27ce5a05898ef6c49cd1d1ee39758bb7e275b0fa1d5c"
+    },
+    {
+      "file": "docs/study_md_files/ui_redesign_plan.md",
+      "size": 7616,
+      "sha256": "f85c431958280a91481a953fe76941aba90f5f191ce2239ba9256cfd4bd5285d"
+    },
+    {
+      "file": "docs/study_md_files/COPY_TRADING_REVERT_STABLE_DNS_FIX_20260926.md",
+      "size": 2993,
+      "sha256": "29ddfa563f683f0b1ad14232150add1ee15895a2b4628bc5342911f71fbb99df"
+    },
+    {
+      "file": "docs/study_md_files/Dokcer_README.md",
+      "size": 1773,
+      "sha256": "b4c400ad70dc3c469016e705b8691e0a81ba7fe0f90f5cd12477c3dd9bd0d34a"
+    },
+    {
+      "file": "docs/study_md_files/AlgoAgentX_Case_Study.pdf",
+      "size": 6098223,
+      "sha256": "194c1acd7b7c1564ce86667dce9857bd0e8b170a047765a6e23230feaee278f4"
+    },
+    {
+      "file": "docs/study_md_files/TRADELOCKER_POSITION_COPY_FIX_README.md",
+      "size": 6619,
+      "sha256": "8572a8705a2b64da0acec19a7aab49498a083e8ec03f6545df351cee5329eac1"
+    },
+    {
+      "file": "docs/study_md_files/COPY_TRADING_IDEMPOTENCY_TRANSACTION_FIX_20260925.md",
+      "size": 2803,
+      "sha256": "6032b7919da52cf0aa54c8df3c99180770dfa35b90adda55ec576657574ca090"
+    },
+    {
+      "file": "docs/study_md_files/COPY_TRADING_IMPLEMENTATION_20260925.md",
+      "size": 2375,
+      "sha256": "a3676a6fdb5b87a3b13187400de5dc45c02dc925312af46a694dedad8d4f16bb"
+    },
+    {
+      "file": "docs/study_md_files/COPY_TRADING_EXECUTION_FIX_20260925.md",
+      "size": 1786,
+      "sha256": "12b42cac6c0bb68f7c890786b7ea24e76d6038b10468c287b307ecae6cf4d06d"
+    },
+    {
+      "file": "docs/study_md_files/COPY_TRADING_SYMBOL_ROUTING_FINAL_FIX_20260925.md",
+      "size": 2456,
+      "sha256": "369ed5444b959efcac1ddb1034d3e1581a280c713c57eabada9fa140be58aec4"
+    },
+    {
+      "file": "docs/study_md_files/CTRADER_MT5_CANDLE_PARITY_FIX_README.md",
+      "size": 6331,
+      "sha256": "e6fd8d5c5df206f98468736828abe837c5b9c29e33bf4a2261b26e631c9d72d3"
+    },
+    {
+      "file": "docs/study_md_files/COPY_TRADING_DELETE_AND_MT5_STOPS_FIX_20260926.md",
+      "size": 4482,
+      "sha256": "059e877fe9ac0ea6de6236a4516ce634546a8dce1f3c8b357cd05b9372770a93"
+    },
+    {
+      "file": "AlgoAgentXAPI/AlgoAgentXMT5Agent/agent_client.py",
+      "size": 3824,
+      "sha256": "4d8e80df364aaa7342ef6984ba6bf7662e7d4cf7f5c03e22eb54ec1c1690f840"
+    },
+    {
+      "file": "AlgoAgentXAPI/AlgoAgentXMT5Agent/README.md",
+      "size": 4049,
+      "sha256": "e9dae514decf914b5da4a4177729a3b45ce652b2a9cb7c3b26bf310e5f5de0b2"
+    },
+    {
+      "file": "AlgoAgentXAPI/AlgoAgentXMT5Agent/build_windows_exe.bat",
+      "size": 293,
+      "sha256": "f4582b59f0e6fbccc175dd7fed3a620f0d53d883622f11e12a645a564525e822"
+    },
+    {
+      "file": "AlgoAgentXAPI/AlgoAgentXMT5Agent/main.py",
+      "size": 12262,
+      "sha256": "acb9e996f9c93ad24602c431ca3d23850dfeb542658a314bea0f0e001d0bc8ab"
+    },
+    {
+      "file": "AlgoAgentXAPI/AlgoAgentXMT5Agent/mt5_client.py",
+      "size": 40521,
+      "sha256": "32c9c22f74a4ea27d668d142b927c47e82a1c6adf9aac5551e19fbf3a4c9e6f1"
+    },
+    {
+      "file": "AlgoAgentXAPI/AlgoAgentXMT5Agent/requirements.txt",
+      "size": 56,
+      "sha256": "3b5fc66582f53bfacf86764bcbf3fd53c5333bc8bf278defbbe4ed15d9b22979"
+    },
+    {
+      "file": "AlgoAgentXAPI/AlgoAgentXMT5Agent/config.json",
+      "size": 449,
+      "sha256": "c211a2041746aabbcce0cabd786582fa4af4001d09432c660550e2defa9c2f75"
+    },
+    {
+      "file": "AlgoAgentXAPI/AlgoAgentXMT5Agent/config.json.example",
+      "size": 419,
+      "sha256": "19be1852bb9472ea3c66c72913f0c036b3080aeea11b6d3873644ed1f6c73414"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/market_data_upgrade_audit.md",
+      "size": 25665,
+      "sha256": "4e874ed7dce36434a0dc985980164eaba4cdec6731e7550f03910046e4ce4fa8"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/REAL_TIME_ALERTING_PHASE1_SYMBOL_FEED_FIX.md",
+      "size": 929,
+      "sha256": "8c37089556497b9eddba6e04f6ea01f38ab98464e3473428f8432c62fb90ffae"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/REAL_TIME_ALERTING_PHASE1.md",
+      "size": 2128,
+      "sha256": "e097d1d9a439eea4d20871a46de2c6a06c657173b68ef7fb3b31774d04886c32"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/CTRADER_OAUTH_CALLBACK_FIX_20260920.md",
+      "size": 1869,
+      "sha256": "3a0349d3f069473222c4af251d05f4dabd084266979678473289c72ec4844f50"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/LIVE_TRADING_10S_1S_RETRY_FRESH_EQUITY_20260921.md",
+      "size": 1219,
+      "sha256": "04a984dc0d72b3272f78eda82cb0e8d30b5d8c37d56c68499ae94d6ff0dc0452"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/AUTO_RUNNER_10X_1S_RETRY_AND_IDEMPOTENCY_20260920.md",
+      "size": 831,
+      "sha256": "ae7ded694124b85cfed5480ceacb14ca6d129c7b213441acdccdd0cc50ab0251"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/LIVE_TRADING_PARITY_HARDENING_20261006.md",
+      "size": 4841,
+      "sha256": "05cfb0e34f0f9badb1225e4d7feb4dc7b893d1060110d00fe38f8b050137c382"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/LIVE_RUNNER_5S_AND_BROKER_SYNC_FIX_20260921.md",
+      "size": 1264,
+      "sha256": "d82fb5bed0c330fef2b4631db4efd5470bff66713e69db5e1b96e1bf35064519"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/FUNDED_LIVE_TRADING_ROADMAP_20260830.md",
+      "size": 2426,
+      "sha256": "4d1ee408e5f126a5565b5d0dbd961b0afcdd13c11984a04c27a0b3902fec7b8c"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/REAL_TIME_ALERTING_PHASE2A_APPROACHING.md",
+      "size": 5174,
+      "sha256": "06a94c66069390078b640aaf2dc5df654b78d9d797781ee6b7eb9da969b29f08"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/CTRADER_CONNECTION_FIX_20260920.md",
+      "size": 884,
+      "sha256": "4a8186d5f4ab7daf433e101209e41d4c48664342ac0916c19fb5a5132cea043f"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/PHASE1_ALERT_END_TO_END_TEST_GUIDE.md",
+      "size": 2588,
+      "sha256": "6073d1aa2d629ebf94a96f50275280c040e4e5fefd886582d788a54b690426ac"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/DYNAMIC_STRATEGY_REGISTRY_FIX_20261003.md",
+      "size": 4974,
+      "sha256": "b8cfb0e8cb04e8f9391f2c6db2fcb7891b2c6f29d008933733507b15e52533c1"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/CTRADER_AUTO_RUNNER_LATENCY_FIX_20260920.md",
+      "size": 1874,
+      "sha256": "0a0ff96a82117423f9f7fee54f044eafb998ac423e2f3057a660b8e6a1b878ec"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/FAST_CANDLE_FETCH_AND_IMMEDIATE_STRATEGY_20260921.md",
+      "size": 1188,
+      "sha256": "47505047ef4468bb51048db0e55eadb51f5b53421263eeab8f14e5d71a55cd40"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/LIVE_CANDLE_LATENCY_FIX_20260830.md",
+      "size": 566,
+      "sha256": "9663eda6400847870e15d07421738ccf78a1b10990a09132fad00a8eb6746c8e"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/LIVE_TRADING_REFRESH_RUNTIME_FIX_20261006.md",
+      "size": 3011,
+      "sha256": "03b2cad8d31fe6ea2e169a17e5fc30b62db9e075d0c61030a382f1773d4fc5cc"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/CTRADER_LIVE_SYNC_POSITION_RECONCILIATION_FIX_20260920.md",
+      "size": 2136,
+      "sha256": "8352c4f5ac9c7efc33f784c4d23b4908f2676a75a3943d0e3975a8aa4b91ebab"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/market_data_admin_guide.md",
+      "size": 8886,
+      "sha256": "67f0fb76c0830047a2c3a33bdb9f16724870a232c7e77ec8c471b2651cbb1aa3"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/DEV_RUNTIME_FIX_20260920.md",
+      "size": 1902,
+      "sha256": "b0b93ce7c0d979e88d4216dcb61d9fcf72d0999d0ca0add6fcffa5c1dd5f93e5"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/CTRADER_NATIVE_ORDER_FIX_20260920.md",
+      "size": 1497,
+      "sha256": "c056d2097858d210b5c8c5ca6bd1d78456854c14fe6943b5889bcbdbaecf1b32"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/REAL_TIME_ALERTING_PHASE2A_WHATSAPP_INCREMENT.md",
+      "size": 4829,
+      "sha256": "e8109e3255b0ceda7b23fe1aac23643d3f668ae0c1b8406d9e0035ccd4c16e97"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/TWILIO_WHATSAPP_TEMPLATE_V2.md",
+      "size": 2768,
+      "sha256": "214144f22d84a4f5721374270fc6c3c820ef2540944ba99c90695ac33051e6c2"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/COPY_TRADING_REVERT_STABLE_DNS_FIX_20260926.md",
+      "size": 2993,
+      "sha256": "29ddfa563f683f0b1ad14232150add1ee15895a2b4628bc5342911f71fbb99df"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/REAL_TIME_ALERTING_PHASE1_FIX1.md",
+      "size": 1436,
+      "sha256": "d4354a8223f94b5be488e6406d1663b028848f45589eaf989324afaea1e103ab"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/LIVE_WARMUP_RUNTIME_FIX_20261006.md",
+      "size": 1279,
+      "sha256": "74c7d8908e95027dd18d57cc6158c389c59278bd07eb02ced63acd79de369b18"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/AUTO_RUNNER_BOUNDARY_FIX_20260920.md",
+      "size": 677,
+      "sha256": "15665b33ff7060eaf800d091c562db497fe1b8058a4cffa555594b75be3a4d4d"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/CTRADER_ALERT_LIVE_USAGE_FIX_20260920.md",
+      "size": 1428,
+      "sha256": "4b7f2063bc71596dc765d035aa49b8a683fd359720490b83ccda54731fcfa0f3"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/AUTO_RUNNER_CANDLE_DRIVEN_1S_FIX_20260920.md",
+      "size": 910,
+      "sha256": "161eb5de050b63b61afb37f5d35c37b6877b940aa2dd243b0eb8cad44a175324"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/LIVE_STABILITY_HOTFIX_20261007_FINAL.md",
+      "size": 4166,
+      "sha256": "6287bb4a58d4e6c4bfaa30aedaa47c78cc63fa9d736951d72ecb0e54b38c5689"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/LIVE_DELETE_STALE_EVENT_PROD_READINESS_20261006.md",
+      "size": 4395,
+      "sha256": "5b061cfaab22bb17421ec07e3314e79f4e088ae6b7699a5f49a76f2c84ca8471"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/LIVE_STACK_STABILITY_FIX_20261007.md",
+      "size": 4416,
+      "sha256": "82bac216181dafc160cc7f2454f46e9eea8c14149ad70ec28f57ca82a26578de"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/COPY_TRADING_MT5_INVALID_STOPS_FIX_20260926.md",
+      "size": 3758,
+      "sha256": "1ce9a2f70dc58299a2b8ed695b09d1af9b9dd7a07071711c0987c6c77f3de0b0"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/ASYNC_LIVE_HISTORY_WARMUP_20261007.md",
+      "size": 2329,
+      "sha256": "143c6f6c1aaf68f4e16847a906c59a679b74c37fba7f243ca2347c04c8a8d76e"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/DOCKER_WORKER_HEALTHCHECK_FIX_20261007.md",
+      "size": 2012,
+      "sha256": "f67b1228c29d56dbede2c2c044dc8fd83bbe0bcda8e380e167804c18456ab0f2"
+    },
+    {
+      "file": "AlgoAgentXAPI/docs/COPY_TRADING_DELETE_AND_MT5_STOPS_FIX_20260926.md",
+      "size": 4482,
+      "sha256": "059e877fe9ac0ea6de6236a4516ce634546a8dce1f3c8b357cd05b9372770a93"
+    },
+    {
+      "file": "AlgoAgentXAPI/engine/metrics.py",
+      "size": 526,
+      "sha256": "bbbb6f873ad69048b87e56787fd8d6bffbd7d9483e7193ef40494e8f483cfdef"
+    },
+    {
+      "file": "AlgoAgentXAPI/engine/visual_backtest.py",
+      "size": 521,
+      "sha256": "d8930bf0f414db752e05f51c6899a90641dca23a35be39de31ff0cb40b5e2e10"
+    },
+    {
+      "file": "AlgoAgentXAPI/engine/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "AlgoAgentXAPI/engine/trade_stats.py",
+      "size": 541,
+      "sha256": "bbd0b9ef76c0ebfbcc3997cee528c6cc522c53e78046f98df7821556375bcdee"
+    },
+    {
+      "file": "AlgoAgentXAPI/engine/backtest_engine.py",
+      "size": 45338,
+      "sha256": "02e832d9baf85ee8370ba4471d3a1b78e873181758e9719875891043eb571768"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/main.py",
+      "size": 6513,
+      "sha256": "ffe709ade28661876785c3844ab837373f2fac52bedf03a554c35c1707065cf6"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/tasks.py",
+      "size": 39769,
+      "sha256": "b6a058011e21f7863a49b82bc5b0b1deb9d0fbbfadc30cca7e77384379186354"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/__init__.py",
+      "size": 28,
+      "sha256": "148b5b5aab29e5afd0b21ed2a10059c5d9eb19096950e0c76a23dd662d27d60b"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/celery_app.py",
+      "size": 3632,
+      "sha256": "3d019ab526b392a0e014400fd6afbd28418b5f19e9be699dc9ba282f65ae854e"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_retained_strategy_state.py",
+      "size": 5806,
+      "sha256": "a912ed03d42a8754b31cdc6e3a98cfb38c8f46a97503d436fbe94de1c4110ad5"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_incremental_parity_cli.py",
+      "size": 1560,
+      "sha256": "acc4c845bbf3145951a6f821375012543d4348c5962068272a4a90a018fedda4"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_tradelocker_full_exit_delete_reconcile.py",
+      "size": 3819,
+      "sha256": "8c7dee600929dc332b69822cdf31a52b528a334d16e8e6b37a1e9ac6ff314849"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_tradelocker_rate_limit_position_guards.py",
+      "size": 6731,
+      "sha256": "1160c70091cc177e56eadd9a838da9a7f346d596981069bffd9075ddc0a93c05"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_tradelocker_full_exit_lifecycle.py",
+      "size": 4801,
+      "sha256": "601266b7a3083ba75829d661b460edc3e73063644f3d2476023012d348883d57"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_copy_trading_expired_orm_regression.py",
+      "size": 4551,
+      "sha256": "85b345d6346bddc6a376dca20af207dc28af1552c546098fdeda309334226db3"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_live_latency_trace.py",
+      "size": 1537,
+      "sha256": "dfb8286e261a9d63278dbcdfda77cd830212d0004a14c972e49a5351806f2587"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_copy_trading_primary_regression.py",
+      "size": 2487,
+      "sha256": "6b398235b07552cdd171c2c8aa1e4278f3a74b18d33d76c822ecf28b7ae155f5"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_copy_trading_position_isolation.py",
+      "size": 1036,
+      "sha256": "7e6cfb584bc3c0a880bfc4bf5ad317efbfc178eeed1eb4e18f0713d48a08e7b8"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_ctrader_connection_routing.py",
+      "size": 5387,
+      "sha256": "debc4e73ef595572b49caef80718a1b530342a8a4ca1e77f148c50fe5ad0a10e"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_live_trace_deleted_deployment.py",
+      "size": 1443,
+      "sha256": "d15033448ca21726b19d9dbce9e2a41f7695421e25407ca722e041a164f3bb01"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_tradelocker_reconciliation_safety.py",
+      "size": 4851,
+      "sha256": "ba4f0a7ee7b0c041b49c6b2ed9b9af60b36b940c4470e58e6d3941e572c0fd75"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_mt5_async_position_and_delete_cleanup.py",
+      "size": 3360,
+      "sha256": "31030f0fbd117d73c470aedf4ee0e581b71f4b0047d56fa315553717937e3ec1"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_live_market_transition.py",
+      "size": 7227,
+      "sha256": "f6ff2c3e0a91c80d15efbc9b2b2bc3c6b3fedc62e0672d6a37d2f61f2894bb54"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_every_candle_latency_strategy.py",
+      "size": 1777,
+      "sha256": "b4f9b22e76faac0d977456d14c8dd990c8b9fe2f44a1668f32c7637083fe64ce"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_copy_trading_symbol_resolution.py",
+      "size": 4379,
+      "sha256": "39f0079d90b414df7d705c8387a692f646f06d164efd02385076705ac70213d0"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_ctrader_fill_replay.py",
+      "size": 2204,
+      "sha256": "d1c97f7298914245e26fb42b015b13b9ccd892a1e300d2356c594988a2de2dbc"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_dynamic_loader_base_regression.py",
+      "size": 893,
+      "sha256": "2fd74aff8ef670d6f9c49abcbd6d9c4ca6356312abbdd27af0ddc2d1a651dc8e"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_generic_order_idempotency.py",
+      "size": 1861,
+      "sha256": "79dd166ebda0bf3e9cd4e729c1093952d2cb64354cc3adf34d6d43ff624eac81"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_deployment_delete_order_reconcile.py",
+      "size": 5163,
+      "sha256": "f3e013d67f8240cd7fd53ba6e225040b0d97c467beaa0b061024a2ef500e2d5d"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_tradelocker_partial_exit_regressions.py",
+      "size": 5466,
+      "sha256": "1e514fba1320acd3c0a2cbc8185c2a5ae6d277554ad136b1d92a61d4d56e212b"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_live_partial_exit_management.py",
+      "size": 1758,
+      "sha256": "762a80b21bd2ec578c65b3f9850f743377a7a56c77307903dd6893064dd2d790"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_ctrader_order_idempotency.py",
+      "size": 1358,
+      "sha256": "35f03bb2ff25e1ee8e20655cd1c821a27c6ded9cb7b03157c2f965461060674d"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_strategy_registry_dynamic_live.py",
+      "size": 3927,
+      "sha256": "d4efda364ef3b117b0dbdeee4ea38c999b645eb555df38957249c676d24280c7"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_admin_strategy_dynamic_metadata.py",
+      "size": 1269,
+      "sha256": "fb7e3e5affc5f0615a21fb347233d870439bd4d0efb77a2260e38af1406733eb"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_broker_candle_parity_guard.py",
+      "size": 3157,
+      "sha256": "79b4629c080ee715bded025bec74ee8c2529e37c70524b7752cea0735107eb96"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_mt5_copy_invalid_stops_fix.py",
+      "size": 5301,
+      "sha256": "81282ad6ae57b0f9a84161c19e9ed76be881600d2945292008fd808e60284677"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_backtest_partial_exit_90_at_1_7r.py",
+      "size": 5204,
+      "sha256": "ec5d2e2d5ec9e273e35e22dc5fdf827fbd99356edcab690b1ce36deb6217dfe6"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_live_optional_safety_limits.py",
+      "size": 2835,
+      "sha256": "1acd484fe93f20b99df69af5b5696f8395183ed099dbf6f1d3adf700845e06e4"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_legacy_broker_isolation.py",
+      "size": 1466,
+      "sha256": "7e51439f709174501737cd33cfed5dc020ee9340dd40d18ca7d252401b10f8bd"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_mt5_copy_close_and_symbol.py",
+      "size": 2191,
+      "sha256": "f0503c6e36d772ad544c8bba9ad88df89661b634622745ad70b528bc20241d87"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_live_runtime_contract_enforcement_patch.py",
+      "size": 1406,
+      "sha256": "61b2a189b568e49c8a8aacce98145627614d66d0abff3006294ee129606b7a11"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_live_strategy_history_profile.py",
+      "size": 2451,
+      "sha256": "ed3224bc2d3fd40791cfe6d98eaa973eaba61af86731ad94281a9fcc1b9c4e96"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_live_order_dedupe_claim.py",
+      "size": 869,
+      "sha256": "13bf11735172a5f14b9a15728d6e80893a1ef0ec5b3a866a3656e6dca327c7ec"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_runtime_partial_exit_config.py",
+      "size": 1930,
+      "sha256": "d40a9327c3739e071b7299fc1a2d30d3dfdf8f04d388a3e832920a3a0863f4f5"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/get_accnum.py",
+      "size": 939,
+      "sha256": "4e1d533a643c7af4b3dbf573977a9af65e3f1cede1192c4dd6d70b9f0a3bba28"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_tradelocker_candle_history_parity.py",
+      "size": 7252,
+      "sha256": "22d2224fd10b2e8d63e167ca8662aa11d7259638a204b00fad5dcdf781cfb098"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_ctrader_relative_protection_precision.py",
+      "size": 768,
+      "sha256": "6f3d71ec69b597c6fadd2c85ac9e9587ca52dff386fe1acee303cfca48878130"
+    },
+    {
+      "file": "AlgoAgentXAPI/tests/test_backtest_warmup_window.py",
+      "size": 6590,
+      "sha256": "cce11a182d24e9e4b240630622c6577d5d7e5dc379b34fb974feff01a16b5fd0"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/env.py",
+      "size": 4309,
+      "sha256": "282d85c6b30905cba6df3b9d095e039e8e47fc5142af3ea31c754fdac805c385"
+    },
+    {
+      "file": "AlgoAgentXAPI/scripts/start_dev_services.bat",
+      "size": 637,
+      "sha256": "cbe26a892cb92b6fbffdfe375ebccd8cb071af3619118652a67683ea3d9f4cf4"
+    },
+    {
+      "file": "AlgoAgentXAPI/scripts/check_dev_services.bat",
+      "size": 91,
+      "sha256": "ded2765f43758dfbda3c02bbb2f9e994d5c732fc110d8b7d3e739c637bcf7960"
+    },
+    {
+      "file": "AlgoAgentXAPI/scripts/backtest_market_data_index_check.sql",
+      "size": 615,
+      "sha256": "572dbf0afde6054e978e87ae2e77708f690a70cf1e6946eecbfd4fbc80b58dbe"
+    },
+    {
+      "file": "AlgoAgentXAPI/scripts/tradelocker_provider_seed.sql",
+      "size": 901,
+      "sha256": "f2fe73e87d1101fc1a7136651c65e8b3259535c30c2e497293b6f644cbafba90"
+    },
+    {
+      "file": "AlgoAgentXAPI/scripts/stop_dev_services.bat",
+      "size": 93,
+      "sha256": "4e3c50a4602422753ef67b6430541940f8831213d88cb1595fd64f1f17d1f1b0"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/every_candle_color_live_latency_test.py",
+      "size": 6051,
+      "sha256": "cedbf7ad96a15f11613c898a88496fd3cd403c0cbfa3893bdc59545e19a76980"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/smc_strategy.py",
+      "size": 2572,
+      "sha256": "36b35fca11bd07196e511d18cd7bb99942a447f0d9555805e7d02769818c972c"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/simple_trendline.py",
+      "size": 1401,
+      "sha256": "370fc776c329f8112d91330d167a276548394c532002a7b71d1836e2efef9505"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/trend_continuation_tce_adam.py",
+      "size": 3532,
+      "sha256": "3f5e9311b324e8945dd79c761f041a0cbbbc1bda1e4608b88ae11f05531aa9c5"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/xauusd_5m_resistance_rejection_v1.py",
+      "size": 23644,
+      "sha256": "33817eb34a52b1e82da8d03ad6e4daa92a3dea32672b3e3450405f17591e5e03"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/every_two_candle_color_demo.py",
+      "size": 5759,
+      "sha256": "b984bfabe971f346bd3d4ae2efb79cc65acc9f3efc296ac68a10c0a351744350"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/xauusd_5m_resistance_rejection_v3_5.py",
+      "size": 184987,
+      "sha256": "7c4eefa8dfb39e1c3ba852d16d2963e93acdf44e4bbfaeef448eb0a73e6508f2"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/__init__.py",
+      "size": 20,
+      "sha256": "722d46c35fe93a915845ae48a4abe008eb000480388669cef17561ca4affdd27"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/xauusd_5m_trend_breakout_v1_37.py",
+      "size": 61223,
+      "sha256": "5460cce2220183101eae1b270d6709c773478b8b75eb409e59cc345a83642302"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/rsi_strategy.py",
+      "size": 1114,
+      "sha256": "f165f60d600f76b85654bf154ee1e45b301bd975421c1eef292364a38541f4a6"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/base_strategy.py",
+      "size": 555,
+      "sha256": "c5397e595217285a8fac50d435ca616d2a6e0e7fdd32f176743663d198f2b3e4"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/stock_burner_ema_9_20.py",
+      "size": 4995,
+      "sha256": "bcc9ee9082376feb02b4863a963eb27157361e7e0aee18d95a56f4e6c1d27080"
+    },
+    {
+      "file": "AlgoAgentXAPI/strategies/ema_crossover.py",
+      "size": 887,
+      "sha256": "940aac1673dda20e0bc5afce331f4237b556c3834aafe76b33e30ead9f58867b"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/20260408_merge_all_heads.py",
+      "size": 719,
+      "sha256": "564caf5e0edd57b94ea3a763fc47376c7b7c61e36bed02fda01036768d18d4c0"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/20260408_backend_schema_compat.py",
+      "size": 3070,
+      "sha256": "d133bb362b398f0c6740bb4f893bee1cc4012dd769a91110c3e7bd0b1ddd711b"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/002_seed_default_plans.py",
+      "size": 6777,
+      "sha256": "a26db9e4abfa2f8294fe5e9016ddd68005f78db9062869691c7f2a9d83317a8c"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/20260909_real_time_alerting_phase1.py",
+      "size": 9353,
+      "sha256": "588e7c5556676e82fd31f03e6d4e1a0230cdc6955ae39cfff9195a8507ace20b"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/20260910_alert_approach_phase2a.py",
+      "size": 1258,
+      "sha256": "3b752ba5a0fbb4991e98c0d32bf05157744ce38f26014762a21a1948d1a50983"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/20260823_funded_backtest_foundation.py",
+      "size": 14763,
+      "sha256": "5fa15f5824bff9ae2876c80d7d3d4d9246b7d2311445fe5ccb41354efdbfaa87"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/add_strategy_requests_table.py",
+      "size": 2583,
+      "sha256": "418f41ed86e878274882e16af850df9748596c27acef75cb0b614a0d72fc3877"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/add_unique_constraints_screener.py",
+      "size": 1154,
+      "sha256": "270126cd99e56e63855dcb2b2d863951bdf8ddddc57f81ef22525dcfcda9e69a"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/remove_live_trading_approvals_table.py",
+      "size": 614,
+      "sha256": "2306c6ec5846e4d615a5cbf8a4d493675fbada926cba8feb20ce851bfaae870a"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/add_credit_system.py",
+      "size": 2198,
+      "sha256": "628485136ad4e1503b8d4646751d8818154c9294c4ed220b9878e8b4adbc58b3"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/add_market_data_index.py",
+      "size": 922,
+      "sha256": "13c670f723824f652227b5f3e2a6d4136dbc77cec9ca44d0db1185fc977d0f4a"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/live_order_idempotency_fix_1.py",
+      "size": 3879,
+      "sha256": "8c8261b88fc6530423d0dd4d1359db224865e108ded60a68bd97d272818a7d8a"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/add_support_tickets_table.py",
+      "size": 3488,
+      "sha256": "215e312f8ed69e0e45f254ed5f6533725f18e6778de2fec4562752657a9614de"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/add_job_status_table.py",
+      "size": 1809,
+      "sha256": "c55f14513bee6253a61d593d834ead6fe85232c437c6a0f965fff624f6b21223"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/add_fullname_mobile_to_users.py",
+      "size": 798,
+      "sha256": "3e5c99e03a5733c92803014a3e6ca7786a0fb187b18ed51b31b76ac545cdd3c5"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/20260903_funded_live_trading_guard.py",
+      "size": 13638,
+      "sha256": "d6f44c1d72f660498dcde6e8bda431cf2aa34775c60554cd0668f30dc47454b0"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/20260921_live_event_pipeline_latency.py",
+      "size": 7954,
+      "sha256": "55ed38b6e006a3d9c3ea543e90e69451079351c5fd7a22867a26c46f9094d9a0"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/20260925_copy_trading_fanout.py",
+      "size": 1062,
+      "sha256": "cda076905ae7a952659479cd9268ea6e65a3e3df6b50db4358549127a408685f"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/20260421_billing_schema_contract_compat.py",
+      "size": 22954,
+      "sha256": "edb624bf015d7c1308b0b5cdcb26fdef246578d93fb5f2a15a38d3c75106df4f"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/001_add_backtest_cache_table.py",
+      "size": 1830,
+      "sha256": "d4df6ce664c3b6a4e784407efe452eefb4761cd3bbdcdeb5ab9267118c24d664"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/add_screener_tables.py",
+      "size": 2862,
+      "sha256": "a4abfcfdf69ca937464d466c1eb8e5d40cbdfdfc2ba0e7fa782d45f9c076eceb"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/add_notifications_table.py",
+      "size": 1832,
+      "sha256": "17145a6c1791e70f467a0912730e6eebb9cc180c2a7f7dc3709da49e985eac24"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/live_candle_close_scheduler_1.py",
+      "size": 2345,
+      "sha256": "a32307e0537c50d41ec55fd9e6ee7ec4c3eb8ae570d0e1add338ffeab76a9e0b"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/live_approval_unique_pending_approved.py",
+      "size": 1195,
+      "sha256": "97468e3a24f36396b0510f578733374b4c528d691ad4cde1f20e026be020a7c8"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/20260330_add_user_activity_columns.py",
+      "size": 682,
+      "sha256": "5c5abcb14a42d75822f878fca60e346952e51b0ff407cec1b3dfe6d0d6264e89"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/003_add_missing_indexes_constraints.py",
+      "size": 4225,
+      "sha256": "40ead148786235daa00d1989b9a78afba80dad9a40600f8ea4f14617da4f9522"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/update_backtest_schema.py",
+      "size": 4423,
+      "sha256": "a2057b4c7d92c9ac66abf90c738cd49fc483d6435ea304c59ec298eb2b0b5136"
+    },
+    {
+      "file": "AlgoAgentXAPI/alembic/versions/add_subscription_system.py",
+      "size": 4260,
+      "sha256": "5e6c07b95e7de174319722bbc894d019a5cb1e21c347e1638d67a104ac6c2d7c"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_requests/9f40fe9f-4bb9-4eaf-9141-21078fe4933d/01_b555bb866741483d8261b22f6d30be35_XAUUSDc_2026-05-13_15-21-39.png",
+      "size": 88642,
+      "sha256": "141daa37b5f80ad2f52696af7147b6bf765d27789ff7059e674ba877a024a9f7"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_requests/6f4b11be-a7d7-4320-8650-9e98dc136894/01_079361723f3a4b649de5e1d3ad50ee33_trade-chart-8771a3c0051ad7-3.png",
+      "size": 450263,
+      "sha256": "62f4505ef666c6f173689428010492d743e2ac1e29161e9c8e1c8ef317a82bb5"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_requests/6f4b11be-a7d7-4320-8650-9e98dc136894/02_a88c218a2ba742d08da3cf1c8adcadd0_trade-chart-8771a3c0051ad7-41.png",
+      "size": 450762,
+      "sha256": "978e93eef28a8903a8e1268375ee2d5e7a3c19853cb2920aa9770fa39e678152"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_requests/6f4b11be-a7d7-4320-8650-9e98dc136894/01_70690ab13d674464a5ffde3e887aca57_XAUUSDc_2026-05-13_15-21-39.png",
+      "size": 88642,
+      "sha256": "141daa37b5f80ad2f52696af7147b6bf765d27789ff7059e674ba877a024a9f7"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/21a93eea-98ac-49d5-bc98-128666229bf6/02_d233a73c7f7a483590db0f5ccd9e3f5c_XAUUSD.X_2026-05-15_19-31-43.png",
+      "size": 101288,
+      "sha256": "a63105fd29cfbec451a41ea61a9ffbbaa9ba6c89a429a8c48099f89b7da46bd5"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/21a93eea-98ac-49d5-bc98-128666229bf6/01_2cf9366b08354110891bec425999e2b4_XAUUSD.X_2026-05-15_19-31-43.png",
+      "size": 101288,
+      "sha256": "a63105fd29cfbec451a41ea61a9ffbbaa9ba6c89a429a8c48099f89b7da46bd5"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/21a93eea-98ac-49d5-bc98-128666229bf6/01_31adc4b141844b53a59d487a3dd09f4f_XAUUSDc_2026-05-13_15-21-39.png",
+      "size": 88642,
+      "sha256": "141daa37b5f80ad2f52696af7147b6bf765d27789ff7059e674ba877a024a9f7"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/6f4b11be-a7d7-4320-8650-9e98dc136894/01_239d099fef5b4349a8cd1bdb98e3664d_XAUUSD.X_2026-05-15_19-31-43.png",
+      "size": 101288,
+      "sha256": "a63105fd29cfbec451a41ea61a9ffbbaa9ba6c89a429a8c48099f89b7da46bd5"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/6f4b11be-a7d7-4320-8650-9e98dc136894/01_db4c77f4988b4a32947166c7eb686480_XAUUSD.X_2026-05-15_19-31-43.png",
+      "size": 101288,
+      "sha256": "a63105fd29cfbec451a41ea61a9ffbbaa9ba6c89a429a8c48099f89b7da46bd5"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/0351a0f9-bc90-4a69-b3ef-de85d1ea0665/01_327a675a0e874a218330ee260f02a358_resistence_rejection_10.png",
+      "size": 186329,
+      "sha256": "7cae35d6d8f63c01211e201c3ae1a7a2f68f0d5bed5e81e9f05d7ed201b74335"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/e84b91f3-52ba-4f9e-afad-3a23ec7199ae/03_3424f89e90a7485daf29d6911778f84c_XAUUSD_4.png",
+      "size": 92903,
+      "sha256": "ad2d94cb843fd04f632855702674f8b82bcb156aae18100f5656d2a3494c9e91"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/e84b91f3-52ba-4f9e-afad-3a23ec7199ae/02_8d90f83fdaba46128edc93f9a813f4ca_XAUUSD_5.png",
+      "size": 89861,
+      "sha256": "8a17b3e190c4e05acddbd119d77e6ef4fbbb8d2452f3a7c38ef9ab36ed6fb023"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/e84b91f3-52ba-4f9e-afad-3a23ec7199ae/06_9fa19c7402204ede942467c1b28460d7_XAUUSD_1.png",
+      "size": 91403,
+      "sha256": "dee19f3baaab0dd9ddec439223332618a83c856015b29769263f818c06186484"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/e84b91f3-52ba-4f9e-afad-3a23ec7199ae/05_6150dc31926249b5a8283990dd3ea15b_XAUUSD_2.png",
+      "size": 88376,
+      "sha256": "4f9c38b44616c982886a72a0a5d515734e00dac171947a36abc6e50c8a034028"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/e84b91f3-52ba-4f9e-afad-3a23ec7199ae/01_2ce36e2ab44e42fbb63a863301021a08_XAUUSD_6.png",
+      "size": 85797,
+      "sha256": "3c4d3487f20727495703247ce8d2f00cb38fd1c3d7e7604a2717cb5ce548c455"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/e84b91f3-52ba-4f9e-afad-3a23ec7199ae/04_bac47ebf6d614fc19fa572de74828ba2_XAUUSD_3.png",
+      "size": 87590,
+      "sha256": "9c48c97e202fd639e95dfbc77d3006301d6220a4fa40c38b049cbb98a13012de"
+    },
+    {
+      "file": "AlgoAgentXAPI/uploads/strategy_assets/caf35f27-c90f-4569-b086-94f2e9e5baa2/01_5aa21e5fb0e24b419170600d3c51e3f3_Screenshot 2026-08-13 002159.png",
+      "size": 89524,
+      "sha256": "f2056a0c4b50d665ea90fa8cc40ebff6c688d863c13dc6ba4c067024962370c1"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/middleware/security.py",
+      "size": 8232,
+      "sha256": "ad43dca3ab0d114e324f6d481cd2a9dcc1e00543f460fd2598cb974e935f2fe8"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/billing/plan_catalog.py",
+      "size": 6229,
+      "sha256": "0512f96d47464790810e51de150916aa65deb46d4d487058834228d5c4289f05"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/billing/cost_rules.py",
+      "size": 7306,
+      "sha256": "c369afb9dfe3e927eb57f5ade5f90fe33d4ade7a79deb8016baafe0d87e15942"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/utils/credential_crypto.py",
+      "size": 1492,
+      "sha256": "543e33f53b0d7b97b8bef445774245e908a766dd4def0b368c129b3e9f45b6e5"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/utils/timezone.py",
+      "size": 2114,
+      "sha256": "d614381bd7b47426cd0103d982926081a730be372ffa5865a6fb648c045f354a"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/utils/api_response.py",
+      "size": 211,
+      "sha256": "e07cd7759a6a2a1105ec2729c9da99485e8f82b4b822c26404c77ec7513aaea4"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/utils/serialization.py",
+      "size": 2773,
+      "sha256": "4e8a411d2beef2549ce9cc483985c94f4ec90bfaf4588780041fe9295877ab33"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/core/config.py",
+      "size": 20405,
+      "sha256": "a6252acc27ecfc5b59be488230aca6f8c417201cc3fc9c6406e0bf0615ba0d7a"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/core/redis_manager.py",
+      "size": 4947,
+      "sha256": "7124da99491fed82335bc250062023e384d6f0520880887c2317d46f8b7ad6b8"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/core/__init__.py",
+      "size": 13,
+      "sha256": "8e637ae4bfc5a30a6d30676e59ec2695d4414c8861cfeeeb15da7e90765cb39b"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/core/logging_config.py",
+      "size": 3100,
+      "sha256": "0c318469bc6aeed1297f8eb537edada41ca66cd1a554fcae37c6badc98d0555f"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/core/config.py.tmp",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/core/dependencies.py",
+      "size": 10141,
+      "sha256": "e90c67a4472b3dda4bd072ec2f55fb04f42043d7ac4564166e88e6c92bbf85aa"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/core/security.py",
+      "size": 1512,
+      "sha256": "27bc34d1021f4f76a07d26c889cced63f8d2bef91028facf50f87f9be1d1ffd1"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/funded_backtests.py",
+      "size": 9780,
+      "sha256": "ff947b392cf07be4a95b10f6d286df4f96dcd3accf63d509f4f2ff702b02597b"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/credits.py",
+      "size": 1532,
+      "sha256": "27b6da2a246b7572036c269f2684e126abd7f5d5f1d9dffefebbd55c25dafd23"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/notifications.py",
+      "size": 944,
+      "sha256": "9b61f9fbbc5e39591c57bf99200690330d5da7ff7c2f84f35dc75631022c14db"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/admin_market_data.py",
+      "size": 2899,
+      "sha256": "2490c3d84f40072b11c4a4d99decaed476c3260ea6a0fe42527eadc2e1106338"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/strategies.py",
+      "size": 1294,
+      "sha256": "2c05315624761a1ffb7c8adc805f3f600b4ecf0762c11713ac8a226e43e8d294"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/users.py",
+      "size": 1243,
+      "sha256": "8bcec55c4b04a01da14de24a60faa49863b1dc7c23c18a92ca76271dbcc64872"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/subscriptions.py",
+      "size": 3047,
+      "sha256": "df47410506261a5703f3e5cacaf4355ee07d275fe4f3031780cfb61e62209a1e"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/profile_settings.py",
+      "size": 1619,
+      "sha256": "52df2e0fa70eca53a921e47c463f81aca1899f439a83a73a7fa9d56e170b4a93"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/metrics.py",
+      "size": 422,
+      "sha256": "7016f4a2fb5a7d30498e8d335c9174147bf5b8c27bdacb230091d2cde8ec2442"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/mt5_agent.py",
+      "size": 2477,
+      "sha256": "03d18e606d57b9bf782a10f365ee50ee5cfcd46499bf8dce0f3225e2a998d03d"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/live_trading.py",
+      "size": 28362,
+      "sha256": "457e2d01dbbf953602ce56985c77676abb7b4c907762c73a10fb9cdc14dcd6a6"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/market_master.py",
+      "size": 2996,
+      "sha256": "884b8b67dab888b927548e7b71a823f9b05799cd5fb74d62e2592059a56188b8"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/payments.py",
+      "size": 3085,
+      "sha256": "3831029601bc27ce21218934d2edb5a6f62bf5ad7cc7587d80ef092f2b6103a0"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/screener.py",
+      "size": 2393,
+      "sha256": "d4c4788bfa57a9c3a2eedd1147724da169a5bf51f6c11b378b06dd0efa018421"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/instruments.py",
+      "size": 373,
+      "sha256": "6352e94aff320398eebbe979cfca572d26c38c6ba0f4dc8a833aae3b39466d7d"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/alerts.py",
+      "size": 7830,
+      "sha256": "adf0f5bb210e31a81699a8229a1a7723917197a20fcf700b593db9837dae7672"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/__init__.py",
+      "size": 2996,
+      "sha256": "8e66c4951de30948ccb5c55612a3f578b3d3f0654f7fc0bbb954c7874b0cc32b"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/support_tickets.py",
+      "size": 2552,
+      "sha256": "6525e80242326cb1dd0963680f038d910164f9e2c317cdd368a4a3f1c39ccd7a"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/billing.py",
+      "size": 3019,
+      "sha256": "343014d0d3dd287deab3f2e8a6eb3005c5d362b1343a37632e3e8bed9e322069"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/market_data.py",
+      "size": 391,
+      "sha256": "1593d6674a47715e46284143daedb78881b2d9679bb8c7d3191f8535724c5457"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/strategy_requests.py",
+      "size": 5126,
+      "sha256": "ffb86a7d30432dc5cd7cb3efae092448b17545727f8733a0752f726886b36f23"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/signals.py",
+      "size": 481,
+      "sha256": "d34c4fff5248a4f42bffef60d11110008222092ebf9a8a536bf5bfee1cdfadff"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/schemas/backtests.py",
+      "size": 6570,
+      "sha256": "b863eb6c1d138f62fd106940e9d7e9e7452c728b9ee60e3403982cbb2a1c9631"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/session.py",
+      "size": 1437,
+      "sha256": "d88b5783470b57d6acb40a2eab31f59203c80a7383defa10915063e37c9805ff"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/compat.py",
+      "size": 1158,
+      "sha256": "bb32241f452fd1ef77ace76729cf0f3dddc5b5c1fc2de8a205f42300cb74877b"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/base.py",
+      "size": 206,
+      "sha256": "78ae755980e7471eb31d234507b28dc5d030ee264d5643a6d06093e0b8353898"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/__init__.py",
+      "size": 17,
+      "sha256": "76a8b3188814e2bd2bb3ec530643070d597f2d66ad949be7e1f34e2c2bb7f402"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/init_db.py",
+      "size": 3021,
+      "sha256": "cae8b5bf9bca4ec32b21cec6fc82428f33f2db3da11f3dc138b7dbc973b303cd"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/job_service.py",
+      "size": 20645,
+      "sha256": "d3257b6310c44378279d2e63ff3d273c645c1970344aee683c8314ad54979d48"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/notifications.py",
+      "size": 2221,
+      "sha256": "0870cd26d9e2df901a52f0846b91482f73a3c656b1af188cf634d8f1830127b0"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/strategy_registry.py",
+      "size": 7853,
+      "sha256": "05bbde974462dc2d648204fe3bc10789e7ea7dae679654e6a3a736bc508d2c0b"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/metrics.py",
+      "size": 7783,
+      "sha256": "a6497bfaa75781bf2d9fafd44c1d8f5129eee84772c3bcace0d0bc69dcea5800"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/user_service.py",
+      "size": 2509,
+      "sha256": "e5cfb8cb5869d98060a085bd0c48762f98473153c6359e4002782460b3119a74"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/trade_chart_context.py",
+      "size": 8744,
+      "sha256": "3d7fb4d8ac3ce77a31c85ae2504f2d1124938849b911d00eb804b4c70e6a35b7"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/ai_screener_service.py",
+      "size": 13078,
+      "sha256": "90d5f0099960237c54026d02b0821311aeb96477b02a76d2f27489b5455c8f05"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/notification_manager.py",
+      "size": 9531,
+      "sha256": "2d7596501949cd009e172aeeff984c5806f20e57e9682791ac399c9655339676"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/email_service.py",
+      "size": 14679,
+      "sha256": "8333111dc84fa647b3f739becebaabd856f9cf0ad019a42bab3db02fce4935ab"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/__init__.py",
+      "size": 17,
+      "sha256": "bd817c16926f9a2fe7a8c1509b9d6b57a480221e26c9ae0ce6e464c2ccd7c053"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/read_only.py",
+      "size": 4151,
+      "sha256": "467768eff247a6d02d99912cb9579fdb56779ffbb121b88005292280c06bb1d7"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/backtest_advanced_filters.py",
+      "size": 12733,
+      "sha256": "782fdf65fc8089e21341d2dcac1a926b7d6866a5c2222d0aadd87c4ca327e98a"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/admin_market_data_service.py",
+      "size": 18145,
+      "sha256": "5bf1b15822765e598d62bf07cc479006addb8e1ee413b67e7a5ada33e4b33647"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/notification_service.py",
+      "size": 6795,
+      "sha256": "d7981cc71aa6d0152dd0e7a726746f987f8885f7247b38dfe67cccdd0e81305f"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/notifications_live.py",
+      "size": 1514,
+      "sha256": "03931ada1ed7064f7cb0f7d3b7dc8ee547535c8c95c1573f5dd37b49008da8bb"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/backtest_service.py",
+      "size": 24365,
+      "sha256": "737c0d7ec4069e599494c38d41b5f81a4b7f46dd85714c2ae8203e3c43548f43"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/dynamic_strategy_loader.py",
+      "size": 11222,
+      "sha256": "c3e366cc1d84607f695ba55c3ffb0e1b47779663d6987e0934e55d6addc3644a"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/background_service.py",
+      "size": 18269,
+      "sha256": "b25e68e372527d07229f5dcbbf173ac4a2eff9549979a5e4791e7efae5d3f54f"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/__init__.py",
+      "size": 12,
+      "sha256": "acf42b3e220d0dee6f7ee9c506cda27e56481e5fae215fb4cf2f277cd602d1e2"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/tools/export_live_strategy_readonly.py",
+      "size": 2049,
+      "sha256": "5fcc99905b8becb8c232ced452005b48c77cfe2acec503afaa27ae3ba8e58c9c"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/tools/check_live_incremental_parity.py",
+      "size": 6682,
+      "sha256": "8cd2f51be47fd9309c23212b5fc18a994bd2d78986c439c723d4db06c9761773"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/tools/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/webhooks.py",
+      "size": 1663,
+      "sha256": "d32f33ba05e8555e975d8f8c33e2d858711384a5bc01af4af43cd076ba7bfeed"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/funded_backtests.py",
+      "size": 53724,
+      "sha256": "6ac0cd31544966c0cd6be7dbc71caa799cb1d4264c224ba34012304bb0d7a17c"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/jobs.py",
+      "size": 6107,
+      "sha256": "ef33ae03d05755187a033396b761c93e7046a6d2ebef3555c61ce2e4be9bbbdd"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin.py.tmp",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/credits.py",
+      "size": 11247,
+      "sha256": "b6a165833448fa5afef228ad612fe80f2b06969289c9c16ddd088c10dc47acb9"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_billing.py",
+      "size": 14476,
+      "sha256": "9aed2405e2c809030086e19a82aae24e350c6dc65a23a9c39710c1b4947c20c8"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/notifications.py",
+      "size": 3532,
+      "sha256": "0615972cd5e66a76b15a5ca5fca395516139e1e1b13bdbe03fd053c6ec936d21"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_strategy_requests.py",
+      "size": 103049,
+      "sha256": "fd64f4f2c0de710aa5faae0795a4056accbc35f08770365b7d17b6817cdfbc01"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_credit_packs.py",
+      "size": 8794,
+      "sha256": "f7ef40bf54593514252c13e3a6b54e3c43b14167a83399286be9f05531f77752"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_market_data.py",
+      "size": 31997,
+      "sha256": "7a6b9c0ed1a40128e011710bf7068260225e98f5db8311d39cc4fe350e5a8b00"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/live_approvals.py",
+      "size": 13199,
+      "sha256": "a06c6e7f334ef16684d1473cf8878c1f24c4e2e1c2ae4d7573bb5501aa2fdb6b"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/strategies.py",
+      "size": 64165,
+      "sha256": "8b9fba22cb452420f34ef2cafd3e15fbff1d785bb3f88845048cf56dbcc82efe"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/users.py",
+      "size": 2470,
+      "sha256": "2c961f9015a94e56f8464248e15dae942770b53ec7cddc5fb8f46598b7380864"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_live_trading_actions.py",
+      "size": 2245,
+      "sha256": "1f0440338a6caebbadc95893571d2d0e17e814b24043f8c83abbbd9fc2a3c4ca"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin.py",
+      "size": 111425,
+      "sha256": "62f62b55c8c1517930c71de6cb1d9e94e8e9673bfa982735c815a2d523990676"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/subscriptions.py",
+      "size": 49935,
+      "sha256": "bdaa70d1e273c67753f91b456f36b78a4317a0192333a6dc4e7e12d3c1301a7a"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/profile_settings.py",
+      "size": 10831,
+      "sha256": "78b8eb2c549ed42efbc7cfb4f85c32100d230c0e2a92adba74bb42fba97d022b"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/live_logs.py",
+      "size": 1054,
+      "sha256": "1359d9e1113abb79e8bda4154f4dad84259d61379dc6e4cfb3e3b8e94b9bc250"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/public.py",
+      "size": 2961,
+      "sha256": "4939b960102c3d9a84b8408fb09027715f19ad67f72615ca543a4e5ce1e85026"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/broker_instruments.py",
+      "size": 2139,
+      "sha256": "fed93745474790f558842a40244a60192d5f0d24bb165679a380a69f978c475f"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/metrics.py",
+      "size": 882,
+      "sha256": "f1c7dd306173f763cc9265d8da9aeac7f99c87cdcdaa5e16c00c493f2c439001"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/auth.py",
+      "size": 25161,
+      "sha256": "d7a1e152bd28c978459707a7af7f152194de0176fbb766c0c0a418d284e370b8"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/settings.py",
+      "size": 4458,
+      "sha256": "b8703248109fdd854cafb71176366f1d3a001baeb0549d6e0323e9829c4f6151"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_credit_rules.py",
+      "size": 6242,
+      "sha256": "fc0301bafa159fe2cb5d645772c0dc3f169414dfab3e9fc4cf96a7045ab877d9"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/router.py",
+      "size": 6693,
+      "sha256": "27458dd64ccd96728452f86ffedb79515abde8004fad9178ac98cc74c041f868"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/broker_accounts.py",
+      "size": 76588,
+      "sha256": "f56f05510c31bbd6de705e3ba699661164ab4900899f2fe62dfab2feff7dd71f"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/mt5_agent.py",
+      "size": 17723,
+      "sha256": "60b476aac31042c36e29bc1713c2ccce4a8d2c4a668514d521665e50ac4f6ae2"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_risk_engine.py",
+      "size": 2686,
+      "sha256": "b08361fc67f4b79df719fbda0450feeec1803830f84a9d721f20cc9948cfda29"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_pricing.py",
+      "size": 13132,
+      "sha256": "aeea8e7d2be2364accb25955efbc9b28aeb6fdc73b8e88982b4e0d256512cc87"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/market_master.py",
+      "size": 6842,
+      "sha256": "78770c9df9f61d6cc92a56ee6b0bf0a144aa04ffcdf13fc3829a1e2f8fbc6169"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/live_trading_preview.py",
+      "size": 3708,
+      "sha256": "77f04a61269cc0e1f66b19ec55db66fe727193c9a72e601b90cb06940231c548"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/payments.py",
+      "size": 43473,
+      "sha256": "19229435503440aebbe940104bd45744dd64d2c9bf518f9ae093a2bebc6013e3"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_strategy_gate.py",
+      "size": 18753,
+      "sha256": "989fb0c748e657ff96936717f5ebe1ef539fb4238bef7d1e3572853762dccdf5"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_coupons.py",
+      "size": 8688,
+      "sha256": "d80b3fbe7cb0fd82796e0bc14a157c83f678dc607bc514dababf77da0ca04533"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_email.py",
+      "size": 1569,
+      "sha256": "f9b1259595a90a0c686e3989088adfd5735c36997c3cd0480b086b7371b73fc6"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/live_deployments.py",
+      "size": 140213,
+      "sha256": "0e39f296f8d54c9bb4a9af71e48fc69bf30457bfedcaa6f3c1d9bdc8f2d51729"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/instruments.py",
+      "size": 839,
+      "sha256": "8a01e25671d806879050548fef7ea87e7b1ff57763cb2613f9753e070fb21873"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/alerts.py",
+      "size": 20615,
+      "sha256": "0944bce9842838c3cebf37724301e6b4827bee850908d22afe6d460b77412be7"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/live_runner.py",
+      "size": 3386,
+      "sha256": "bb77166cd919476d89dbf409dc35fe4880184e82d769f786b181aed07811bb71"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_live.py",
+      "size": 25243,
+      "sha256": "446b2ed6ea300e3d25557c9f3532aa05bb031207cb0d4307b5240771750b1533"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/__init__.py",
+      "size": 15,
+      "sha256": "bba28968e20aa69456329839f7a7d43cfdb5a3f7ab80a379173afee6b64c36b8"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/ai_screener_jobs.py",
+      "size": 12573,
+      "sha256": "9816773db9d34a2122ad75051d310529f83700a2ba9d816356e2fa33e67ef9df"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_strategy_runtime_presets.py",
+      "size": 7994,
+      "sha256": "433253bcb3452f72f27cb5c20d733d77f1f77ef4d093cbafc4d51978f2de5c62"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/support_tickets.py",
+      "size": 24682,
+      "sha256": "08626a647305505c88f8168736ae47353afcf37bc1ead21c3687102d5b56257c"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/live_common.py",
+      "size": 4298,
+      "sha256": "7256ca26d9f4a7724ea29fe4bb23d8b1f35809f894f8227fc829c419adb440f3"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/billing.py",
+      "size": 43956,
+      "sha256": "2c686e215e5872012ac3171da0b73f7a5527e2111a38d56749974423d475d044"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/live_signals.py",
+      "size": 2755,
+      "sha256": "4c28822fae828e7c7dd2ee955296da78cb8e14f9a0d725ecadf1663d561012e9"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_broker_providers.py",
+      "size": 3452,
+      "sha256": "50752814727cc3661293c17daba011717f8c45a51f35abc8615fff6069382238"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/ai_screener.py",
+      "size": 34087,
+      "sha256": "7a28aa861e5a57beefd1310628bab4c0ba6621a412d6d2db78e75635f0824081"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/admin_live_settings.py",
+      "size": 5085,
+      "sha256": "aa4d21ef9ebd621ae1e7f77ae9c8b01a1866180016fbe41bd3bedf0aa02247ce"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/market_data.py",
+      "size": 4158,
+      "sha256": "1650a12eb0dc9a8c38e47e3ad7e9108a08d09fc7b21786727e200a0fa7d196de"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/dashboard.py",
+      "size": 19813,
+      "sha256": "373d010822f271fcda24d121bbc092be222e28294bf6d7aa73e9aad8c513b88e"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/strategy_requests.py",
+      "size": 6697,
+      "sha256": "25e2f1ece06e0685c12c23bff8e40b51f22bdc67a95b286befe52466851174ac"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/signals.py",
+      "size": 621,
+      "sha256": "191e548eaae96240c6cb3a5a0c7aba0562f7362ed5d4949dbe6be5b06436fecd"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/live_orders.py",
+      "size": 1035,
+      "sha256": "469aca655d85b52cf2751fa76778592da292474079e7ec73b1b7060ac8e6d29d"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/backtests.py",
+      "size": 184410,
+      "sha256": "fcfbac04eb248a801b65e143c4b615555efc6632891dde598913b48106c102f4"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/reports.py",
+      "size": 20353,
+      "sha256": "53ecc16e2af313f21add3c8e045c18a15de04e264d2daeda92d21de449cae307"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/api/v1/live_positions.py",
+      "size": 1544,
+      "sha256": "bb23766b7045b11f8298656233950fefe4e62ad1d9f5401595795343b19c8daa"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/payments/razorpay_service.py",
+      "size": 10259,
+      "sha256": "ee620315a32b10de5858f5cf0622f9e1edd7142f6a7b2357d6149f9f633f293d"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/payments/razorpay_subscription_service.py",
+      "size": 19702,
+      "sha256": "cc295153348dd2e8b08a4709c267f955c5d58ad9fae825ef8e7f28d7cb9000e2"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/subscriptions/lifecycle.py",
+      "size": 11472,
+      "sha256": "cb3f9497d48c8784f44a4d0678073fb1c99a27f0c432cd68b2962caa5c131464"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/subscriptions/__init__.py",
+      "size": 171,
+      "sha256": "9477095a69d0b938d382353eca7e4ba5cc83f507ee888ee603a8a23191211a27"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/funded_backtest/rule_engine.py",
+      "size": 3505,
+      "sha256": "c0efc291022d6cd32cb0dce1afa9ce833e327bac779d4cb00d1ee3b4d9ced691"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/funded_backtest/consistency.py",
+      "size": 543,
+      "sha256": "5804ad0866d02231597c7b2b6a596e9b988c6836f37d2b56a90e1edd096947a7"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/funded_backtest/billing_service.py",
+      "size": 4410,
+      "sha256": "e61744d37e117c5f0ff954eba7a996c111af13db77698abb0683d2033a003a80"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/funded_backtest/report_exports.py",
+      "size": 11299,
+      "sha256": "d5e33778eb9dc2fed83390a5f4fc875a69440a36acd9b70b6714520e88b8468d"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/funded_backtest/simulator.py",
+      "size": 51218,
+      "sha256": "b62a4f9b24d7312eab6a05b3e92261a5dd4cfba9bd69afda87337842a682641d"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/funded_backtest/risk_policy.py",
+      "size": 5858,
+      "sha256": "6079e0bcf0d98b7a75db46245d23fa6fd757acf61acdbe4368df5a85f173bdd7"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/funded_backtest/ownership.py",
+      "size": 320,
+      "sha256": "65760801ea09562324c0072ebc2d340731f002d1eb1acc8633afd5b21b46b015"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/funded_backtest/__init__.py",
+      "size": 49,
+      "sha256": "4f0e37fc80b49cf576d9eb5cdd2d3ed62bca2a1a4b48418ed353230530990428"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/funded_backtest/snapshots.py",
+      "size": 1597,
+      "sha256": "4116231738994fe19cf80c92af150d90c0281d392ea8868092d01c9827cd8296"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/credits/management.py",
+      "size": 32972,
+      "sha256": "cee28826a80cb6ca09b408b667ef07301b0875b411b55ffd0498f0947cf0ba69"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/credits/calculation.py",
+      "size": 3730,
+      "sha256": "1a6c08dcdfb841c92e09040104e61e806bdf2d67d2d5206291cf207b7fb7fec4"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/billing/credit_cost_service.py",
+      "size": 9845,
+      "sha256": "037136fe8f0a419f93f1e8c3a2b31f83f94a08e6716c813c4aaa44d88baa1a1a"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/billing/live_subscription_gate.py",
+      "size": 5889,
+      "sha256": "8ac1badf6adaff503588bdcdede10cf1e3486721f3d90f28db7eaf3418bc4c0d"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/billing/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/billing/coupon_service.py",
+      "size": 14426,
+      "sha256": "bae07ca8b39074aebb4523a88d1a45bc726d450f2a7f8c8a087235922892899f"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/ai_screener/news_fetcher.py",
+      "size": 13869,
+      "sha256": "4fa1bb2926df795a5e94293ce6ccada0c7faf12fd5050e46e611a358665cec2f"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/ai_screener/sentiment_engine.py",
+      "size": 6487,
+      "sha256": "fb5a6bcc7af5ab68163441df068645d8b1b4ce9812f79f81b42ea8b639670a32"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/ai_screener/storage.py",
+      "size": 15803,
+      "sha256": "13d15aa77a5b8a4ac475318fe78f37f494477e66ebc7d14e60889c47c41de7c0"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/ai_screener/job_handlers.py",
+      "size": 19386,
+      "sha256": "081671892e8049fb5dce24e41237df14f1337899798cba3e78b3f8b89ca4c0e5"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/ai_screener/__init__.py",
+      "size": 511,
+      "sha256": "f9692c9f08873f6629e6a23f2f91e40b636a14b4790ebef368c6f661f4a303cf"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/ai_screener/service.py",
+      "size": 17375,
+      "sha256": "709a7e4108ca2a3444870c48a6d83b14379095c75a11d8df206ed451b6def004"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/ai_screener/announcements_fetcher.py",
+      "size": 11697,
+      "sha256": "f969f6e8e8798073ac6b62d7056484a171449e3a5a536415d6ce7679ed4c3268"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/brokers/symbol_utils.py",
+      "size": 2525,
+      "sha256": "5094992d58af9873eef0bf13747f66bb8e1b29523a3b280283a536374d81447f"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/brokers/upstox.py",
+      "size": 27540,
+      "sha256": "51a772b2f76eccd1c664ea7b2545c2efc84e0d8a3e350b0cc19b8d171f2fda03"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/brokers/ctrader_connection_manager.py",
+      "size": 36326,
+      "sha256": "f8d8e94b101e3113a6f681bc217c882e67805537d4cbf3f00afca1dc969840a8"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/brokers/ctrader.py",
+      "size": 84364,
+      "sha256": "d4e8417e8666a31b9261aecdf6b72ef337a4718cc240557e29cc73de7fa23215"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/brokers/mt5_agent.py",
+      "size": 22944,
+      "sha256": "d320f4e8e1f07ecc7b2971c92279e17bc0ccd5a196ae882f08a24ab7773e07ca"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/brokers/base.py",
+      "size": 2646,
+      "sha256": "826a0508a70b44e2e8c46a390db11534497b6173e07b898698d79aa4233429ec"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/brokers/mt5.py",
+      "size": 43713,
+      "sha256": "eed9ada6a0146356dd6e301c5e7d4dc198d97e5041dcccb0875f40c05ca30b5f"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/brokers/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/brokers/tradelocker.py",
+      "size": 30495,
+      "sha256": "44d67f2dc4855c4e9bb157039af7d47269144db7836f7621b5bf271aed283578"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/brokers/crypto_api.py",
+      "size": 11452,
+      "sha256": "29c591e8c7661e197d7a10098bdf0b9d85175195767c1abbb466018c4d2e14ec"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/brokers/ctrader_order_gateway.py",
+      "size": 6738,
+      "sha256": "d658f37a3798dc50dd7a688f02bc72b6879da5cae091811efc142d2ff9f60192"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/brokers/factory.py",
+      "size": 1779,
+      "sha256": "8be82069df3f2c962f0a9509d12ef79803aa50c5f6331b8076f6feaec6f26a0c"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live_trading/readiness_service.py",
+      "size": 31025,
+      "sha256": "50f4a84422f14498a9579b08e13e955407d8932cccd25247b0e3cea568f8fd6e"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live_trading/paper_position_manager.py",
+      "size": 6688,
+      "sha256": "e19d458249d4187572183718d4904bc7ea75ea8c69f16d3ecdecc24dc4053d4a"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live_trading/live_sl_tp_service.py",
+      "size": 7431,
+      "sha256": "fce617edb0c4e55363ebfd1d2efb8f4c93f4a330e9086a076254a8d6df96ae9b"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live_trading/final_qa_service.py",
+      "size": 19029,
+      "sha256": "0626019683c1bfecd18d67711fd1fcfd78a2658f024f3cb1681e3cab6af6ffc3"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live_trading/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/validator.py",
+      "size": 2642,
+      "sha256": "f8efd2a3626888c7098fb94e1160d26c345d1a65652e0a31c5cd530572a7460e"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/normalizer.py",
+      "size": 5069,
+      "sha256": "2e4bd0a1267d0b813c4fcbea9fbb3e9abd5a834687b5b5d72d50d12a73741852"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/upsert_service.py",
+      "size": 3763,
+      "sha256": "019327c94ae4a8b84586442fc44f1703a2b94d49bfcb2bdef9387f1b896ed1a4"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/__init__.py",
+      "size": 668,
+      "sha256": "5f28d4922e0f29c207d0b2011806afc087994aebbc6ea7ae78d1bd1cd7571f74"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/types.py",
+      "size": 2144,
+      "sha256": "fa18afe4f1fa3a974a1605c7cbe690782f2d243182bb28dfd3809efad71221c3"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/retained_strategy_state.py",
+      "size": 6366,
+      "sha256": "1bc00b358f2448721b468c8485e832b46b6c973ef205d9d182627af4091ebbc1"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/live_tradelocker_candle_worker.py",
+      "size": 9544,
+      "sha256": "4d2b3c77250e9c9aed247b46ea38745ad0c6789db5024c3ca832f789f735d579"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/strategy_history_profile.py",
+      "size": 5384,
+      "sha256": "e27f324cb3a8e61c2497f7690815d7e05b5e3e9c6fa6f77af5f18acd3df3b62f"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/history_warmup_queue.py",
+      "size": 1553,
+      "sha256": "bd98240b7d9008a5c272cdc7bff4c3b7e60fd05c0845e657ad48b3914d68381a"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/live_partial_exit_service.py",
+      "size": 20415,
+      "sha256": "2b58af87abb70d3cad5851b6a0a2ad94d120aa230c2b35f3e4e03162fa4a8f38"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/live_market_worker.py",
+      "size": 77373,
+      "sha256": "56b433227536b809c9ec98f9ee5c0149d07005177c733c7958bf040e12ae44a7"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/live_strategy_worker.py",
+      "size": 16142,
+      "sha256": "1f093f9827fda2700595f6822ecf6ddf5bbf45e6700566c853cc85ce0376c407"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/broker_candle_service.py",
+      "size": 30712,
+      "sha256": "3a0f5ea2b0b8ff18fa6421cae3edda1edb4c4a03c51fc823157a09ece6f5b7ff"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/trading_safety.py",
+      "size": 7210,
+      "sha256": "2dcc96c5db1172bf7c7c5defd863886854238da4203daa193dddb389d288389f"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/capital_service.py",
+      "size": 3963,
+      "sha256": "a6712446f6727e37aabf8f22c2db6b025155926bbf2a0176ddaf6e29ee46e253"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/strategy_runner.py",
+      "size": 60374,
+      "sha256": "c07631eb41a11b6134a7f44848bba48693fa0c7571692fc85fb5ea615b52ba15"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/order_preview_service.py",
+      "size": 45347,
+      "sha256": "d30822710883551913f4262be8b6fc022f2838d9103b17619de1b78c486e20fb"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/runner_scheduler.py",
+      "size": 3617,
+      "sha256": "41ad75b30ed952e1fb9c3ec4d51da013bf2fe13d14e06a4b95f37268e6e715e4"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/position_service.py",
+      "size": 3639,
+      "sha256": "0ebaff96aed0999159f1d0d27aa853f714fde24cca14e9f1ec82eb2c69c4e155"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/funded_guard_service.py",
+      "size": 43171,
+      "sha256": "7388187171f617a094bec36823f14abe8a047c6efd7a19a0e24e34716b07fd14"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/live_latency_trace_service.py",
+      "size": 13207,
+      "sha256": "a9122c159be12d14b6ac214720fccc5a0b2ea53a4d7fccb39c8200e85d4ae943"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/execution_engine.py",
+      "size": 91513,
+      "sha256": "9f4b37622eae11ee729c9f6646fdd4fbe8cf4f1276bd78deef6ed5692d549ea6"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/deployment_lock.py",
+      "size": 1176,
+      "sha256": "da5bb0f88d3ed900033c68a48163a17d719f5b7fd54ed2f3467b998e545930c2"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/live_legacy_runner_worker.py",
+      "size": 2752,
+      "sha256": "2c7a1d57a5f02b91b37dcc155d29cba34074d2efbad52fa5ffcca1302f0db4c8"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/compatibility_service.py",
+      "size": 13907,
+      "sha256": "08b7ed715753d9d36f6f6db60a6157cbf7fcb045b2adf150631695e04673b4a2"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/mt5_candle_service.py",
+      "size": 9082,
+      "sha256": "0f8928f42bd2c30f84166f5dbbd383101685202c905725083bc0df087b1ad16c"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/dry_test_jobs.py",
+      "size": 3865,
+      "sha256": "ef4601ceb426b5bc94ff7d881a7d8b60a6d78b65b023953b6c94756c1bd3a3f6"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/signal_contract.py",
+      "size": 4569,
+      "sha256": "3592d30ebfc5d503d798a887d8b8778fbf235dc1a9aadef5b2ebef3cf351ccc8"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/risk_manager.py",
+      "size": 9364,
+      "sha256": "ac78c3f79ea84bdf0a826f6bfc86b4640f811838ca48cfc7cb8bc8f5ce938ed7"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/paper_broker.py",
+      "size": 1612,
+      "sha256": "7a7f6fdca58c8a8f60c92936464d7d6baf30dec740617ef7abb1bd6860eecafe"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/signal_service.py",
+      "size": 6415,
+      "sha256": "e3e734cda564a8fb83aac23cc7ff0ba499fb8c7d537ae6d5151581e4dfc02933"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/broker_sync_service.py",
+      "size": 64954,
+      "sha256": "30f65f829079b34cf21ba1a38d2f7b2c97c02254ea2b7c0ca75bf09216e95473"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/pnl_service.py",
+      "size": 3090,
+      "sha256": "3129a35648f747c1f2652cfe6d0eca19135fdd70714bac515af94e3a2be25433"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/runner_diagnostics.py",
+      "size": 2169,
+      "sha256": "c0add70e7b5df1146402fdd96abbe4df35a60e152289814df64b0300c478c550"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/live_approval_service.py",
+      "size": 11632,
+      "sha256": "7e339b7077dc4e447ac092957149e15cc2a6f9973c96b995a2a6a2509679cbb3"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/live_position_manager_worker.py",
+      "size": 14335,
+      "sha256": "3ccfd1c64a87dbd1e411e4e454745e6b71212af338ace46460f1a9d9a8e48002"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/auto_runner_service.py",
+      "size": 27980,
+      "sha256": "b0b44acec1d7789c594ea5554a0499c8923acb19074b579bef8dd8a1c38398c3"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/live_event_bus.py",
+      "size": 9242,
+      "sha256": "3574a46e8f4d75b8cfb57fdad0d8d091fabc3b556c5e146c519ce119abad7475"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/live/live_reconcile_worker.py",
+      "size": 9706,
+      "sha256": "2b47e47137d8657767c171b24b75da64c2fe765ac0af52c4fb48eb33462a27f5"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/trading/runtime_config_service.py",
+      "size": 16636,
+      "sha256": "36345f1e74a1ec620cce39421382e596eb94386f2b77c281ae9a21d3efc10cce"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/trading/partial_exit_engine.py",
+      "size": 4446,
+      "sha256": "88c7bf527aefbed62c2818fb75d67d1e7e54d64055b32bc06f82e4337f6c7a2c"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/trading/pnl_engine.py",
+      "size": 3412,
+      "sha256": "ddf758a57d39c26fcc920f421aca8c686df196eefafdbaa959693d667b49e207"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/trading/guardrails.py",
+      "size": 5258,
+      "sha256": "9083efe1324bf723d19fc7779d47caf0c60a43383392184ecbd6278f89e32c9c"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/trading/sl_tp_engine.py",
+      "size": 5506,
+      "sha256": "3f76a525c83c4304122da30e351657fcda49f42f49fe978b0b5ab7d747924d70"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/trading/risk_engine.py",
+      "size": 13825,
+      "sha256": "b9b3f5eb8cbc0cccba5287cc9bf52494a93eee8b37ad68cc067fdb64fece21e7"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/trading/__init__.py",
+      "size": 216,
+      "sha256": "d46cef9c8048d9d17ac27251474af2af79ef7f451d3d962f3c34cf142d331927"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/alerts/evaluator.py",
+      "size": 16877,
+      "sha256": "940ce07fd49e95c6431265b4989d28415305b4da6dad1d9a1d706552d7cff89a"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/alerts/delivery.py",
+      "size": 11396,
+      "sha256": "8a4bc06c1f18de475a7d7d66e206eaba39e4b067f63c92215be0547b3693890e"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/alerts/whatsapp.py",
+      "size": 12551,
+      "sha256": "834683946098829fe566bf522ee1a156c4585fc35e2e7039d44acd318878a12b"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/alerts/health.py",
+      "size": 5490,
+      "sha256": "b7b3387fe684a1bc65f46f0a79eb37ce6574ce74e4925357a7206750b1fc4c5e"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/alerts/telegram.py",
+      "size": 7084,
+      "sha256": "9b1d0e292ca7d77469b6b70c9f23a50ca3745bc455d10f1356ba4e331f9f9963"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/alerts/__init__.py",
+      "size": 50,
+      "sha256": "5bf264c56e9c86a2deec2aff3aa723e993b72fe3492cc0ff67577f8669d3c639"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/alerts/worker.py",
+      "size": 8111,
+      "sha256": "62eadfb00dd2f925bef0932849e090da1a1f9e1b464df74fb2803b90d5ffcf5c"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/alerts/quote_bus.py",
+      "size": 6017,
+      "sha256": "4c48e7cca5498c77676f9a7bd6ce4d292605941f06985ca76ec141728172c2db"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/reports/backtest_pdf_report.py",
+      "size": 37657,
+      "sha256": "1b1bf10f41fcb12234580f45e859876b629cdc62578b9ff7ed3b3e857b7f4b47"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/reports/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/reports/report_formatters.py",
+      "size": 3884,
+      "sha256": "6a40aa4a3223a8439044ebb965547c7bdc7229a210919f4f4e53d32098e57d1c"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/pricing/backtest_pricing_service.py",
+      "size": 21683,
+      "sha256": "7fef68ae88e9f5a3dc9e11990eaf3946e651a18397fccbf83da1c73e048a4fd5"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/providers/upstox_provider.py",
+      "size": 8691,
+      "sha256": "08a05f7e75b1871f30a287123fa49880915d20cc56a70f0e7d7d7ed6ddc1313e"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/providers/mock_provider.py",
+      "size": 2793,
+      "sha256": "87495944019201e06ea72c654721806b867df050b5ab6e8d7ad3e339eaee5e87"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/providers/base.py",
+      "size": 652,
+      "sha256": "31168cde5af5d35c33eaae80d035aeaab12cf042b0d4c974674a3fef2a5ef761"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/providers/__init__.py",
+      "size": 508,
+      "sha256": "d6a95681a4e04735efa69e8ec2e1f589cb972621f4a34a308b5c2e9220942304"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/providers/mt5_provider.py",
+      "size": 20793,
+      "sha256": "ca6d1c0f969a781fd8c51a8248b5e2510ce5a0e46840e2b9472868c562b20cd7"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/providers/errors.py",
+      "size": 506,
+      "sha256": "6e7ee3879561ead463afd5fab8a5254d834071d48191408d814fa293c97ef5cd"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/providers/registry.py",
+      "size": 1519,
+      "sha256": "e4915edfd2d3be92934b3b05564e29b5bad24d1d753d6161c93b8853db7e87bd"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/services/market_data/providers/binance_provider.py",
+      "size": 7434,
+      "sha256": "ef7b839b6701ed545041d8faa2a1cf67bad86d1a05e833e72fc7c91cb6e575cf"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/funded_backtests.py",
+      "size": 13480,
+      "sha256": "2c5e63ba3e4c5579e54598061e42d079b7b8c9cc427d06553c7c9dce637dd345"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/trades.py",
+      "size": 1295,
+      "sha256": "96633fd7c431d62dcd9b89c46572e0dde74c573ac5ee9fe2e0aba7c8c4b66d19"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/password_reset_tokens.py",
+      "size": 827,
+      "sha256": "b5022494db6f331e32e29cc26b4a46dc5ad0245f1dc4bd914c1210a002827a5d"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/notifications.py",
+      "size": 1457,
+      "sha256": "3b6682de760109ae7d78d071af97bf9897bebade0f9fdd4572923daeb34123b7"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/job_status.py",
+      "size": 1372,
+      "sha256": "ad5779258cbfa927106e99f616a022b0da1ac528e37d062ddb1feeb48c19c042"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/strategies.py",
+      "size": 4982,
+      "sha256": "b39ce2ab92ff42a410db925e9906088fa1a06d54ba930559815409f7edac1d86"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/user_subscriptions.py",
+      "size": 1575,
+      "sha256": "309db3923ab768d7dd11bd4d0cbab8c139d1dae55cfeb1e82e7d4aa2862c239c"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/users.py",
+      "size": 1616,
+      "sha256": "b1e78e2a3e8f1df3cade1eb6d75e77bf7860b6e4ae88fce3e439e278d45777d2"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/plans.py",
+      "size": 1054,
+      "sha256": "76c773d2257296cba2ba1ff4c276410e94d485dddbf1318644045751b51b7ba1"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/metrics.py",
+      "size": 454,
+      "sha256": "f015b299e71de00e4c8727b5ff724074a1fdf880ee445315c58ff71dcae1e404"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/billing_documents.py",
+      "size": 1663,
+      "sha256": "bc19198a41536ff7dbf2214525b0339e7bd8070aa4e3eb6bb1cfd32611d413cd"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/pnl_calendar.py",
+      "size": 530,
+      "sha256": "2e52c00e7006e97a6b8a0dcf94740179053008ed3cd3363d0bc216bb24d98eb4"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/screener_news.py",
+      "size": 1190,
+      "sha256": "29cebe9cd7e6ed0b18eb3d8d132e47ffdfc5fd2f8e53c57cdb597e17036d1056"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/backtest_pricing_rule_sets.py",
+      "size": 1925,
+      "sha256": "cfd3a4abf5429850ba29e1365142392b4b1afc5f3b1ee8d0b40aabd28fce9ea9"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/credit_transactions.py",
+      "size": 1577,
+      "sha256": "bc1a28ea380a7fd40b6c0cd5a211c924f08c97f6a0d64b49d103968c74a481d2"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/user_settings.py",
+      "size": 912,
+      "sha256": "69c49864edb049a3002d1072b5f50181e6483a2efbf110e495affb71cab09c4a"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/screener_runs.py",
+      "size": 717,
+      "sha256": "9ee4743251db7eacc88c5278c8c4b7aaa6babe28acd5f99412828116f0e77935"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/billing_webhook_events.py",
+      "size": 1482,
+      "sha256": "bb3378e10a1527fd5074666c96affb426fed7ae16c15353333a344e5478b5be9"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/live_trading.py",
+      "size": 41874,
+      "sha256": "d689e0c8ae6d301036c4829261313c41c5e9ed0f4587c4ee6e9ad3d7ac0a343d"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/equity_curve.py",
+      "size": 573,
+      "sha256": "54a42c1a59333d0cda4aef9689fcde68de91a57a9a6b918579a0905d1163bf6a"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/payments.py",
+      "size": 1612,
+      "sha256": "32cb1f359f086da8fda61b4f29b7610943574d766c6157191a0c06cddaaa3f75"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/admin_login_otp.py",
+      "size": 1404,
+      "sha256": "918cfdbb47fcc8ef2011043ce6c66ab6a98ab2e28159fa3d63421fcd0f1041c8"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/financial_audit_logs.py",
+      "size": 1416,
+      "sha256": "5b4b3d18b0ec521e1953d0321aedffc648be495e207d6a01b989cd4d99f8021b"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/instruments.py",
+      "size": 3288,
+      "sha256": "e197a22e7b2a2ab0b9ef33c898660cb7515b42631d6e0e63990e9d0c617d4d4b"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/alerts.py",
+      "size": 8687,
+      "sha256": "4af3cdf3d1a18aca91e874076d63317ac439f2d42f7b6551331b73708b647cbf"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/__init__.py",
+      "size": 4083,
+      "sha256": "a0af28697dd881739d6217624925603246a70d2153f3401c0504f193a275012d"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/support_tickets.py",
+      "size": 4978,
+      "sha256": "88cb657097a8bba708d12c62c538181738ce68677db47e637d140a6f52732d98"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/funded_live.py",
+      "size": 8112,
+      "sha256": "b927cefa3e600f08de647a7d965c9528a0024d9aa3174dbf65ae3d1fd030a935"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/user_credits.py",
+      "size": 416,
+      "sha256": "de2644d89c2d4a1ea08320eca2da2738f8203a3c765fc2b7dfa8ce07c2cb333f"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/billing_refunds.py",
+      "size": 1435,
+      "sha256": "cccab5cbfb874028cf110bad42cb78ffcb2d416465b793a0f6e885464efb9589"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/screener_announcements.py",
+      "size": 1036,
+      "sha256": "a77db25246b361377a3ac690650f23d77a5246bb17c1b4c97bf891e6758a8d77"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/market_data.py",
+      "size": 524,
+      "sha256": "8a83c862acd13766e99aae9a4ff88daacc6c2ff5d5cc7382725e90115a863c0d"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/strategy_requests.py",
+      "size": 3593,
+      "sha256": "1a1b97973e0f895f2e2b1816bc94a34ec162028955c814a71164074080878e59"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/billing_orders.py",
+      "size": 2478,
+      "sha256": "0d7991db576ed6c973eef9f5c8ad68a800e5f047c27dd800d5f000ded7f1fdc8"
+    },
+    {
+      "file": "AlgoAgentXAPI/app/db/models/backtests.py",
+      "size": 2454,
+      "sha256": "c55ab27c14eb1a0528a136b7b0c3988ba0edfdc9cf024e0aea744e21e3f5cca8"
+    },
+    {
+      "file": "AlgoAgentXAPI/storage/support_tickets/dec89777-b5b2-40aa-ab8c-57c9d1cbf0e6/ae7131148bfc466aa852d7ec3b68e285_smtp_env_example_v21F.txt",
+      "size": 292,
+      "sha256": "f014cc28e879393f5c3c33ee55a95abed44468ec15eeb28e14b72c8893e8ecda"
+    },
+    {
+      "file": "AlgoAgentXAPI/storage/support_tickets/0f1a9e87-fe2d-4ab7-b019-9ffaa20264a6/6434cbc0b23747c4af83755a22c3ef7e_issue_4.png",
+      "size": 287759,
+      "sha256": "389abf1622de6e68975d418ccdd6479e733f9a3e8fcb80d74448fdd634d59ba8"
+    },
+    {
+      "file": "AlgoAgentXAPI/storage/support_tickets/0f1a9e87-fe2d-4ab7-b019-9ffaa20264a6/1852f4fec2684812bdc8a1a393e5e37e_api_log_error.txt",
+      "size": 1362,
+      "sha256": "83986e741303a3c352b894ae7a48cc6cd90b8e2556fa76164b77aa155ced1277"
+    },
+    {
+      "file": "AlgoAgentXAPI/storage/support_tickets/676e1a21-1867-408e-8154-a4eeea2b176d/c937435d44634381b18d7d08e819151b_api_log_error.txt",
+      "size": 1362,
+      "sha256": "83986e741303a3c352b894ae7a48cc6cd90b8e2556fa76164b77aa155ced1277"
+    },
+    {
+      "file": "AlgoAgentXApp/stores/index.tsx",
+      "size": 1062,
+      "sha256": "ec45133991bd87e7d3961d71683081054b2d447c0d815ee0405809bf0942a860"
+    },
+    {
+      "file": "AlgoAgentXApp/stores/secure-atom.ts",
+      "size": 1074,
+      "sha256": "5d8cd058c5b1f603ba8c085c31a7ad4efeefb9d533d4d0de60561e21da34afbf"
+    },
+    {
+      "file": "AlgoAgentXApp/contexts/user-context.tsx",
+      "size": 4249,
+      "sha256": "dd2c9cc2dd1b6f2d979f9471366e8910781a6eee0670c127795913d88b7de07d"
+    },
+    {
+      "file": "AlgoAgentXApp/contexts/notification-context.tsx",
+      "size": 5324,
+      "sha256": "23f1102d61b7a45e3b572a385273e7bc6a980ebb29799ee23945dce0c869023f"
+    },
+    {
+      "file": "AlgoAgentXApp/contexts/global-context.tsx",
+      "size": 56,
+      "sha256": "5a98712fab70ad1f1cb3ebf150523eb0ac8702cbb1c28f6db98137a0f1f83eef"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/payment-fallback.ts",
+      "size": 1874,
+      "sha256": "592b4006c3c1cd45f958d6a26040c56cc8574861c6234733ec3240e88eb1fe76"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api-assets.ts",
+      "size": 321,
+      "sha256": "a9a865420fe15a8ccd939ed0902975effb7111d5403c3e5a29620f30159278a7"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/timezone.ts",
+      "size": 3215,
+      "sha256": "c077d9b0788020124131af89ace04f419ac1e8559dc2fb7f43119caf51e37619"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api-timeouts.ts",
+      "size": 529,
+      "sha256": "8cd6d2baa7af01e1cb43818824f46dae9111521d9fc855a7c6593eb34ed7dcee"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/razorpay.ts",
+      "size": 7582,
+      "sha256": "e94bf7505dd924a2e23492d5a43be86201e0f32c0f9a0718cabee6949aa61b88"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/mail.ts",
+      "size": 803,
+      "sha256": "1500db5e9ecbca7ea5363e764c37ffff3f34f3fc34658792c3528d83c92ba984"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/route.ts",
+      "size": 1854,
+      "sha256": "e6d3de9722c68be39d9424103240fb37e39596fdbf8c98bd5201b5e091634847"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/formatters.ts",
+      "size": 1547,
+      "sha256": "89b9a24c92da9745cc9fcfa8a61b13a5f695037b87f7590e35cbb3fbe7067ae7"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api-base.ts",
+      "size": 791,
+      "sha256": "4eb08cd60b627feac4d2d27054b65ae65fd5daa64c420a9c61056eddc30da8cb"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/axios.ts",
+      "size": 5129,
+      "sha256": "ba140d53e6e0c282e237c19dafbd590c6acba5e89b300e16f3efb5aec5f266a2"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/auth-session.ts",
+      "size": 3273,
+      "sha256": "854c2f9fa1428a9047183f5e61e5429c65e8f745e0db765b8fcf08128998ef1d"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/utils.ts",
+      "size": 114,
+      "sha256": "d3c6d2a5d46017ac3f4418f9ea16f2dfe5b5fbb5df8b211e563c760c167c6b9c"
+    },
+    {
+      "file": "AlgoAgentXApp/app/providers.tsx",
+      "size": 250,
+      "sha256": "ed09522421910bd47584b7734589243b6ff8c239d3ca23ab4f59bde48589ec74"
+    },
+    {
+      "file": "AlgoAgentXApp/app/layout.tsx",
+      "size": 776,
+      "sha256": "6c78900adc4468a7f6385d0ce63ea753a693addb6ded6e6312fa58a3a753a332"
+    },
+    {
+      "file": "AlgoAgentXApp/app/page.tsx",
+      "size": 122,
+      "sha256": "405ed41768fb3bf46909a53ccbdeba20396ebf4d89054db438ad5d732128b67e"
+    },
+    {
+      "file": "AlgoAgentXApp/app/package-lock.json",
+      "size": 194132,
+      "sha256": "8720ce2755473c902c8edb6a405f6dbe955f577e2322e2e1c0e7cce098c8c678"
+    },
+    {
+      "file": "AlgoAgentXApp/app/globals.css",
+      "size": 20516,
+      "sha256": "646334972738ceb511286c5286cc98edc95b5e805124e544b8053f5a68fe910e"
+    },
+    {
+      "file": "AlgoAgentXApp/app/next-env.d.ts",
+      "size": 233,
+      "sha256": "e462a655754db9df18b4a657454a7b6a88717ffded4e89403b2b3a47c6603fc3"
+    },
+    {
+      "file": "AlgoAgentXApp/hooks/use-query.ts",
+      "size": 9222,
+      "sha256": "99ac817b12c1db136aa95e518760773d06b578c06366a677b67784c14adf5191"
+    },
+    {
+      "file": "AlgoAgentXApp/hooks/use-config.ts",
+      "size": 419,
+      "sha256": "c097ccfa81662f79dd3027340ded71dcc2c4e2712feae09958872e567e6e2f40"
+    },
+    {
+      "file": "AlgoAgentXApp/hooks/use-translations.tsx",
+      "size": 309,
+      "sha256": "5a69996277ee5258b2960a4df7e8c76038478afc6b675316530b0ffd9b7b9d68"
+    },
+    {
+      "file": "AlgoAgentXApp/hooks/useCreditsSummary.ts",
+      "size": 1465,
+      "sha256": "13cf9137a2d5d14a64cc463baa739d956fad868f1b637add7b3dd5175005e452"
+    },
+    {
+      "file": "AlgoAgentXApp/hooks/useAutoCloseOverlay.ts",
+      "size": 1272,
+      "sha256": "81c21fdeebce3e859c49678d97e84aae1887cc8ba783a6e5bd88ee475489136a"
+    },
+    {
+      "file": "AlgoAgentXApp/types/alerts.ts",
+      "size": 3458,
+      "sha256": "8e204b08c0cc8149f2c457762337fd7387bc27b435e0e18eb604467ef82ed721"
+    },
+    {
+      "file": "AlgoAgentXApp/types/notifications.ts",
+      "size": 582,
+      "sha256": "1784fd4dd92e0a5c1e50185f63f51f23b565bdea3101ae39c1cb8200d7835a98"
+    },
+    {
+      "file": "AlgoAgentXApp/types/global.d.ts",
+      "size": 658,
+      "sha256": "16718dec950ea589af13f9787272f3615bde3c0e4ece2f4404322866bfb7a6f7"
+    },
+    {
+      "file": "AlgoAgentXApp/types/live-trading.ts",
+      "size": 37419,
+      "sha256": "d444d8d677c3687bfdb0c28f39eeadd82700853bc3c75b905b518ef9a9d6effc"
+    },
+    {
+      "file": "AlgoAgentXApp/types/ai-screener.ts",
+      "size": 3208,
+      "sha256": "0226acd8f531063e3d2bddc4bbe208dcffa9e883ca73606141d9cd76d40f4a0f"
+    },
+    {
+      "file": "AlgoAgentXApp/components/shared/toast.tsx",
+      "size": 4191,
+      "sha256": "42eee8faa469fb601450041f32898fb4ea7e8248dcdb426e88a691fc94f4c970"
+    },
+    {
+      "file": "AlgoAgentXApp/components/shared/empty-state.tsx",
+      "size": 3652,
+      "sha256": "113a58002cdea392683bc8ff6b64ab393222517167e0811bba2c3ea02ec87a10"
+    },
+    {
+      "file": "AlgoAgentXApp/components/shared/RazorpayScript.tsx",
+      "size": 585,
+      "sha256": "33972cdbdd45c597618128137fe8c423450e003bc26eb00715ccc46a3862baff"
+    },
+    {
+      "file": "AlgoAgentXApp/components/shared/swal-toast.ts",
+      "size": 394,
+      "sha256": "a889432a33df823d05d5f9dc8c76681777e951857d65cca8dc3cb1a9a5b0e3ca"
+    },
+    {
+      "file": "AlgoAgentXApp/components/shared/EmptyState.tsx",
+      "size": 923,
+      "sha256": "9cac5de1aa47765f58c834d6b73a108bee24d6ae63baceb035ba7ca6717abb29"
+    },
+    {
+      "file": "AlgoAgentXApp/components/funded-backtest/trade-verification-chart.tsx",
+      "size": 8626,
+      "sha256": "96e1c4b55b28504de9006c1d0d87c7401bb458de29a3c6c06cb2cf3fdf961f21"
+    },
+    {
+      "file": "AlgoAgentXApp/components/funded-backtest/funded-utils.ts",
+      "size": 3705,
+      "sha256": "449c7c75e6015e4be20b5267a8cf1d0aa66df8811980a9739003267180583ef7"
+    },
+    {
+      "file": "AlgoAgentXApp/components/funded-backtest/report-utils.ts",
+      "size": 2186,
+      "sha256": "1c431e24130d97b78c71189e42491b5b8b19f1a13d42d0b108021ad08e3f2373"
+    },
+    {
+      "file": "AlgoAgentXApp/components/backtest-history/StandardBacktestHistoryWorkspace.tsx",
+      "size": 51298,
+      "sha256": "2445d42aedbd7adba389919fe373ae9adac8626f67ba7a78578f6a394b377100"
+    },
+    {
+      "file": "AlgoAgentXApp/components/backtest-history/AllBacktestHistoryOverview.tsx",
+      "size": 10148,
+      "sha256": "bf12215d9c3075dc38134b936b42d81b0a9a4275e988035f2213f25229bf80ab"
+    },
+    {
+      "file": "AlgoAgentXApp/components/backtest-history/FundedBacktestHistoryWorkspace.tsx",
+      "size": 8703,
+      "sha256": "2ff4c657d8670b867c825307a056ae009d8565896783dacb0f6ec31f9765f16e"
+    },
+    {
+      "file": "AlgoAgentXApp/components/backtest-workspace/FundedBacktestWorkspace.tsx",
+      "size": 73532,
+      "sha256": "5569b050c9f33fed2981c3a0483d189cc32a4fb0fe4b0655d5b9ce8d374e17ea"
+    },
+    {
+      "file": "AlgoAgentXApp/components/backtest-workspace/StandardBacktestWorkspace.tsx",
+      "size": 119369,
+      "sha256": "7ced58b8205c5c4fd64310e6dcdba3b723f3fecfd55542f9b336d5ac9ccf5f48"
+    },
+    {
+      "file": "AlgoAgentXApp/components/layout/Sidebar.tsx",
+      "size": 11956,
+      "sha256": "12087494a716f1ddebd82f7b164a86cce768fe146476abc4029b2292cd41b69b"
+    },
+    {
+      "file": "AlgoAgentXApp/components/layout/AppShell.tsx",
+      "size": 3916,
+      "sha256": "1ee1e42d2e71e0dc40b20394dc7a5a5058fd14324ef7394d1e2fc69e5cde8e9a"
+    },
+    {
+      "file": "AlgoAgentXApp/components/layout/Topbar.tsx",
+      "size": 7346,
+      "sha256": "ce3f852bae7ec7190c985a326c343bb5a94781dcdec315f016cd81c98b712c0a"
+    },
+    {
+      "file": "AlgoAgentXApp/components/layout/NotificationBell.tsx",
+      "size": 8409,
+      "sha256": "6f08d336076d69645d885793badb9daa4092ffbdcd8d7f9bb55057c1fcb5c17b"
+    },
+    {
+      "file": "AlgoAgentXApp/components/admin/AdminConsoleCards.tsx",
+      "size": 1872,
+      "sha256": "a5d1efc8f87eaf6770b440276f47df33564fd763efd2e5d6c2655d1507c201a4"
+    },
+    {
+      "file": "AlgoAgentXApp/components/admin/CouponBarSettingsCard.tsx",
+      "size": 4566,
+      "sha256": "97969864b5472c84f7045cdeccea9ac4cbe08c34756dcabcc8b0f552d72562e7"
+    },
+    {
+      "file": "AlgoAgentXApp/components/admin/admin-table.tsx",
+      "size": 6206,
+      "sha256": "6601eaccc9d1dc70fd9cfde13f12ffc078e1656e094385ba1362940dac06dcf1"
+    },
+    {
+      "file": "AlgoAgentXApp/components/admin/BillingSettingsCard.tsx",
+      "size": 7515,
+      "sha256": "1b21dd7f5d5645de57ecf178419384c1cf82cb17a1bea2a34eeded8a265dac97"
+    },
+    {
+      "file": "AlgoAgentXApp/components/guards/AuthGate.tsx",
+      "size": 3472,
+      "sha256": "870f43a55887dd1c9fd9defdbafe34f5b8766c5996076e23e7cc9b6d7171d944"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ai-screener/StatusBar.tsx",
+      "size": 6284,
+      "sha256": "2b1823e586dadae463af88524ef0bf9db9e808fab8134013a3155044db6c6d10"
+    },
+    {
+      "file": "AlgoAgentXApp/components/branding/AlgoAgentXLogo.tsx",
+      "size": 1993,
+      "sha256": "b2d488a589f459c128883b20f34c8bff2f91351300336cb8bd17884afa2a85ba"
+    },
+    {
+      "file": "AlgoAgentXApp/components/images/algoagentx_icon.jpeg",
+      "size": 29292,
+      "sha256": "31db0f0927cf80de467ba3ee8668b0d44a37e8780d6cea803e7f7088dd5bdca0"
+    },
+    {
+      "file": "AlgoAgentXApp/components/common/FieldHelpTooltip.tsx",
+      "size": 4453,
+      "sha256": "134ad15946664419303f432820fab96627ee6e2537c926bca5725a761707bf33"
+    },
+    {
+      "file": "AlgoAgentXApp/components/common/CouponAnnouncementBar.tsx",
+      "size": 3516,
+      "sha256": "5b72924df15cf9db529c1a687538dc74bc4be3439051e8b8467921719a6727f6"
+    },
+    {
+      "file": "AlgoAgentXApp/components/live/LiveCompatibilityCard.tsx",
+      "size": 3484,
+      "sha256": "9b4fd19e91e7de7cd836961e20e644be81735e1f78372e7aefdbddaa127e77f6"
+    },
+    {
+      "file": "AlgoAgentXApp/components/live/OrderCalculationAuditPanel.tsx",
+      "size": 12084,
+      "sha256": "1d15a8a951c0c7b8abf660861e788d45291de515cfbedf87518ffbf66637cd62"
+    },
+    {
+      "file": "AlgoAgentXApp/components/dashboard/piechart.tsx",
+      "size": 2313,
+      "sha256": "d42756cfa9dbf3cd10051e79b7cbf1705727cfeef95672dc2d44ee56e91970e3"
+    },
+    {
+      "file": "AlgoAgentXApp/components/dashboard/barchart.tsx",
+      "size": 1577,
+      "sha256": "a6bbafb64fa8c148b13c362a6271e3df9a1440bba6fc89c227d714b149d9caa9"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/standard-card.tsx",
+      "size": 2288,
+      "sha256": "309f4daf5e5e6b8e1b122274af915cdaac8ef91c97d14323531dbb479b3204a6"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/Dropdown.tsx",
+      "size": 7491,
+      "sha256": "f82d237a456bc99cf699f086d4a0b2232540bdaf2061ef1ccc43f68bb7720e3d"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/toast.tsx",
+      "size": 4962,
+      "sha256": "85ac07d5c8149cfd9e4f1d991b030027bbaa6e6306319346847c15142b8627e8"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/tooltip.tsx",
+      "size": 1189,
+      "sha256": "63255ea6219e9fe283854e1364aa38e0a33b69263cb74055d911ec380211a324"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/radio-group.tsx",
+      "size": 1474,
+      "sha256": "3a5ff51a283c98bc8a96e9a1e5089976a73b3758070442b2eb844cbf023d8624"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/resizable.tsx",
+      "size": 1689,
+      "sha256": "baf45edbbf7ebc0cfdc1f08dd054a004260d5677086ed7f03c054a0767285f6b"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/tabs.tsx",
+      "size": 1946,
+      "sha256": "5bdda90fc85ebe4960b3821ef2573d81fa7ef1391ab23bd017f9ff199ab348bc"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/button.tsx",
+      "size": 1809,
+      "sha256": "791eb9ad19ad7c9b6df002730d48c1407ba9c4177fa6dec4dc5c55ead9555044"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/enhanced-dropdown.tsx",
+      "size": 9470,
+      "sha256": "86dd2eb3a9f188ff47593ebcf8908c1f7d371832b33639cb79c1e62d63e3f1e5"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/PageShell.tsx",
+      "size": 510,
+      "sha256": "c249e0e36c0e99d815a12b8138281013fb1303aa52a4a24f905fc0f315304513"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/select.tsx",
+      "size": 5826,
+      "sha256": "f36c7b9184385f32064064b8d2f43b4022517128f831538b1b70f875232ae87f"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/command.tsx",
+      "size": 5012,
+      "sha256": "5f2785655383c6b27ed086bf96a3c3750c62d01841223d026c0be5f0953f1b3b"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/LoadingSkeleton.tsx",
+      "size": 667,
+      "sha256": "84fb826df3e50e83700414cc3d4ba0d07e0786eea006c0b8c4a7742fbb1daf97"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/badge.tsx",
+      "size": 1402,
+      "sha256": "ae72e0e26c741bba0d32cc051d1185776caf39e15b5390288fc6c994b5c69f75"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/drawer.tsx",
+      "size": 3062,
+      "sha256": "9501ae64cf5a16d7a52ab7a63fdf1ed25d43ea3217a9708af91f437e78ecc06f"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/input.tsx",
+      "size": 847,
+      "sha256": "62a6998f6a6cc11cce5dc81860a39f2105967fb87f5ca5c3d41a3223246ab15b"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/button copy.tsx",
+      "size": 1809,
+      "sha256": "791eb9ad19ad7c9b6df002730d48c1407ba9c4177fa6dec4dc5c55ead9555044"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/date-picker.tsx",
+      "size": 1906,
+      "sha256": "59cb62b8568bb761c696802a54ff566c16cc540cf08517de40f85a446da0f905"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/sheet.tsx",
+      "size": 4421,
+      "sha256": "c02a18d6c73b21078ca394465b819b4cebeef60778c3bdcd3e1f818522981f0f"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/modern-card.tsx",
+      "size": 3601,
+      "sha256": "e9fa6d7e5b1f0a148c43d18c89f70f98865a8db92bf3cec91aaf5a68a7cd5409"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/use-toast.ts",
+      "size": 4142,
+      "sha256": "dfc2ee5d2da75fbbdb3665ed1a6969405c8246200aeca11199a10a0b786c7a11"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/form.tsx",
+      "size": 5071,
+      "sha256": "a6fdfbd2cdb17582a44b87e8add80db5f329927b7d54f3cc531d0fa1b779ad5b"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/enhanced-card.tsx",
+      "size": 3325,
+      "sha256": "8279c972f1be7127b4293c2b58b65f05403247a473295e74e3ddf19125cae206"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/dropdown-menu.tsx",
+      "size": 7509,
+      "sha256": "d25dc4dc1b135d934313f0cd0bdcc5efb4fddef8d3e942b41a44640c4ca9411d"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/input-otp.tsx",
+      "size": 2236,
+      "sha256": "8f063829d14c6464ba4f53f9a8f0b11eb0236807f18baac2c7f908929f3c108e"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/hover-card.tsx",
+      "size": 1227,
+      "sha256": "f8ce6d69f7b5498825df548495ed36d1f9f7a8fa4b621bf04cbc2148fdfb6aa5"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/skeleton.tsx",
+      "size": 276,
+      "sha256": "90badf0dcd440128b81554c06d56c4f01b1ccf03748ca3adf7e4a41d611acddd"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/separator.tsx",
+      "size": 801,
+      "sha256": "d2dec642afe71c74e76f2f3ee8a2a30fde5743ef7c5d1c30ee21d4ec23d574e8"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/GlassCard.tsx",
+      "size": 768,
+      "sha256": "db8bc28327358662a0eeee4503db24864d6e5792b1b87603f32d8fb9ae099b8c"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/enhanced-button.tsx",
+      "size": 2629,
+      "sha256": "380f730c80062b9bbfbe88a7dd0ebe2545aca8ecf3e8cfd3bf1b26be7a9547b7"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/toaster.tsx",
+      "size": 829,
+      "sha256": "479be42f267fb6edcf56db25298ddd0f63938b9e3a0a8b252956a72be3f1b65a"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/label.tsx",
+      "size": 750,
+      "sha256": "8253ee4179284de5d037eee03b55f4499b04ff41ddfa60b3176ea28d4bdc301c"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/avatar.tsx",
+      "size": 1469,
+      "sha256": "4ee6fbff6d693bf5b76f1b30e4cd55de6c6343c46a51e636c3e3b8a911fa7ec0"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/design-tokens.ts",
+      "size": 8090,
+      "sha256": "651d66e44fe9c63074bb77cedde304eedf8d6fea0de7e552a40109865ea1f37b"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/accordion.tsx",
+      "size": 2145,
+      "sha256": "dde6c7bd929d749c8b3a5c4690f006e45334c54f4d1dfb726b8695079f642bb6"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/Modal.tsx",
+      "size": 4191,
+      "sha256": "a586880a0007511b63d80b4123c0b750d652e418d80f477e1567aebc0ee47a8f"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/card.tsx",
+      "size": 2170,
+      "sha256": "dd583a87f4f618791b36ade573acdd988aa967e402d928762519c737aba9e94b"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/collapsible.tsx",
+      "size": 340,
+      "sha256": "bc854800960ef4129d4679a7c4a6b5091e7038adc03698e4529d0c9b5af0d831"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/pagination.tsx",
+      "size": 2745,
+      "sha256": "c109c0427cb659ce003270a751daf09d55835ae70034122876e246216d4c56b7"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/test-enhanced-components.tsx",
+      "size": 5626,
+      "sha256": "73abacfbccc7be596be0b3e4b643a7130ce5baecf608f5ddcffdcb479027582c"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/GlassCard copy.tsx",
+      "size": 646,
+      "sha256": "19c1ed0555f10127b82ed21ddf44f7364d254fbe223bf24bdfc9952520e97016"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/PageHeader.tsx",
+      "size": 1385,
+      "sha256": "a769a9a778e83c90cab00d7fd2a7d9875f107b2146350179de176d4cbec069b0"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/dialog.tsx",
+      "size": 4128,
+      "sha256": "161f3a4659d00ed1854bca0612b225e85d69a70ce130a0309f9621122e598e77"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/textarea.tsx",
+      "size": 756,
+      "sha256": "c34ac779b572282035124a7c69e69d751b64e83c3fc7232739fec50ba83039b5"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/popover.tsx",
+      "size": 1339,
+      "sha256": "2450586551287f9a15f93950e2468f75ba0fcd40582f54e0e0f12e37547bc19b"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/table.tsx",
+      "size": 2977,
+      "sha256": "2e8b9fef0237e3b152e0e528b0282e795e2d27aad5a894b2f842d51bb58ea37e"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/progress.tsx",
+      "size": 720,
+      "sha256": "c0701eec0a6f00a93c4a5fc527fa651f3fbfbd5f520b922bc1b4b34508823895"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/ResponsiveTableWrapper.tsx",
+      "size": 613,
+      "sha256": "eadc70251923291da3d7e92a1a6dbab49a440e298ba9c1f66047787685e53701"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/calendar.tsx",
+      "size": 2954,
+      "sha256": "9486840dcb967b2460dacfacdbab01da1b24cd224350802ff5f9f30adf59d3c7"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/checkbox.tsx",
+      "size": 1064,
+      "sha256": "97a0e9f6121bf40cba6f936d3ea3981fd12393668056464b268436af0e2ae0b0"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/page-header.tsx",
+      "size": 1124,
+      "sha256": "6366bcbb5cb4a967c520e48aa51c87bae9024534b93df61947eb2938a8cd536e"
+    },
+    {
+      "file": "AlgoAgentXApp/components/ui/loading-skeleton.tsx",
+      "size": 1866,
+      "sha256": "6427ab63befea718c9b31a6247bde4ad14f3dc20ffd05369559c56de820e7835"
+    },
+    {
+      "file": "AlgoAgentXApp/components/home/navbar.tsx",
+      "size": 2375,
+      "sha256": "d3f8d6d67d549a470d8b9236789613e6f1403a492cdfcf5d659101f4f679b1dc"
+    },
+    {
+      "file": "AlgoAgentXApp/components/landing/LandingPage.tsx",
+      "size": 24403,
+      "sha256": "c6e2bb4ef17bc180c9a3c7e8367b25c6034948610506e101f7270672eead2008"
+    },
+    {
+      "file": "AlgoAgentXApp/components/runtime/runtimeSettingsHelp.ts",
+      "size": 4692,
+      "sha256": "703752e50522fe86267638c7bf241e4ceac61f2a82a1a1ddb563a08a1973f581"
+    },
+    {
+      "file": "AlgoAgentXApp/components/runtime/RuntimeSettingsForm.tsx",
+      "size": 20520,
+      "sha256": "2268b7280dfdcec20531946eca41a3a94fd6fd6b31de556ec39aa9821b2343f1"
+    },
+    {
+      "file": "AlgoAgentXApp/components/runtime/RuntimeSettingsDrawer.tsx",
+      "size": 5393,
+      "sha256": "53ec9618679439bdbbf193c11ac83c42075d7fd9b10416cd505f709ff5aaa6c6"
+    },
+    {
+      "file": "AlgoAgentXApp/components/runtime/runtimeSettingsTypes.ts",
+      "size": 603,
+      "sha256": "a58b74ffb8d46e88ec84a85d6fcf06aaf3968dece667cb795d126758a018313b"
+    },
+    {
+      "file": "AlgoAgentXApp/components/runtime/runtimeSettingsDefaults.ts",
+      "size": 1185,
+      "sha256": "e4f1a17e63c8e588b6fd6ff342b7e8b430fa5984a8399cea90a4fecbc6fd7210"
+    },
+    {
+      "file": "AlgoAgentXApp/components/runtime/runtimeSettingsAdapters.ts",
+      "size": 974,
+      "sha256": "c50345e46fb9d8766bf6e637d10bc6e2e2e8f5fe249e40fa7661dab9283cd7dd"
+    },
+    {
+      "file": "AlgoAgentXApp/components/strategies/RequestStrategyModal.tsx",
+      "size": 24433,
+      "sha256": "81b8cfa79a280fd1dc8b0e28ce0b8d8d6e4658d72d5ee5779f86c20ebd6b432f"
+    },
+    {
+      "file": "AlgoAgentXApp/components/strategies/StrategyAttachmentGallery.tsx",
+      "size": 8839,
+      "sha256": "9f6fb62c32fedc6df8e4b6237c705369b984c96bb22c0d2c86b16ae54418271f"
+    },
+    {
+      "file": "AlgoAgentXApp/components/strategies/StrategyRequestForm.tsx",
+      "size": 10848,
+      "sha256": "a85ef7411b6e81d047f6112df9a15fb4a6df2620aeb6121f19fe0632cf9db6a5"
+    },
+    {
+      "file": "AlgoAgentXApp/components/strategies/MyStrategyRequests.tsx",
+      "size": 6627,
+      "sha256": "c5e502a1f9dbc763f8f36d5d95a57d43c13e710340d9edaf1f1f96ca0e77a5aa"
+    },
+    {
+      "file": "AlgoAgentXApp/components/strategies/AuthenticatedStrategyImage.tsx",
+      "size": 8219,
+      "sha256": "b2b4c3c3922997c4f939d52e4961b78e6d9c1b2455cbb01fd7921292e1e63f4e"
+    },
+    {
+      "file": "AlgoAgentXApp/components/auth/GoogleAuthButton.tsx",
+      "size": 3669,
+      "sha256": "334658aa3bcda9604eedffd5feff5f450a699d03237c3e49936878add82755c2"
+    },
+    {
+      "file": "AlgoAgentXApp/components/auth/AuthShell.tsx",
+      "size": 780,
+      "sha256": "60dc305b80bb13ed2f6e6d8cd59e3403a65907797bdc40914e62094b046e2552"
+    },
+    {
+      "file": "AlgoAgentXApp/features/account/ProfileClient.tsx",
+      "size": 10105,
+      "sha256": "397bebf6b4a78e0977d06e1d44a3030fef3de496742bec12b89d713d9f76c925"
+    },
+    {
+      "file": "AlgoAgentXApp/features/account/SettingsClient.tsx",
+      "size": 16747,
+      "sha256": "3ce8926a136663f5012700fc1739ed33516eeec3dc6b15476e8eb76c3c4992a0"
+    },
+    {
+      "file": "AlgoAgentXApp/features/notifications/NotificationsClient.tsx",
+      "size": 6086,
+      "sha256": "5e3809b8ad53743e4dcbcfb5f739b2fa52752126af104552d75adfa6342a755f"
+    },
+    {
+      "file": "AlgoAgentXApp/public/images/algoagentx_icon.jpeg",
+      "size": 29292,
+      "sha256": "31db0f0927cf80de467ba3ee8668b0d44a37e8780d6cea803e7f7088dd5bdca0"
+    },
+    {
+      "file": "AlgoAgentXApp/app/register/page.tsx",
+      "size": 124,
+      "sha256": "7998ac67b649b3ebf4cda40540b4c900619bcdba84d307491c56df4942c83dee"
+    },
+    {
+      "file": "AlgoAgentXApp/app/login/page.tsx",
+      "size": 120,
+      "sha256": "0a4ba7edcd6f28d07080f7c612d7fe604d58550766c76740f2423de1b5aecdd2"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/layout.tsx",
+      "size": 287,
+      "sha256": "eb5422c4f11e0ecb4ab7111ea71e03b62c22af9c0de862701ac697f0a927bb01"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/layout.tsx",
+      "size": 287,
+      "sha256": "6faa4343a7ea1e001d122a6790fb40d084ac736174289d09852a1fc3f83ca28d"
+    },
+    {
+      "file": "AlgoAgentXApp/app/auth/layout.tsx",
+      "size": 195,
+      "sha256": "c11d4b9f059661d98e1c9820e9415d611ce55a7ab565ce87275edb20b9088b0d"
+    },
+    {
+      "file": "AlgoAgentXApp/app/auth/signup/page.tsx",
+      "size": 7568,
+      "sha256": "68b2e72e9e90cb8aa3471d4347aee4cb6ef7156cff02a7ae7c84c306690bc9e9"
+    },
+    {
+      "file": "AlgoAgentXApp/app/auth/forgot-password/page.tsx",
+      "size": 129,
+      "sha256": "12e6e6d45ee8f1ba8c2a260ae69c77532854f4c4112d2a623123156789aed2ab"
+    },
+    {
+      "file": "AlgoAgentXApp/app/auth/login/page.tsx",
+      "size": 8256,
+      "sha256": "f5392673ac63fb5fb1886c13838038b220c835feda2bd91035787d74b172abf6"
+    },
+    {
+      "file": "AlgoAgentXApp/app/auth/forgotpassword/page.tsx",
+      "size": 3413,
+      "sha256": "9201fbbcc6b0cbd09e69942244ec6a423da624c936ed0ea89d8e2dfa1e81a752"
+    },
+    {
+      "file": "AlgoAgentXApp/app/auth/reset-password/page.tsx",
+      "size": 5460,
+      "sha256": "27df38d816dcc7d6342f0eab0fa10d5ddfaee17e6ff5dba129142e0ab75450e7"
+    },
+    {
+      "file": "AlgoAgentXApp/app/auth/admin-login/page.tsx",
+      "size": 17726,
+      "sha256": "fabb1e9e1e858ba26484148723be22f9e50555d808612ad0fc9550afaf55f69d"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/payments/page.tsx",
+      "size": 9974,
+      "sha256": "0b67b5d79b76b159aad821d1afaae75f465ee21b3b0110ce3c2b051f9cf70020"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/subscriptions/page.tsx",
+      "size": 8145,
+      "sha256": "8cef71ee1333a194b080aaef1d6f4303c303f197a177419160392df670d8ebc0"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/market-data/page.tsx",
+      "size": 42233,
+      "sha256": "f94e1765f06aeb14fefd7b1c5fc772713c32e13444deefde8937f2b9bcab18d5"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/support-tickets/page.tsx",
+      "size": 29363,
+      "sha256": "ee2b601f3a444e3972b81005d9d70d0ed12590e2f9a2f1c177386779d9c2368d"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/live-trading/page.tsx",
+      "size": 14032,
+      "sha256": "8d1dcde3a8df6bf69663ef77381ab560d29b853604a10886f49020840308fa9e"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/credits/page.tsx",
+      "size": 17673,
+      "sha256": "a301e9510762b34791f341a1babfa086bf7d9a192e683d4ba08d41d53ed56866"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/users/page.tsx",
+      "size": 12568,
+      "sha256": "4bba27cb8b3606d15d409b23605b6d7ef1b09394d721c856e710df9595408cc3"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/brokers/page.tsx",
+      "size": 4951,
+      "sha256": "b768eb6334886870b93a9218aa120045b56b455520b7f917a9db7efaa9327797"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/ai-jobs/page.tsx",
+      "size": 14359,
+      "sha256": "99eedb5445cc9e7a58509adbfd7ae776042cef8c1e13f65cbf5e12e9fa2eb64b"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/strategy-requests/page.tsx",
+      "size": 52127,
+      "sha256": "ca35158c56fbe8b6dec97f27f7dc4864b4199e3e8cc1c2f5e55f9b67bf4e1f3d"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/live-settings/page.tsx",
+      "size": 11665,
+      "sha256": "969a6cad8c4b38ba5eb9abc17d1727477e00b596935ba07bdc89db4174e042b6"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/market-master/page.tsx",
+      "size": 24123,
+      "sha256": "cbc68aa5573c77f24fb59fc4f03627d4c807d5ce01394f0789b38239023d0017"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/profile/page.tsx",
+      "size": 144,
+      "sha256": "387d5cccce36c54d6fc7e4809b89c921e201791110340db8bfeb9d9eb8fa4167"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/dashboard/page.tsx",
+      "size": 26696,
+      "sha256": "9b61116f957d513f0c26a91ca788aa1cb8e60e8369e77c090bb1d2f40e08712a"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/live-approvals/page.tsx",
+      "size": 14327,
+      "sha256": "bea53a22f23c7d1c901578eba73a38ebb4bfe48aa76bfe7493c6b367f7b17c3d"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/credit-rules/page.tsx",
+      "size": 15451,
+      "sha256": "86f03da7cda1d6c1fa73d852e90b3dbfb8e8cdb20586b329008caa502aa40d50"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/backtest-engine/page.tsx",
+      "size": 5084,
+      "sha256": "1cc57a1821994992383a3c8eb9d6b45b59ebeae83040c0718059469ef6797b8e"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/coupons/page.tsx",
+      "size": 18284,
+      "sha256": "cfaa5f3b6765ef039117a6310a1e233277732887b7a623c714173c769a58da24"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/orders/page.tsx",
+      "size": 10973,
+      "sha256": "b6ef3ac5c005be5681ce3555512bb2d0255e977ffc59245caf3a2cfe8376e450"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/notifications/page.tsx",
+      "size": 174,
+      "sha256": "d85492c8e9ebba2d48e88b2da4db1a1060b4ec044ff66ce98b0bb64c8f746b2b"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/settings/page.tsx",
+      "size": 148,
+      "sha256": "cd5cc972d3a64b32f609e79fc95cfe7f733da335ca42bbf944d581986abfa110"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/pricing/page.tsx",
+      "size": 32601,
+      "sha256": "89b6d56131e0735fdd309949de15a8e604cd5985f2a2d45cb3c0b382d8a10a3e"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/backtests/page.tsx",
+      "size": 7292,
+      "sha256": "1654b908d6daec33ed4cda12a2cbf5fef0050860b76c7fcb9d897b97db3e4663"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/backtest-report/[backtestId]/page.tsx",
+      "size": 18888,
+      "sha256": "bd2a5cedeeac7e8ff7c9b2d32db3afc15738231243a20d3dadd32822dab1443b"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/backtest-report/[backtestId]/loading.tsx",
+      "size": 457,
+      "sha256": "c768583c16be04025a565080bb2540b22fcba9596b4b0f18ed0c03fd60c48c8f"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/strategy-requests/[id]/page.tsx",
+      "size": 17589,
+      "sha256": "4c37ebbb7cc4356ccfb15f8c6b3061f4813052b90b97f360a1f7ade50c3df72b"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/strategy-requests/strategies/[strategyId]/page.tsx",
+      "size": 97845,
+      "sha256": "1ff1ccc50d9580fb9554c3694701c229786c636042a69cf979930b0fa8db2594"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/strategy-requests/strategies/new/page.tsx",
+      "size": 17047,
+      "sha256": "7a5eed38e2116417d0c72bbd0c8510f98a62b12da90321678796d0eea791dd53"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(admin)/admin/live-trading/[deploymentId]/page.tsx",
+      "size": 24534,
+      "sha256": "4b31d8aaaad5222e8004aa3befc31905158d5a7d5c116d839273fc3ca5dc881b"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/live-approval/page.tsx",
+      "size": 13522,
+      "sha256": "efd5b2c5977ed4ed3bec96e0bb3211a9ddc6fcc73a7ed118f34759129d84d6f5"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/funded-backtest/page.tsx",
+      "size": 576,
+      "sha256": "fd4ac116255f85abb45c700b92aec765ab69640cbdb65987286cfd0fdcedb82b"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/funded-backtest/loading.tsx",
+      "size": 524,
+      "sha256": "c83b945a61bed3873f375c860949a7c1bdb916892fcb6ffca35d5287ef2c41d9"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/myprofile/page.tsx",
+      "size": 12843,
+      "sha256": "356c3f06e3ee682dcb482758717d620c1bae4e309a5604a9661e6ec18234a573"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/backtest-history/page.tsx",
+      "size": 3469,
+      "sha256": "956622ada6d834aee3d7108d2193b2c9206f8c4ed577492cd3c23fdf169d1e26"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/backtest-history/loading.tsx",
+      "size": 1658,
+      "sha256": "396e3975b1b48b6f51bf751ed18ac823ec35d0752f860fb0810c4cfa73b3f422"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/support-tickets/page.tsx",
+      "size": 27092,
+      "sha256": "859595847337a4911260f7200dfb6a9215bb4a6d74857e7e555a0e36a7e2f24c"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/live-trading/page.tsx",
+      "size": 20332,
+      "sha256": "9829bce1ea7261d6cb8848d5f97f80f07ec3e6453c041b7e34287dcab815bf75"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/credits/page.tsx",
+      "size": 25932,
+      "sha256": "22734a78c7171ce2faff8358d928648956848799213ffdf89297c93393d374c6"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/brokers/page.tsx",
+      "size": 59105,
+      "sha256": "20ae351e64d15930570b688afa05c2d61dd8b1d83e9518ae455fa38bf214181f"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/broker/page.tsx",
+      "size": 13483,
+      "sha256": "ec4b3e75a334f2a8fab42b96cd7fa2783fdce821e53eab072bca208c59d13608"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/profile/page.tsx",
+      "size": 133,
+      "sha256": "e5b86c029272f9826f942555839bf477bfd1a0e7c830da2c2c42ca0a541fa4e8"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/dashboard/page.tsx",
+      "size": 29280,
+      "sha256": "74ea0fe08fcdec3325fe73b48c39ff6f3624a872fb7ca1440d9a47c10fafd285"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/alerts/page.tsx",
+      "size": 45338,
+      "sha256": "1ef1749c4155a5fc672924a3095084eb8451210dcf627d13cb876989dc3325b0"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/reports/page.tsx",
+      "size": 31352,
+      "sha256": "867502e888cccf6675eb0c4fcd9fc1f789d5490bb50aa2b4172f2a8668253f27"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/backtest/page.tsx",
+      "size": 3940,
+      "sha256": "e2173c01e2392d152d25c260758bcc7501679843612f017a2b61bec61d8217dc"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/backtest/loading.tsx",
+      "size": 3345,
+      "sha256": "7aa7c16bb945bd09f2eff2e8dd0d9646ebd910a1c083d5a371bda3d96a97845f"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/notifications/page.tsx",
+      "size": 163,
+      "sha256": "35cbd0196349077448ba798defc8412baee0e7c013cc7fc148b5b577bf095d00"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/settings/page.tsx",
+      "size": 137,
+      "sha256": "5f56e6587c205954c569ad8c997f3c502975f14510a0c872ae78b7d8d37bf16c"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/pricing/page.tsx",
+      "size": 30592,
+      "sha256": "949616fb8f5e514d59aea5f0e6ea8929ac7e2fc9ea7df9087d48007df77e2e9b"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/funded-history/page.tsx",
+      "size": 149,
+      "sha256": "9442c93978712b23b6c5e3e241311b876b6bf0e5c9d861ac7b99c0b18e2c5808"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/strategies/page.tsx",
+      "size": 50527,
+      "sha256": "86d03e2350e134a1a9232ef8cedf77d506f90fffdd7b4a0be03fba7c15e082e1"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/strategies/loading.tsx",
+      "size": 1843,
+      "sha256": "34ffb5e88de4fc41f30635ada8469d323bc1ce0f3e0fbeecd9e42851d6f43ed6"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/strategies/[strategyId]/page.tsx",
+      "size": 17733,
+      "sha256": "1a4fd6df6370d99c6bcc19daf00c5c73f190a9bc7a9576ac7e00e572fc1e430d"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/strategies/[strategyId]/refine/page.tsx",
+      "size": 12514,
+      "sha256": "fa084243107e57e07d6591173669718bf1899c825583d0069ffc66d0e4f967f8"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/strategies/requests/[requestId]/page.tsx",
+      "size": 7666,
+      "sha256": "aaec04c9082869c093d4dbb6d13778d07a6f0e4677a5e812090e48e54ce2a98e"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/strategies/requests/[requestId]/edit/page.tsx",
+      "size": 9221,
+      "sha256": "7f81e869fef55845e75353466c1eca7c78ef5a909fc655bd4ec8dde12ccc7a4a"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/funded-backtest-report/[runId]/page.tsx",
+      "size": 38691,
+      "sha256": "6ad5c1653e2557e86796e9e2666701f0cfdddf6e5290278deeec383b47a1dd77"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/funded-backtest-report/[runId]/loading.tsx",
+      "size": 459,
+      "sha256": "ce7fdb4e1226d9067eeb723138c023459be75b0308bd0fd785731c4c67acfaf0"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/backtest-report/[backtestId]/page.tsx",
+      "size": 100899,
+      "sha256": "00537d57fbf3e6307fb7d53160c95a18f52b323eee5da5702563d7cb5277fa15"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/backtest-report/[backtestId]/loading.tsx",
+      "size": 457,
+      "sha256": "c768583c16be04025a565080bb2540b22fcba9596b4b0f18ed0c03fd60c48c8f"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/billing/checkout/page.tsx",
+      "size": 20326,
+      "sha256": "1b60b8be6c570d6a907c6be14e3821c36df5320831fa909196de4c366e8b29b7"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/live-trading/new/page.tsx",
+      "size": 56576,
+      "sha256": "18eb8c9317b12c6cf04ae552931f476f5d156b70a88dadf7cc8b16969b2cb17f"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/live-trading/[deploymentId]/page.tsx",
+      "size": 72040,
+      "sha256": "0ed96a15829a2664b90a149e2b4718be408c2e5f592b56996c875ada173882f0"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/live-trading/[deploymentId]/settings/page.tsx",
+      "size": 78466,
+      "sha256": "630996633990eeb5acebca0bde75b329d4d1476546ab254aeedec5f9c8849ff5"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/funded-backtest/history/page.tsx",
+      "size": 583,
+      "sha256": "cf7b283b18b53beba0b2a202d4e99229214dea7a51e15a332084855d668d9177"
+    },
+    {
+      "file": "AlgoAgentXApp/app/(user)/funded-backtest/history/loading.tsx",
+      "size": 399,
+      "sha256": "69950d5bf55199c6fc958414346b34f163e42ab8846fb0cb5600394da0f2ac42"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/alerts.ts",
+      "size": 2100,
+      "sha256": "e3f25837d7ae1223b8fe289f24cbea23d2709a32e492042270f370a84edef0d4"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/coupon-bar.ts",
+      "size": 546,
+      "sha256": "3b431e5e5c7d8be3aa8e489ddca144b5f92a042cc8ef1b444e58ebe82611d757"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/credits.ts",
+      "size": 614,
+      "sha256": "e32ae1be034b0868195bcc4b5c8ea68cee2c2a8fcd233c58f2cebe1ff25479db"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/landing.ts",
+      "size": 599,
+      "sha256": "87fe8985bfd87fe837cedbff7d8db4b1bda5300094cf403afc466abb68ecbe29"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/notifications.ts",
+      "size": 1201,
+      "sha256": "0c61159aa3042c73e84d564d094db19443c99879975625346d9849f25e0406b2"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/billing.ts",
+      "size": 3965,
+      "sha256": "a96cee14e84ff69e9a908e0ba3b121332616a00150ddf56e7ab8ed19e27543b1"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/subscriptions.ts",
+      "size": 4607,
+      "sha256": "508c4ccbc0374e2b98bc054b2a2d579b33874aed21c1ead8ec3137db7be40fa9"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/live-trading.ts",
+      "size": 29549,
+      "sha256": "046ca194065c1ec9ffc210f2c2ccec73600c90191b127a6613161c811776ec05"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/users.ts",
+      "size": 351,
+      "sha256": "f57b5132c960f3fb555c4a7c63d8f9b71dc0346f0456e0b1f8b25fd86330ff87"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/error.ts",
+      "size": 3144,
+      "sha256": "25299f662780231622c238f29ffe11eaf1471fd7ac854d2281a94a3b23bdd8bc"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/funded-backtests.ts",
+      "size": 13435,
+      "sha256": "4d329317775591fe6aef6d95ffabb0f84983aa76315e2a53f2f9821a1c6d3eb9"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/profile-settings.ts",
+      "size": 1706,
+      "sha256": "2ebeb17b03d5d78e672b36fb3ac29d7602cd11af8c02788947f503c18b30bc52"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/support.ts",
+      "size": 9401,
+      "sha256": "4b88721a2de6b0b1b0ee753bb8df3d61eeb18ca19e2a926213cf7e540aab7759"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/admin.ts",
+      "size": 58033,
+      "sha256": "5d46152ba28edf68c60ae041c32ec7c0c8544d9aa9089db19e10b5ba510927c5"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/reports.ts",
+      "size": 7480,
+      "sha256": "a5cb6c040d822f548f9385011b0e5676241025df0ce7d109e27abe88111b7ea0"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/ai-screener.ts",
+      "size": 5890,
+      "sha256": "7948bbdbe024b0a2d183d70e1978dfaa750b4ac52a9c278710c47fb5c741e03c"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/api/backtests.ts",
+      "size": 22578,
+      "sha256": "984526a332288518e93b93939cd34bd5784e9a5f92aef2dfedf5a92478f117d0"
+    },
+    {
+      "file": "AlgoAgentXApp/lib/auth/session.ts",
+      "size": 2017,
+      "sha256": "e7437ebc9b3d6ceb1c1c746c14360e6d88ed200ca8ec09beb65f14ebbdd5d392"
+    }
+  ]
+}

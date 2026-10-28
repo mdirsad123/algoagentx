@@ -50,6 +50,7 @@ from ...services.live_trading.readiness_service import build_live_deployment_rea
 from ...services.live_trading.paper_position_manager import process_paper_positions_for_deployment
 from ...services.live_trading.final_qa_service import build_final_live_qa, run_paper_order_test, run_demo_micro_order_test
 from ...services.live.live_event_bus import LiveEventBus
+from ...services.live.observer_cache import observer_key, read_observer_cache, store_observer_cache
 from ...services.live.deployment_lock import try_deployment_xact_lock
 from ...services.billing.live_subscription_gate import (
     build_live_trading_access_status,
@@ -1633,7 +1634,13 @@ async def get_deployment_summary(
     current_user: dict = Depends(get_current_user),
 ):
     row = await get_deployment_or_404(db, deployment_id, current_user)
-    return success_response(await _summary(db, row, refresh_broker=refresh_broker))
+    if refresh_broker:
+        return success_response(await _summary(db, row, refresh_broker=True))
+    key = observer_key('summary', row, current_user)
+    cached = await read_observer_cache(key)
+    if cached is not None:
+        return cached
+    return await store_observer_cache(key, success_response(await _summary(db, row, refresh_broker=False)))
 
 
 @router.get("/{deployment_id}/latency")
@@ -1643,7 +1650,11 @@ async def get_deployment_latency(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    await get_deployment_or_404(db, deployment_id, current_user)
+    deployment = await get_deployment_or_404(db, deployment_id, current_user)
+    key = observer_key('latency', deployment, current_user, limit=limit)
+    cached = await read_observer_cache(key)
+    if cached is not None:
+        return cached
     rows = (
         await db.execute(
             select(LiveExecutionTrace)
@@ -1672,12 +1683,12 @@ async def get_deployment_latency(
             "min": round(min(values), 3) if values else None,
             "max": round(max(values), 3) if values else None,
         }
-    return success_response({
+    return await store_observer_cache(key, success_response({
         "latest": _execution_trace_payload(rows[0]) if rows else None,
         "recent": [_execution_trace_payload(row) for row in rows],
         "rollup": rollup,
         "sample_size": len(rows),
-    }, "Live execution latency loaded")
+    }, "Live execution latency loaded"))
 
 
 @router.get("/{deployment_id}/latency/latest")
@@ -1686,7 +1697,11 @@ async def get_deployment_latest_latency(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    await get_deployment_or_404(db, deployment_id, current_user)
+    deployment = await get_deployment_or_404(db, deployment_id, current_user)
+    key = observer_key('latency/latest', deployment, current_user)
+    cached = await read_observer_cache(key)
+    if cached is not None:
+        return cached
     row = (
         await db.execute(
             select(LiveExecutionTrace)
@@ -1695,7 +1710,7 @@ async def get_deployment_latest_latency(
             .limit(1)
         )
     ).scalar_one_or_none()
-    return success_response(_execution_trace_payload(row) if row else None, "Latest live execution latency loaded")
+    return await store_observer_cache(key, success_response(_execution_trace_payload(row) if row else None, "Latest live execution latency loaded"))
 
 
 @router.get("/{deployment_id}/pipeline-health")
@@ -1705,6 +1720,10 @@ async def get_deployment_pipeline_health(
     current_user: dict = Depends(get_current_user),
 ):
     deployment = await get_deployment_or_404(db, deployment_id, current_user)
+    key = observer_key('pipeline-health', deployment, current_user)
+    cached = await read_observer_cache(key)
+    if cached is not None:
+        return cached
     health: dict[str, Any] = {
         "event_pipeline_enabled": settings.live_event_pipeline_enabled,
         "market_worker_enabled": settings.live_market_worker_enabled,
@@ -1778,8 +1797,10 @@ async def get_deployment_pipeline_health(
     if redis_manager.is_available and redis_manager.client is not None:
         bus = LiveEventBus(redis_manager.client)
         try:
-            for role in ("live_market_worker", "live_strategy_worker", "live_reconcile_worker", "live_position_manager_worker", "live_legacy_runner_worker", "live_tradelocker_candle_worker"):
-                health["workers"][role] = await bus.get_health(role)
+            health["workers"] = await bus.get_health_many((
+                "live_market_worker", "live_strategy_worker", "live_reconcile_worker",
+                "live_position_manager_worker", "live_legacy_runner_worker", "live_tradelocker_candle_worker",
+            ))
             market_health = health["workers"].get("live_market_worker") or {}
             connections = market_health.get("connections") if isinstance(market_health, dict) else {}
             health["connection"] = (connections or {}).get(deployment_environment) if isinstance(connections, dict) else None
@@ -1793,7 +1814,10 @@ async def get_deployment_pipeline_health(
             health["redis_error"] = str(exc) or exc.__class__.__name__
     else:
         health["redis_error"] = "Redis is unavailable"
-    return success_response(health, "Live pipeline health loaded")
+    response = success_response(health, "Live pipeline health loaded")
+    if health.get('redis_error'):
+        return response
+    return await store_observer_cache(key, response, ttl=1)
 
 
 @router.get("/{deployment_id}/broker-status")
@@ -2097,9 +2121,13 @@ async def refresh_deployment_broker_candles(deployment_id: UUID, count: int = 30
 
 @router.get("/{deployment_id}/candles")
 async def get_deployment_broker_candles(deployment_id: UUID, limit: int = 300, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    await get_deployment_or_404(db, deployment_id, current_user)
+    deployment = await get_deployment_or_404(db, deployment_id, current_user)
+    key = observer_key('candles', deployment, current_user, limit=limit)
+    cached = await read_observer_cache(key)
+    if cached is not None:
+        return cached
     result = await get_candle_snapshot(db, deployment_id, limit=limit)
-    return success_response(result)
+    return await store_observer_cache(key, success_response(result), ttl=1)
 
 
 @router.get("/{deployment_id}/funded-status")

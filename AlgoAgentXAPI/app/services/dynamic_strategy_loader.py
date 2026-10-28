@@ -225,6 +225,8 @@ _META_PARAM_KEYS = {
     "confirmation_rules", "risk_rules", "invalidation_rules", "trade_management_rules", "notes",
     "performance_metrics", "runtime_config", "default_runtime_config", "runtime_config_schema", "engine_mode",
     "source_code_sha256", "live_history_bars", "required_history_bars",
+    "live_incremental_enabled", "live_incremental_parity_verified",
+    "live_incremental_approved_source_sha256", "live_incremental_adapter_id",
 }
 
 
