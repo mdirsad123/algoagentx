@@ -30,7 +30,10 @@ from .deployment_lock import try_deployment_xact_lock
 from .strategy_history_profile import resolve_live_strategy_profile, runtime_contract_violations
 from .history_warmup_queue import enqueue_history_warmup
 from .runner_diagnostics import StageClock, profile_generate
-from .retained_strategy_state import retained_states, is_opted_in, signature as incremental_signature
+from .retained_strategy_state import (
+    retained_states, is_opted_in, signature as incremental_signature,
+    signal_runtime_identity, fingerprint_fields,
+)
 from .runner_cache import history_ready_cache
 from .incremental_adapter_registry import select_registered_adapter, configured_max_advances
 from .signal_contract import (
@@ -691,9 +694,20 @@ async def run_strategy_for_deployment(
                 global_enabled=bool(getattr(settings, "live_incremental_enabled", False)),
             )
         ) and mode in {"DEMO", "LIVE", "PAPER"} and execute and not refresh_broker_candles
+        identity_runtime = signal_runtime_identity(
+            runtime_config, capital_independent=bool(hybrid_selected and adapter.adapter_id == 'v64_hybrid_v1'),
+            configured_capital=deployment.capital,
+        )
+        identity_runtime['_v64_hybrid_runtime'] = bool(hybrid_selected)
+        identity_runtime['_routing'] = {
+            'broker_account_id': str(deployment.broker_account_id),
+            'mode': mode, 'broker_symbol': getattr(deployment, 'broker_symbol', None),
+        }
+        identity_fields = fingerprint_fields(params=strategy_params, runtime=identity_runtime) if incremental_allowed else {}
+        observed_capital = str((runtime_config.get('risk') or {}).get('initial_capital'))
         fingerprint = incremental_signature(
             strategy_id=str(deployment.strategy_id), params=strategy_params,
-            runtime={**runtime_config, "_v64_hybrid_runtime": bool(hybrid_selected)},
+            runtime=identity_runtime,
             history_bars=profile.required_history_bars,
             timeframe=str(deployment.timeframe),
             instrument=str(getattr(deployment, 'instrument_key', None) or deployment.instrument),
@@ -721,6 +735,7 @@ async def run_strategy_for_deployment(
                     next_candle_time=probe_time,
                     timeframe_seconds=parse_timeframe_to_seconds(str(deployment.timeframe or 'M5')),
                     previous_candle=probe[1] if len(probe) > 1 else None,
+                    fields=identity_fields, observed_capital=observed_capital,
                 )
                 # Experimental adapter appends to history. Rebase from the
                 # authoritative *rolling 80K* window periodically so memory
@@ -728,7 +743,8 @@ async def run_strategy_for_deployment(
                 # This is a cold full evaluation, not a shortened warmup.
                 if hybrid_selected and warmed is not None:
                     max_advances = configured_max_advances(settings)
-                    if warmed.candle_count >= profile.required_history_bars + max_advances:
+                    if retained_states.rebase_due(state_id, history_bars=profile.required_history_bars,
+                                                 max_advances=max_advances):
                         logger.warning('RUNNER_V64_HYBRID_REBASE deployment=%s incremental_steps=%s history=%s',
                                        deployment_id, warmed.candle_count-profile.required_history_bars,
                                        profile.required_history_bars)
@@ -788,6 +804,7 @@ async def run_strategy_for_deployment(
                     state_id, fingerprint=fingerprint, candle_time=latest_candle_time,
                     strategy=strategy_instance, generated=generated,
                     candle_count=len(df), latest_candle=latest_candle,
+                    fields=identity_fields, observed_capital=observed_capital,
                 )
             runner_mode = 'FULL_HISTORY'
         else:
