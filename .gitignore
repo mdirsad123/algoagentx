@@ -174,3 +174,6 @@ migration.log
 # IMPORTANT:
 # Do NOT ignore test_*.py globally.
 # Tests are source code and should normally be committed.
+
+# Interactive, machine-local debugging only; keep regression tests tracked.
+/AlgoAgentXAPI/tests/local_debug/

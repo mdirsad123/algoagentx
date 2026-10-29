@@ -99,3 +99,64 @@ def test_explicit_summary_refresh_bypasses_cache(monkeypatch):
     result = asyncio.run(routes.get_deployment_summary(uuid4(), refresh_broker=True, db=object(), current_user={}))
     assert result['data'] == {'fresh': True}
     read.assert_not_awaited()
+
+
+@pytest.mark.parametrize('name,extra', [
+    ('get_deployment_summary', {'refresh_broker': False}),
+    ('get_deployment_latency', {'limit': 50}),
+    ('get_deployment_latest_latency', {}),
+    ('get_deployment_pipeline_health', {}),
+    ('get_deployment_broker_candles', {'limit': 50}),
+])
+def test_authorized_hits_skip_read_model_queries(monkeypatch, name, extra):
+    from app.api.v1 import live_deployments as routes
+    deployment = SimpleNamespace(id=uuid4(), status='RUNNING')
+    auth = AsyncMock(return_value=deployment)
+    response = {'success': True, 'data': {'cached': True}}
+    read = AsyncMock(return_value=response)
+    db = SimpleNamespace(execute=AsyncMock())
+    summary = AsyncMock()
+    monkeypatch.setattr(routes, 'get_deployment_or_404', auth)
+    monkeypatch.setattr(routes, 'read_observer_cache', read)
+    monkeypatch.setattr(routes, '_summary', summary)
+    result = asyncio.run(getattr(routes, name)(deployment_id=deployment.id, db=db,
+                        current_user={'user_id': str(uuid4())}, **extra))
+    assert result is response
+    auth.assert_awaited_once()
+    db.execute.assert_not_awaited()
+    summary.assert_not_awaited()
+
+
+def test_latest_latency_miss_then_hit_preserves_response_and_saves_query(monkeypatch):
+    from app.api.v1 import live_deployments as routes
+    deployment = SimpleNamespace(id=uuid4(), status='RUNNING')
+    auth = AsyncMock(return_value=deployment)
+    client = SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock())
+    db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)))
+    monkeypatch.setattr(routes, 'get_deployment_or_404', auth)
+    monkeypatch.setattr(cache, 'redis_manager', SimpleNamespace(client=client))
+    async def check():
+        user = {'user_id': str(uuid4())}
+        miss = await routes.get_deployment_latest_latency(deployment.id, db=db, current_user=user)
+        client.get.return_value = client.set.call_args.args[1]
+        hit = await routes.get_deployment_latest_latency(deployment.id, db=db, current_user=user)
+        assert hit == miss
+        assert auth.await_count == 2
+        db.execute.assert_awaited_once()
+    asyncio.run(check())
+
+
+def test_cache_store_propagates_cancellation(monkeypatch):
+    client = SimpleNamespace(set=AsyncMock(side_effect=asyncio.CancelledError()))
+    monkeypatch.setattr(cache, 'redis_manager', SimpleNamespace(client=client))
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(cache.store_observer_cache('key', {'success': True}))
+
+
+def test_health_batch_propagates_outage_and_cancellation():
+    client = SimpleNamespace(mget=AsyncMock(side_effect=OSError('unavailable')))
+    with pytest.raises(OSError):
+        asyncio.run(LiveEventBus(client).get_health_many(('a',)))
+    client.mget.side_effect = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(LiveEventBus(client).get_health_many(('a',)))

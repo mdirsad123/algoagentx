@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Copy, Lock, ShieldCheck } from "lucide-react";
 import { FieldHelpTooltip } from "@/components/common/FieldHelpTooltip";
@@ -228,9 +228,14 @@ function InputBox(props: React.InputHTMLAttributes<HTMLInputElement>) {
 
 export default function LiveDeploymentSettingsPage() {
   const { deploymentId } = useParams<{ deploymentId: string }>();
-  const router = useRouter();
   const { showToast } = useToast();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadVersion, setLoadVersion] = useState(0);
+  const [runtimeLoaded, setRuntimeLoaded] = useState(false);
+  const original = useRef<Record<string, any> | null>(null);
+  const initialEditable = useRef<Record<string, any>>({});
+  const compatibilityController = useRef<AbortController | null>(null);
   const [saving, setSaving] = useState(false);
   const [deploymentStatus, setDeploymentStatus] = useState<string>("DRAFT");
   const [brokers, setBrokers] = useState<BrokerAccount[]>([]);
@@ -275,8 +280,8 @@ export default function LiveDeploymentSettingsPage() {
   const isUpstox = (selectedBroker?.broker_name || selectedBroker?.broker_code || "").toUpperCase() === "UPSTOX";
   const isTradeLocker = (selectedBroker?.broker_code || selectedBroker?.broker_name || "").toUpperCase() === "TRADELOCKER";
   const isRunning = deploymentStatus === "RUNNING";
-  const isFunded = fundedStatus?.account_policy_type === "FUNDED";
-  const fundedRiskLocked = isRunning || Number(summary?.metrics?.open_positions || 0) > 0;
+  const isFunded = original.current?.account_policy_type === "FUNDED";
+  const fundedRiskLocked = isRunning || !summary || Number(summary.metrics?.open_positions || 0) > 0;
   const isPaperDeprecated = form.mode === "PAPER";
   const selectedMasterInstrument = useMemo(() => isTradeLocker ? masterForBrokerSymbol(form.broker_symbol || form.instrument, marketInstruments) : findSelectedMasterInstrument(form.instrument, marketInstruments), [form.instrument, form.broker_symbol, marketInstruments, isTradeLocker]);
   const accountMetrics = summary?.metrics || null;
@@ -301,8 +306,9 @@ export default function LiveDeploymentSettingsPage() {
   const brokerMappingLabel = form.instrument_key && (isUpstox || selectedMarketCode.includes("INDIAN")) ? `Instrument key: ${form.instrument_key}` : `Broker symbol: ${form.broker_symbol || form.instrument}`;
 
   useEffect(() => {
+    const controller = new AbortController();
     const loadSymbols = async () => {
-      if ((form.mode !== "DEMO" && form.mode !== "LIVE") || !form.broker_account_id) { setSymbolOptions([]); setSymbolLoadError(null); return; }
+      if (!selectedBroker || isRunning || isFunded || (form.mode !== "DEMO" && form.mode !== "LIVE") || !form.broker_account_id) { setSymbolOptions([]); setSymbolLoadError(null); return; }
       try {
         setLoadingSymbols(true);
         setSymbolLoadError(null);
@@ -311,27 +317,57 @@ export default function LiveDeploymentSettingsPage() {
         // the previous instrument's prefix. Keep other broker UIs unchanged.
         const tradeLocker = provider === "TRADELOCKER";
         const query = tradeLocker ? "" : (form.instrument ? form.instrument.replace(/m$/i, "").slice(0, 6) : "");
-        const rows = await liveTradingApi.listBrokerSymbols(form.broker_account_id, query, tradeLocker ? 5000 : 200);
+        const rows = await liveTradingApi.listBrokerSymbols(form.broker_account_id, query, tradeLocker ? 5000 : 200, controller.signal);
+        if (controller.signal.aborted) return;
         const usable = rows.filter((row) => row?.symbol && row.success !== false);
         setSymbolOptions(usable);
         if (tradeLocker && !usable.length) setSymbolLoadError("The selected TradeLocker account did not return any broker instruments.");
       } catch (error: any) {
+        if (controller.signal.aborted) return;
         setSymbolOptions([]);
         setSymbolLoadError(String(error?.message || "Could not fetch instruments from broker"));
-      } finally { setLoadingSymbols(false); }
+      } finally { if (!controller.signal.aborted) setLoadingSymbols(false); }
     };
     loadSymbols();
-  }, [form.mode, form.broker_account_id, selectedBroker]);
+    return () => controller.abort();
+  }, [form.mode, form.broker_account_id, selectedBroker, isRunning, isFunded]);
+
+  useEffect(() => () => compatibilityController.current?.abort(), [deploymentId]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
     const load = async () => {
+      setLoading(true);
+      setLoadError(null);
       try {
-        const [row, brokerRows, instrumentRows, summaryRow, compatRow] = await Promise.all([liveTradingApi.getDeployment(deploymentId), liveTradingApi.listBrokerAccounts(), liveTradingApi.listMarketInstruments(), liveTradingApi.getDeploymentSummary(deploymentId, { refreshBroker: false }).catch(() => null), liveTradingApi.runCompatibilityCheck(deploymentId).catch(() => null)]);
-        setBrokers(brokerRows);
-        setMarketInstruments(instrumentRows);
+        const row = await liveTradingApi.getDeployment(deploymentId, { signal: controller.signal });
+        if (!active) return;
+        original.current = row;
         setDeploymentStatus(row.status);
-        setSummary(summaryRow);
-        const loadedFunded = summaryRow?.funded || (row.account_policy_type === "FUNDED" ? await liveTradingApi.getFundedStatus(deploymentId).catch(() => null) : null);
+        setRuntimeLoaded(false);
+        liveTradingApi.getDeploymentRuntimeSettings(deploymentId).then((config) => {
+          if (!active) return;
+          setForm((current) => ({ ...current,
+            sl_mode: config.sl_tp?.sl_mode || current.sl_mode,
+            atr_period: Number(config.sl_tp?.atr_period ?? current.atr_period),
+            atr_multiplier: Number(config.sl_tp?.atr_multiplier ?? current.atr_multiplier),
+            swing_lookback: Number(config.sl_tp?.swing_lookback ?? current.swing_lookback),
+            break_even_enabled: Boolean(config.trade_management?.break_even_enabled),
+            break_even_trigger_r: Number(config.trade_management?.break_even_trigger_r ?? current.break_even_trigger_r),
+            trailing_enabled: Boolean(config.trade_management?.trailing_enabled),
+            trailing_mode: config.trade_management?.trailing_mode || current.trailing_mode,
+            trail_start_r: Number(config.trade_management?.trail_start_r ?? current.trail_start_r),
+            trail_atr_multiplier: Number(config.trade_management?.trail_atr_multiplier ?? current.trail_atr_multiplier),
+          }));
+          setRuntimeLoaded(true);
+        }).catch(() => { if (active) showToast("Strategy runtime settings unavailable. Configuration remains editable; preview is disabled until refresh.", "warning"); });
+        const loadedFunded = row.account_policy_type === "FUNDED" ? {
+          account_policy_type: "FUNDED", risk_mode: row.funded_risk_mode,
+          fixed_risk_pct: row.funded_fixed_risk_pct, safety_buffer_pct: row.funded_safety_buffer_pct,
+          configured_max_risk_pct: row.funded_configured_max_risk_pct,
+          risk_plan: (row as any).funded_risk_plan_snapshot,
+        } as FundedLiveStatus : null;
         if (loadedFunded && "account_policy_type" in loadedFunded && loadedFunded.account_policy_type === "FUNDED") {
           setFundedStatus(loadedFunded as FundedLiveStatus);
           setFundedRiskMode(String((loadedFunded as FundedLiveStatus).risk_mode || row.funded_risk_mode || "DYNAMIC").toUpperCase() === "FIXED" ? "FIXED" : "DYNAMIC");
@@ -349,8 +385,8 @@ export default function LiveDeploymentSettingsPage() {
         } else setFundedStatus(null);
         setPhaseAdvanceBrokerId(row.broker_account_id || "");
         setInitialRouting({ broker_account_id: row.broker_account_id || "", instrument: normalizeSymbol(row.instrument), broker_symbol: normalizeSymbol(row.broker_symbol) });
-        if (compatRow) setCompatibility(compatRow);
-        setForm((prev) => ({ ...prev,
+        setForm((prev) => {
+          const loadedForm: FormState = { ...prev,
           name: row.name, instrument: row.instrument, timeframe: row.timeframe, mode: (row.mode === "LIVE" ? "LIVE" : row.mode === "DEMO" ? "DEMO" : "PAPER"), broker_account_id: row.broker_account_id || "",
           capital: Number(row.capital), risk_per_trade: Number(row.risk_per_trade), rr_ratio: Number(row.rr_ratio), price_risk_pct: Number(row.price_risk_pct),
           max_daily_loss: row.max_daily_loss == null ? null : Number(row.max_daily_loss), max_trades_per_day: row.max_trades_per_day == null ? null : Number(row.max_trades_per_day), max_open_positions: Number(row.max_open_positions), partial_exit_enabled: Boolean(row.partial_exit_enabled), partial_exit_at_r: Number(row.partial_exit_at_r ?? 1.7), partial_exit_percent: Number(row.partial_exit_percent ?? 0.9),
@@ -359,21 +395,44 @@ export default function LiveDeploymentSettingsPage() {
           order_variety: row.order_variety || "REGULAR", quantity_mode: row.quantity_mode || "FIXED_QTY", fixed_quantity: Number(row.fixed_quantity ?? 1), max_quantity: Number(row.max_quantity ?? 1),
           max_order_value: Number(row.max_order_value ?? 5000), square_off_time: row.square_off_time || "15:15", upstox_order_confirmed: Boolean(row.upstox_order_confirmed),
           copy_trading_enabled: Boolean(row.copy_trading_enabled), copy_broker_account_ids: Array.isArray(row.copy_broker_account_ids) ? row.copy_broker_account_ids.map(String) : [],
-        }));
-      } catch (error: any) { showToast(error.message || "Failed to load settings", "error"); } finally { setLoading(false); }
+          };
+          initialEditable.current = { ...loadedForm };
+          return loadedForm;
+        });
+      } catch (error: any) {
+        if (active) setLoadError(error.message || "Failed to load settings");
+      } finally { if (active) setLoading(false); }
     };
     if (deploymentId) load();
-  }, [deploymentId]);
+    return () => { active = false; controller.abort(); };
+  }, [deploymentId, loadVersion]);
+
+  // Optional reference data never holds the configuration form behind a spinner.
+  useEffect(() => {
+    let active = true;
+    if (!deploymentId) return;
+    liveTradingApi.listBrokerAccounts().then((rows) => { if (active) setBrokers(rows); })
+      .catch((error) => { if (active) showToast(`Broker accounts: ${error.message}`, "error"); });
+    liveTradingApi.listMarketInstruments().then((rows) => { if (active) setMarketInstruments(rows); })
+      .catch((error) => { if (active) showToast(`Instrument reference: ${error.message}`, "warning"); });
+    liveTradingApi.getDeploymentSummary(deploymentId, { refreshBroker: false }).then((row) => {
+      if (active) { setSummary(row); if (row.funded) setFundedStatus(row.funded as FundedLiveStatus); }
+    }).catch(() => { /* Capital/position diagnostics are optional, not editable configuration. */ });
+    return () => { active = false; };
+  }, [deploymentId, loadVersion]);
 
   const runCompatibility = async () => {
     if (!deploymentId) return;
+    compatibilityController.current?.abort();
+    const controller = new AbortController();
+    compatibilityController.current = controller;
     try {
       setCompatBusy(true);
-      const result = await liveTradingApi.runCompatibilityCheck(deploymentId);
+      const result = await liveTradingApi.runCompatibilityCheck(deploymentId, controller.signal);
       setCompatibility(result);
       showToast(result.summary || "Live compatibility checked", result.status === "FAIL" ? "error" : result.status === "WARNING" ? "warning" : "success");
     } catch (error: any) {
-      showToast(error.message || "Compatibility check failed", "error");
+      if (!controller.signal.aborted) showToast(error.message || "Compatibility check failed", "error");
     } finally {
       setCompatBusy(false);
     }
@@ -398,7 +457,10 @@ export default function LiveDeploymentSettingsPage() {
     if (section === "risk") {
       if (key === "initial_capital") setForm((prev) => ({ ...prev, capital: Number(value) }));
       else if (key === "risk_percent") setForm((prev) => ({ ...prev, risk_per_trade: Number(value) }));
-      else if (key === "position_size_mode") setForm((prev) => ({ ...prev, quantity_mode: value === "RISK_BASED" ? "RISK_BASED" : "FIXED_QTY" }));
+      else if (key === "position_size_mode") {
+        if (value === "FIXED_LOT") { showToast("Fixed Lot cannot be saved by this deployment API. Use Risk Based or Fixed Quantity.", "warning"); return; }
+        setForm((prev) => ({ ...prev, quantity_mode: value === "RISK_BASED" ? "RISK_BASED" : "FIXED_QTY" }));
+      }
       else if (key === "fixed_quantity") setForm((prev) => ({ ...prev, fixed_quantity: Number(value || 0) }));
       else if (key === "max_lot_cap") setForm((prev) => ({ ...prev, mt5_demo_max_lot: value == null || value === "" ? null : Number(value) }));
       else if (key === "max_quantity_cap") setForm((prev) => ({ ...prev, max_quantity: Number(value || 0) }));
@@ -421,6 +483,7 @@ export default function LiveDeploymentSettingsPage() {
   };
 
   const runPreview = async (mode: "AUTO_LATEST_PRICE" | "MANUAL") => {
+    if (!runtimeLoaded) { showToast("Wait for strategy runtime settings or refresh before previewing.", "warning"); return; }
     try {
       setPreviewLoading(true);
       const result = await liveTradingApi.previewLiveOrder({
@@ -455,20 +518,12 @@ export default function LiveDeploymentSettingsPage() {
     if (error) { showToast(error, "error"); return; }
     try {
       setSaving(true);
-      if (form.auto_trade_enabled) {
-        const compat = await liveTradingApi.runCompatibilityCheck(deploymentId);
-        setCompatibility(compat);
-        if (compat.status === "FAIL") {
-          showToast(compat.summary || "Live compatibility failed. Fix failed checks before enabling Auto Trade.", "error");
-          return;
-        }
-      }
       const routingChanged = String(form.broker_account_id || "") !== String(initialRouting.broker_account_id || "") || normalizeSymbol(form.instrument) !== normalizeSymbol(initialRouting.instrument) || (isTradeLocker && normalizeSymbol(form.broker_symbol) !== normalizeSymbol(initialRouting.broker_symbol));
       if (isTradeLocker && routingChanged && (!selectedBrokerSymbol || normalizeSymbol(selectedBrokerSymbol.symbol) !== normalizeSymbol(form.broker_symbol))) {
         showToast("Select an exact symbol fetched from the connected TradeLocker account before saving.", "error");
         return;
       }
-      await liveTradingApi.updateDeployment(deploymentId, {
+      const candidate = {
         name: form.name, mode: form.mode, broker_account_id: form.broker_account_id || null, instrument: normalizeSymbol(form.instrument), timeframe: form.timeframe,
         ...(isTradeLocker && routingChanged ? { broker_symbol: normalizeSymbol(form.broker_symbol), instrument_key: normalizeSymbol(form.broker_symbol) }
            : routingChanged ? { broker_symbol: null, instrument_key: null, exchange: null, segment: null } : {}),
@@ -477,10 +532,28 @@ export default function LiveDeploymentSettingsPage() {
         auto_runner_enabled: form.auto_runner_enabled, copy_trading_enabled: form.copy_trading_enabled, copy_broker_account_ids: form.copy_broker_account_ids, mt5_demo_max_lot: form.mt5_demo_max_lot,
         product_type: form.product_type, order_variety: form.order_variety, quantity_mode: form.quantity_mode, fixed_quantity: form.fixed_quantity,
         max_quantity: form.max_quantity, max_order_value: form.max_order_value, square_off_time: form.square_off_time, upstox_order_confirmed: form.upstox_order_confirmed,
-      });
+      };
+      // PATCH only user changes: do not overwrite concurrent runner/config state
+      // or revalidate unchanged broker routing on a name/copy-target edit.
+      const changes = Object.fromEntries(Object.entries(candidate).filter(([key, value]) => {
+        const mappingField = ["broker_symbol", "instrument_key", "exchange", "segment"].includes(key);
+        if (!(routingChanged && mappingField) && key in form && JSON.stringify(form[key as keyof FormState]) === JSON.stringify(initialEditable.current[key])) return false;
+        const previous = original.current?.[key];
+        if (Array.isArray(value)) return JSON.stringify(value) !== JSON.stringify(previous || []);
+        if (value == null || previous == null) return value != previous;
+        if (typeof value === "number") return Number(previous) !== value;
+        return String(previous) !== String(value);
+      }));
+      const updated = await liveTradingApi.updateDeployment(deploymentId, changes);
+      original.current = updated;
+      initialEditable.current = { ...form };
+      setDeploymentStatus(updated.status);
+      setInitialRouting({ broker_account_id: updated.broker_account_id || "", instrument: normalizeSymbol(updated.instrument), broker_symbol: normalizeSymbol(updated.broker_symbol) });
+      setCompatibility(null);
       showToast("Deployment settings updated", "success");
-      router.push(`/live-trading/${deploymentId}`);
-    } catch (error: any) { showToast(error.message || "Failed to update settings", "error"); } finally { setSaving(false); }
+    } catch (error: any) {
+      showToast(error.code === "ECONNABORTED" ? "Save timed out; the result is unknown. Refresh settings before retrying to confirm whether it saved." : error.message || "Failed to update settings", "error");
+    } finally { setSaving(false); }
   };
 
   const saveFundedRiskPlan = async () => {
@@ -520,7 +593,9 @@ export default function LiveDeploymentSettingsPage() {
     <PageShell>
       <PageHeader title="Safe Deployment Settings" subtitle="Beginner-safe presets, guarded risk settings, and automatic order preview before auto trading." actions={<Link href={`/live-trading/${deploymentId}`}><Button variant="outline" className="gap-2 border-white/10 bg-white/5 text-white hover:bg-white/10"><ArrowLeft className="h-4 w-4" />Back</Button></Link>} />
       <GlassCard className="p-6" hoverEffect={false}>
-        {loading ? <p className="text-purple-100">Loading settings...</p> : (
+        {loading ? <p role="status" className="text-muted-foreground">Loading settings...</p> : loadError ? (
+          <div role="alert" className="space-y-4 text-foreground"><p>{loadError}</p><Button type="button" onClick={() => setLoadVersion((value) => value + 1)}>Retry loading settings</Button></div>
+        ) : (
           <form onSubmit={submit} className="space-y-6">
             <LiveCompatibilityCard result={compatibility} loading={compatBusy} onRun={runCompatibility} compact />
             <LockedNote />
@@ -653,7 +728,7 @@ export default function LiveDeploymentSettingsPage() {
                 <FieldShell label="Partial Exit"><label className="flex h-11 items-center gap-3 rounded-xl border border-border/50 bg-card/20 px-3"><input type="checkbox" checked={form.partial_exit_enabled} onChange={(e) => setForm({ ...form, partial_exit_enabled: e.target.checked })} /><span>{form.partial_exit_enabled ? "Enabled" : "Disabled"}</span></label></FieldShell>
                 {form.partial_exit_enabled && <FieldShell label="Partial Exit At R"><SelectBox value={form.partial_exit_at_r} onChange={(e) => setForm({ ...form, partial_exit_at_r: Number(e.target.value) })}>{[0.5,1,1.25,1.35,1.5,1.65,1.7,1.75,1.8,1.9,2].map((v)=><option key={v} value={v}>{v.toFixed(2)}R</option>)}</SelectBox></FieldShell>}
                 {form.partial_exit_enabled && <FieldShell label="Partial Exit Percent" hint="If the requested runner is below the Instrument Master broker minimum/step, AlgoAgentX skips the partial and leaves the full position to its original TP."><SelectBox value={form.partial_exit_percent} onChange={(e) => setForm({ ...form, partial_exit_percent: Number(e.target.value) })}>{[[0.25,"25%"],[0.5,"50%"],[0.75,"75%"],[0.9,"90%"],[0.95,"95%"]].map(([v,label])=><option key={String(v)} value={Number(v)}>{label}</option>)}</SelectBox></FieldShell>}
-                <FieldShell label="SL Mode"><SelectBox value={liveSlMode} onChange={(e) => setForm({ ...form, sl_mode: e.target.value })}>{SL_MODES.map((value) => <option key={value} value={value}>{value.replace(/_/g, " ")}</option>)}</SelectBox></FieldShell>
+                <FieldShell label="SL Mode" hint="Read-only strategy runtime setting; deployment saves do not persist SL-mode overrides."><SelectBox disabled value={liveSlMode}>{SL_MODES.map((value) => <option key={value} value={value}>{value.replace(/_/g, " ")}</option>)}</SelectBox></FieldShell>
                 {!isFunded && <FieldShell label="Max Daily Loss" hint={form.max_daily_loss == null ? "None = no extra AlgoAgentX daily-loss cap." : undefined}><SelectBox value={selectValue(form.max_daily_loss, dailyLossOptions)} onChange={(e) => e.target.value === "NONE" ? setForm({ ...form, max_daily_loss: null }) : e.target.value !== "CUSTOM" ? setForm({ ...form, max_daily_loss: Number(e.target.value) }) : setAdvancedMode(true)}><option value="NONE">None / Unlimited</option>{dailyLossOptions.map((value) => <option key={value} value={value}>{money(value, currency)}</option>)}<option value="CUSTOM">Custom</option></SelectBox>{advancedMode && selectValue(form.max_daily_loss, dailyLossOptions) === "CUSTOM" && <InputBox type="number" min="0" value={form.max_daily_loss ?? ""} onChange={(e) => setForm({ ...form, max_daily_loss: e.target.value === "" ? null : Number(e.target.value) })} />}</FieldShell>}
                 <FieldShell label="Max Trades / Day" hint={form.max_trades_per_day == null ? "None = no extra daily trade-count cap; valid strategy signals can proceed." : undefined}><SelectBox value={form.max_trades_per_day == null ? "NONE" : String(form.max_trades_per_day)} onChange={(e) => setForm({ ...form, max_trades_per_day: e.target.value === "NONE" ? null : Number(e.target.value) })}><option value="NONE">None / Strategy signals</option>{MAX_TRADES.map((value) => <option key={value} value={value}>{value}</option>)}</SelectBox></FieldShell>
                 <FieldShell label="Broker Max Lot (MT5/cTrader)" hint={form.mt5_demo_max_lot == null ? "None = no extra AlgoAgentX lot cap. Risk sizing still respects broker-native min/step/max limits." : undefined}><SelectBox value={selectValue(form.mt5_demo_max_lot, MT5_LOT_CAPS)} onChange={(e) => e.target.value === "NONE" ? setForm({ ...form, mt5_demo_max_lot: null }) : e.target.value !== "CUSTOM" ? setForm({ ...form, mt5_demo_max_lot: Number(e.target.value) }) : setAdvancedMode(true)}><option value="NONE">None / Broker native max</option>{MT5_LOT_CAPS.map((value) => <option key={value} value={value}>{value.toFixed(2)}</option>)}<option value="CUSTOM">Custom Advanced</option></SelectBox>{advancedMode && selectValue(form.mt5_demo_max_lot, MT5_LOT_CAPS) === "CUSTOM" && <InputBox type="number" step="0.01" min="0.01" value={form.mt5_demo_max_lot ?? ""} onChange={(e) => setForm({ ...form, mt5_demo_max_lot: e.target.value === "" ? null : Number(e.target.value) })} />}</FieldShell>
@@ -669,6 +744,8 @@ export default function LiveDeploymentSettingsPage() {
                 <div className="flex flex-wrap gap-2">{RUNTIME_TABS.map((tab) => <button key={tab.value} type="button" onClick={() => setLiveRuntimeTab(tab.value)} className={`rounded-xl border px-3 py-2 text-xs font-medium transition ${liveRuntimeTab === tab.value ? "border-primary/60 bg-primary/20 text-primary-foreground" : "border-white/10 bg-white/5 text-purple-100 hover:bg-white/10"}`}>{tab.label}</button>)}</div>
               </div>
               <div className="mt-5">
+                {(["sl_tp", "trade_management"] as RuntimeTab[]).includes(liveRuntimeTab) && <p className="mb-3 text-sm text-muted-foreground">Strategy-managed settings below are read-only: this deployment API cannot persist SL mode, ATR, break-even or trailing overrides. Edit RR and partial exits using the deployment controls above.</p>}
+                <fieldset disabled={(["sl_tp", "trade_management"] as RuntimeTab[]).includes(liveRuntimeTab)}>
                 <RuntimeSettingsForm
                   activeTab={liveRuntimeTab}
                   config={runtimeConfig() as any}
@@ -678,6 +755,7 @@ export default function LiveDeploymentSettingsPage() {
                   supportsIntradaySquareOff={supportsLiveSquareOff}
                   mode="live"
                 />
+                </fieldset>
               </div>
               {supportsLiveSquareOff && <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
                 {isUpstox && <><FieldShell label="Upstox Instrument Key"><InputBox disabled value={form.instrument_key} placeholder="NSE_EQ|INE040A01034" /></FieldShell><FieldShell label="Exchange"><InputBox disabled value={form.exchange} /></FieldShell><FieldShell label="Segment"><InputBox disabled value={form.segment} /></FieldShell></>}

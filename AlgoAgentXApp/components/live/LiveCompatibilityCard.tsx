@@ -14,6 +14,7 @@ function badgeClass(status?: string) {
 }
 
 function titleFor(status?: string) {
+  if (!status) return "Not checked";
   const value = String(status || "FAIL").toUpperCase();
   if (value === "PASS") return "Live compatible";
   if (value === "WARNING") return "Compatible with warnings";
@@ -51,7 +52,7 @@ export function LiveCompatibilityCard({
           <Badge className={badgeClass(result?.status)}>{titleFor(result?.status)}</Badge>
           <Badge className="border-white/10 bg-white/10 text-purple-100">{failing} fail</Badge>
           <Badge className="border-white/10 bg-white/10 text-purple-100">{warnings} warning</Badge>
-          {onRun && <Button disabled={loading} onClick={onRun} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{loading ? "Checking..." : "Run Check"}</Button>}
+          {onRun && <Button type="button" disabled={loading} onClick={onRun} variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10">{loading ? "Checking in background..." : "Run Check"}</Button>}
         </div>
       </div>
       {checks.length > 0 ? (

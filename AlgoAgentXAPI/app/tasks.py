@@ -905,6 +905,44 @@ def warm_live_strategy_history_task(self, deployment_id: str, required_count: in
             r.close()
 
 
+@celery_app.task(name="app.tasks.run_live_compatibility_task", bind=True, time_limit=1800)
+def run_live_compatibility_task(self, deployment_id: str):
+    """Explicit deep compatibility on the existing isolated validation queue."""
+    from uuid import UUID
+    import redis
+    from sqlalchemy import select
+    from .core.config import settings
+    from .db.models import StrategyDeployment
+    from .services.live.compatibility_service import run_live_compatibility_check
+    from .services.live.settings_validation import configuration_fingerprint, COMPATIBILITY_TTL
+
+    async def execute():
+        engine, sessions = _fresh_async_engine_and_sessionmaker()
+        try:
+            async with sessions() as db:
+                row = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == UUID(deployment_id)))).scalar_one()
+                fingerprint = await configuration_fingerprint(db, row)
+                result = await run_live_compatibility_check(db, UUID(deployment_id))
+                return fingerprint, result
+        finally:
+            await engine.dispose()
+
+    client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+    try:
+        client.delete(f'live:compatibility:approved:{deployment_id}')
+        fingerprint, result = asyncio.run(execute())
+        if result.get('status') in {'PASS', 'WARNING'}:
+            client.set(f'live:compatibility:approved:{deployment_id}',
+                       json.dumps({'fingerprint': fingerprint, 'status': result['status']}), ex=COMPATIBILITY_TTL)
+        return json.loads(json.dumps(result, default=str))
+    finally:
+        try:
+            client.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+                        1, f'live:compatibility:active:{deployment_id}', str(self.request.id))
+        finally:
+            client.close()
+
+
 @celery_app.task(name="app.tasks.run_live_full_dry_test_task", bind=True)
 def run_live_full_dry_test_task(self, deployment_id: str):
     """Evaluate full live dry test off the HTTP event loop, without order placement.

@@ -159,7 +159,7 @@ export const liveTradingApi = {
   },
 
   async listBrokerAccounts(): Promise<BrokerAccount[]> {
-    const response = await axiosInstance.get<Envelope<BrokerAccount[]>>("/api/v1/broker-accounts");
+    const response = await axiosInstance.get<Envelope<BrokerAccount[]>>("/api/v1/broker-accounts", { timeout: 15000 });
     return toArray<BrokerAccount>(unwrap(response.data));
   },
 
@@ -234,14 +234,15 @@ export const liveTradingApi = {
     return toArray<BrokerMt5Position>(unwrap(response.data));
   },
 
-  async listBrokerSymbols(id: string, query = "", limit = 200): Promise<BrokerSymbol[]> {
-    const response = await axiosInstance.get<Envelope<BrokerSymbol[]>>(`/api/v1/broker-accounts/${id}/symbols`, { params: { query, limit } });
+  async listBrokerSymbols(id: string, query = "", limit = 200, signal?: AbortSignal): Promise<BrokerSymbol[]> {
+    const response = await axiosInstance.get<Envelope<BrokerSymbol[]>>(`/api/v1/broker-accounts/${id}/symbols`, { params: { query, limit }, timeout: 15000, signal });
     return toArray<BrokerSymbol>(unwrap(response.data));
   },
 
 
   async listMarketInstruments(search = ""): Promise<MarketInstrument[]> {
     const response = await axiosInstance.get<Envelope<MarketInstrument[]>>("/api/v1/market-master/instruments", {
+      timeout: 15000,
       params: search ? { search } : undefined,
     });
     return toArray<MarketInstrument>(unwrap(response.data));
@@ -273,13 +274,19 @@ export const liveTradingApi = {
     await axiosInstance.delete(`/api/v1/live/deployments/${id}`);
   },
 
-  async getDeployment(id: string): Promise<StrategyDeployment> {
-    const response = await axiosInstance.get<Envelope<StrategyDeployment>>(`/api/v1/live/deployments/${id}`);
+  async getDeployment(id: string, options?: { signal?: AbortSignal }): Promise<StrategyDeployment> {
+    const response = await axiosInstance.get<Envelope<StrategyDeployment>>(`/api/v1/live/deployments/${id}`, { timeout: 15000, signal: options?.signal });
+    return unwrap(response.data);
+  },
+
+  async getDeploymentRuntimeSettings(id: string): Promise<Record<string, any>> {
+    const response = await axiosInstance.get<Envelope<Record<string, any>>>(`/api/v1/live/deployments/${id}/settings/runtime`, { timeout: 15000 });
     return unwrap(response.data);
   },
 
   async getDeploymentSummary(id: string, options?: { refreshBroker?: boolean }): Promise<LiveDeploymentSummary> {
     const response = await axiosInstance.get<Envelope<LiveDeploymentSummary>>(`/api/v1/live/deployments/${id}/summary`, {
+      timeout: 15000,
       // Summary polling is observer-only. Broker refresh is an explicit/manual
       // action; silently opening cTrader requests from every page poll can
       // compete with the persistent market worker.
@@ -344,9 +351,21 @@ export const liveTradingApi = {
     return unwrap(response.data);
   },
 
-  async runCompatibilityCheck(id: string): Promise<LiveCompatibilityResult> {
-    const response = await axiosInstance.post<Envelope<LiveCompatibilityResult>>(`/api/v1/live/deployments/${id}/compatibility-check`, undefined, { timeout: HEAVY_API_TIMEOUT_MS });
-    return unwrap(response.data);
+  async runCompatibilityCheck(id: string, signal?: AbortSignal): Promise<LiveCompatibilityResult> {
+    const response = await axiosInstance.post<Envelope<{ job_id: string }>>(`/api/v1/live/deployments/${id}/compatibility-check`, undefined, { timeout: 15000, signal });
+    const job = unwrap(response.data);
+    if (!job?.job_id) throw new Error("Compatibility queue returned no job. Please retry.");
+    const deadline = Date.now() + 30 * 60 * 1000;
+    while (Date.now() < deadline) {
+      if (signal?.aborted) throw new Error("Compatibility polling cancelled");
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const statusResponse = await axiosInstance.get<Envelope<{ status: string; result?: LiveCompatibilityResult; error?: string }>>(
+        `/api/v1/live/deployments/${id}/compatibility-check/jobs/${job.job_id}`, { timeout: 10000, signal });
+      const jobStatus = unwrap(statusResponse.data);
+      if (jobStatus.status === "SUCCESS" && jobStatus.result) return jobStatus.result;
+      if (["FAILURE", "REVOKED"].includes(jobStatus.status)) throw new Error(jobStatus.error || "Compatibility check failed. Settings remain editable.");
+    }
+    throw new Error("Compatibility check is still queued or running. Settings remain editable; retry Check to reconnect to the active job.");
   },
 
   async createDeploymentManualSignal(id: string, payload: { signal_type?: string; signal?: string; price: number; reason?: string | null }): Promise<ManualSignalResponse> {
@@ -473,7 +492,7 @@ export const liveTradingApi = {
   },
 
   async updateDeployment(id: string, payload: Partial<DeploymentPayload>): Promise<StrategyDeployment> {
-    const response = await axiosInstance.patch<Envelope<StrategyDeployment>>(`/api/v1/live/deployments/${id}`, payload);
+    const response = await axiosInstance.patch<Envelope<StrategyDeployment>>(`/api/v1/live/deployments/${id}`, payload, { timeout: 15000 });
     return unwrap(response.data);
   },
 

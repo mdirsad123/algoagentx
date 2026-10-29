@@ -51,6 +51,7 @@ from ...services.live_trading.paper_position_manager import process_paper_positi
 from ...services.live_trading.final_qa_service import build_final_live_qa, run_paper_order_test, run_demo_micro_order_test
 from ...services.live.live_event_bus import LiveEventBus
 from ...services.live.observer_cache import observer_key, read_observer_cache, store_observer_cache
+from ...services.live.settings_validation import changed_settings, require_compatibility_evidence
 from ...services.live.deployment_lock import try_deployment_xact_lock
 from ...services.billing.live_subscription_gate import (
     build_live_trading_access_status,
@@ -1579,11 +1580,17 @@ async def get_deployment_readiness(deployment_id: UUID, db: AsyncSession = Depen
     return success_response(result, result.get("summary") or "Live readiness checked")
 
 
-@router.post("/{deployment_id}/compatibility-check")
+@router.post("/{deployment_id}/compatibility-check", status_code=202)
 async def check_deployment_live_compatibility(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     await get_deployment_or_404(db, deployment_id, current_user)
-    result = await run_live_compatibility_check(db, deployment_id)
-    return success_response(result, result.get("summary") or "Live compatibility checked")
+    job = await enqueue_dry_test(str(deployment_id), kind='compatibility')
+    return success_response(job, 'Compatibility check queued; settings remain editable')
+
+
+@router.get("/{deployment_id}/compatibility-check/jobs/{job_id}")
+async def get_deployment_compatibility_job(deployment_id: UUID, job_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    await get_deployment_or_404(db, deployment_id, current_user)
+    return success_response(await dry_test_status(str(deployment_id), str(job_id), kind='compatibility'))
 
 
 @router.get("/{deployment_id}/positions")
@@ -2258,10 +2265,18 @@ async def get_deployment(deployment_id: UUID, db: AsyncSession = Depends(get_db)
     return success_response(dump_one(StrategyDeploymentOut, row))
 
 
+@router.get("/{deployment_id}/settings/runtime")
+async def get_deployment_runtime_settings(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from ...services.live.order_preview_service import resolve_live_runtime_config
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    # Configuration resolution only: no candles, strategy execution or broker I/O.
+    return success_response(await resolve_live_runtime_config(db, deployment=row))
+
+
 @router.patch("/{deployment_id}")
 async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpdate, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     row = await get_deployment_or_404(db, deployment_id, current_user)
-    values = payload.model_dump(exclude_unset=True)
+    values = changed_settings(row, payload.model_dump(exclude_unset=True))
 
     def _locked_value_changed(field: str, incoming) -> bool:
         current = getattr(row, field, None)
@@ -2293,12 +2308,13 @@ async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpda
     # change the strategy, candle source, instrument or primary broker account.
     if values.get("copy_trading_enabled") and str(getattr(row, "account_policy_type", "STANDARD") or "STANDARD").upper() == "FUNDED":
         raise HTTPException(status_code=400, detail="Copy trading for FUNDED deployments requires per-target funded profiles and is disabled in this safe release.")
-    if "copy_broker_account_ids" in values:
-        requested = values.get("copy_broker_account_ids") or []
+    if {'copy_broker_account_ids', 'copy_trading_enabled', 'broker_account_id', 'mode'}.intersection(values):
+        requested = values.get("copy_broker_account_ids", row.copy_broker_account_ids) or []
         deduped = []
-        primary = await get_broker_account_or_404(db, row.broker_account_id, current_user) if row.broker_account_id else None
+        primary_id = values.get('broker_account_id', row.broker_account_id)
+        primary = await get_broker_account_or_404(db, primary_id, current_user) if primary_id else None
         for account_id in requested:
-            if str(account_id) == str(row.broker_account_id):
+            if str(account_id) == str(primary_id):
                 continue
             broker = await get_broker_account_or_404(db, account_id, current_user)
             if str(getattr(broker, "status", "") or "").upper() != "CONNECTED":
@@ -2308,7 +2324,7 @@ async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpda
             if str(account_id) not in {str(x) for x in deduped}:
                 deduped.append(account_id)
         values["copy_broker_account_ids"] = [str(x) for x in deduped]
-        if values.get("copy_trading_enabled") and not deduped:
+        if values.get("copy_trading_enabled", row.copy_trading_enabled) and not deduped:
             raise HTTPException(status_code=400, detail="Select at least one connected copy-trading target account.")
 
     funded_plan_fields = {"funded_risk_mode", "funded_fixed_risk_pct", "funded_safety_buffer_pct", "funded_configured_max_risk_pct"}
@@ -2317,7 +2333,8 @@ async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpda
 
     _validate_safe_deployment_values(values, row)
     if values.get("auto_trade_enabled") is True and not bool(getattr(row, "auto_trade_enabled", False)):
-        compatibility = await run_live_compatibility_check(db, row.id)
+        await require_compatibility_evidence(db, row, values)
+        compatibility = await run_live_compatibility_check(db, row.id, deep_strategy_check=False)
         if compatibility_failed(compatibility):
             failing = [c for c in compatibility.get("checks", []) if c.get("status") == "FAIL"]
             detail = failing[0].get("message") if failing else "Live compatibility check failed. Fix compatibility before enabling Auto Trade."
@@ -2331,7 +2348,7 @@ async def update_deployment(deployment_id: UUID, payload: StrategyDeploymentUpda
         await get_deployable_strategy_or_400(db, row.strategy_id, target_mode)
         if target_mode in {"DEMO", "LIVE"} and not target_broker_account_id:
             raise HTTPException(status_code=400, detail="Broker account is required for DEMO and LIVE deployments.")
-    if any(k in values for k in ["broker_account_id", "mode", "instrument", "exchange", "segment", "broker_symbol", "instrument_key", "max_daily_loss", "max_trades_per_day", "max_order_value"]):
+    if any(k in values for k in ["broker_account_id", "mode", "instrument", "exchange", "segment", "broker_symbol", "instrument_key"]):
         broker = await get_broker_account_or_404(db, target_broker_account_id, current_user) if target_broker_account_id else None
         merged_mapping = {
             "instrument": values.get("instrument", row.instrument),

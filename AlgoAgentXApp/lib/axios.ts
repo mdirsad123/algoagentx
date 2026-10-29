@@ -78,7 +78,9 @@ apiClient.interceptors.response.use(
       message = error.message;
     }
 
-    if (error.response?.status === 401 || error.response?.status === 403) {
+    // A permission denial is not an expired session. Preserve authentication on
+    // 403 so a settings validation/authorization failure cannot log users out.
+    if (error.response?.status === 401) {
       const isPublicRequest = (error.config as AxiosRequestConfig & { auth?: boolean } | undefined)?.auth === false;
       if (typeof window !== "undefined" && !isPublicRequest) {
         const pathname = window.location.pathname;
@@ -96,7 +98,7 @@ apiClient.interceptors.response.use(
           window.setTimeout(() => window.location.replace(target), 0);
         }
       }
-      message = error.response?.status === 403 ? "You do not have permission to access this page." : "Your session has expired. Please sign in again.";
+      message = "Your session has expired. Please sign in again.";
     }
 
     error.message = message;

@@ -68,12 +68,8 @@ export default function AdminLiveTradingDetailPage() {
   const load = async () => {
     try {
       setLoading(true);
-      const [detail, compat] = await Promise.all([
-        liveTradingApi.adminGetLiveDeployment(deploymentId),
-        liveTradingApi.runCompatibilityCheck(deploymentId).catch(() => null),
-      ]);
+      const detail = await liveTradingApi.adminGetLiveDeployment(deploymentId);
       setData(detail);
-      if (compat) setCompatibility(compat);
       setLiveSyncInterval(String(detail.deployment?.live_sync_interval_seconds || 10));
     } catch (error: any) {
       showToast(error.message || "Failed to load admin deployment detail", "error");
