@@ -146,6 +146,12 @@ def test_copy_router_never_reads_expired_primary_orm_after_primary(monkeypatch):
 
     monkeypatch.setattr(execution_engine.settings, "live_copy_trading_enabled", True)
     monkeypatch.setattr(execution_engine, "_execute_signal_for_account", fake_executor)
+    async def fake_dispatch(**kwargs):
+        assert kwargs['account_id'] == copy_id
+        assert db.commit_count >= 1, 'primary must commit before concurrent child dispatch'
+        calls.append(SimpleNamespace(broker_account_id=copy_id))
+        return SimpleNamespace(id=uuid4(), status='FILLED')
+    monkeypatch.setattr(execution_engine, '_dispatch_copy_account', fake_dispatch)
     monkeypatch.setattr(execution_engine, "_log", fake_log)
     monkeypatch.setattr(execution_engine, "_canonical_copy_symbol", fake_canonical)
 
@@ -155,4 +161,4 @@ def test_copy_router_never_reads_expired_primary_orm_after_primary(monkeypatch):
     assert calls[0] is deployment
     assert calls[1].broker_account_id == copy_id
     assert signal.status == "EXECUTED"
-    assert db.commit_count == 1
+    assert db.commit_count == 2

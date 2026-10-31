@@ -116,6 +116,8 @@ class Settings(BaseSettings):
     live_legacy_runner_enabled: bool = Field(default=True, description="Keep the legacy scheduler available for rollback")
     live_tradelocker_candle_worker_enabled: bool = Field(default=False, description="Independent TradeLocker broker candle polling")
     live_copy_trading_enabled: bool = Field(default=True, description="Master kill switch for deployment copy-trading fan-out")
+    live_copy_max_concurrency: int = Field(default=4, ge=1, le=16, description="Concurrent account-isolated copy execution tasks")
+    live_copy_max_age_after_close_seconds: int = Field(default=60, ge=1, le=300, description="Copy entries expire relative to original candle close; never replay")
 
     live_candle_stream: str = Field(default="live:candle_closed", description="Redis Stream for closed-candle events")
     live_order_request_stream: str = Field(default="live:ctrader_order_requests", description="Redis Stream for persistent cTrader order requests")

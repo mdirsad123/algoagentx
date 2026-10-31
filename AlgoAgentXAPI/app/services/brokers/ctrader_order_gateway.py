@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import math
 from decimal import Decimal
 from typing import Any
 
@@ -11,6 +12,7 @@ from ...core.redis_manager import redis_manager
 from ..live.live_event_bus import LiveEventBus
 from ..live.live_latency_trace_service import LiveLatencyTraceService
 from .base import BrokerOrderRequest, BrokerOrderResult
+from .request_context import order_request_context, check_order_deadline
 
 
 def _result_from_payload(payload: dict[str, Any]) -> BrokerOrderResult:
@@ -75,6 +77,10 @@ async def submit_market_order(
             "comment": order_request.comment,
         },
     }
+    context = order_request_context.get()
+    if context is not None and math.isfinite(context.deadline):
+        check_order_deadline()
+        payload['entry_deadline_epoch'] = context.deadline
     await bus.publish_order_request(payload)
     try:
         response = await bus.wait_order_result(
@@ -84,8 +90,8 @@ async def submit_market_order(
     except Exception as exc:
         return BrokerOrderResult(
             False,
-            "FAILED",
-            str(exc),
+            "PENDING",
+            'cTrader response unavailable after queue submission; reconcile before retry',
             raw_response={"provider": "CTRADER", "gateway": "REDIS_STREAM", "request_id": request_id},
         )
     return _result_from_payload(response)

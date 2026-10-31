@@ -65,6 +65,7 @@ reportlab = "^4.5.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
+pytest-asyncio = "^1.4.1"
 ruff = "0.9.3"
 
 [build-system]

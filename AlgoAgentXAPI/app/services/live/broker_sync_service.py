@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+import hashlib
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -311,8 +312,23 @@ async def reconcile_orders(db: AsyncSession, deployment: StrategyDeployment, bro
             )
         )).scalar_one_or_none()
         if local is None:
-            unmatched += 1
-            continue
+            # Only an exact account-scoped strategyId can recover a lost ACK.
+            # Never infer identity from side/size/time proximity or empty positions.
+            if provider_code.upper() == 'TRADELOCKER' and raw.get('strategyId'):
+                candidates = (await db.execute(select(LiveOrder).where(
+                    LiveOrder.deployment_id == deployment.id,
+                    LiveOrder.broker_account_id == deployment.broker_account_id,
+                    LiveOrder.broker_order_id.is_(None), LiveOrder.status == 'PENDING',
+                    LiveOrder.idempotency_key.is_not(None),
+                ))).scalars().all()
+                matches = [item for item in candidates if
+                           'AX-' + hashlib.sha256(item.idempotency_key.encode()).hexdigest()[:28] == str(raw['strategyId'])]
+                if len(matches) == 1:
+                    local = matches[0]
+                    local.broker_order_id = broker_order_id
+            if local is None:
+                unmatched += 1
+                continue
         local.status = status
         if price is not None and price > 0:
             local.executed_price = price
@@ -618,10 +634,24 @@ async def sync_tradelocker_pretrade_positions(db: AsyncSession, deployment: Stra
     ))).scalars().all()
     pending_ids = [str(p) for p in pending if p]
     order_result = {}
-    if pending_ids:
+    if pending:
         try:
             orders = await adapter.get_orders()
-            orders.extend(await adapter.get_order_history(pending_ids))
+            # Lost acknowledgements have no broker ID. Fetch only exact
+            # account-scoped strategy identifiers; never infer a fill by size.
+            if any(p is None for p in pending):
+                keys = (await db.execute(select(LiveOrder.idempotency_key).where(
+                    LiveOrder.deployment_id == deployment.id,
+                    LiveOrder.broker_account_id == deployment.broker_account_id,
+                    LiveOrder.status == 'PENDING',
+                    LiveOrder.broker_order_id.is_(None),
+                    LiveOrder.idempotency_key.is_not(None),
+                    LiveOrder.action == 'ENTRY',
+                ))).scalars().all()
+                strategies = ['AX-' + hashlib.sha256(key.encode()).hexdigest()[:28] for key in keys]
+                orders.extend(await adapter.get_order_history(pending_ids, strategy_ids=strategies))
+            else:
+                orders.extend(await adapter.get_order_history(pending_ids))
             order_result = await reconcile_orders(db, deployment, orders, 'TRADELOCKER')
         except Exception as exc:
             await _write_log(db, deployment, 'TRADELOCKER_PENDING_ORDER_UNVERIFIED',
@@ -641,8 +671,10 @@ async def sync_tradelocker_pretrade_positions(db: AsyncSession, deployment: Stra
                     last_at = last_at.replace(tzinfo=timezone.utc)
             except (ValueError, TypeError):
                 last_at = None
-        recent = bool(last_at and (datetime.now(timezone.utc) - last_at).total_seconds() <= 120
-                      and last_test.get('balance') is not None)
+        # Entry sizing requires current financial truth, not a background equity
+        # snapshot from before a close/deposit. Only stable identity is cached by
+        # the shared adapter; positions and /state remain fresh for each entry.
+        recent = False
         if not recent:
             info = await adapter.get_account_info()
             if not isinstance(info, dict) or not info.get('connected') or _dec(info.get('balance')) <= 0:
@@ -656,6 +688,11 @@ async def sync_tradelocker_pretrade_positions(db: AsyncSession, deployment: Stra
                 'currency': info.get('currency'), 'synced_at': datetime.now(timezone.utc).isoformat(),
             }
             broker.metadata_json = meta
+            # capital_service prefers account_info over last_test. Do not let an
+            # old UI snapshot shadow the financial state just verified above.
+            if 'account_info' in meta:
+                meta['account_info'] = dict(meta['last_test'])
+                broker.metadata_json = dict(meta)
 
     await _write_log(db, deployment, 'TRADELOCKER_PRE_TRADE_POSITIONS_SYNCED',
                      'Fresh TradeLocker account positions verified before risk/position gates',

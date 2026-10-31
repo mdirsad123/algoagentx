@@ -6,13 +6,19 @@ import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
 import hashlib
+import time
+from datetime import timedelta
+from uuid import uuid4
 from typing import Optional
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import settings
 from ...core.redis_manager import redis_manager
+from ...db.session import async_session
+from ..brokers.request_context import OrderRequestContext, order_request_context, check_order_deadline, mark_order_submission
 
 from ...db.models import BrokerAccount, Instrument, LiveOrder, LiveSignal, LiveTradeLog, StrategyDeployment
 from ..brokers.base import BrokerOrderRequest
@@ -240,6 +246,30 @@ async def _existing_order_for_client_id(db: AsyncSession, client_order_id: str) 
         return None
     return (await db.execute(select(LiveOrder).where(LiveOrder.client_order_id == client_order_id))).scalar_one_or_none()
 
+
+async def _reserve_entry(db, deployment, signal, client_order_id, idempotency_key, symbol, side, qty, price, stop_loss, target):
+    """Commit intent BEFORE external I/O. A crash leaves a blocking PENDING row.
+
+    Uses the existing PostgreSQL partial unique indexes, not a TTL Redis lock.
+    Unknown outcomes are never automatically re-sent, including after restart.
+    """
+    check_order_deadline()
+    await db.flush()  # signal FK must exist before committing its intent
+    values = dict(id=uuid4(), deployment_id=deployment.id, signal_id=signal.id,
+                  user_id=deployment.user_id, broker_account_id=deployment.broker_account_id,
+                  client_order_id=client_order_id, idempotency_key=idempotency_key,
+                  trace_id=getattr(signal, 'trace_id', None), symbol=symbol, side=side,
+                  order_type='MARKET', action='ENTRY', qty=qty, entry_price=price,
+                  stop_loss=stop_loss, target=target, status='PENDING',
+                  raw_response={'submission_intent_at': datetime.now(timezone.utc).isoformat(),
+                                'requires_reconciliation': True})
+    inserted = (await db.execute(pg_insert(LiveOrder).values(**values).on_conflict_do_nothing().returning(LiveOrder.id))).scalar_one_or_none()
+    await db.commit()
+    order = await _existing_order_for_client_id(db, client_order_id)
+    if order is None:
+        raise RuntimeError('Durable entry reservation unavailable; broker submission blocked')
+    return order, inserted is not None
+
 def _selected_ctrader_account(broker: BrokerAccount | None) -> dict | None:
     meta = getattr(broker, "metadata_json", None) or {}
     selected = meta.get("ctrader_selected_account") if isinstance(meta, dict) else None
@@ -444,6 +474,14 @@ async def _execute_demo_entry(
     is_tradelocker = get_broker_code(broker) == "TRADELOCKER"
     await _log(db, deployment, "BROKER_EXECUTION_STARTED", "DEMO broker order send started", metadata={"broker_account_id": str(broker.id), "signal_id": str(signal.id), "client_order_id": client_order_id, "sizing": sizing_metadata or {}})
     broker_symbol = getattr(deployment, "broker_symbol", None) or signal.symbol
+    reserved_order = None
+    if is_tradelocker or bool(getattr(deployment, '_copy_execution_target', False)):
+        reserved_order, claimed = await _reserve_entry(db, deployment, signal, client_order_id, client_order_id,
+                                                       broker_symbol, order_side, qty, price, stop_loss, target)
+        if not claimed:
+            return reserved_order
+    if not is_tradelocker:
+        mark_order_submission()
     if is_tradelocker:
         await _safe_tradelocker_trace(signal, "t11", status="BROKER_SEND_READY")
         await _safe_tradelocker_trace(signal, "t12", status="BROKER_REQUEST_SENT")
@@ -461,6 +499,11 @@ async def _execute_demo_entry(
         is_copy_execution=bool(getattr(deployment, "_copy_execution_target", False)),
         source_broker_code=getattr(deployment, "_copy_source_broker_code", None),
     ))
+    context = order_request_context.get()
+    if context:
+        context.metrics['broker_acknowledged_at'] = datetime.now(timezone.utc).isoformat()
+        if result.status == 'FILLED':
+            context.metrics['primary_to_fill_ms'] = round((time.time() - context.primary_completed_at) * 1000, 3)
     if is_tradelocker and result.success:
         # PLACED/PENDING/UNCERTAIN do not prove broker acceptance or fill.
         if str(result.status or '').upper() in {'ACCEPTED', 'FILLED'}:
@@ -470,7 +513,7 @@ async def _execute_demo_entry(
     actual_qty = _result_volume(result, qty)
     resolved_broker_symbol = _resolved_order_symbol(result, broker_symbol)
 
-    order = LiveOrder(
+    order_values = dict(
         trace_id=getattr(signal, 'trace_id', None),
         deployment_id=deployment.id,
         signal_id=signal.id,
@@ -489,10 +532,19 @@ async def _execute_demo_entry(
         target=target,
         status=(str(getattr(result, "status", "") or "PLACED").upper() if result.success
                 else "PENDING" if get_broker_code(broker) == 'TRADELOCKER' and str(getattr(result, 'status', '')).upper() == 'UNCERTAIN'
+                else "SKIPPED" if str(getattr(result, 'status', '')).upper() == 'SKIPPED'
                 else "ERROR"),
         error_message=None if result.success else result.message,
-        raw_response={**(result.raw_response or {}), "client_order_id": client_order_id, **({"sizing": sizing_metadata} if sizing_metadata else {})},
+        raw_response={**(result.raw_response or {}), "client_order_id": client_order_id,
+                      'execution_timing': dict(context.metrics) if context else {},
+                      **({"sizing": sizing_metadata} if sizing_metadata else {})},
     )
+    if reserved_order is not None:
+        order = reserved_order
+        for key, value in order_values.items():
+            setattr(order, key, value)
+    else:
+        order = LiveOrder(**order_values)
     if sizing_metadata:
         for field, key in {
             "quantity_mode": "quantity_mode",
@@ -651,6 +703,13 @@ async def _execute_ctrader_entry(
         tag=client_order_id,
         idempotency_key=idempotency_key,
     )
+    reserved_order = None
+    if bool(getattr(deployment, '_copy_execution_target', False)):
+        reserved_order, claimed = await _reserve_entry(db, deployment, signal, client_order_id, idempotency_key,
+                                                       broker_symbol, order_side, qty, price, stop_loss, target)
+        if not claimed:
+            return reserved_order
+    mark_order_submission()
     await _log(db, deployment, "CTRADER_SIGNAL_ROUTED", "cTrader DEMO signal routed to order service", metadata={"signal_id": str(signal.id), "symbol": broker_symbol, "side": order_side, "qty": str(qty), "client_order_id": client_order_id, "trace_id": trace_id, "sizing": sizing_metadata or {}})
     if settings.live_event_pipeline_enabled and settings.ctrader_persistent_connection_enabled:
         result = await submit_market_order(
@@ -666,8 +725,14 @@ async def _execute_ctrader_entry(
         result = await adapter.place_market_order(order_request)
     actual_qty = _result_volume(result, qty)
     result_raw = result.raw_response or {}
+    context = order_request_context.get()
+    if context:
+        context.metrics['broker_acknowledged_at'] = datetime.now(timezone.utc).isoformat()
+        if result.status == 'FILLED':
+            context.metrics['primary_to_fill_ms'] = round((time.time() - context.primary_completed_at) * 1000, 3)
+        result_raw = {**result_raw, 'execution_timing': dict(context.metrics)}
     resolved_broker_symbol = _resolved_order_symbol(result, broker_symbol)
-    order = LiveOrder(
+    order_values = dict(
         trace_id=trace_id,
         deployment_id=deployment.id,
         signal_id=signal.id,
@@ -688,6 +753,14 @@ async def _execute_ctrader_entry(
         error_message=None if result.success else result.message,
         raw_response={**result_raw, **({"provider": "CTRADER", "sizing": sizing_metadata} if sizing_metadata else {"provider": "CTRADER"})},
     )
+    if reserved_order is not None:
+        order = reserved_order
+        for key, value in order_values.items():
+            setattr(order, key, value)
+        if not result.success and str(result.status).upper() in {'UNCERTAIN', 'PENDING', 'TIMEOUT'}:
+            order.status = 'PENDING'
+    else:
+        order = LiveOrder(**order_values)
     if sizing_metadata:
         for field, key in {
             "quantity_mode": "quantity_mode",
@@ -954,6 +1027,19 @@ async def _execute_upstox_close(db: AsyncSession, deployment: StrategyDeployment
 
 
 async def _execute_signal_for_account(db: AsyncSession, deployment: StrategyDeployment, signal: LiveSignal) -> Optional[LiveOrder]:
+    # Primary and copies share the same request-priority mechanism. Copy tasks
+    # already carry the original candle deadline; never reset it mid-execution.
+    if order_request_context.get() is not None:
+        return await _execute_signal_for_account_inner(db, deployment, signal)
+    context = OrderRequestContext(float('inf'), str(signal.id), str(deployment.broker_account_id), time.time())
+    token = order_request_context.set(context)
+    try:
+        return await _execute_signal_for_account_inner(db, deployment, signal)
+    finally:
+        order_request_context.reset(token)
+
+
+async def _execute_signal_for_account_inner(db: AsyncSession, deployment: StrategyDeployment, signal: LiveSignal) -> Optional[LiveOrder]:
     trace_id = str(getattr(signal, "trace_id", None) or "") or None
     latency_trace = _trace_service()
     await latency_trace.mark(trace_id, "t9", status="EXECUTION_STARTED", signal_id=str(signal.id))
@@ -1000,7 +1086,12 @@ async def _execute_signal_for_account(db: AsyncSession, deployment: StrategyDepl
                 # deployment-id sync here because that is intentionally bound to
                 # the primary account. The copy helper is account-scoped and does
                 # not commit or overwrite the primary deployment configuration.
+                validation_started = time.monotonic()
                 copy_sync = await sync_copy_target_positions(db, deployment)
+                context = order_request_context.get()
+                if context:
+                    context.metrics['account_validation_ms'] = round((time.monotonic() - validation_started) * 1000, 3)
+                    context.metrics['risk_verified_at_epoch'] = time.time()
                 await _log(
                     db,
                     deployment,
@@ -1475,81 +1566,53 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
     primary_mode = str(getattr(primary_broker, "mode", "") or "").upper() if primary_broker is not None else ""
     latest_copy_order: Optional[LiveOrder] = None
 
-    # Keep the already-working copy execution semantics: each target gets an
-    # independent SAVEPOINT so one target cannot cancel a sibling/primary order.
-    # The difference is that every target is built from plain DB row mappings.
-    for account_id in copy_ids:
-        broker = (
-            await db.execute(
-                select(BrokerAccount).where(
-                    BrokerAccount.id == account_id,
-                    BrokerAccount.user_id == deployment_user_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if broker is None or str(broker.status or "").upper() != "CONNECTED":
-            await _log(db, log_deployment, "COPY_TARGET_SKIPPED", "Copy target is unavailable or disconnected", "WARNING", {"broker_account_id": str(account_id), "signal_id": str(signal_id)})
-            continue
-        if primary_mode and str(broker.mode or "").upper() != primary_mode:
-            await _log(db, log_deployment, "COPY_TARGET_SKIPPED", "Copy target DEMO/LIVE environment differs from primary account", "WARNING", {"broker_account_id": str(account_id), "signal_id": str(signal_id)})
-            continue
-
-        target = SimpleNamespace(**deployment_snapshot)
-        target.broker_account_id = account_id
-        target._copy_execution_target = True
-        target._copy_source_broker_code = primary_broker_code
-        if canonical_symbol:
-            target.instrument = canonical_symbol
-            target.broker_symbol = canonical_symbol
-            target.instrument_key = None
-        # Resolve the copy account's actual symbol independently. The primary
-        # must remain untouched (e.g. XAUUSD -> XAUUSD.X only on this target).
-        if get_broker_code(broker) == "TRADELOCKER":
-            try:
-                tl_adapter = get_broker_adapter(broker, db)
-                inst = await tl_adapter._instrument(canonical_symbol or primary_signal_symbol)
-                target.broker_symbol = str(inst.get("name") or inst.get("symbol") or "")
-                if not target.broker_symbol:
-                    raise ValueError("TradeLocker copy instrument has no broker symbol")
-            except Exception as exc:
-                await _log(db, log_deployment, "COPY_TARGET_SKIPPED", f"TradeLocker copy symbol could not be verified: {exc}", "WARNING",
-                           {"broker_account_id": str(account_id), "signal_id": str(signal_id)})
-                continue
-
-        copy_signal = SimpleNamespace(**signal_snapshot)
-        copy_signal.status = original_status
-        copy_signal.rejection_reason = original_rejection
-        if canonical_symbol:
-            copy_signal.symbol = canonical_symbol
-            payload = dict(getattr(copy_signal, "raw_payload", None) or {})
-            payload["copy_canonical_symbol"] = canonical_symbol
-            payload["copy_primary_symbol"] = primary_signal_symbol
-            copy_signal.raw_payload = payload
-
-        copy_order: Optional[LiveOrder] = None
+    primary_completed_at = time.time()
+    primary_status = str(primary_order_state.get('status') or '').upper()
+    copy_entry = str(signal_snapshot.get('signal_type') or '').upper() in {'BUY', 'SELL'}
+    if copy_entry and primary_broker_code == 'TRADELOCKER' and primary_status == 'PLACED' and primary_order_state.get('broker_order_id'):
+        # Dispatch copies only after broker fill truth, never infer a fill from
+        # an HTTP acknowledgement. One bounded history read; no catch-up queue.
+        from .broker_sync_service import reconcile_orders
         try:
-            async with db.begin_nested():
-                copy_order = await _execute_signal_for_account(db, target, copy_signal)
-                if copy_order is not None:
-                    latest_copy_order = copy_order
-            await _log(
-                db,
-                log_deployment,
-                "COPY_ACCOUNT_RESULT",
-                "Copy account execution completed",
-                metadata={
-                    "broker_account_id": str(account_id),
-                    "signal_id": str(signal_id),
-                    "order_id": str(object.__getattribute__(copy_order, "__dict__").get("id")) if copy_order is not None and object.__getattribute__(copy_order, "__dict__").get("id") else None,
-                    "order_status": object.__getattribute__(copy_order, "__dict__").get("status") if copy_order is not None else None,
-                    "copy_signal_status": getattr(copy_signal, "status", None),
-                    "copy_rejection_reason": getattr(copy_signal, "rejection_reason", None),
-                },
-            )
+            adapter = get_broker_adapter(primary_broker, db)
+            history = await adapter.get_order_history([primary_order_state['broker_order_id']])
+            await reconcile_orders(db, canonical_probe_deployment, history, 'TRADELOCKER')
+            await db.commit()
+            await db.refresh(primary_order)
+            primary_status = str(primary_order.status).upper()
+            primary_order_state = dict(object.__getattribute__(primary_order, '__dict__'))
         except Exception as exc:
-            # begin_nested() isolates this target.  Log using only plain scalar
-            # context; never touch the primary ORM deployment in this path.
-            await _log(db, log_deployment, "COPY_ACCOUNT_ERROR", f"Copy account execution failed: {exc}", "ERROR", {"broker_account_id": str(account_id), "signal_id": str(signal_id)})
+            await db.rollback()
+            await _log(db, log_deployment, 'COPY_TARGET_SKIPPED', 'Primary fill not yet verifiable; no catch-up scheduled',
+                       'WARNING', {'signal_id': str(signal_id), 'error_type': type(exc).__name__,
+                                   'accounts': [str(x) for x in copy_ids]})
+            return primary_order
+    # New exposure requires confirmed primary execution. Explicit EXIT signals
+    # still close each target independently, including when the primary is flat.
+    if copy_entry and (primary_order is None or primary_status not in {'FILLED', 'RECONCILED'}):
+        await _log(db, log_deployment, 'COPY_TARGET_SKIPPED', 'Primary order not confirmed filled',
+                   'WARNING', {'signal_id': str(signal_id), 'primary_status': primary_status,
+                               'accounts': [str(x) for x in copy_ids]})
+        return primary_order
+    # Release the parent transaction before independent child sessions commit.
+    await db.commit()
+    semaphore = asyncio.Semaphore(max(1, int(settings.live_copy_max_concurrency)))
+
+    async def dispatch(account_id):
+        async with semaphore:
+            return await _dispatch_copy_account(
+                account_id=account_id, deployment_snapshot=deployment_snapshot,
+                signal_snapshot=signal_snapshot, canonical_symbol=canonical_symbol,
+                primary_signal_symbol=primary_signal_symbol, primary_mode=primary_mode,
+                primary_broker_code=primary_broker_code, primary_completed_at=primary_completed_at)
+
+    results = await asyncio.gather(*(dispatch(account_id) for account_id in copy_ids), return_exceptions=True)
+    for account_id, result in zip(copy_ids, results):
+        if isinstance(result, BaseException):
+            await _log(db, log_deployment, 'COPY_ACCOUNT_ERROR', 'Copy task failed; inspect worker error', 'ERROR',
+                       {'signal_id': str(signal_id), 'broker_account_id': str(account_id), 'error_type': type(result).__name__})
+        elif result is not None:
+            latest_copy_order = result
 
     # Copy attempts must never overwrite the primary signal result.
     signal.status = primary_signal_status
@@ -1560,4 +1623,98 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
         signal.rejection_reason = None
 
     return primary_order or latest_copy_order
+
+
+def _copy_deadline(deployment_snapshot, signal_snapshot):
+    from .runner_scheduler import parse_timeframe_to_seconds
+    candle = signal_snapshot.get('candle_time')
+    if not isinstance(candle, datetime):
+        raise ValueError('Copy entry requires an original candle timestamp; historical replay prohibited')
+    if candle.tzinfo is None:
+        candle = candle.replace(tzinfo=timezone.utc)
+    close = candle + timedelta(seconds=parse_timeframe_to_seconds(str(deployment_snapshot.get('timeframe') or 'M5')))
+    return close.timestamp() + max(1, int(settings.live_copy_max_age_after_close_seconds))
+
+
+async def _dispatch_copy_account(*, account_id, deployment_snapshot, signal_snapshot, canonical_symbol,
+                                 primary_signal_symbol, primary_mode, primary_broker_code, primary_completed_at):
+    """One task, one session, one account. Never share mutable ORM state."""
+    target = SimpleNamespace(**deployment_snapshot)
+    target.broker_account_id = account_id
+    target._copy_execution_target = True
+    target._copy_source_broker_code = primary_broker_code
+    copy_signal = SimpleNamespace(**signal_snapshot)
+    audit = {'signal_id': str(copy_signal.id), 'broker_account_id': str(account_id),
+             'candle_time': str(signal_snapshot.get('candle_time')), 'enabled': True,
+             'dispatch_started_at': datetime.now(timezone.utc).isoformat()}
+    context = None
+    token = None
+    async with async_session() as copy_db:
+        try:
+            # Entry expiry must not disable risk-reducing EXIT operations.
+            deadline = (_copy_deadline(deployment_snapshot, signal_snapshot)
+                        if copy_signal.signal_type in {'BUY', 'SELL'} else float('inf'))
+            context = OrderRequestContext(deadline, str(copy_signal.id), str(account_id), primary_completed_at)
+            token = order_request_context.set(context)
+            context.check()
+            # Advisory lock does not lock the broker row: cTrader's separate
+            # snapshot worker must remain free to persist fresh equity while we
+            # await its response. No waiting behind another signal on this account.
+            lock_id = int.from_bytes(hashlib.sha256(f'copy:{account_id}'.encode()).digest()[:8], 'big', signed=True)
+            locked = (await copy_db.execute(text('SELECT pg_try_advisory_xact_lock(:key)'), {'key': lock_id})).scalar()
+            if not locked:
+                raise ValueError('Another copy signal is validating this destination account')
+            broker = (await copy_db.execute(select(BrokerAccount).where(
+                BrokerAccount.id == account_id, BrokerAccount.user_id == target.user_id
+            ))).scalar_one_or_none()
+            if broker is None or str(broker.status).upper() != 'CONNECTED':
+                raise ValueError('Copy target unavailable or disconnected')
+            audit['broker_type'] = get_broker_code(broker)
+            if primary_mode and str(broker.mode).upper() != primary_mode:
+                raise ValueError('Copy target DEMO/LIVE environment differs from primary')
+            if copy_signal.signal_type in {'BUY', 'SELL'}:
+                unresolved = (await copy_db.execute(select(LiveOrder.id).where(
+                    LiveOrder.broker_account_id == account_id,
+                    LiveOrder.action == 'ENTRY',
+                    LiveOrder.status.in_(('PENDING', 'SUBMITTED', 'PLACED', 'ACCEPTED', 'PENDING_DEMO')),
+                ).limit(1))).scalar_one_or_none()
+                if unresolved is not None:
+                    raise ValueError('Destination account has an unresolved entry; reconcile before another signal')
+            if canonical_symbol:
+                target.instrument = target.broker_symbol = copy_signal.symbol = canonical_symbol
+                target.instrument_key = None
+                copy_signal.raw_payload = {**(getattr(copy_signal, 'raw_payload', None) or {}),
+                                           'copy_canonical_symbol': canonical_symbol,
+                                           'copy_primary_symbol': primary_signal_symbol}
+            if audit['broker_type'] == 'TRADELOCKER':
+                inst = await get_broker_adapter(broker, copy_db)._instrument(canonical_symbol or primary_signal_symbol)
+                target.broker_symbol = str(inst.get('name') or inst.get('symbol') or '')
+                if not target.broker_symbol:
+                    raise ValueError('TradeLocker copy instrument has no broker symbol')
+            context.check()
+            order = await _execute_signal_for_account(copy_db, target, copy_signal)
+            audit.update(context.metrics)
+            audit.update(order_id=str(order.id) if order else None,
+                         broker_order_id=order.broker_order_id if order else None,
+                         order_status=order.status if order else 'SKIPPED',
+                         copy_signal_status=copy_signal.status,
+                         copy_rejection_reason=copy_signal.rejection_reason,
+                         completed_at=datetime.now(timezone.utc).isoformat())
+            await _log(copy_db, target, 'COPY_ACCOUNT_RESULT', 'Copy execution result', metadata=audit)
+            await copy_db.commit()
+            return order
+        except Exception as exc:
+            await copy_db.rollback()
+            if context:
+                audit.update(context.metrics)
+            # Any committed submission intent survives this rollback. Do not
+            # fabricate a terminal failure when the broker outcome is unknown.
+            audit.update(order_status='PENDING' if audit.get('submitted_at') else 'SKIPPED',
+                         error_type=type(exc).__name__, reason=str(exc)[:300])
+            await _log(copy_db, target, 'COPY_ACCOUNT_ERROR', 'Copy execution failed safely', 'ERROR', audit)
+            await copy_db.commit()
+            return None
+        finally:
+            if token is not None:
+                order_request_context.reset(token)
 

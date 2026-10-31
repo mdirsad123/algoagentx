@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -35,6 +36,17 @@ class LiveReconcileWorker:
         self._semaphore = asyncio.Semaphore(max(1, int(settings.live_worker_concurrency)))
         self._last_error: str | None = None
         self._last_result: dict[str, Any] = {}
+        self._tl_next_poll: dict[str, float] = {}
+
+    async def _tradelocker_poll_due(self, account_id) -> bool:
+        key = f'tradelocker:background-sync:{account_id}'
+        if redis_manager.client is not None:
+            return bool(await redis_manager.client.set(key, '1', nx=True, ex=60))
+        now = time.monotonic()
+        if self._tl_next_poll.get(key, 0) > now:
+            return False
+        self._tl_next_poll[key] = now + 60
+        return True
 
     async def stop(self) -> None:
         self._stop.set()
@@ -101,10 +113,17 @@ class LiveReconcileWorker:
                         "synced": False,
                         "skipped": "DEPLOYMENT_BUSY",
                     }
-                if broker_code in {"CTRADER", "CTRADER_API"} and settings.ctrader_persistent_connection_enabled:
-                    primary = await sync_ctrader_deployment_via_gateway(db, deployment_id)
-                else:
-                    primary = await sync_deployment_broker_state(db, deployment_id)
+                try:
+                    if broker_code in {"CTRADER", "CTRADER_API"} and settings.ctrader_persistent_connection_enabled:
+                        primary = await sync_ctrader_deployment_via_gateway(db, deployment_id)
+                    elif broker_code == 'TRADELOCKER' and not await self._tradelocker_poll_due(f'primary:{deployment_id}'):
+                        primary = {'synced': False, 'skipped': 'BACKGROUND_CADENCE'}
+                    else:
+                        primary = await sync_deployment_broker_state(db, deployment_id)
+                except Exception as exc:
+                    await db.rollback()
+                    primary = {'synced': False, 'error_type': type(exc).__name__}
+                    logger.warning('Primary reconciliation failed deployment=%s type=%s; copies remain independent', deployment_id, type(exc).__name__)
 
             # 2) Copy accounts are reconciled independently AFTER primary truth is
             # safely committed. This is essential for asynchronous MT5 copies:
@@ -148,6 +167,9 @@ class LiveReconcileWorker:
 
                     try:
                         code = get_broker_code(broker)
+                        if code == 'TRADELOCKER' and not await self._tradelocker_poll_due(broker.id):
+                            copy_results.append({'broker_account_id': str(broker.id), 'synced': False, 'skipped': 'BACKGROUND_CADENCE'})
+                            continue
                         if code in {"CTRADER", "CTRADER_API"} and settings.ctrader_persistent_connection_enabled:
                             result = await sync_ctrader_account_positions_via_gateway(db, deployment, broker.id)
                         else:

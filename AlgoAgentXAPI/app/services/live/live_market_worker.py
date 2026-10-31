@@ -1197,6 +1197,9 @@ class LiveMarketWorker:
         if action in {"PLACE_MARKET", "CLOSE_POSITION"} and not client_order_id:
             raise ValueError("A deterministic cTrader clientOrderId is required")
         if action == "PLACE_MARKET":
+            deadline = request.get('entry_deadline_epoch')
+            if deadline is not None and _now().timestamp() >= float(deadline):
+                return {'success': False, 'status': 'SKIPPED', 'message': 'Entry expired in gateway queue; no historical order sent'}
             order = request.get("order") if isinstance(request.get("order"), dict) else {}
             symbol = str(order.get("symbol") or "").upper()
             symbol_ref = self._symbol_ref_from_metadata(metadata, symbol)
@@ -1234,6 +1237,8 @@ class LiveMarketWorker:
             previous_result = await self._reserve_broker_intent(request, action, client_order_id)
             if previous_result is not None:
                 return previous_result
+            if deadline is not None and _now().timestamp() >= float(deadline):
+                return {'success': False, 'status': 'SKIPPED', 'message': 'Entry expired during broker validation; no order sent'}
             execution = await connection.submit_trade(
                 payload_type=PT_NEW_ORDER_REQ,
                 payload=payload,

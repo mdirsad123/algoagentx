@@ -94,6 +94,11 @@ def test_async_mt5_queued_order_does_not_create_optimistic_open_position(monkeyp
         opened["count"] += 1
 
     monkeypatch.setattr(execution_engine, "_existing_order_for_client_id", _existing)
+    async def _reserve(*args, **kwargs):
+        # This test targets ACK-vs-fill behavior; durable reservation itself is
+        # covered independently by the copy reliability tests.
+        return SimpleNamespace(id=uuid4()), True
+    monkeypatch.setattr(execution_engine, '_reserve_entry', _reserve)
     monkeypatch.setattr(execution_engine, "get_broker_adapter", lambda broker, db: _FakeAdapter())
     monkeypatch.setattr(execution_engine, "_log", _log)
     monkeypatch.setattr(execution_engine, "open_position", _open)
