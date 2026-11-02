@@ -37,16 +37,46 @@ class LiveReconcileWorker:
         self._last_error: str | None = None
         self._last_result: dict[str, Any] = {}
         self._tl_next_poll: dict[str, float] = {}
+        self._tl_error_count: dict[str, int] = {}
 
     async def _tradelocker_poll_due(self, account_id) -> bool:
         key = f'tradelocker:background-sync:{account_id}'
-        if redis_manager.client is not None:
-            return bool(await redis_manager.client.set(key, '1', nx=True, ex=60))
+        redis = redis_manager.client
+        if redis is not None:
+            # Shared broker cooldowns must block background polling, otherwise
+            # every deployment repeats the same HTTP 429 after 60 seconds.
+            if await redis.pttl('tradelocker:cooldown:demo') > 0 or await redis.pttl('tradelocker:cooldown:live') > 0:
+                return False
+            if await redis.pttl(f'tradelocker:background-backoff:{account_id}') > 0:
+                return False
+            return bool(await redis.set(key, '1', nx=True, ex=60))
         now = time.monotonic()
         if self._tl_next_poll.get(key, 0) > now:
             return False
         self._tl_next_poll[key] = now + 60
         return True
+
+    async def _tradelocker_sync_failed(self, account_id, exc: Exception) -> None:
+        key = str(account_id)
+        failures = min(5, self._tl_error_count.get(key, 0) + 1)
+        self._tl_error_count[key] = failures
+        backoff = min(600, 30 * (2 ** failures))
+        if redis_manager.client is not None:
+            try:
+                await redis_manager.client.set(f'tradelocker:background-backoff:{key}',
+                                               '1', ex=backoff)
+                return
+            except Exception:
+                pass
+        self._tl_next_poll[f'tradelocker:background-sync:{key}'] = time.monotonic() + backoff
+
+    async def _tradelocker_sync_succeeded(self, account_id) -> None:
+        self._tl_error_count.pop(str(account_id), None)
+        if redis_manager.client is not None:
+            try:
+                await redis_manager.client.delete(f'tradelocker:background-backoff:{account_id}')
+            except Exception:
+                pass
 
     async def stop(self) -> None:
         self._stop.set()
@@ -89,7 +119,7 @@ class LiveReconcileWorker:
                 )
             ).all()
         tasks = [
-            asyncio.create_task(self._sync_one(deployment_id, get_broker_code(broker)))
+            asyncio.create_task(self._sync_one(deployment_id, get_broker_code(broker), broker.id))
             for deployment_id, broker in rows
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -101,7 +131,7 @@ class LiveReconcileWorker:
             "errors": errors[:20],
         }
 
-    async def _sync_one(self, deployment_id: Any, broker_code: str) -> dict[str, Any]:
+    async def _sync_one(self, deployment_id: Any, broker_code: str, primary_account_id: Any = None) -> dict[str, Any]:
         async with self._semaphore:
             # 1) Primary account keeps the existing reconciliation path.
             async with async_session() as db:
@@ -116,14 +146,29 @@ class LiveReconcileWorker:
                 try:
                     if broker_code in {"CTRADER", "CTRADER_API"} and settings.ctrader_persistent_connection_enabled:
                         primary = await sync_ctrader_deployment_via_gateway(db, deployment_id)
-                    elif broker_code == 'TRADELOCKER' and not await self._tradelocker_poll_due(f'primary:{deployment_id}'):
+                    elif broker_code == 'TRADELOCKER' and not await self._tradelocker_poll_due(primary_account_id or f'primary:{deployment_id}'):
                         primary = {'synced': False, 'skipped': 'BACKGROUND_CADENCE'}
                     else:
                         primary = await sync_deployment_broker_state(db, deployment_id)
+                        if broker_code == 'TRADELOCKER':
+                            await self._tradelocker_sync_succeeded(primary_account_id)
                 except Exception as exc:
+                    if broker_code == 'TRADELOCKER':
+                        await self._tradelocker_sync_failed(primary_account_id, exc)
                     await db.rollback()
                     primary = {'synced': False, 'error_type': type(exc).__name__}
                     logger.warning('Primary reconciliation failed deployment=%s type=%s; copies remain independent', deployment_id, type(exc).__name__)
+
+            # Broker-verified fills may arrive after the original signal runner
+            # finishes. Process only durable, recent, marked copy intents.
+            if broker_code == 'TRADELOCKER' and primary.get('synced', True) is not False:
+                try:
+                    from .execution_engine import dispatch_confirmed_copy_orders
+                    primary['deferred_copy'] = await dispatch_confirmed_copy_orders(deployment_id)
+                except Exception as exc:
+                    logger.warning('Deferred copy reconcile failed deployment=%s type=%s',
+                                   deployment_id, type(exc).__name__)
+                    primary['deferred_copy_error_type'] = type(exc).__name__
 
             # 2) Copy accounts are reconciled independently AFTER primary truth is
             # safely committed. This is essential for asynchronous MT5 copies:
@@ -179,7 +224,11 @@ class LiveReconcileWorker:
                             result = await sync_copy_target_positions(
                                 db, proxy, reconcile_full_exits=(code == "TRADELOCKER"))
                         copy_results.append({"broker_account_id": str(broker.id), "synced": True, **result})
+                        if code == 'TRADELOCKER':
+                            await self._tradelocker_sync_succeeded(broker.id)
                     except Exception as exc:
+                        if code == 'TRADELOCKER':
+                            await self._tradelocker_sync_failed(broker.id, exc)
                         logger.warning("Copy-account reconcile failed deployment=%s account=%s: %s", deployment_id, raw_id, exc)
                         copy_results.append({"broker_account_id": str(raw_id), "synced": False, "error": str(exc)})
 

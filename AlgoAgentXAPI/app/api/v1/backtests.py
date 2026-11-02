@@ -884,7 +884,13 @@ def _service_equity_rows(service_response, start_date: date) -> list[dict]:
             "timestamp": _ensure_aware_datetime(ts).isoformat(),
             "equity": _equity_point_value(value),
         })
-    return rows
+    # The engine may emit initial capital and the first equity change at the
+    # same candle timestamp.  The DB primary key is (backtest_id, timestamp),
+    # so persist the LAST point for each actual timestamp without inventing
+    # artificial candle times or changing the underlying equity calculations.
+    # Sort by real timestamp for a deterministic equity time series.
+    latest_by_timestamp = {row["timestamp"]: row for row in rows}
+    return [latest_by_timestamp[key] for key in sorted(latest_by_timestamp)]
 
 
 def _equity_json_from_service(service_response, start_date: date) -> list[dict]:
@@ -1612,8 +1618,12 @@ async def _save_backtest_payload(
                             equity=_decimal(row.get("equity")),
                         )
                     )
-        except Exception as exc:
-            logger.warning("Failed to persist equity curve for backtest %s: %s", backtest_id, exc)
+        except Exception:
+            # An incomplete equity history must not be silently reported as a
+            # successful saved backtest.  The enclosing transaction decides
+            # whether to fail/rollback the backtest, rather than hiding this.
+            logger.exception("Failed to persist required equity curve for backtest %s", backtest_id)
+            raise
 
     if service_response.result.trades:
         try:

@@ -12,6 +12,7 @@ import logging
 import hashlib
 import math
 import json
+import random
 from email.utils import parsedate_to_datetime
 from weakref import WeakKeyDictionary
 from datetime import datetime, timezone
@@ -35,6 +36,8 @@ _SESSION_LOCKS: dict[str, asyncio.Lock] = {}
 _RATE_LIMIT_UNTIL: dict[str, float] = {}
 _HTTP_CLIENTS: WeakKeyDictionary = WeakKeyDictionary()
 _METADATA_LOCKS: dict[str, asyncio.Lock] = {}
+_LOCAL_REQUEST_SLOTS: dict[str, float] = {}
+_LOCAL_REQUEST_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 def _account_key(environment: str, email: str, server: str, account_id: str, password: str) -> str:
@@ -108,6 +111,55 @@ class TradeLockerAdapter(BrokerAdapter):
                 raise RuntimeError('TradeLocker shared request coordinator unavailable') from None
         return max(0, _RATE_LIMIT_UNTIL.get(key, 0) - time.monotonic())
 
+    async def _pace_request(self, deadline: float) -> None:
+        """Conservatively space ALL TradeLocker calls across Docker workers.
+
+        A broker cooldown is reactive; independent services were previously
+        able to burst together *before* the first 429.  A Redis NX + PX lease
+        coordinates account reads/writes on the same demo/live endpoint.
+        This configurable interval is a local safety throttle, NOT a claim
+        about the broker's undocumented actual request quota.
+        """
+        try:
+            spacing_ms = max(0, min(5000, int(os.environ.get(
+                'TRADELOCKER_SHARED_REQUEST_SPACING_MS', '300'))))
+        except ValueError:
+            spacing_ms = 300
+        if spacing_ms == 0:
+            return
+        key = f'tradelocker:request-slot:{self.environment}'
+        redis = redis_manager.client
+        started = time.monotonic()
+        if redis is None:
+            # Dev/isolated tests may not have Redis. The local fallback cannot
+            # coordinate *other* Docker workers, so it is not a live substitute.
+            lock = _LOCAL_REQUEST_LOCKS.setdefault(key, asyncio.Lock())
+            async with lock:
+                remaining = _LOCAL_REQUEST_SLOTS.get(key, 0) - time.monotonic()
+                if remaining > 0:
+                    if time.time() + remaining >= deadline:
+                        raise RuntimeError('TradeLocker request pacing exceeds request budget')
+                    await asyncio.sleep(remaining)
+                _LOCAL_REQUEST_SLOTS[key] = time.monotonic() + spacing_ms / 1000
+        else:
+            while True:
+                try:
+                    claimed = await redis.set(key, '1', nx=True, px=spacing_ms)
+                    if claimed:
+                        break
+                    remaining_ms = await redis.pttl(key)
+                except Exception as exc:
+                    raise RuntimeError('TradeLocker shared request coordinator unavailable') from exc
+                wait = min(0.5, max(0.01, remaining_ms / 1000 if remaining_ms > 0 else 0.02))
+                if time.time() + wait >= deadline:
+                    raise RuntimeError('TradeLocker shared request pacing exceeds request budget')
+                await asyncio.sleep(wait)
+        context = order_request_context.get()
+        if context:
+            context.metrics['request_pacing_wait_ms'] = round(
+                context.metrics.get('request_pacing_wait_ms', 0) +
+                (time.monotonic() - started) * 1000, 3)
+
     async def _request(self, method: str, path: str, *, params=None, body=None, auth=True):
         headers = {'Accept': 'application/json'}
         check_order_deadline()
@@ -138,6 +190,8 @@ class TradeLockerAdapter(BrokerAdapter):
                 if not safe_read or not context or time.time() + wait >= deadline:
                     raise RuntimeError('TradeLocker API rate limit cooldown exceeds request budget')
                 await asyncio.sleep(wait)
+            check_order_deadline()
+            await self._pace_request(deadline)
             check_order_deadline()
             if method == 'POST' and path.endswith('/orders'):
                 mark_order_submission()
@@ -170,7 +224,7 @@ class TradeLockerAdapter(BrokerAdapter):
             # Do not automatically retry writes, even on an HTTP rejection.
             if not safe_read or attempt == 2 or time.time() + wait >= deadline:
                 raise RuntimeError(f'TradeLocker HTTP {response.status_code}; bounded request budget exhausted')
-            await asyncio.sleep(wait)
+            await asyncio.sleep(wait + random.uniform(0, min(0.25, wait * 0.1)))
         if response.status_code >= 400:
             if response.status_code in (401, 403):
                 _SESSION_CACHE.pop(getattr(self, '_session_key', None), None)
@@ -267,9 +321,27 @@ class TradeLockerAdapter(BrokerAdapter):
             if cached.get('config') and time.monotonic() < cached.get('config_expiry', 0):
                 self._config_cache = cached['config']
             else:
-                self._config_cache = (await self._request('GET', '/trade/config')).get('d') or {}
+                # Process-local caches did not help API/runner/reconciler running
+                # in different Docker containers. Share only stable broker
+                # schema, never credentials or live position/equity snapshots.
+                client = redis_manager.client
+                shared_key = f'tradelocker:metadata:{key}:config' if key else None
+                shared = await client.get(shared_key) if client is not None and shared_key else None
+                if shared:
+                    try:
+                        data = json.loads(shared)
+                    except (TypeError, ValueError):
+                        data = None
+                    if isinstance(data, dict) and data:
+                        self._config_cache = data
+                if self._config_cache is None:
+                    self._config_cache = (await self._request('GET', '/trade/config')).get('d') or {}
+                    if not isinstance(self._config_cache, dict):
+                        raise RuntimeError('TradeLocker configuration schema invalid')
+                    if client is not None and shared_key and self._config_cache:
+                        await client.set(shared_key, json.dumps(self._config_cache), ex=300)
                 if key and self._config_cache:
-                    _SESSION_CACHE.setdefault(key, {}).update(config=self._config_cache, config_expiry=time.monotonic() + 120)
+                    _SESSION_CACHE.setdefault(key, {}).update(config=self._config_cache, config_expiry=time.monotonic() + 300)
         return self._config_cache
 
     async def get_account_info(self):
@@ -351,13 +423,26 @@ class TradeLockerAdapter(BrokerAdapter):
             if cached.get('instruments') and time.monotonic() < cached.get('instruments_expiry', 0):
                 self._instrument_cache = cached['instruments']
             else:
-                result = await self._request('GET', f'/trade/accounts/{self.account_id}/instruments')
-                data = result.get('d') or {}
-                if not isinstance(data, dict) or not isinstance(data.get('instruments'), list):
-                    raise RuntimeError('TradeLocker instruments response missing valid instruments list')
-                self._instrument_cache = data['instruments']
+                client = redis_manager.client
+                shared_key = f'tradelocker:metadata:{key}:instruments' if key else None
+                shared = await client.get(shared_key) if client is not None and shared_key else None
+                if shared:
+                    try:
+                        data = json.loads(shared)
+                    except (TypeError, ValueError):
+                        data = None
+                    if isinstance(data, list):
+                        self._instrument_cache = data
+                if self._instrument_cache is None:
+                    result = await self._request('GET', f'/trade/accounts/{self.account_id}/instruments')
+                    data = result.get('d') or {}
+                    if not isinstance(data, dict) or not isinstance(data.get('instruments'), list):
+                        raise RuntimeError('TradeLocker instruments response missing valid instruments list')
+                    self._instrument_cache = data['instruments']
+                    if client is not None and shared_key:
+                        await client.set(shared_key, json.dumps(self._instrument_cache), ex=300)
                 if key:
-                    _SESSION_CACHE.setdefault(key, {}).update(instruments=self._instrument_cache, instruments_expiry=time.monotonic() + 120)
+                    _SESSION_CACHE.setdefault(key, {}).update(instruments=self._instrument_cache, instruments_expiry=time.monotonic() + 300)
         return self._instrument_cache
 
     async def get_symbols(self, query=None, limit=200):

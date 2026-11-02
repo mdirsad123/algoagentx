@@ -267,7 +267,7 @@ async def test_dispatch_sessions_and_contexts_are_isolated_and_exit_has_no_entry
 async def test_lost_ack_history_is_requested_and_fresh_equity_replaces_old_snapshot(monkeypatch):
     from app.services.live import broker_sync_service as sync
     dep = SimpleNamespace(id=uuid4(), broker_account_id=uuid4())
-    broker = SimpleNamespace(broker_code='TRADELOCKER', metadata_json={
+    broker = SimpleNamespace(id=uuid4(), broker_code='TRADELOCKER', metadata_json={
         'account_info': {'balance': '9999', 'equity': '9999'},
     })
     key = 'durable-lost-ack-key'
@@ -276,7 +276,7 @@ async def test_lost_ack_history_is_requested_and_fresh_equity_replaces_old_snaps
         SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [None])),
         SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [key])),
     ])
-    db = SimpleNamespace(execute=AsyncMock(side_effect=lambda *args: next(results)))
+    db = SimpleNamespace(info={}, execute=AsyncMock(side_effect=lambda *args: next(results)))
     adapter = SimpleNamespace(
         get_positions=AsyncMock(return_value=[]),
         get_orders=AsyncMock(return_value=[]),
@@ -296,8 +296,10 @@ async def test_lost_ack_history_is_requested_and_fresh_equity_replaces_old_snaps
         [], strategy_ids=['AX-' + hashlib.sha256(key.encode()).hexdigest()[:28]])
     assert reconcile.await_args.args[2] == [{'id': 'recovered'}]
     assert result['orders_updated'] == 1
-    assert broker.metadata_json['account_info']['equity'] == '4900'
-    assert broker.metadata_json['account_info']['balance'] == '5000'
+    assert broker.metadata_json['account_info']['equity'] == '9999'  # no metadata UPDATE/lock
+    fresh = db.info['tradelocker_pretrade_financial_snapshots'][str(broker.id)]
+    assert fresh['equity'] == '4900'
+    assert fresh['balance'] == '5000'
 
 
 @pytest.mark.asyncio

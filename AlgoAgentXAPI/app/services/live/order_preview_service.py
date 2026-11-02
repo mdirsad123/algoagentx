@@ -65,7 +65,18 @@ async def _safe_capital_snapshot(db: AsyncSession, deployment: StrategyDeploymen
             broker_account = (
                 await db.execute(select(BrokerAccount).where(BrokerAccount.id == broker_account_id))
             ).scalar_one_or_none()
-        return get_effective_trading_capital(deployment, broker_account)
+        # The entry path may have just fetched fresh TradeLocker financials.
+        # Do not persist them through a competing broker_accounts metadata UPDATE:
+        # the account sync worker owns that row. Use the verified session-local
+        # snapshot for sizing; it takes precedence over historical UI metadata.
+        broker_metrics = None
+        if broker_account is not None:
+            session_info = getattr(db, 'info', None)
+            if isinstance(session_info, dict):
+                financials = session_info.get('tradelocker_pretrade_financial_snapshots', {}).get(str(broker_account_id))
+                if isinstance(financials, dict) and financials.get('connected') is True:
+                    broker_metrics = {'account_info': financials}
+        return get_effective_trading_capital(deployment, broker_account, broker_metrics=broker_metrics)
     except Exception as exc:  # pragma: no cover - defensive readiness guard
         logger.warning(
             "LIVE_ORDER_PREVIEW_CAPITAL_SNAPSHOT_FALLBACK deployment_id=%s error=%s",

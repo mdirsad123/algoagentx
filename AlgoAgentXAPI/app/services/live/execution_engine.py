@@ -11,16 +11,17 @@ from datetime import timedelta
 from uuid import uuid4
 from typing import Optional
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 
 from ...core.config import settings
 from ...core.redis_manager import redis_manager
 from ...db.session import async_session
 from ..brokers.request_context import OrderRequestContext, order_request_context, check_order_deadline, mark_order_submission
 
-from ...db.models import BrokerAccount, Instrument, LiveOrder, LiveSignal, LiveTradeLog, StrategyDeployment
+from ...db.models import BrokerAccount, Instrument, LiveOrder, LivePosition, LiveSignal, LiveTradeLog, StrategyDeployment
 from ..brokers.base import BrokerOrderRequest
 from ..brokers.factory import get_broker_adapter, get_broker_code
 from .paper_broker import fill_market_order
@@ -247,6 +248,15 @@ async def _existing_order_for_client_id(db: AsyncSession, client_order_id: str) 
     return (await db.execute(select(LiveOrder).where(LiveOrder.client_order_id == client_order_id))).scalar_one_or_none()
 
 
+def _safe_to_reclaim_copy_pre_submit(order: LiveOrder | None) -> bool:
+    if order is None or str(getattr(order, 'status', '')).upper() != 'SKIPPED':
+        return False
+    if getattr(order, 'broker_order_id', None):
+        return False
+    raw = getattr(order, 'raw_response', None)
+    return isinstance(raw, dict) and raw.get('safe_pre_submit_retry') is True
+
+
 async def _reserve_entry(db, deployment, signal, client_order_id, idempotency_key, symbol, side, qty, price, stop_loss, target):
     """Commit intent BEFORE external I/O. A crash leaves a blocking PENDING row.
 
@@ -264,11 +274,27 @@ async def _reserve_entry(db, deployment, signal, client_order_id, idempotency_ke
                   raw_response={'submission_intent_at': datetime.now(timezone.utc).isoformat(),
                                 'requires_reconciliation': True})
     inserted = (await db.execute(pg_insert(LiveOrder).values(**values).on_conflict_do_nothing().returning(LiveOrder.id))).scalar_one_or_none()
+    claimed = inserted is not None
+    if not claimed:
+        # A prior attempt may have failed BEFORE any broker order POST. Only
+        # that explicitly audited, terminal pre-submit SKIPPED reservation can
+        # be atomically reclaimed. Uncertain PENDING and real broker orders
+        # must NEVER be resent merely because the runner/reconciler restarted.
+        reclaimed = (await db.execute(update(LiveOrder).where(
+            LiveOrder.client_order_id == client_order_id,
+            LiveOrder.status == 'SKIPPED',
+            LiveOrder.broker_order_id.is_(None),
+            LiveOrder.raw_response['safe_pre_submit_retry'].as_boolean().is_(True),
+        ).values(status='PENDING', error_message=None,
+                 raw_response={'submission_intent_at': datetime.now(timezone.utc).isoformat(),
+                               'requires_reconciliation': True,
+                               'pre_submit_reclaimed': True}).returning(LiveOrder.id))).scalar_one_or_none()
+        claimed = reclaimed is not None
     await db.commit()
     order = await _existing_order_for_client_id(db, client_order_id)
     if order is None:
         raise RuntimeError('Durable entry reservation unavailable; broker submission blocked')
-    return order, inserted is not None
+    return order, claimed
 
 def _selected_ctrader_account(broker: BrokerAccount | None) -> dict | None:
     meta = getattr(broker, "metadata_json", None) or {}
@@ -465,7 +491,10 @@ async def _execute_demo_entry(
 
     client_order_id = _client_order_id(deployment, signal, "ENTRY")
     existing_order = await _existing_order_for_client_id(db, client_order_id)
-    if existing_order is not None:
+    if existing_order is not None and not (
+        bool(getattr(deployment, '_copy_execution_target', False))
+        and _safe_to_reclaim_copy_pre_submit(existing_order)
+    ):
         signal.status = "EXECUTED" if existing_order.status in {"FILLED", "PLACED"} else signal.status
         await _log(db, deployment, "DUPLICATE_ORDER_BLOCKED", "Duplicate broker order blocked by client_order_id", "WARNING", {"signal_id": str(signal.id), "order_id": str(existing_order.id), "client_order_id": client_order_id})
         return existing_order
@@ -687,7 +716,10 @@ async def _execute_ctrader_entry(
     client_order_id = _ctrader_client_order_id(deployment, signal, "ENTRY")
     idempotency_key = hashlib.sha256(f"CTRADER:{client_order_id}".encode()).hexdigest()
     existing = await _existing_order_for_client_id(db, client_order_id)
-    if existing is not None:
+    if existing is not None and not (
+        bool(getattr(deployment, '_copy_execution_target', False))
+        and _safe_to_reclaim_copy_pre_submit(existing)
+    ):
         signal.status = "EXECUTED" if existing.status in {"FILLED", "PLACED", "ACCEPTED"} else signal.status
         await _log(db, deployment, "DUPLICATE_ORDER_BLOCKED", "Existing cTrader client order id reused; broker send skipped", "WARNING", {"signal_id": str(signal.id), "order_id": str(existing.id), "client_order_id": client_order_id})
         return existing
@@ -1118,7 +1150,27 @@ async def _execute_signal_for_account_inner(db: AsyncSession, deployment: Strate
                     await sync_deployment_broker_state(db, deployment.id)
                 deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment.id))).scalar_one()
                 await _log(db, deployment, "PRE_TRADE_BROKER_SYNC", "Broker state verified before execution risk checks", metadata={"signal_id": str(signal.id), "persistent_ctrader": persistent_ctrader, "cached_state_fresh": cached_state_fresh})
+        except SQLAlchemyError as exc:
+            # A PostgreSQL deadlock (40P01), serialization failure, or autoflush
+            # error poisons the transaction. Accessing even deployment.id or
+            # signal.id through ORM logging before rollback can raise
+            # PendingRollbackError and mask the original failure. The broker
+            # order POST has NOT been reached on this pre-trade path: fail closed
+            # and let the outer strategy runner start a new clean transaction.
+            _trace_logger.error(
+                'PRE_TRADE_DB_TRANSACTION_FAILED deployment=%s error_type=%s',
+                object.__getattribute__(deployment, '__dict__').get('id'),
+                type(exc).__name__,
+            )
+            await db.rollback()
+            raise
         except Exception as exc:
+            # The adapter can also surface a SQLAlchemy error wrapped by an
+            # application exception. A failed DB session must never be used
+            # to log that error; let the outer runner roll back and report it.
+            if not db.is_active:
+                await db.rollback()
+                raise
             signal.status = "REJECTED"
             signal.rejection_reason = f"Broker state refresh failed safely before execution: {exc}"
             await _log(db, deployment, "PRE_TRADE_BROKER_SYNC_FAILED", signal.rejection_reason, "ERROR", {"signal_id": str(signal.id)})
@@ -1479,6 +1531,20 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
     # Do not wrap, clone, snapshot, or otherwise alter this working path.
     primary_order = await _execute_signal_for_account(db, deployment, signal)
 
+    # Store an opt-in, durable copy intent on THIS primary order before commit.
+    # Only new primary entries are eligible for follow-up reconciliation; old
+    # historical orders are never redispatched after upgrading the application.
+    # This does not authorize a copy until the broker confirms a primary fill.
+    if (primary_order is not None and
+            str(signal_state.get('signal_type') or '').upper() in {'BUY', 'SELL'}):
+        existing_raw = dict(object.__getattribute__(primary_order, '__dict__').get('raw_response') or {})
+        existing_raw['copy_dispatch_intent'] = {
+            'version': 2,
+            'targets': [str(x) for x in copy_ids],
+            'created_at': datetime.now(timezone.utc).isoformat(),
+        }
+        primary_order.raw_response = existing_raw
+
     # CRITICAL COPY-ISOLATION BOUNDARY:
     # Persist the primary broker result before optional copy fan-out begins.
     # A later copy-account/network failure must never roll back the local primary
@@ -1583,17 +1649,28 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
             primary_order_state = dict(object.__getattribute__(primary_order, '__dict__'))
         except Exception as exc:
             await db.rollback()
-            await _log(db, log_deployment, 'COPY_TARGET_SKIPPED', 'Primary fill not yet verifiable; no catch-up scheduled',
+            await _log(db, log_deployment, 'COPY_WAITING_FOR_PRIMARY_FILL',
+                       'Primary broker fill remains unverified; copy intent persisted for bounded reconciliation',
                        'WARNING', {'signal_id': str(signal_id), 'error_type': type(exc).__name__,
                                    'accounts': [str(x) for x in copy_ids]})
             return primary_order
     # New exposure requires confirmed primary execution. Explicit EXIT signals
     # still close each target independently, including when the primary is flat.
     if copy_entry and (primary_order is None or primary_status not in {'FILLED', 'RECONCILED'}):
-        await _log(db, log_deployment, 'COPY_TARGET_SKIPPED', 'Primary order not confirmed filled',
+        await _log(db, log_deployment, 'COPY_WAITING_FOR_PRIMARY_FILL',
+                   'Primary order not confirmed filled; only a matching broker fill can trigger a deferred copy',
                    'WARNING', {'signal_id': str(signal_id), 'primary_status': primary_status,
                                'accounts': [str(x) for x in copy_ids]})
         return primary_order
+    # Copy timing starts when a primary order is *confirmed*, NOT from candle
+    # close. Full-history QA may legitimately take over a minute to calculate.
+    # The primary runner already enforces fresh, latest-candle eligibility.
+    # The broker still gets a bounded request deadline to avoid unsafe queues.
+    if copy_entry:
+        await _log(db, log_deployment, 'COPY_DISPATCH_READY',
+                   'Primary fill verified; dispatching eligible copy targets',
+                   metadata={'signal_id': str(signal_id),
+                             'broker_account_ids': [str(x) for x in copy_ids]})
     # Release the parent transaction before independent child sessions commit.
     await db.commit()
     semaphore = asyncio.Semaphore(max(1, int(settings.live_copy_max_concurrency)))
@@ -1636,6 +1713,157 @@ def _copy_deadline(deployment_snapshot, signal_snapshot):
     return close.timestamp() + max(1, int(settings.live_copy_max_age_after_close_seconds))
 
 
+def _copy_execution_deadline(primary_completed_at: float) -> float:
+    """Allow a *fresh primary fill* to fan out even after a slow M5 calculation.
+
+    This is deliberately bounded from the actual primary fill/ACK, rather than
+    a stale candle time. Never use it to replay historical unexecuted signals.
+    """
+    return float(primary_completed_at) + max(
+        10, int(getattr(settings, 'live_copy_max_age_after_primary_seconds', 180)))
+
+
+async def dispatch_confirmed_copy_orders(deployment_id) -> dict[str, int]:
+    """Recover only NEW copy intents after their broker-confirmed primary fill.
+
+    Called by the existing reconcile worker after it updates primary broker
+    truth. A durable idempotency reservation protects each target even if this
+    worker and the initial runner attempt the same signal simultaneously.
+    Unverified/closed/old primary entries are never copied.
+    """
+    counts = {'eligible': 0, 'submitted': 0, 'skipped': 0, 'errors': 0}
+    plans = []
+    async with async_session() as db:
+        deployment = (await db.execute(select(StrategyDeployment).where(
+            StrategyDeployment.id == deployment_id))).scalar_one_or_none()
+        if not deployment or str(deployment.status).upper() != 'RUNNING' or not deployment.auto_trade_enabled:
+            return counts
+        if not (settings.live_copy_trading_enabled and deployment.copy_trading_enabled):
+            return counts
+        if str(deployment.account_policy_type or 'STANDARD').upper() != 'STANDARD':
+            return counts
+        dep_snapshot = dict((await db.execute(select(StrategyDeployment.__table__).where(
+            StrategyDeployment.id == deployment_id))).mappings().one())
+        primary_id = deployment.broker_account_id
+        candidates = (await db.execute(select(LiveOrder).where(
+            LiveOrder.deployment_id == deployment_id,
+            LiveOrder.broker_account_id == primary_id,
+            LiveOrder.status.in_(('FILLED', 'RECONCILED')),
+            LiveOrder.action == 'ENTRY',
+            LiveOrder.signal_id.is_not(None),
+        ).order_by(LiveOrder.created_at.desc()).limit(15))).scalars().all()
+        primary_broker = (await db.execute(select(BrokerAccount).where(
+            BrokerAccount.id == primary_id))).scalar_one_or_none()
+        if primary_broker is None:
+            return counts
+        primary_code = get_broker_code(primary_broker)
+        primary_mode = str(primary_broker.mode or '').upper()
+        now = datetime.now(timezone.utc)
+        max_followup = max(30, int(getattr(settings, 'live_copy_fill_followup_seconds', 600)))
+        for primary in candidates:
+            raw = primary.raw_response if isinstance(primary.raw_response, dict) else {}
+            intent = raw.get('copy_dispatch_intent')
+            if not isinstance(intent, dict) or intent.get('version') != 2:
+                continue  # No catch-up for orders created by older code.
+            age_anchor = primary.created_at
+            if not isinstance(age_anchor, datetime):
+                counts['skipped'] += 1
+                continue
+            if age_anchor.tzinfo is None:
+                age_anchor = age_anchor.replace(tzinfo=timezone.utc)
+            if (now - age_anchor).total_seconds() > max_followup:
+                counts['skipped'] += 1
+                continue
+            signal = (await db.execute(select(LiveSignal.__table__).where(
+                LiveSignal.id == primary.signal_id))).mappings().one_or_none()
+            if signal is None or str(signal.get('signal_type') or '').upper() not in {'BUY', 'SELL'}:
+                continue
+            # A later signal supersedes this one, even when its entry failed.
+            subsequent = (await db.execute(select(LiveSignal.id).where(
+                LiveSignal.deployment_id == deployment_id,
+                LiveSignal.id != primary.signal_id,
+                LiveSignal.candle_time > signal['candle_time'],
+                LiveSignal.signal_type.in_(('BUY', 'SELL', 'EXIT')),
+            ).limit(1))).scalar_one_or_none() if signal.get('candle_time') else None
+            if subsequent is not None:
+                counts['skipped'] += 1
+                continue
+            # Confirm the primary exposure is STILL open; a late fill of a
+            # now-closed position must not open fresh risk on copy accounts.
+            positions = (await db.execute(select(LivePosition).where(
+                LivePosition.deployment_id == deployment_id,
+                LivePosition.broker_account_id == primary_id,
+                LivePosition.status == 'OPEN',
+            ))).scalars().all()
+            side = 'LONG' if str(signal['signal_type']).upper() == 'BUY' else 'SHORT'
+            primary_symbol = _canonical_symbol_fallback(primary.symbol)
+            if not any(str(pos.side).upper() == side and
+                       _canonical_symbol_fallback(pos.symbol) == primary_symbol for pos in positions):
+                counts['skipped'] += 1
+                continue
+            counts['eligible'] += 1
+            sig_snapshot = dict(signal)
+            sig_snapshot['status'] = 'RECEIVED'
+            sig_snapshot['rejection_reason'] = None
+            sig_proxy = SimpleNamespace(**sig_snapshot)
+            target_ids = list(intent.get('targets') or [])
+            if not target_ids:
+                continue
+            canonical = await _canonical_copy_symbol(
+                db, SimpleNamespace(**dep_snapshot), sig_proxy)
+            # The initial runner can have submitted a target already. NEVER
+            # retry that account if any durable client-order reservation exists.
+            due = []
+            for raw_id in target_ids:
+                from uuid import UUID
+                try:
+                    target_id = UUID(str(raw_id))
+                except (ValueError, TypeError):
+                    counts['skipped'] += 1
+                    continue
+                target_dep = SimpleNamespace(**dep_snapshot)
+                target_dep.broker_account_id = target_id
+                client_key = _client_order_id(target_dep, sig_proxy, 'ENTRY')
+                prior = await _existing_order_for_client_id(db, client_key)
+                if prior is None or _safe_to_reclaim_copy_pre_submit(prior):
+                    due.append(target_id)
+            if not due:
+                continue
+            # Close the DB session before any external copy order requests.
+            # A network stall must not occupy a primary database connection.
+            plans.append((tuple(due), dict(dep_snapshot), dict(sig_snapshot),
+                          canonical, str(signal.get('symbol') or ''),
+                          primary_mode, primary_code))
+
+    # Each copy uses its own connection and durable, account-scoped order key.
+    for due, dep_snapshot, sig_snapshot, canonical, symbol, primary_mode, primary_code in plans:
+        started = time.time()
+        sem = asyncio.Semaphore(max(1, int(settings.live_copy_max_concurrency)))
+        async def submit_one(target_id):
+            async with sem:
+                return await _dispatch_copy_account(
+                    account_id=target_id, deployment_snapshot=dep_snapshot,
+                    signal_snapshot=sig_snapshot, canonical_symbol=canonical,
+                    primary_signal_symbol=symbol,
+                    primary_mode=primary_mode, primary_broker_code=primary_code,
+                    primary_completed_at=started)
+        results = await asyncio.gather(*(submit_one(x) for x in due), return_exceptions=True)
+        for target_id, result in zip(due, results):
+            if isinstance(result, BaseException):
+                counts['errors'] += 1
+                _trace_logger.warning('COPY_DEFERRED_EXCEPTION deployment=%s target=%s type=%s',
+                                      deployment_id, target_id, type(result).__name__)
+            elif result is not None and str(getattr(result, 'status', '')).upper() in {
+                'FILLED', 'RECONCILED', 'PLACED', 'SUBMITTED', 'PENDING', 'ACCEPTED', 'PENDING_DEMO'
+            }:
+                counts['submitted'] += 1
+            elif result is not None and str(getattr(result, 'status', '')).upper() == 'ERROR':
+                counts['errors'] += 1
+            else:
+                counts['skipped'] += 1
+    return counts
+
+
 async def _dispatch_copy_account(*, account_id, deployment_snapshot, signal_snapshot, canonical_symbol,
                                  primary_signal_symbol, primary_mode, primary_broker_code, primary_completed_at):
     """One task, one session, one account. Never share mutable ORM state."""
@@ -1652,7 +1880,7 @@ async def _dispatch_copy_account(*, account_id, deployment_snapshot, signal_snap
     async with async_session() as copy_db:
         try:
             # Entry expiry must not disable risk-reducing EXIT operations.
-            deadline = (_copy_deadline(deployment_snapshot, signal_snapshot)
+            deadline = (_copy_execution_deadline(primary_completed_at)
                         if copy_signal.signal_type in {'BUY', 'SELL'} else float('inf'))
             context = OrderRequestContext(deadline, str(copy_signal.id), str(account_id), primary_completed_at)
             token = order_request_context.set(context)
@@ -1707,9 +1935,40 @@ async def _dispatch_copy_account(*, account_id, deployment_snapshot, signal_snap
             await copy_db.rollback()
             if context:
                 audit.update(context.metrics)
-            # Any committed submission intent survives this rollback. Do not
-            # fabricate a terminal failure when the broker outcome is unknown.
-            audit.update(order_status='PENDING' if audit.get('submitted_at') else 'SKIPPED',
+            broker_submission_possible = bool(audit.get('submitted_at'))
+            # A durable reservation is committed before the external order POST.
+            # If rate limiting / account validation failed *before* the adapter
+            # called mark_order_submission(), it would otherwise remain PENDING
+            # forever and block every subsequent signal on that copy account.
+            # Only a provably pre-submit, account-scoped reservation may become
+            # safely reclaimable; after a possible POST, broker reconciliation
+            # is mandatory and automatic resubmission remains forbidden.
+            if not broker_submission_possible and copy_signal.signal_type in {'BUY', 'SELL'}:
+                try:
+                    if audit.get('broker_type') in {'CTRADER', 'CTRADER_API'}:
+                        key = _ctrader_client_order_id(target, copy_signal, 'ENTRY')
+                    else:
+                        key = _client_order_id(target, copy_signal, 'ENTRY')
+                    reserved = (await copy_db.execute(select(LiveOrder).where(
+                        LiveOrder.client_order_id == key,
+                        LiveOrder.broker_account_id == account_id,
+                        LiveOrder.status == 'PENDING',
+                        LiveOrder.broker_order_id.is_(None),
+                    ).with_for_update())).scalar_one_or_none()
+                    if reserved is not None and (reserved.raw_response or {}).get('requires_reconciliation'):
+                        reserved.status = 'SKIPPED'
+                        reserved.error_message = f'Pre-submit failure: {type(exc).__name__}'
+                        reserved.raw_response = {
+                            **(reserved.raw_response or {}),
+                            'safe_pre_submit_retry': True,
+                            'pre_submit_error_type': type(exc).__name__,
+                        }
+                        audit['safe_pre_submit_retry'] = True
+                except Exception as cleanup_exc:
+                    # Unknown persisted state: keep fail-closed; no blind retry.
+                    await copy_db.rollback()
+                    audit['pre_submit_cleanup_error'] = type(cleanup_exc).__name__
+            audit.update(order_status='PENDING' if broker_submission_possible else 'SKIPPED',
                          error_type=type(exc).__name__, reason=str(exc)[:300])
             await _log(copy_db, target, 'COPY_ACCOUNT_ERROR', 'Copy execution failed safely', 'ERROR', audit)
             await copy_db.commit()

@@ -1087,7 +1087,28 @@ async def run_strategy_for_deployment(
             await _log(db, deployment, "RUNNER_EXECUTION_SKIPPED", latest_log_message, "WARNING", {"signal_id": str(signal.id)})
         else:
             order = await execute_signal(db, deployment, signal)
-            executed = bool(order and signal.status == "EXECUTED" and order.status in {"FILLED", "PLACED"})
+            # execute_signal may commit or roll back the primary transaction while
+            # dispatching/reconciling copy accounts.  Those operations can expire
+            # ORM attributes even with expire_on_commit=False (e.g. rollback or
+            # nested transaction invalidation).  Never access expired attributes
+            # synchronously after a broker request: explicitly flush pending
+            # local status and re-load the primary rows using awaited I/O.
+            await db.flush()
+            await db.refresh(deployment)
+            await db.refresh(signal)
+            if order is not None:
+                from sqlalchemy.orm import object_session
+                if object_session(order) is db.sync_session:
+                    await db.refresh(order)
+                else:
+                    # A child copy session may return a detached order.  Query
+                    # the local database for an authoritative attached row.
+                    order_id = object.__getattribute__(order, "__dict__").get("id")
+                    order = (
+                        (await db.execute(select(LiveOrder).where(LiveOrder.id == order_id))).scalar_one_or_none()
+                        if order_id is not None else None
+                    )
+            executed = bool(order is not None and signal.status == "EXECUTED" and order.status in {"FILLED", "PLACED", "RECONCILED"})
             latest_log_message = signal.rejection_reason or _message_for_result(signal_type, execute, True, order)
             await _log(
                 db,

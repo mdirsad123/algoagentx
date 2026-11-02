@@ -117,6 +117,8 @@ class Settings(BaseSettings):
     live_tradelocker_candle_worker_enabled: bool = Field(default=False, description="Independent TradeLocker broker candle polling")
     live_copy_trading_enabled: bool = Field(default=True, description="Master kill switch for deployment copy-trading fan-out")
     live_copy_max_concurrency: int = Field(default=4, ge=1, le=16, description="Concurrent account-isolated copy execution tasks")
+    live_copy_max_age_after_primary_seconds: int = Field(default=180, ge=10, le=1800, description="Per-copy account deadline measured from confirmed primary order; independent of candle calculation latency")
+    live_copy_fill_followup_seconds: int = Field(default=600, ge=30, le=1800, description="Maximum time since primary broker submission in which reconciliation may fan out a newly filled entry")
     live_copy_max_age_after_close_seconds: int = Field(default=60, ge=1, le=300, description="Copy entries expire relative to original candle close; never replay")
 
     live_candle_stream: str = Field(default="live:candle_closed", description="Redis Stream for closed-candle events")

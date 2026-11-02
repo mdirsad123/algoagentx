@@ -674,25 +674,38 @@ async def sync_tradelocker_pretrade_positions(db: AsyncSession, deployment: Stra
         # Entry sizing requires current financial truth, not a background equity
         # snapshot from before a close/deposit. Only stable identity is cached by
         # the shared adapter; positions and /state remain fresh for each entry.
-        recent = False
+        # Reuse an already verified financial snapshot only for a *very short*
+        # window; consecutive primary/copy pre-trade checks need not each call
+        # /trade/accounts and /state if the same account was verified seconds ago.
+        # Never cache position truth: it was freshly reconciled above.
+        recent = bool(last_at and (datetime.now(timezone.utc) - last_at).total_seconds() <= 10
+                      and isinstance(last_test, dict) and _dec(last_test.get('balance')) > 0)
         if not recent:
             info = await adapter.get_account_info()
             if not isinstance(info, dict) or not info.get('connected') or _dec(info.get('balance')) <= 0:
                 raise RuntimeError('TradeLocker broker balance unavailable; risk sizing blocked')
-            meta['last_test'] = {
+            # Pre-trade sizing must use fresh broker truth without writing the
+            # shared broker_accounts metadata row while position reconciliation
+            # holds other locks. Background broker sync owns persisted metadata.
+            # This avoids transaction lock inversion with the reconciliation
+            # worker and prevents a later SELECT from autoflushing this large
+            # JSON document during the live order path.
+            last_test = {
                 'connected': True, 'message': info.get('message'),
                 'account_login': info.get('account_login'), 'server': info.get('server'),
                 'balance': str(info['balance']),
                 'equity': str(info.get('equity')) if info.get('equity') is not None else None,
                 'free_margin': str(info.get('free_margin')) if info.get('free_margin') is not None else None,
-                'currency': info.get('currency'), 'synced_at': datetime.now(timezone.utc).isoformat(),
+                'currency': info.get('currency'),
+                'synced_at': datetime.now(timezone.utc).isoformat(),
             }
-            broker.metadata_json = meta
-            # capital_service prefers account_info over last_test. Do not let an
-            # old UI snapshot shadow the financial state just verified above.
-            if 'account_info' in meta:
-                meta['account_info'] = dict(meta['last_test'])
-                broker.metadata_json = dict(meta)
+        # Auto-order preview reads this per-AsyncSession snapshot before the
+        # persisted account metadata; risk sizing is NEVER based on stale
+        # account metadata when the broker returned fresher financial data.
+        # No snapshot is shared between sessions/deployments/accounts.
+        session_info = getattr(db, 'info', None)
+        if isinstance(session_info, dict) and isinstance(last_test, dict):
+            session_info.setdefault('tradelocker_pretrade_financial_snapshots', {})[str(broker.id)] = dict(last_test)
 
     await _write_log(db, deployment, 'TRADELOCKER_PRE_TRADE_POSITIONS_SYNCED',
                      'Fresh TradeLocker account positions verified before risk/position gates',
