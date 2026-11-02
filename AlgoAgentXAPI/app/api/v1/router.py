@@ -50,6 +50,8 @@ api_router.include_router(ai_screener_jobs.router, prefix="/ai-screener-jobs", t
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_email.router, prefix="/admin/email", tags=["admin-email"])
 api_router.include_router(admin_market_data.router, prefix="/admin/market-data", tags=["admin-market-data"])
+from . import admin_market_data_sync
+api_router.include_router(admin_market_data_sync.router, prefix="/admin/market-data/auto-sync", tags=["admin-market-data-auto-sync"])
 api_router.include_router(admin_risk_engine.router, prefix="/admin/risk-engine", tags=["admin-risk-engine"])
 api_router.include_router(market_master.router, prefix="/market-master", tags=["market-master"])
 api_router.include_router(market_master.admin_router, prefix="/admin/market-master", tags=["admin-market-master"])

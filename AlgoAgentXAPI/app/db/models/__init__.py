@@ -4,6 +4,7 @@ from .admin_login_otp import AdminLoginOtp
 from .instruments import AssetClass, Timeframe, Instrument
 from .strategies import Strategy, StrategyRuntimePreset, StrategyAsset
 from .market_data import MarketData
+from .market_data_sync import MarketDataSyncConfig, MarketDataFeedCandle, MarketDataSyncRun, MarketDataSyncBatch, MarketDataCanonicalProvenance
 from .backtests import PerformanceMetric
 from .trades import Trade
 from .equity_curve import EquityCurve

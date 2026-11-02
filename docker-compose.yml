@@ -415,7 +415,61 @@ services:
       retries: 5
       start_period: 30s
 
+  # Isolated daily history worker. No live candle/order/strategy tasks on this queue.
+  market_data_history_worker:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile.prod
+    container_name: algoagentx_market_data_history_worker
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_prod:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      LIVE_LEGACY_RUNNER_ENABLED: "false"
+    command: ["celery", "-A", "app.services.market_data.daily_tasks.celery_app", "worker", "--loglevel=info", "--concurrency=1", "--prefetch-multiplier=1", "--without-gossip", "--without-mingle", "-Q", "market_data_daily", "-n", "market_data_history@%h"]
+    depends_on:
+      postgres_prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib; assert 'market_data_daily' in pathlib.Path('/proc/1/cmdline').read_bytes().decode('utf-8','ignore')"]
+      interval: 45s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Exactly one Beat instance: only history sync schedule, NEVER the legacy Celery schedules.
+  market_data_history_scheduler:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile.prod
+    container_name: algoagentx_market_data_history_scheduler
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_prod:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      LIVE_LEGACY_RUNNER_ENABLED: "false"
+    command: ["celery", "-A", "app.services.market_data.daily_tasks.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/market-data-history-beat.db"]
+    depends_on:
+      postgres_prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib; assert 'beat' in pathlib.Path('/proc/1/cmdline').read_bytes().decode('utf-8','ignore')"]
+      interval: 45s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+
 volumes:
   postgres_data:
   redis_data:
   api_runtime_data:
+

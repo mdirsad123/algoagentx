@@ -890,3 +890,17 @@ html[data-sidebar-collapsed="true"] .user-shell-content {
     min-width: 18rem;
   }
 }
+
+/* Market-data native selects: avoid white-on-light-grey Windows/Chrome dropdowns. */
+.market-data-theme select {
+  color-scheme: dark;
+  background-color: #28194c;
+  color: #f8fafc;
+}
+.market-data-theme select option,
+.market-data-theme select optgroup {
+  background-color: #251642 !important;
+  color: #f8fafc !important;
+}
+.market-data-theme select option:checked { background-color: #51308a !important; color: #fff !important; }
+.market-data-theme input[type="date"] { color-scheme: dark; }

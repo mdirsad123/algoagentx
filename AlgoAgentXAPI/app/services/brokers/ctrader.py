@@ -1502,6 +1502,88 @@ class CTraderAdapter(BrokerAdapter):
         return result[-safe_count:]
 
 
+    async def get_rates_history_window(self, symbol: str, timeframe: str, *, start: datetime, end: datetime,
+                                       symbol_meta: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Read-only, time-bounded cTrader trendbars for the admin history worker.
+
+        This method deliberately leaves the live warmup get_rates_history logic alone.
+        Requests are split into small timestamp windows to respect cTrader's
+        period-dependent from/to limits and server-side count restrictions.
+        """
+        if start.tzinfo is None or end.tzinfo is None or end <= start:
+            raise ValueError("History range must have valid UTC-aware start and end")
+        period_map = {"M1": 1, "M2": 2, "M3": 3, "M4": 4, "M5": 5,
+                      "M10": 6, "M15": 7, "M30": 8, "H1": 9, "H4": 10, "H12": 11, "D1": 12}
+        minutes_map = {"M1": 1, "M2": 2, "M3": 3, "M4": 4, "M5": 5,
+                       "M10": 10, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "H12": 720, "D1": 1440}
+        period = str(timeframe).upper()
+        if period not in period_map:
+            raise ValueError("Unsupported cTrader history timeframe")
+        selected = self._selected_account()
+        if not selected:
+            raise ValueError("Select a cTrader trading account before requesting candles")
+        account_id = selected.get("ctrader_account_id") or selected.get("account_number")
+        token = self._access_token()
+        if not account_id or not token:
+            raise ValueError("cTrader account/token unavailable; reconnect cTrader")
+        meta = symbol_meta or await self._resolve_symbol_meta(symbol)
+        resolved = str(meta.get("symbol_name") or meta.get("trading_symbol") or meta.get("symbol") or meta.get("name") or "")
+        if resolved.casefold() != str(symbol).strip().casefold():
+            raise ValueError("cTrader symbol mapping is not exact for selected account")
+        symbol_id = int(meta.get("symbol_id") or meta.get("id"))
+        is_live = bool(selected.get("is_live") or str(selected.get("account_type") or "").upper() == "LIVE")
+        numeric_id = int(account_id)
+        start = start.astimezone(timezone.utc)
+        end = end.astimezone(timezone.utc)
+        # At most 12 hours per request for minute bars and 2 days for larger
+        # periods. The worker additionally limits the total page window to 2 days.
+        chunk = timedelta(hours=12) if minutes_map[period] <= 10 else timedelta(days=2)
+        cursor = start
+        collected: dict[int, dict[str, Any]] = {}
+        client = await self._openapi_authorized_client(is_live=is_live)
+        try:
+            await client.request(PT_ACCOUNT_AUTH_REQ, {"ctidTraderAccountId": numeric_id, "accessToken": token}, PT_ACCOUNT_AUTH_RES)
+            while cursor < end:
+                until = min(cursor + chunk, end)
+                count = min(1500, max(2, int((until - cursor).total_seconds() / (minutes_map[period] * 60)) + 2))
+                response = await client.request(PT_GET_TRENDBARS_REQ, {
+                    "ctidTraderAccountId": numeric_id,
+                    "symbolId": symbol_id, "period": period_map[period],
+                    "fromTimestamp": int(cursor.timestamp() * 1000),
+                    "toTimestamp": int(until.timestamp() * 1000) - 1,
+                    "count": count,
+                }, PT_GET_TRENDBARS_RES)
+                bars = response.get("trendbar") or response.get("trendbars") or []
+                if not isinstance(bars, list):
+                    raise ValueError("cTrader returned invalid history bars")
+                for bar in bars:
+                    if not isinstance(bar, dict):
+                        continue
+                    try:
+                        ts = int(bar["utcTimestampInMinutes"]) * 60
+                        low = int(bar["low"])
+                        o = low + int(bar.get("deltaOpen") or 0)
+                        h = low + int(bar.get("deltaHigh") or 0)
+                        c = low + int(bar.get("deltaClose") or 0)
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    if not (start.timestamp() <= ts < end.timestamp()) or low <= 0 or not (low <= o <= h and low <= c <= h):
+                        continue
+                    collected[ts] = {"candle_time": datetime.fromtimestamp(ts, tz=timezone.utc),
+                                     "open": Decimal(o) / Decimal("100000"),
+                                     "high": Decimal(h) / Decimal("100000"),
+                                     "low": Decimal(low) / Decimal("100000"),
+                                     "close": Decimal(c) / Decimal("100000"),
+                                     "volume": bar.get("volume") or 0}
+                if until <= cursor:
+                    raise RuntimeError("cTrader history cursor did not advance")
+                cursor = until
+                if cursor < end:
+                    await asyncio.sleep(0.25)  # historical API max 5 requests/sec
+        finally:
+            await client.__aexit__(None, None, None)
+        return [collected[k] for k in sorted(collected)]
+
     async def get_rates_history(self, symbol: str, timeframe: str, count: int = 5000, before: datetime | None = None) -> list[dict[str, Any]]:
         """Fetch a large closed-candle history in broker-safe pages.
 

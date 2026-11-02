@@ -1,6 +1,9 @@
 "use client";
 
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { DailyHistoryPanel } from "./DailyHistoryPanel";
+import { CloudManualFetch } from "./CloudManualFetch";
+import { HistorySelect } from "./HistorySelect";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -17,6 +20,7 @@ import { toast } from "sonner";
 
 import {
   adminApi,
+  marketHistoryApi,
   AdminMarketDataCatalog,
   AdminMarketDataDataset,
   AdminMarketDataDatasetSummary,
@@ -49,7 +53,7 @@ const freshnessLabel: Record<MarketDataFreshnessStatus, string> = {
 
 const fallbackTimeframeOptions = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
 
-type MarketDataTab = "broker" | "csv";
+type MarketDataTab = "broker" | "daily" | "connect";
 
 function formatDateTime(value?: string | null) {
   return formatDateTimeIST(value);
@@ -149,6 +153,7 @@ export default function AdminMarketDataPage() {
   const [invalidOnly, setInvalidOnly] = useState(false);
 
   const [activeTab, setActiveTab] = useState<MarketDataTab>("broker");
+  useEffect(() => { if (new URLSearchParams(window.location.search).get("tab") === "connect") setActiveTab("connect"); }, []);
   const [provider, setProvider] = useState("MT5");
   const [brokerInstrumentId, setBrokerInstrumentId] = useState("");
   const [brokerSymbol, setBrokerSymbol] = useState("");
@@ -354,6 +359,36 @@ export default function AdminMarketDataPage() {
 
   const refreshMissingForDataset = async (dataset: AdminMarketDataDataset) => {
     const rowKey = `${dataset.instrument_id}-${dataset.timeframe}`;
+    setRefreshLoadingKey(rowKey);
+    try {
+      const { feed } = await marketHistoryApi.canonicalSource(dataset.instrument_id, dataset.timeframe);
+      if (feed) {
+        const info = await marketHistoryApi.publishPreview(feed.id);
+        const approved = window.confirm(`Update ${dataset.instrument_symbol} ${dataset.timeframe} from ${feed.provider} ${feed.broker_symbol}?\n\n${info.missing_rows.toLocaleString()} saved source candles are absent from the backtest dataset. Existing ${info.overlapping_rows.toLocaleString()} overlapping candles stay unchanged (including ${info.different_ohlc_overlaps_preserved.toLocaleString()} differing OHLC rows).\n\nThis mixes sources INSERT-ONLY and records provenance. Continue?`);
+        if (!approved) return;
+        if (info.source_rows > 0) {
+          const job = await marketHistoryApi.publishMissing(feed.id);
+          toast.success(`Canonical gap-fill queued (${job.run_id.slice(0, 8)}). Refresh Coverage when complete.`);
+        } else {
+          toast.warning("Primary broker feed has no stored source candles; fetch its initial history in the broker tab first.");
+        }
+        // Follow with an incremental broker API fetch using the dedicated history worker.
+        if (!["QUEUED", "RUNNING"].includes(feed.last_status)) {
+          try { await marketHistoryApi.run(feed.id); toast.info("Latest broker candles queued. Existing timestamps will be preserved."); }
+          catch { toast.info("Use Run Now in Automatic Daily Sync after publishing finishes."); }
+        }
+        return;
+      }
+      if (provider === "CTRADER" || provider === "TRADELOCKER") {
+        toast.error("Select a Primary feed in Automatic Daily Sync first; legacy Refresh Missing cannot use account-scoped broker APIs.");
+        setActiveTab("daily"); return;
+      }
+    } catch (error: any) {
+      toast.error(getErrorMessage(error, "Unable to publish missing broker candles"));
+      return;
+    } finally {
+      setRefreshLoadingKey(null);
+    }
     const selectedInstrument = catalog.instruments.find((instrument) => instrument.id === dataset.instrument_id);
     const symbol = selectedInstrument?.broker_symbol || selectedInstrument?.symbol || dataset.instrument_symbol;
 
@@ -363,7 +398,7 @@ export default function AdminMarketDataPage() {
     }
 
     const confirmed = window.confirm(
-      `Refresh missing ${dataset.instrument_symbol} ${dataset.timeframe} candles using ${provider}? This will start from the latest saved candle with a small overlap buffer.`,
+      `Refresh missing ${dataset.instrument_symbol} ${dataset.timeframe} candles using ${provider}? This uses the legacy manual provider; your broker-history Primary is configured separately.`,
     );
     if (!confirmed) return;
 
@@ -432,10 +467,10 @@ export default function AdminMarketDataPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 market-data-theme">
       <PageHeader
         title="Market Data Management"
-        subtitle="Admin control panel for data coverage, broker imports, CSV uploads, freshness monitoring, and diagnostics."
+        subtitle="Admin control panel for broker connections, manual history imports, 3 AM auto sync, freshness, and diagnostics."
         actions={
           <Button
             variant="outline"
@@ -480,31 +515,13 @@ export default function AdminMarketDataPage() {
               />
             </div>
 
-            <select value={instrumentIdFilter} onChange={(event) => setInstrumentIdFilter(event.target.value)} className={fieldClass}>
-              <option value="">All instruments</option>
-              {catalog.instruments.map((instrument) => (
-                <option key={instrument.id} value={instrument.id}>
-                  {instrument.symbol}
-                </option>
-              ))}
-            </select>
+            <HistorySelect value={instrumentIdFilter} onChange={setInstrumentIdFilter} clearable placeholder="All instruments" options={catalog.instruments.map(x => ({value: String(x.id), label: x.symbol}))} />
 
-            <select value={timeframeFilter} onChange={(event) => setTimeframeFilter(event.target.value)} className={fieldClass}>
-              <option value="">All timeframes</option>
-              {catalog.timeframes.map((timeframe) => (
-                <option key={timeframe} value={timeframe}>
-                  {timeframe}
-                </option>
-              ))}
-            </select>
+            <HistorySelect value={timeframeFilter} onChange={setTimeframeFilter} clearable placeholder="All timeframes" options={catalog.timeframes.map(tf => ({value: tf, label: tf}))} />
 
-            <select value={freshnessFilter} onChange={(event) => setFreshnessFilter(event.target.value as "" | MarketDataFreshnessStatus)} className={fieldClass}>
-              <option value="">All freshness</option>
-              <option value="fresh">Fresh</option>
-              <option value="warning">Warning</option>
-              <option value="stale">Stale</option>
-              <option value="no_data">No Data</option>
-            </select>
+            <HistorySelect value={freshnessFilter} onChange={v => setFreshnessFilter(v as "" | MarketDataFreshnessStatus)} clearable placeholder="All freshness" options={[
+              {value:"fresh", label:"Fresh"}, {value:"warning", label:"Warning"}, {value:"stale", label:"Stale"}, {value:"no_data", label:"No Data"}
+            ]} />
 
             <input
               type="number"
@@ -534,7 +551,7 @@ export default function AdminMarketDataPage() {
               <p className="text-xs uppercase tracking-wide">Tracked jobs</p>
               <p className="mt-1 text-lg font-semibold text-foreground">{formatInt(jobTotal)}</p>
             </div>
-            <p className="text-xs leading-relaxed">Use broker fetch for MT5/Upstox imports or CSV upload as a fallback. Preview/validate first, then save candles.</p>
+            <p className="text-xs leading-relaxed">Manual date-range broker fetch is preserved. Automatic cTrader/TradeLocker history sync is configured in its own tab.</p>
           </div>
         </GlassCard>
       </div>
@@ -543,9 +560,9 @@ export default function AdminMarketDataPage() {
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-base font-semibold text-foreground">Market Data Import Controls</h2>
-            <p className="mt-1 text-xs text-muted-foreground">Fetch candles from broker providers or validate and upload CSV files safely.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Manual broker imports, automatic once-daily feed updates, and broker connections.</p>
           </div>
-          <div className="grid grid-cols-2 gap-2 rounded-2xl border border-border/60 bg-background/20 p-1">
+          <div className="grid grid-cols-3 gap-2 rounded-2xl border border-border/60 bg-background/20 p-1">
             <button
               type="button"
               onClick={() => setActiveTab("broker")}
@@ -555,41 +572,38 @@ export default function AdminMarketDataPage() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("csv")}
-              className={`rounded-xl px-4 py-2 text-sm transition ${activeTab === "csv" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:bg-card/40 hover:text-foreground"}`}
+              onClick={() => setActiveTab("daily")}
+              className={`rounded-xl px-4 py-2 text-sm transition ${activeTab === "daily" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:bg-card/40 hover:text-foreground"}`}
             >
-              Upload CSV
+              Automatic Daily Sync
+            </button>
+            <button type="button" onClick={() => setActiveTab("connect")}
+              className={`rounded-xl px-4 py-2 text-sm transition ${activeTab === "connect" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:bg-card/40 hover:text-foreground"}`}>
+              Connect Broker
             </button>
           </div>
         </div>
 
         {activeTab === "broker" ? (
           <div className="space-y-4">
+            <div className="max-w-md space-y-1">
+              <label className="text-xs text-muted-foreground">History broker source</label>
+              <HistorySelect value={provider} onChange={setProvider} options={[
+                {value:"MT5",label:"MT5 — existing manual import"}, {value:"CTRADER",label:"cTrader Open API — connected account"},
+                {value:"TRADELOCKER",label:"TradeLocker — connected account"}, {value:"BINANCE",label:"Binance"}, {value:"UPSTOX",label:"Upstox"},
+                ...(process.env.NODE_ENV !== "production" ? [{value:"MOCK",label:"Mock"}] : [])
+              ]} />
+            </div>
+            {provider === "CTRADER" || provider === "TRADELOCKER" ? (
+              <CloudManualFetch key={provider} provider={provider} catalog={catalog} />
+            ) : <>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <select value={provider} onChange={(event) => setProvider(event.target.value)} className={fieldClass}>
-                <option value="MT5">MT5</option>
-                <option value="BINANCE">BINANCE</option>
-                <option value="UPSTOX">UPSTOX</option>
-                {process.env.NODE_ENV !== "production" ? <option value="MOCK">MOCK</option> : null}
-              </select>
-
-              <select value={brokerInstrumentId} onChange={(event) => setBrokerInstrumentId(event.target.value)} className={fieldClass}>
-                <option value="">Select instrument</option>
-                {catalog.instruments.map((instrument) => (
-                  <option key={instrument.id} value={instrument.id}>
-                    {instrument.symbol} • {instrument.exchange}
-                  </option>
-                ))}
-              </select>
+              <HistorySelect value={brokerInstrumentId} onChange={setBrokerInstrumentId} placeholder="Select instrument" options={catalog.instruments.map(x => ({value:String(x.id), label:`${x.symbol} • ${x.exchange}`}))} />
 
               <input value={brokerSymbol} onChange={(event) => setBrokerSymbol(event.target.value)} className={fieldClass} placeholder="Symbol e.g. XAUUSD / NIFTY" />
               <input value={instrumentKey} onChange={(event) => setInstrumentKey(event.target.value)} className={fieldClass} placeholder="Upstox instrument key optional" />
 
-              <select value={brokerTimeframe} onChange={(event) => setBrokerTimeframe(event.target.value)} className={fieldClass}>
-                {availableTimeframes.map((timeframe) => (
-                  <option key={timeframe} value={timeframe}>{timeframe}</option>
-                ))}
-              </select>
+              <HistorySelect value={brokerTimeframe} onChange={setBrokerTimeframe} options={availableTimeframes.map(tf => ({value:tf,label:tf}))} placeholder="Timeframe" />
 
               <input type="date" value={brokerStartDate} onChange={(event) => setBrokerStartDate(event.target.value)} className={fieldClass} />
               <input type="date" value={brokerEndDate} onChange={(event) => setBrokerEndDate(event.target.value)} className={fieldClass} />
@@ -636,63 +650,20 @@ export default function AdminMarketDataPage() {
               </div>
             ) : null}
             <SummaryCard title="Broker Fetch Result" summary={brokerSummary} />
+            </>}
           </div>
         ) : (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <select value={csvInstrumentId} onChange={(event) => setCsvInstrumentId(event.target.value)} className={fieldClass}>
-                <option value="">Select instrument</option>
-                {catalog.instruments.map((instrument) => (
-                  <option key={instrument.id} value={instrument.id}>
-                    {instrument.symbol} • {instrument.exchange}
-                  </option>
-                ))}
-              </select>
-
-              <select value={csvTimeframe} onChange={(event) => setCsvTimeframe(event.target.value)} className={fieldClass}>
-                {availableTimeframes.map((timeframe) => (
-                  <option key={timeframe} value={timeframe}>{timeframe}</option>
-                ))}
-              </select>
-
-              <input value={csvSource} onChange={(event) => setCsvSource(event.target.value)} className={fieldClass} placeholder="Source" />
-
-              <label className="inline-flex items-center gap-2 rounded-xl border border-border/60 bg-card/25 px-4 py-2.5 text-sm text-foreground">
-                <input type="checkbox" checked={csvDryRun} onChange={(event) => setCsvDryRun(event.target.checked)} />
-                Dry run
-              </label>
-
-              <div className="md:col-span-2 xl:col-span-4">
-                <input type="file" accept=".csv,text/csv" onChange={onCsvFileChange} className={fieldClass} />
-                <p className="mt-2 text-xs text-muted-foreground">Accepted headers: Date/Open/High/Low/Close/Volume, timestamp/open/high/low/close/volume, or tick_volume.</p>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Button disabled={csvLoading || !csvFile} onClick={() => void runCsvUpload(true)} variant="outline" className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50">
-                {csvLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileText className="mr-2 h-4 w-4" />}
-                Validate CSV
-              </Button>
-              <Button disabled={csvLoading || !csvFile} onClick={() => void runCsvUpload(false)} className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90">
-                {csvLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                Upload & Save Candles
-              </Button>
-            </div>
-
-            {selectedCsvInstrument ? (
-              <p className="text-xs text-muted-foreground">Selected: {selectedCsvInstrument.symbol} • {selectedCsvInstrument.exchange} • {selectedCsvInstrument.market}</p>
-            ) : null}
-            <SummaryCard title="CSV Import Result" summary={csvSummary} />
-          </div>
+          <DailyHistoryPanel catalog={catalog} view={activeTab === "connect" ? "connect" : "daily"} />
         )}
+
       </GlassCard>
 
       <GlassCard className="border border-border/60 bg-card/30 shadow-xl">
         <div className="border-b border-border/50 px-4 py-3">
-          <h2 className="text-base font-semibold text-foreground">Dataset Coverage & Freshness</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Showing {datasets.length} of {datasetTotal} datasets • freshness uses market/session rules
-          </p>
+          <h2 className="text-base font-semibold text-foreground">Legacy Backtest Dataset Coverage & Freshness</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2"><p className="mt-1 text-xs text-muted-foreground">
+            Showing {datasets.length} of {datasetTotal} canonical backtest datasets (legacy + explicitly published broker gaps). Source feed counts remain under Automatic Daily Sync → Verify Stored Data.
+          </p><Button size="sm" variant="outline" disabled={loadingDatasets} onClick={() => void loadDatasets(datasetPage)}>Refresh Coverage</Button></div>
         </div>
 
         {loadingDatasets || loadingCatalog ? (
@@ -751,7 +722,7 @@ export default function AdminMarketDataPage() {
                         ) : (
                           <RefreshCcw className="mr-2 h-4 w-4" />
                         )}
-                        Refresh Missing
+                        Fill Gaps / Refresh
                       </Button>
                     </td>
                   </tr>
@@ -774,95 +745,7 @@ export default function AdminMarketDataPage() {
         </div>
       </GlassCard>
 
-      <GlassCard className="border border-border/60 bg-card/30 shadow-xl">
-        <div className="border-b border-border/50 px-4 py-3">
-          <h2 className="text-base font-semibold text-foreground">Import Failures & Invalid Datasets</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Track failed jobs, invalid row counts, and ingestion diagnostics.</p>
-        </div>
 
-        <div className="grid grid-cols-1 gap-3 border-b border-border/40 p-4 md:grid-cols-5">
-          <input value={jobSearch} onChange={(event) => setJobSearch(event.target.value)} className={fieldClass} placeholder="Search job id / timeframe / source" />
-          <select value={jobTypeFilter} onChange={(event) => setJobTypeFilter(event.target.value)} className={fieldClass}>
-            <option value="">All job types</option>
-            <option value="market_data_import">Import</option>
-            <option value="market_data_upload">Upload</option>
-            <option value="market_data_refresh">Refresh</option>
-            <option value="CSV_UPLOAD">CSV Upload</option>
-          </select>
-          <label className="inline-flex items-center gap-2 rounded-xl border border-border/60 bg-card/25 px-3 py-2 text-sm text-foreground">
-            <input type="checkbox" checked={failedOnly} onChange={(event) => setFailedOnly(event.target.checked)} />
-            Failed only
-          </label>
-          <label className="inline-flex items-center gap-2 rounded-xl border border-border/60 bg-card/25 px-3 py-2 text-sm text-foreground">
-            <input type="checkbox" checked={invalidOnly} onChange={(event) => setInvalidOnly(event.target.checked)} />
-            Invalid data only
-          </label>
-          <Button onClick={() => void loadJobs(1)} className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90">
-            <Filter className="mr-2 h-4 w-4" />
-            Apply
-          </Button>
-        </div>
-
-        {loadingJobs ? (
-          <div className="flex items-center justify-center p-8 text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading jobs...
-          </div>
-        ) : jobs.length === 0 ? (
-          <div className="p-8 text-center text-muted-foreground">No import/refresh job records for selected filters.</div>
-        ) : (
-          <div className="admin-table-scroll overflow-x-auto">
-            <table className="admin-data-table w-full min-w-[980px] text-sm">
-              <thead>
-                <tr className="border-b border-border/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="px-4 py-3">Job</th>
-                  <th className="px-4 py-3">Type</th>
-                  <th className="px-4 py-3">Scope</th>
-                  <th className="px-4 py-3">Progress</th>
-                  <th className="px-4 py-3">Rows</th>
-                  <th className="px-4 py-3">Error</th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map((job) => (
-                  <tr key={job.job_id} className="border-b border-border/30 text-foreground/95">
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{job.job_id.slice(0, 10)}...</div>
-                      <div className="text-xs text-muted-foreground">{formatDateTime(job.created_at)}</div>
-                    </td>
-                    <td className="px-4 py-3">{job.job_type}</td>
-                    <td className="px-4 py-3">
-                      <div>{job.instrument_id ? `#${job.instrument_id}` : "All Instruments"}</div>
-                      <div className="text-xs text-muted-foreground">{job.timeframe || "All Timeframes"}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge className={job.status === "failed" ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-border/60 bg-card/40 text-foreground"}>
-                        {job.status} • {job.progress}%
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div>Imported: {job.imported_rows ?? "—"}</div>
-                      <div className="text-xs text-muted-foreground">Invalid: {job.invalid_rows ?? "—"}</div>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">{job.error_message || job.message || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <div className="flex items-center justify-between px-4 py-3 text-xs text-muted-foreground">
-          <span>Page {jobPage} of {jobTotalPages} • {jobTotal} jobs</span>
-          <div className="flex gap-2">
-            <Button variant="outline" disabled={jobPage <= 1 || loadingJobs} onClick={() => void loadJobs(jobPage - 1)} className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50">
-              Previous
-            </Button>
-            <Button variant="outline" disabled={jobPage >= jobTotalPages || loadingJobs} onClick={() => void loadJobs(jobPage + 1)} className="rounded-xl border-border/60 bg-card/30 text-foreground hover:bg-card/50">
-              Next
-            </Button>
-          </div>
-        </div>
-      </GlassCard>
     </div>
   );
 }

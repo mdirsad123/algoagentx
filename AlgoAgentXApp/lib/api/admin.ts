@@ -1728,3 +1728,55 @@ export const adminApi = {
 
 
 };
+
+// Isolated market-data history feeds: admin only. Does not touch live candle endpoints.
+export interface MarketHistoryAccount {
+  id: string; provider: string; label: string; user: string; mode: string; status: string;
+  subaccounts: { id: string; label: string; environment: string }[];
+  history_supported: boolean; capability: string;
+}
+export interface MarketHistoryBrokerSymbol { symbol: string; symbol_id?: string; description?: string; }
+export interface MarketHistoryConfig {
+  id: string; broker_account_id: string; provider: string; subaccount_id: string;
+  instrument_id: number; broker_symbol: string; timeframe: string;
+  enabled: boolean; is_primary: boolean; publish_approved: boolean; is_archived?: boolean;
+  initial_start?: string | null; last_candle?: string | null; expected_last_closed_utc?: string | null;
+  source_count?: number; source_first?: string | null;
+  checkpoint?: string | null; last_status: string; last_error?: string | null;
+  last_synced_at?: string | null;
+}
+export interface MarketHistoryVerification {
+  feed_id: string; provider: string; broker_symbol: string; instrument_id: number; timeframe: string;
+  source: {table: string; count: number; first: string | null; last: string | null};
+  canonical: {table: string; count: number; first: string | null; last: string | null};
+  is_primary: boolean; publish_approved: boolean;
+  last_run_status: string | null; last_run_dry_run: boolean | null;
+  latest_candles: Array<{timestamp: string; open: string; high: string; low: string; close: string; volume: string}>;
+  note: string;
+}
+export interface MarketHistoryRun {
+  id: string; config_id: string; status: string; scheduled_date?: string | null;
+  started_at?: string | null; finished_at?: string | null;
+  last_before?: string | null; last_after?: string | null;
+  fetched: number; inserted: number; updated?: number; invalid: number; skipped: number; error?: string | null;
+}
+const unboxHistory = <T>(response: any): T => response?.data?.success ? response.data.data as T : response.data as T;
+const historyBase = "/api/v1/admin/market-data/auto-sync";
+export const marketHistoryApi = {
+  overview: async () => unboxHistory<{ feature_enabled: boolean; enabled_count: number; config_count: number; next_scheduled_at: string; timezone: string; note: string }>(await axiosInstance.get(`${historyBase}/overview`)),
+  accounts: async (page = 1, search = "", page_size = 30) => unboxHistory<{ items: MarketHistoryAccount[]; total: number; page: number; page_size: number }>(await axiosInstance.get(`${historyBase}/accounts`, { params: { page, search, page_size } })),
+  symbols: async (accountId: string, subaccount_id: string) => unboxHistory<{ items: MarketHistoryBrokerSymbol[]; total: number; provider: string }>(await axiosInstance.get(`${historyBase}/accounts/${accountId}/symbols`, {params:{subaccount_id}, timeout: 45000})),
+  verify: async (id: string) => unboxHistory<MarketHistoryVerification>(await axiosInstance.get(`${historyBase}/configs/${id}/verification`)),
+  configs: async (page = 1) => unboxHistory<{ items: MarketHistoryConfig[]; total: number; page: number; page_size: number }>(await axiosInstance.get(`${historyBase}/configs`, { params: { page } })),
+  runs: async (page = 1) => unboxHistory<{ items: MarketHistoryRun[]; total: number; page: number }>(await axiosInstance.get(`${historyBase}/runs`, { params: { page } })),
+  create: async (data: { broker_account_id: string; subaccount_id: string; instrument_id: number; broker_symbol: string; timeframe: string; initial_start?: string | null; enabled?: boolean }) => unboxHistory<MarketHistoryConfig>(await axiosInstance.post(`${historyBase}/configs`, data)),
+  edit: async (id: string, data: { enabled?: boolean; initial_start?: string | null; broker_symbol?: string }) => unboxHistory<MarketHistoryConfig>(await axiosInstance.patch(`${historyBase}/configs/${id}`, data)),
+  disable: async (id: string) => unboxHistory<any>(await axiosInstance.delete(`${historyBase}/configs/${id}`)),
+  canonicalSource: async (instrument_id: number, timeframe: string) => unboxHistory<{ feed: MarketHistoryConfig | null }>(await axiosInstance.get(`${historyBase}/canonical-source`, {params: {instrument_id, timeframe}})),
+  publishPreview: async (id: string) => unboxHistory<{ source_rows: number; overlapping_rows: number; missing_rows: number; different_ohlc_overlaps_preserved: number; source_first?: string | null; source_last?: string | null; mode: string; overwrites: number }>(await axiosInstance.get(`${historyBase}/configs/${id}/publish-preview`)),
+  publishMissing: async (id: string) => unboxHistory<{status: string; run_id: string; publish_approved: boolean; mode: string; overwrites: number}>(await axiosInstance.post(`${historyBase}/configs/${id}/publish-missing`, {confirm_insert_missing_only: true})),
+  archive: async (id: string) => unboxHistory<{status: string; note: string}>(await axiosInstance.post(`${historyBase}/configs/${id}/archive`)),
+  primary: async (id: string) => unboxHistory<{ publish_approved: boolean; note: string }>(await axiosInstance.post(`${historyBase}/configs/${id}/primary`)),
+  run: async (id: string, bootstrap_days = 7) => unboxHistory<{ status: string; run_id: string; bootstrap_days?: number | null }>(await axiosInstance.post(`${historyBase}/configs/${id}/run-now`, { bootstrap_days })),
+  manual: async (id: string, start_date: string, end_date: string, dry_run: boolean) => unboxHistory<{ status: string; run_id: string; dry_run: boolean }>(await axiosInstance.post(`${historyBase}/configs/${id}/manual-fetch`, { start_date, end_date, dry_run })),
+};
