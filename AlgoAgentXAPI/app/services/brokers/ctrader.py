@@ -1320,6 +1320,7 @@ class CTraderAdapter(BrokerAdapter):
         return rows[0]
 
     async def _reconcile(self) -> dict[str, Any]:
+        from .auth_failure_guard import check_token, reject_token, invalid_token_error
         selected = self._selected_account()
         if not selected:
             raise ValueError("Select a cTrader trading account before syncing positions/orders.")
@@ -1327,6 +1328,14 @@ class CTraderAdapter(BrokerAdapter):
         token = self._access_token()
         if not account_id or not token:
             raise ValueError("cTrader account/token is unavailable. Reconnect cTrader.")
+        await check_token(token)
+        expires = getattr(self.broker_account, 'token_expires_at', None)
+        if isinstance(expires, datetime):
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            if expires <= datetime.now(timezone.utc):
+                await reject_token(token)
+                raise ValueError('CH_ACCESS_TOKEN_INVALID - Access token expired; reconnect cTrader')
         is_live = bool(
             selected.get("is_live")
             or str(selected.get("account_type") or "").upper() == "LIVE"
@@ -1340,6 +1349,10 @@ class CTraderAdapter(BrokerAdapter):
                 {"ctidTraderAccountId": numeric_id, "returnProtectionOrders": False},
                 PT_RECONCILE_RES,
             )
+        except Exception as exc:
+            if invalid_token_error(exc):
+                await reject_token(token)
+            raise
         finally:
             await client.__aexit__(None, None, None)
 

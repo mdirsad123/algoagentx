@@ -28,6 +28,7 @@ class OrderRequestContext:
 
 
 order_request_context: ContextVar[OrderRequestContext | None] = ContextVar('order_request_context', default=None)
+broker_read_context: ContextVar[dict | None] = ContextVar('broker_read_context', default=None)
 
 
 def check_order_deadline():

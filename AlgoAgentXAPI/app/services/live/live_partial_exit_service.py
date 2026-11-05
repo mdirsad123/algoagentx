@@ -126,7 +126,7 @@ async def refresh_account_truth(db: AsyncSession, deployment: StrategyDeployment
     # helper may commit internally and release our transaction-scoped advisory lock.
     proxy=SimpleNamespace(**{c.name:getattr(deployment,c.name) for c in StrategyDeployment.__table__.columns})
     proxy.broker_account_id=broker_account_id
-    await sync_copy_target_positions(db,proxy)
+    await sync_copy_target_positions(db,proxy,refresh_financials=False)
 
 async def finalize_from_broker_truth(db: AsyncSession, state: LivePositionManagementState, deployment: StrategyDeployment) -> bool:
     pos=(await db.execute(select(LivePosition).where(LivePosition.id==state.live_position_id))).scalar_one_or_none()

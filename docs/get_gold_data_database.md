@@ -100,3 +100,21 @@ RETURNING id, deployment_id, action, status;
 -- Execute COMMIT only if those are the five broker-verified records.
 -- Otherwise execute ROLLBACK.
 COMMIT;
+
+-----------------------------------
+below query for find SHA code of any strategy
+
+SELECT
+    s.id AS strategy_id,
+    s.name AS strategy_name,
+    encode(
+        digest(
+            convert_to(s.parameters->>'source_code', 'UTF8'),
+            'sha256'
+        ),
+        'hex'
+    ) AS source_sha256,
+    s.parameters->>'source_code_sha256' AS stored_sha256
+FROM strategies s
+WHERE s.name ILIKE '%Supply and Demand S&R V6.4%'
+  AND NULLIF(s.parameters->>'source_code', '') IS NOT NULL;

@@ -467,7 +467,7 @@ export default function LiveDeploymentDetailPage() {
       ),
       runResource(
         "pipelineHealth",
-        getDeploymentPipelineHealthDirect.bind(null, deploymentId),
+        () => getDeploymentPipelineHealthDirect(deploymentId),
         (value) => { setPipelineHealth(value); setPipelineHealthError(""); },
         "Failed to load pipeline health",
         setPipelineHealthError,
@@ -978,6 +978,9 @@ export default function LiveDeploymentDetailPage() {
                 <div className="mb-4">
                   <h2 className="text-xl font-bold text-white">Copy Trading Open Positions ({copyOpenPositions.length})</h2>
                   <p className="mt-1 text-sm text-purple-200">Each copy broker position has its own partial trigger, broker minimum/step validation, and management state. Primary results never control copy positions.</p>
+                  {copyOpenPositions.some((p) => p.broker_code === "TRADELOCKER" && p.protection_status !== "VERIFIED") && (
+                    <p role="alert" className="mt-2 rounded-xl border border-border/50 bg-card/30 p-3 text-foreground">Warning: broker-side SL/TP is unverified for one or more TradeLocker copies. Check the broker terminal. Requested prices in order history do not prove active protection.</p>
+                  )}
                 </div>
                 {copyOpenPositions.length === 0 ? <NoRows label="No open copy positions" /> : (
                   <div className="responsive-table-wrapper max-h-[360px] overflow-auto">
@@ -990,7 +993,7 @@ export default function LiveDeploymentDetailPage() {
                           <tr key={p.id} className="text-purple-50">
                             <td className="p-3">{p.broker_account_label || p.broker_login_id || "Copy account"}</td>
                             <td>{[p.broker_code, p.broker_mode].filter(Boolean).join(" · ") || "-"}</td>
-                            <td>{p.symbol}</td><td>{p.side}</td><td>{num(p.qty)}</td><td>{num(p.avg_entry_price)}</td><td>{num(p.current_price)}</td><td>{num(p.stop_loss)}</td><td>{num(p.target)}</td><td>{p.partial_exit_enabled ? `${num(p.partial_exit_at_r)}R` : "—"}</td><td>{p.partial_exit_enabled ? `${(Number(p.partial_exit_percent || 0) * 100).toFixed(0)}%` : "—"}</td><td>{num(p.partial_trigger_price)}</td><td>{p.partial_status || "DISABLED"}</td><td>{num(p.planned_runner_size)}</td><td>{p.broker_position_id || "-"}</td>
+                            <td>{p.symbol}</td><td>{p.side}</td><td>{num(p.qty)}</td><td>{num(p.avg_entry_price)}</td><td>{num(p.current_price)}</td><td title={p.protection_warning || p.protection_checked_at || undefined}>{p.broker_code === "TRADELOCKER" && p.protection_status !== "VERIFIED" ? "Unverified" : p.stop_loss == null ? "—" : num(p.stop_loss)}</td><td>{p.broker_code === "TRADELOCKER" && p.protection_status !== "VERIFIED" ? "Unverified" : p.target == null ? "—" : num(p.target)}</td><td>{p.partial_exit_enabled ? `${num(p.partial_exit_at_r)}R` : "—"}</td><td>{p.partial_exit_enabled ? `${(Number(p.partial_exit_percent || 0) * 100).toFixed(0)}%` : "—"}</td><td>{num(p.partial_trigger_price)}</td><td>{p.partial_status || "DISABLED"}</td><td>{num(p.planned_runner_size)}</td><td>{p.broker_position_id || "-"}</td>
                           </tr>
                         ))}
                       </tbody>

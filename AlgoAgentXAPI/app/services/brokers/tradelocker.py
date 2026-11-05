@@ -22,7 +22,8 @@ import httpx
 
 from ...utils.credential_crypto import decrypt_credential
 from .base import BrokerAdapter, BrokerConnectionResult, BrokerOrderRequest, BrokerOrderResult
-from .request_context import order_request_context, check_order_deadline, mark_order_submission
+from .request_context import order_request_context, broker_read_context, check_order_deadline, mark_order_submission
+from .shared_cache import cached as shared_cached, invalidate_secret
 from ...core.redis_manager import redis_manager
 
 logger = logging.getLogger(__name__)
@@ -80,8 +81,24 @@ class TradeLockerAdapter(BrokerAdapter):
         self._access_expiry = 0.0
         self._instrument_cache = None
         self._config_cache = None
+        self._config_expires = 0.0
         self._session_key = _account_key(self.environment, self.email, self.server, self.account_id, self.password)
         self._session_key = hashlib.sha256(f'{self._session_key}:{self.acc_num}'.encode()).hexdigest()
+        # JWT is login-scoped; instruments/selected-account metadata are not.
+        self._login_key = _account_key(self.environment, self.email, self.server, '', self.password)
+
+    def _token_cache_key(self):
+        return f'tradelocker:session:v2:{getattr(self, "_login_key", self._session_key)}'
+
+    async def _yield_background(self):
+        client = redis_manager.client
+        context = order_request_context.get()
+        key = f'tradelocker:entry-priority:{self.environment}'
+        if client is not None:
+            if context is not None:
+                await client.set(key, '1', px=15000)
+            elif await client.exists(key):
+                raise RuntimeError('TradeLocker background read deferred for order-critical requests')
 
     def _http_client(self):
         # Connection pools must never cross event loops or credential/account scopes.
@@ -111,7 +128,7 @@ class TradeLockerAdapter(BrokerAdapter):
                 raise RuntimeError('TradeLocker shared request coordinator unavailable') from None
         return max(0, _RATE_LIMIT_UNTIL.get(key, 0) - time.monotonic())
 
-    async def _pace_request(self, deadline: float) -> None:
+    async def _pace_request(self, deadline: float, *, defer_background=True) -> None:
         """Conservatively space ALL TradeLocker calls across Docker workers.
 
         A broker cooldown is reactive; independent services were previously
@@ -143,6 +160,13 @@ class TradeLockerAdapter(BrokerAdapter):
                 _LOCAL_REQUEST_SLOTS[key] = time.monotonic() + spacing_ms / 1000
         else:
             while True:
+                if defer_background:
+                    await self._yield_background()
+                cooldown = await self._cooldown()
+                if cooldown:
+                    if order_request_context.get() is None or time.time() + cooldown >= deadline:
+                        raise RuntimeError('TradeLocker API rate limit cooldown exceeds request budget')
+                    await asyncio.sleep(cooldown)
                 try:
                     claimed = await redis.set(key, '1', nx=True, px=spacing_ms)
                     if claimed:
@@ -164,15 +188,8 @@ class TradeLockerAdapter(BrokerAdapter):
         headers = {'Accept': 'application/json'}
         check_order_deadline()
         context = order_request_context.get()
-        client = redis_manager.client
-        if client is not None:
-            priority_key = f'tradelocker:entry-priority:{self.environment}'
-            if context is not None:
-                await client.set(priority_key, '1', px=2000)
-            elif method == 'GET' and (path == '/trade/accounts' or path.endswith('/orders') or path.endswith('/ordersHistory')) and await client.exists(priority_key):
-                # Background polling yields rather than queues stale work. Close
-                # and protection writes are never deferred by this priority gate.
-                raise RuntimeError('TradeLocker background read deferred for order-critical requests')
+        if method.upper() == 'GET' or context is not None:
+            await self._yield_background()
         if auth:
             headers['Authorization'] = f'Bearer {await self._token()}'
         if self.acc_num is not None:
@@ -187,17 +204,27 @@ class TradeLockerAdapter(BrokerAdapter):
             check_order_deadline()
             wait = await self._cooldown()
             if wait:
-                if not safe_read or not context or time.time() + wait >= deadline:
+                if not context or time.time() + wait >= deadline:
                     raise RuntimeError('TradeLocker API rate limit cooldown exceeds request budget')
                 await asyncio.sleep(wait)
             check_order_deadline()
-            await self._pace_request(deadline)
+            await self._pace_request(deadline, defer_background=safe_read)
+            await self._pace_route(method, path, deadline)
+            # Another worker may have received 429 while this task was queued.
+            if await self._cooldown():
+                raise RuntimeError('TradeLocker API rate limit cooldown exceeds request budget')
             check_order_deadline()
             if method == 'POST' and path.endswith('/orders'):
                 mark_order_submission()
             started = time.monotonic()
             try:
-                response = await self._http_client().request(method, self.base + path, headers=headers, params=params, json=body)
+                response = await asyncio.wait_for(
+                    self._http_client().request(method, self.base + path, headers=headers, params=params, json=body),
+                    timeout=max(0.001, deadline - time.time()))
+            except TimeoutError:
+                if not safe_read:
+                    raise httpx.TransportError('TradeLocker submission deadline elapsed after send; reconcile before retry') from None
+                raise
             except httpx.TransportError:
                 if not safe_read or attempt == 2 or time.time() + 2 ** attempt >= deadline:
                     raise
@@ -206,6 +233,12 @@ class TradeLockerAdapter(BrokerAdapter):
             logger.info('TRADELOCKER_REQUEST account=%s method=%s path=%s status=%s attempt=%s duration_ms=%.3f',
                         self.account_id, method, path, response.status_code, attempt + 1,
                         (time.monotonic() - started) * 1000)
+            audit = broker_read_context.get() or {}
+            logger.log(logging.WARNING if response.status_code >= 400 else logging.INFO,
+                       'TRADELOCKER_OUTCOME deployment=%s account=%s endpoint=%s status=%s attempt=%s outcome=%s',
+                       (context.metrics.get('deployment_id') if context else audit.get('deployment_id')),
+                       context.account_id if context else getattr(getattr(self, 'account', None), 'id', self.account_id),
+                       path, response.status_code, attempt + 1, 'http_ack' if response.status_code < 400 else 'http_rejected')
             if context:
                 context.metrics['http_requests'] = context.metrics.get('http_requests', 0) + 1
                 context.metrics['retry_attempts'] = context.metrics.get('retry_attempts', 0) + int(attempt > 0)
@@ -213,6 +246,14 @@ class TradeLockerAdapter(BrokerAdapter):
             if response.status_code == 429:
                 wait = _retry_after_seconds(response.headers.get('Retry-After'))
                 await self._cooldown(wait)
+                logger.warning('TRADELOCKER_COOLDOWN account=%s endpoint=%s status=429 attempt=%s cooldown_s=%s', self.account_id, path, attempt + 1, wait)
+            elif response.status_code == 401 and auth:
+                await invalidate_secret(self._token_cache_key(), headers['Authorization'][7:])
+                self._access_token, self._access_expiry = None, 0
+                if method.upper() == 'GET' and attempt == 0 and time.time() < deadline:
+                    headers['Authorization'] = f'Bearer {await self._token()}'
+                    continue
+                break  # Never replay a write after an authentication error.
             elif response.status_code >= 500:
                 if not safe_read:
                     raise httpx.TransportError('TradeLocker submission returned ambiguous gateway error; reconcile before retry')
@@ -222,7 +263,7 @@ class TradeLockerAdapter(BrokerAdapter):
             else:
                 break
             # Do not automatically retry writes, even on an HTTP rejection.
-            if not safe_read or attempt == 2 or time.time() + wait >= deadline:
+            if not safe_read or (response.status_code == 429 and context is None and wait > 0) or attempt == 2 or time.time() + wait >= deadline:
                 raise RuntimeError(f'TradeLocker HTTP {response.status_code}; bounded request budget exhausted')
             await asyncio.sleep(wait + random.uniform(0, min(0.25, wait * 0.1)))
         if response.status_code >= 400:
@@ -246,25 +287,63 @@ class TradeLockerAdapter(BrokerAdapter):
             raise RuntimeError(f'TradeLocker API returned status {data.get("s")!r}')
         return data
 
+    async def _pace_route(self, method, path, deadline):
+        """Use broker-advertised route quotas; share allowance across login accounts."""
+        routes = {'accounts': 'GET_ACCOUNTS', 'state': 'GET_ACCOUNTS_STATE',
+                  'positions': 'GET_POSITIONS', 'instruments': 'GET_INSTRUMENTS',
+                  'ordersHistory': 'GET_ORDERS_HISTORY', 'quotes': 'QUOTES',
+                  'history': 'QUOTES_HISTORY', 'orders': 'GET_ORDERS' if method == 'GET' else 'PLACE_ORDER'}
+        route = routes.get(path.rsplit('/', 1)[-1])
+        if '/trade/positions/' in path and method == 'PATCH':
+            route = 'MODIFY_POSITION'
+        elif '/trade/orders/' in path and method == 'PATCH':
+            route = 'MODIFY_ORDER'
+        if not route:
+            return
+        config = getattr(self, '_config_cache', None) or {}
+        spacing = 0
+        for rule in config.get('rateLimits') or []:
+            if rule.get('rateLimitType') != route:
+                continue
+            try:
+                seconds = {'SECONDS': 1, 'MINUTES': 60}[rule['measure']]
+                spacing = max(spacing, math.ceil(1100 * seconds * float(rule['intervalNum']) / float(rule['limit'])))
+            except (KeyError, ValueError, TypeError, ZeroDivisionError):
+                raise RuntimeError('TradeLocker invalid broker rate-limit configuration') from None
+        if not spacing:
+            return  # Global conservative pacing still applies during bootstrap.
+        key = f'tradelocker:route:{self.environment}:{getattr(self, "_login_key", self._session_key)}:{route}'
+        redis = redis_manager.client
+        if redis is None:
+            return  # Isolated/offline fallback is covered by global pacing.
+        while time.time() < deadline:
+            if method == 'GET':
+                await self._yield_background()
+            cooldown = await self._cooldown()
+            if cooldown:
+                raise RuntimeError('TradeLocker API rate limit cooldown exceeds request budget')
+            if await redis.set(key, '1', nx=True, px=spacing):
+                return
+            wait = max(0.01, (await redis.pttl(key)) / 1000)
+            if order_request_context.get() is None or time.time() + wait >= deadline:
+                raise RuntimeError('TradeLocker route allowance unavailable within request budget')
+            await asyncio.sleep(min(wait, 0.25))
+        raise TimeoutError('TradeLocker route pacing exceeds request budget')
+
     async def _token(self):
-        if self._access_token and time.monotonic() < self._access_expiry:
-            return self._access_token
         if not all((self.email, self.password, self.server)):
             raise ValueError('TradeLocker email, password and server are required')
-        key = getattr(self, '_session_key', None)
-        if key:
-            cached = _SESSION_CACHE.get(key) or {}
-            if cached.get('token') and time.monotonic() < cached.get('expiry', 0):
-                self._access_token, self._access_expiry = cached['token'], cached['expiry']
-                return self._access_token
-            lock = _SESSION_LOCKS.setdefault(key, asyncio.Lock())
-            async with lock:
-                cached = _SESSION_CACHE.get(key) or {}
-                if cached.get('token') and time.monotonic() < cached.get('expiry', 0):
-                    self._access_token, self._access_expiry = cached['token'], cached['expiry']
-                    return self._access_token
-                return await self._refresh_token(key)
-        return await self._refresh_token(None)
+        context = order_request_context.get()
+        async def load():
+            token = await self._refresh_token(None)
+            return {'token': token, 'expires_at': time.time() + max(0, self._access_expiry - time.monotonic())}
+        key = self._token_cache_key()
+        info = await shared_cached(key, 570, load, secret=True, deadline=context.deadline if context else None)
+        if info['expires_at'] <= time.time():
+            await invalidate_secret(key, info['token'])
+            info = await shared_cached(key, 570, load, secret=True, deadline=context.deadline if context else None)
+        self._access_token = info['token']
+        return self._access_token
 
     async def _refresh_token(self, key):
         payload = await self._request('POST', '/auth/jwt/token', body={
@@ -315,6 +394,8 @@ class TradeLockerAdapter(BrokerAdapter):
             raise ValueError('Select a TradeLocker accountId and accNum in broker setup before syncing or trading.')
 
     async def _config(self):
+        if getattr(self, '_config_expires', float('inf')) < time.monotonic():
+            self._config_cache = None
         if self._config_cache is None:
             key = getattr(self, '_session_key', None)
             cached = _SESSION_CACHE.get(key, {}) if key else {}
@@ -335,13 +416,16 @@ class TradeLockerAdapter(BrokerAdapter):
                     if isinstance(data, dict) and data:
                         self._config_cache = data
                 if self._config_cache is None:
-                    self._config_cache = (await self._request('GET', '/trade/config')).get('d') or {}
+                    async def load_config():
+                        return (await self._request('GET', '/trade/config')).get('d') or {}
+                    self._config_cache = await shared_cached(f'tradelocker:config:v2:{key}', 300, load_config) if key else await load_config()
                     if not isinstance(self._config_cache, dict):
                         raise RuntimeError('TradeLocker configuration schema invalid')
                     if client is not None and shared_key and self._config_cache:
                         await client.set(shared_key, json.dumps(self._config_cache), ex=300)
                 if key and self._config_cache:
                     _SESSION_CACHE.setdefault(key, {}).update(config=self._config_cache, config_expiry=time.monotonic() + 300)
+            self._config_expires = time.monotonic() + 300
         return self._config_cache
 
     async def get_account_info(self):
@@ -386,7 +470,14 @@ class TradeLockerAdapter(BrokerAdapter):
                         if context:
                             context.metrics['account_metadata_cache_hit'] = True
                         return dict(selected)
-            accounts = (await self._request('GET', '/trade/accounts')).get('d')
+            async def load_accounts():
+                rows = (await self._request('GET', '/trade/accounts')).get('d')
+                if not isinstance(rows, list):
+                    raise ValueError('TradeLocker account list unavailable')
+                return [{k: row[k] for k in ('id', 'accNum', 'name', 'currency') if k in row}
+                        for row in rows if isinstance(row, dict)]
+            # /trade/accounts is selected by accNum (not the login-wide list).
+            accounts = await shared_cached(f'tradelocker:accounts:v2:{key}', 3600, load_accounts) if key else await load_accounts()
             if not isinstance(accounts, list):
                 raise ValueError('TradeLocker account list unavailable; account validation failed closed')
             selected = next((x for x in accounts if isinstance(x, dict) and str(x.get('id')) == self.account_id), None)
@@ -434,11 +525,13 @@ class TradeLockerAdapter(BrokerAdapter):
                     if isinstance(data, list):
                         self._instrument_cache = data
                 if self._instrument_cache is None:
-                    result = await self._request('GET', f'/trade/accounts/{self.account_id}/instruments')
-                    data = result.get('d') or {}
-                    if not isinstance(data, dict) or not isinstance(data.get('instruments'), list):
-                        raise RuntimeError('TradeLocker instruments response missing valid instruments list')
-                    self._instrument_cache = data['instruments']
+                    async def load_instruments():
+                        result = await self._request('GET', f'/trade/accounts/{self.account_id}/instruments')
+                        data = result.get('d') or {}
+                        if not isinstance(data, dict) or not isinstance(data.get('instruments'), list):
+                            raise RuntimeError('TradeLocker instruments response missing valid instruments list')
+                        return data['instruments']
+                    self._instrument_cache = await shared_cached(f'tradelocker:instruments:v2:{key}', 300, load_instruments) if key else await load_instruments()
                     if client is not None and shared_key:
                         await client.set(shared_key, json.dumps(self._instrument_cache), ex=300)
                 if key:
@@ -492,7 +585,19 @@ class TradeLockerAdapter(BrokerAdapter):
         raise ValueError(f'TradeLocker {route_type} route unavailable for selected instrument; refusing order.')
 
     async def get_quote(self, symbol):
+        await self._config()
         inst = await self._instrument(symbol)
+        # Alerts and position management may poll the same account/instrument.
+        # Do not return a cached quote as fresh; the winning worker publishes it
+        # on the existing account-scoped quote bus for both consumers.
+        redis = redis_manager.client
+        if redis is not None and order_request_context.get() is None:
+            await self._yield_background()
+            if await self._cooldown():
+                raise RuntimeError('TradeLocker quote polling deferred during broker cooldown')
+            key = f'tradelocker:quote-poll:{self._session_key}:{inst["tradableInstrumentId"]}'
+            if not await redis.set(key, '1', nx=True, px=2000):
+                raise RuntimeError('TradeLocker quote already polled by another worker')
         result = await self._request('GET', '/trade/quotes', params={'routeId': self._route(inst, 'INFO'), 'tradableInstrumentId': inst['tradableInstrumentId']})
         q = result.get('d') or {}
         return {'symbol': symbol, 'bid': q.get('bp'), 'ask': q.get('ap'), 'raw': q}
@@ -529,6 +634,10 @@ class TradeLockerAdapter(BrokerAdapter):
             order_id = str(acknowledgement.get('orderId') or '')
             if not order_id:
                 raise httpx.TransportError('TradeLocker order response has no orderId; reconcile before retrying')
+            context = order_request_context.get()
+            logger.info('TRADELOCKER_ORDER deployment=%s account=%s order_id=%s outcome=ack_pending_fill',
+                        context.metrics.get('deployment_id') if context else None,
+                        context.account_id if context else self.account_id, order_id)
             return BrokerOrderResult(True, 'PLACED', 'TradeLocker order accepted; broker fill confirmation pending.', broker_order_id=order_id,
                 raw_response={'orderId': order_id, 'requires_reconciliation': True,
                               'resolved_symbol': str(inst.get('name') or inst.get('symbol') or order_request.symbol),
@@ -585,6 +694,12 @@ class TradeLockerAdapter(BrokerAdapter):
 
     async def get_positions(self, symbol=None):
         positions = await self._table('positions', 'positionsConfig')
+        protection_orders = []
+        if positions:
+            try:
+                protection_orders = await self.get_orders()
+            except Exception as exc:
+                logger.warning('TRADELOCKER_PROTECTION account=%s outcome=unverified error_type=%s', self.account_id, type(exc).__name__)
         instruments = await self._instruments()
         by_id = {str(inst.get('tradableInstrumentId')): inst for inst in instruments
                  if inst.get('tradableInstrumentId') is not None}
@@ -607,7 +722,12 @@ class TradeLockerAdapter(BrokerAdapter):
                 name = str(inst.get('name') or inst.get('symbol') or '').strip()
                 if not name:
                     raise RuntimeError('TradeLocker instrument has no symbol; refusing unsafe sync')
-            normalized.append({**raw, 'symbol': name, 'broker_position_id': str(raw['id'])})
+            from .tradelocker_protection import verify_protection
+            protection = verify_protection(raw, protection_orders)
+            protection['checked_at'] = datetime.now(timezone.utc).isoformat()
+            normalized.append({**raw, 'symbol': name, 'broker_position_id': str(raw['id']), 'protection': protection})
+            if protection['status'] != 'VERIFIED':
+                logger.warning('TRADELOCKER_PROTECTION account=%s position=%s outcome=unverified', self.account_id, raw['id'])
         return normalized
 
     async def get_orders(self):

@@ -71,7 +71,7 @@ def test_failed_account_auth_is_not_cached_as_authorized():
                 await connection.authorize_account(1, "bad-token")
             except ValueError:
                 pass
-        assert calls == 2
+        assert calls == 1  # Known-invalid credentials never reach the broker again.
         assert 1 not in connection._authorized_accounts
 
     asyncio.run(scenario())

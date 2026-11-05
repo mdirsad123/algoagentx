@@ -19,6 +19,8 @@ from app.services.live import execution_engine as engine
 
 @pytest.fixture(autouse=True)
 def isolate(monkeypatch):
+    from app.services.brokers import shared_cache
+    shared_cache._VALUES.clear()
     tl._SESSION_CACHE.clear()
     tl._METADATA_LOCKS.clear()
     tl._RATE_LIMIT_UNTIL.clear()
@@ -158,7 +160,8 @@ async def test_reservation_commits_before_submission_and_duplicate_does_not_clai
     class DB:
         async def flush(self): events.append('flush')
         async def execute(self, statement):
-            assert 'ON CONFLICT DO NOTHING' in str(statement)
+            sql = str(statement)
+            assert 'ON CONFLICT DO NOTHING' in sql or ('UPDATE live_orders' in sql and 'broker_order_id IS NULL' in sql and 'raw_response' in sql)
             return SimpleNamespace(scalar_one_or_none=lambda: None)
         async def commit(self): events.append('commit')
     monkeypatch.setattr(engine, '_existing_order_for_client_id', AsyncMock(return_value=existing))

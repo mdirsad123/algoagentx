@@ -1,0 +1,49 @@
+................F........................                                [100%]
+================================== FAILURES ===================================
+___ test_reservation_commits_before_submission_and_duplicate_does_not_claim ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001EDD977C260>
+
+    @pytest.mark.asyncio
+    async def test_reservation_commits_before_submission_and_duplicate_does_not_claim(monkeypatch):
+        existing = SimpleNamespace(id=uuid4(), status='PENDING')
+        events = []
+        class DB:
+            async def flush(self): events.append('flush')
+            async def execute(self, statement):
+                assert 'ON CONFLICT DO NOTHING' in str(statement)
+                return SimpleNamespace(scalar_one_or_none=lambda: None)
+            async def commit(self): events.append('commit')
+        monkeypatch.setattr(engine, '_existing_order_for_client_id', AsyncMock(return_value=existing))
+        dep = SimpleNamespace(id=uuid4(), user_id=uuid4(), broker_account_id=uuid4())
+        sig = SimpleNamespace(id=uuid4())
+>       order, claimed = await engine._reserve_entry(DB(), dep, sig, 'client', 'key', 'XAUUSD', 'SELL', Decimal('.01'), Decimal(4000), Decimal(4010), Decimal(3980))
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_copy_execution_reliability.py:167: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+app\services\live\execution_engine.py:283: in _reserve_entry
+    reclaimed = (await db.execute(update(LiveOrder).where(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <test_copy_execution_reliability.test_reservation_commits_before_submission_and_duplicate_does_not_claim.<locals>.DB object at 0x000001EDD977EBD0>
+statement = <sqlalchemy.sql.dml.Update object at 0x000001EDD9286420>
+
+    async def execute(self, statement):
+>       assert 'ON CONFLICT DO NOTHING' in str(statement)
+E       AssertionError: assert 'ON CONFLICT DO NOTHING' in 'UPDATE live_orders SET status=:status, error_message=:error_message, raw_response=:raw_response, updated_at=now() WHE...AND live_orders.broker_order_id IS NULL AND live_orders.raw_response[:raw_response_1] IS true RETURNING live_orders.id'
+E        +  where 'UPDATE live_orders SET status=:status, error_message=:error_message, raw_response=:raw_response, updated_at=now() WHE...AND live_orders.broker_order_id IS NULL AND live_orders.raw_response[:raw_response_1] IS true RETURNING live_orders.id' = str(<sqlalchemy.sql.dml.Update object at 0x000001EDD9286420>)
+
+tests\test_copy_execution_reliability.py:161: AssertionError
+============================== warnings summary ===============================
+app\core\config.py:269
+  d:\Stock_market\algoagentx\AlgoAgentXAPI\app\core\config.py:269: PydanticDeprecatedSince20: Pydantic V1 style `@validator` validators are deprecated. You should migrate to Pydantic V2 style `@field_validator` validators, see the migration guide for more details. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    @validator('env')
+
+app\db\base.py:3
+  d:\Stock_market\algoagentx\AlgoAgentXAPI\app\db\base.py:3: MovedIn20Warning: The ``declarative_base()`` function is now available as sqlalchemy.orm.declarative_base(). (deprecated since: 2.0) (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
+    Base = declarative_base()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_copy_execution_reliability.py::test_reservation_commits_before_submission_and_duplicate_does_not_claim

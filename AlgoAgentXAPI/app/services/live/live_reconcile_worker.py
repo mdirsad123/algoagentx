@@ -6,14 +6,17 @@ import asyncio
 import logging
 import signal
 import time
+import hashlib
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from ...core.config import settings
 from ...core.redis_manager import redis_manager
-from ...db.models import BrokerAccount, StrategyDeployment
+from ...db.models import BrokerAccount, StrategyDeployment, LiveOrder, LivePosition
+from ..brokers.request_context import broker_read_context
 from ...db.session import async_session
 from ..brokers.factory import get_broker_code
 from .broker_sync_service import (
@@ -38,6 +41,33 @@ class LiveReconcileWorker:
         self._last_result: dict[str, Any] = {}
         self._tl_next_poll: dict[str, float] = {}
         self._tl_error_count: dict[str, int] = {}
+        self._invalid_ctrader_credentials = {}
+
+    async def _copy_poll_relevant(self, db, deployment, broker) -> bool:
+        # Open copy positions remain managed even if the primary is flat. Idle
+        # accounts need no recurring pre-trade poll: entry always checks fresh.
+        positions = await db.execute(select(LivePosition.id).where(
+            LivePosition.deployment_id == deployment.id,
+            LivePosition.broker_account_id == broker.id,
+            LivePosition.status == 'OPEN').limit(1))
+        if positions.scalar_one_or_none() is not None:
+            return True
+        orders = await db.execute(select(LiveOrder.id).where(
+            LiveOrder.deployment_id == deployment.id,
+            LiveOrder.broker_account_id == broker.id,
+            LiveOrder.status.in_(('PENDING', 'SUBMITTED', 'PLACED', 'ACCEPTED', 'PENDING_DEMO'))).limit(1))
+        return orders.scalar_one_or_none() is not None
+
+    def _ctrader_poll_due(self, broker) -> bool:
+        fingerprint = hashlib.sha256(str(broker.encrypted_token or '').encode()).hexdigest()
+        if self._invalid_ctrader_credentials.get(str(broker.id)) == fingerprint:
+            return False
+        expiry = broker.token_expires_at
+        if expiry and expiry.replace(tzinfo=expiry.tzinfo or timezone.utc) <= datetime.now(timezone.utc):
+            self._invalid_ctrader_credentials[str(broker.id)] = fingerprint
+            logger.warning('CTRADER_RECONNECT_REQUIRED account=%s outcome=expired_session', broker.id)
+            return False
+        return True
 
     async def _tradelocker_poll_due(self, account_id) -> bool:
         key = f'tradelocker:background-sync:{account_id}'
@@ -192,6 +222,14 @@ class LiveReconcileWorker:
                     and str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "STANDARD"
                 )
                 raw_ids = list(getattr(deployment, "copy_broker_account_ids", None) or []) if copy_enabled else []
+                # Disabling/deselecting future copies must not abandon existing
+                # copy exposure or uncertain acknowledgements.
+                for model, statuses in ((LivePosition, ('OPEN',)),
+                                        (LiveOrder, ('PENDING', 'SUBMITTED', 'PLACED', 'ACCEPTED', 'PENDING_DEMO'))):
+                    active_ids = (await db.execute(select(model.broker_account_id).where(
+                        model.deployment_id == deployment.id, model.status.in_(statuses),
+                        model.broker_account_id.is_not(None)).distinct())).scalars().all()
+                    raw_ids.extend(active_ids)
                 seen = {str(deployment.broker_account_id)} if deployment.broker_account_id else set()
                 for raw_id in raw_ids:
                     if not raw_id or str(raw_id) in seen:
@@ -212,6 +250,12 @@ class LiveReconcileWorker:
 
                     try:
                         code = get_broker_code(broker)
+                        if code in {'CTRADER', 'CTRADER_API'} and not self._ctrader_poll_due(broker):
+                            copy_results.append({'broker_account_id': str(broker.id), 'synced': False, 'skipped': 'RECONNECT_REQUIRED'})
+                            continue
+                        if code == 'TRADELOCKER' and not await self._copy_poll_relevant(db, deployment, broker):
+                            copy_results.append({'broker_account_id': str(broker.id), 'synced': False, 'skipped': 'NO_OPEN_OR_PENDING_EXPOSURE'})
+                            continue
                         if code == 'TRADELOCKER' and not await self._tradelocker_poll_due(broker.id):
                             copy_results.append({'broker_account_id': str(broker.id), 'synced': False, 'skipped': 'BACKGROUND_CADENCE'})
                             continue
@@ -221,12 +265,19 @@ class LiveReconcileWorker:
                             snapshot = {c.name: getattr(deployment, c.name) for c in StrategyDeployment.__table__.columns}
                             proxy = SimpleNamespace(**snapshot)
                             proxy.broker_account_id = broker.id
-                            result = await sync_copy_target_positions(
-                                db, proxy, reconcile_full_exits=(code == "TRADELOCKER"))
+                            audit_token = broker_read_context.set({'deployment_id': str(deployment_id)})
+                            try:
+                                result = await sync_copy_target_positions(
+                                    db, proxy, reconcile_full_exits=(code == "TRADELOCKER"), refresh_financials=False)
+                            finally:
+                                broker_read_context.reset(audit_token)
                         copy_results.append({"broker_account_id": str(broker.id), "synced": True, **result})
                         if code == 'TRADELOCKER':
                             await self._tradelocker_sync_succeeded(broker.id)
                     except Exception as exc:
+                        from ..brokers.auth_failure_guard import invalid_token_error
+                        if code in {'CTRADER', 'CTRADER_API'} and invalid_token_error(exc):
+                            self._invalid_ctrader_credentials[str(broker.id)] = hashlib.sha256(str(broker.encrypted_token or '').encode()).hexdigest()
                         if code == 'TRADELOCKER':
                             await self._tradelocker_sync_failed(broker.id, exc)
                         logger.warning("Copy-account reconcile failed deployment=%s account=%s: %s", deployment_id, raw_id, exc)
@@ -259,6 +310,8 @@ class LiveReconcileWorker:
 
 
 async def main() -> None:
+    from ...core.logging_config import configure_logging
+    configure_logging()
     if not (settings.live_event_pipeline_enabled and settings.live_reconcile_worker_enabled):
         logger.warning("Live reconcile worker is idle because its feature flags are disabled")
         while True:

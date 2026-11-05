@@ -208,8 +208,8 @@ def _tradelocker_position_values(position: dict[str, Any], deployment: StrategyD
         'unrealized': _dec(position.get('unrealizedPl')),
         'realized': Decimal('0'),
         'opened_at': opened_at,
-        'stop_loss': None,  # stopLossId is an order ID, not a price.
-        'target': None,     # takeProfitId is an order ID, not a price.
+        'stop_loss': _dec(position['protection']['stop_loss']) if (position.get('protection') or {}).get('stop_loss') else None,
+        'target': _dec(position['protection']['target']) if (position.get('protection') or {}).get('target') else None,
     }
 
 
@@ -417,9 +417,9 @@ async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, 
             existing.current_price = values["current"]
             existing.unrealized_pnl = values["unrealized"]
             existing.realized_pnl = values["realized"]
-            if values.get("stop_loss") is not None:
+            if values.get("stop_loss") is not None or provider_upper == 'TRADELOCKER':
                 existing.stop_loss = values.get("stop_loss")
-            if values.get("target") is not None:
+            if values.get("target") is not None or provider_upper == 'TRADELOCKER':
                 existing.target = values.get("target")
             updated += 1
         matched.add(str(existing.id))
@@ -601,7 +601,7 @@ async def reconcile_tradelocker_pending_full_exits(
             "full_exit_history_matched": len(verified)}
 
 
-async def sync_tradelocker_pretrade_positions(db: AsyncSession, deployment: StrategyDeployment) -> dict[str, Any]:
+async def sync_tradelocker_pretrade_positions(db: AsyncSession, deployment: StrategyDeployment, *, refresh_financials: bool = True) -> dict[str, Any]:
     """Fresh account-scoped TradeLocker position truth for primary AND copy entries.
 
     Unlike the expensive full background sync, this hot path never fetches
@@ -660,7 +660,7 @@ async def sync_tradelocker_pretrade_positions(db: AsyncSession, deployment: Stra
     # Order sizing may use Broker Balance. It must not silently rely on an
     # indefinitely stale financial snapshot when the background poll is OFF.
     # Reuse only a recent successful sync, otherwise fetch fresh account info.
-    if hasattr(adapter, 'get_account_info'):
+    if refresh_financials and hasattr(adapter, 'get_account_info'):
         meta = dict(getattr(broker, 'metadata_json', None) or {})
         last_test = meta.get('last_test') or {}
         last_at = None
@@ -715,7 +715,7 @@ async def sync_tradelocker_pretrade_positions(db: AsyncSession, deployment: Stra
             **position_result, **order_result}
 
 
-async def sync_copy_target_positions(db: AsyncSession, deployment: StrategyDeployment, *, reconcile_full_exits: bool = False) -> dict[str, Any]:
+async def sync_copy_target_positions(db: AsyncSession, deployment: StrategyDeployment, *, reconcile_full_exits: bool = False, refresh_financials: bool = True) -> dict[str, Any]:
     """Refresh broker position truth for one copy-trading target account.
 
     Copy targets share the deployment id but have their own broker_account_id.
@@ -746,7 +746,7 @@ async def sync_copy_target_positions(db: AsyncSession, deployment: StrategyDeplo
     if provider_code == "TRADELOCKER":
         # Preserve the fast pre-trade path; background worker additionally
         # checks the exact copy account's pending FULL_EXIT IDs at low cadence.
-        result = await sync_tradelocker_pretrade_positions(db, deployment)
+        result = await sync_tradelocker_pretrade_positions(db, deployment, refresh_financials=refresh_financials)
         if reconcile_full_exits:
             try:
                 result.update(await reconcile_tradelocker_pending_full_exits(

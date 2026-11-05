@@ -1,0 +1,14 @@
+api {('2568331', 'POST', '/auth/jwt/token', '201'): 1, ('2568331', 'GET', '/trade/accounts/2568331/instruments', '200'): 1}
+live_reconcile_worker {}
+live_strategy_worker {}
+live_legacy_runner_worker {('2568334', 'POST', '/auth/jwt/token', '201'): 1, ('2568334', 'GET', '/trade/history', '200'): 1, ('2568333', 'POST', '/auth/jwt/token', '201'): 1, ('2568333', 'GET', '/trade/accounts/2568333/instruments', '200'): 1, ('2568333', 'GET', '/trade/history', '200'): 1}
+live_position_manager_worker {}
+live_tradelocker_candle_worker {('2568334', 'POST', '/auth/jwt/token', '201'): 56, ('2568334', 'GET', '/trade/history', '200'): 111, ('2568334', 'GET', '/trade/accounts/2568334/instruments', '200'): 2, ('2568333', 'POST', '/auth/jwt/token', '201'): 1, ('2568333', 'GET', '/trade/history', '200'): 4}
+live_history_worker {('2568334', 'POST', '/auth/jwt/token', '201'): 1, ('2568334', 'GET', '/trade/accounts/2568334/instruments', '200'): 1, ('2568334', 'GET', '/trade/history', '200'): 54}
+alert_worker {('2568334', 'GET', '/trade/quotes', '200'): 14664, ('2568334', 'GET', '/trade/accounts/2568334/instruments', '200'): 107, ('2568334', 'POST', '/auth/jwt/token', '201'): 60, ('2568334', 'GET', '/trade/quotes', '429'): 3}
+{"account": "c6be8de1-d520-4747-a9c1-a8447934ddb7", "status": "CONNECTED", "credential_group": "b1044a27caa7", "selected_account": "2568334"}
+{"account": "10ef9cad-6af2-4bed-b669-2d34e30c3661", "status": "CONNECTED", "credential_group": "b1044a27caa7", "selected_account": "2540479"}
+{"account": "70a6e09e-601b-4e9f-b937-ddf2aa5238ab", "status": "CONNECTED", "credential_group": "b1044a27caa7", "selected_account": "2568332"}
+{"account": "3a9890ee-d80e-4f8f-bc6b-1e2fe303b2d2", "status": "CONNECTED", "credential_group": "b1044a27caa7", "selected_account": "2568331"}
+{"account": "1e42c2dc-f660-47f2-a8bd-a6a822a88cdd", "status": "CONNECTED", "credential_group": "b1044a27caa7", "selected_account": "2568333"}
+

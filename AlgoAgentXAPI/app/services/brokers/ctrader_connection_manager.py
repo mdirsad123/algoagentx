@@ -335,12 +335,14 @@ class PersistentCTraderConnection:
                     self._pending_by_client_order_id.pop(client_order_id, None)
 
     async def authorize_account(self, account_id: int, access_token: str) -> dict[str, Any]:
+        from .auth_failure_guard import check_token, reject_token, invalid_token_error
         numeric_id = int(account_id)
         token = str(access_token or "").strip()
         if not token:
             raise ValueError("cTrader account access token is required")
         lock = self._account_auth_locks.setdefault(numeric_id, asyncio.Lock())
         async with lock:
+            await check_token(token)
             if (
                 self._account_tokens.get(numeric_id) == token
                 and numeric_id in self._authorized_accounts
@@ -354,8 +356,11 @@ class PersistentCTraderConnection:
                     {"ctidTraderAccountId": numeric_id, "accessToken": token},
                     PT_ACCOUNT_AUTH_RES,
                 )
-            except Exception:
+            except Exception as exc:
                 self._authorized_accounts.discard(numeric_id)
+                if invalid_token_error(exc):
+                    self._account_tokens.pop(numeric_id, None)
+                    await reject_token(token)
                 raise
             self._authorized_accounts.add(numeric_id)
             return response
@@ -572,14 +577,23 @@ class PersistentCTraderConnection:
         self._active_spot_subscriptions.clear()
         self._active_trendbar_subscriptions.clear()
         for account_id, token in tuple(self._account_tokens.items()):
-            await self._request_connected(
-                PT_ACCOUNT_AUTH_REQ,
-                {"ctidTraderAccountId": account_id, "accessToken": token},
-                PT_ACCOUNT_AUTH_RES,
-            )
+            from .auth_failure_guard import check_token, reject_token, invalid_token_error
+            try:
+                await check_token(token)
+                await self._request_connected(
+                    PT_ACCOUNT_AUTH_REQ,
+                    {"ctidTraderAccountId": account_id, "accessToken": token},
+                    PT_ACCOUNT_AUTH_RES,
+                )
+            except Exception as exc:
+                if not invalid_token_error(exc):
+                    raise
+                await reject_token(token)
+                self._account_tokens.pop(account_id, None)
+                continue
             self._authorized_accounts.add(account_id)
         for account_id, symbol_ids in tuple(self._spot_subscriptions.items()):
-            if symbol_ids:
+            if symbol_ids and account_id in self._authorized_accounts:
                 await self._request_connected(
                     PT_SUBSCRIBE_SPOTS_REQ,
                     {
@@ -591,6 +605,8 @@ class PersistentCTraderConnection:
                 )
                 self._active_spot_subscriptions.update((account_id, symbol_id) for symbol_id in symbol_ids)
         for subscription in tuple(self._trendbar_subscriptions):
+            if subscription.account_id not in self._authorized_accounts:
+                continue
             await self._request_connected(
                 PT_SUBSCRIBE_LIVE_TRENDBAR_REQ,
                 {

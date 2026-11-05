@@ -523,6 +523,9 @@ export interface CopyTradingOrder extends LiveOrder {
 }
 
 export interface CopyTradingPosition extends LivePosition {
+  protection_status?: "VERIFIED" | "UNVERIFIED";
+  protection_warning?: string | null;
+  protection_checked_at?: string | null;
   broker_account_label?: string | null;
   broker_code?: string | null;
   broker_mode?: string | null;

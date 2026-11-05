@@ -251,8 +251,8 @@ async def create_config(payload: CreateConfig, db: AsyncSession = Depends(get_db
         raise HTTPException(400, "This provider currently has no verified account-scoped historical adapter; choose cTrader or TradeLocker")
     if provider == "TRADELOCKER" and tf not in {"1m", "5m", "15m", "30m", "1h", "4h", "1d"}:
         raise HTTPException(400, "TradeLocker history does not support this timeframe")
-    if not payload.broker_symbol.strip() or any(ch.isspace() for ch in payload.broker_symbol.strip()):
-        raise HTTPException(400, "Exact broker symbol must not be blank or contain whitespace")
+    # if not payload.broker_symbol.strip() or any(ch.isspace() for ch in payload.broker_symbol.strip()):
+    #     raise HTTPException(400, "Exact broker symbol must not be blank or contain whitespace")
     verified_symbol = await _require_exact_symbol(db, account, payload.subaccount_id, payload.broker_symbol)
     # A "deleted" feed is archived, never purged. Reusing the exact configuration
     # revives its original source candles/audit rather than hitting a unique-key error.

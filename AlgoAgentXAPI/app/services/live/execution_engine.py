@@ -1064,6 +1064,7 @@ async def _execute_signal_for_account(db: AsyncSession, deployment: StrategyDepl
     if order_request_context.get() is not None:
         return await _execute_signal_for_account_inner(db, deployment, signal)
     context = OrderRequestContext(float('inf'), str(signal.id), str(deployment.broker_account_id), time.time())
+    context.metrics['deployment_id'] = str(deployment.id)
     token = order_request_context.set(context)
     try:
         return await _execute_signal_for_account_inner(db, deployment, signal)
@@ -1771,7 +1772,9 @@ async def dispatch_confirmed_copy_orders(deployment_id) -> dict[str, int]:
                 continue
             if age_anchor.tzinfo is None:
                 age_anchor = age_anchor.replace(tzinfo=timezone.utc)
-            if (now - age_anchor).total_seconds() > max_followup:
+            # Never renew eligibility on each reconciliation pass. A persisted
+            # primary intent bounds both discovery and subsequent safe retries.
+            if (now - age_anchor).total_seconds() > min(max_followup, max(10, int(getattr(settings, 'live_copy_max_age_after_primary_seconds', 180)))):
                 counts['skipped'] += 1
                 continue
             signal = (await db.execute(select(LiveSignal.__table__).where(
@@ -1833,11 +1836,10 @@ async def dispatch_confirmed_copy_orders(deployment_id) -> dict[str, int]:
             # A network stall must not occupy a primary database connection.
             plans.append((tuple(due), dict(dep_snapshot), dict(sig_snapshot),
                           canonical, str(signal.get('symbol') or ''),
-                          primary_mode, primary_code))
+                          primary_mode, primary_code, age_anchor.timestamp()))
 
     # Each copy uses its own connection and durable, account-scoped order key.
-    for due, dep_snapshot, sig_snapshot, canonical, symbol, primary_mode, primary_code in plans:
-        started = time.time()
+    for due, dep_snapshot, sig_snapshot, canonical, symbol, primary_mode, primary_code, started in plans:
         sem = asyncio.Semaphore(max(1, int(settings.live_copy_max_concurrency)))
         async def submit_one(target_id):
             async with sem:
@@ -1883,6 +1885,7 @@ async def _dispatch_copy_account(*, account_id, deployment_snapshot, signal_snap
             deadline = (_copy_execution_deadline(primary_completed_at)
                         if copy_signal.signal_type in {'BUY', 'SELL'} else float('inf'))
             context = OrderRequestContext(deadline, str(copy_signal.id), str(account_id), primary_completed_at)
+            context.metrics['deployment_id'] = str(target.id)
             token = order_request_context.set(context)
             context.check()
             # Advisory lock does not lock the broker row: cTrader's separate

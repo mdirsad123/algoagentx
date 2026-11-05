@@ -127,7 +127,7 @@ def test_deferred_broker_confirmed_fill_fans_out_to_both_accounts_despite_slow_c
     assert result['submitted'] == 2
     assert {c['account_id'] for c in calls} == {aid, bid}
     assert all(c['signal_snapshot']['candle_time'] == candle for c in calls)
-    assert all(c['primary_completed_at'] > created.timestamp() for c in calls)
+    assert all(c['primary_completed_at'] == created.timestamp() for c in calls)
 
 
 def test_deferred_recovery_refuses_unmarked_historical_primary():

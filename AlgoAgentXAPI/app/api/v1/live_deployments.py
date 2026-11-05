@@ -909,6 +909,9 @@ async def _summary(db: AsyncSession, row: StrategyDeployment, refresh_broker: bo
         })
         copy_open_positions.append(item)
 
+    from ...services.live.protection_reporting import attach_protection
+    await attach_protection(db, deployment_id, copy_open_positions)
+
     copy_order_rows = []
     if deployment_broker_account_id is not None:
         copy_order_rows = (await db.execute(

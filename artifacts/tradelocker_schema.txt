@@ -1,0 +1,223 @@
+{
+  "rateLimits": [
+    {
+      "rateLimitType": "GET_ACCOUNTS",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 2
+    },
+    {
+      "rateLimitType": "GET_EXECUTIONS",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 2
+    },
+    {
+      "rateLimitType": "GET_INSTRUMENTS",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 2
+    },
+    {
+      "rateLimitType": "GET_ORDERS",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 1
+    },
+    {
+      "rateLimitType": "GET_ORDERS_HISTORY",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 1
+    },
+    {
+      "rateLimitType": "GET_POSITIONS",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 1
+    },
+    {
+      "rateLimitType": "GET_ACCOUNTS_STATE",
+      "measure": "SECONDS",
+      "intervalNum": 2,
+      "limit": 4
+    },
+    {
+      "rateLimitType": "GET_INSTRUMENT_DETAILS",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 2
+    },
+    {
+      "rateLimitType": "GET_TRADE_SESSIONS",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 2
+    },
+    {
+      "rateLimitType": "GET_SESSION_STATUSES",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 2
+    },
+    {
+      "rateLimitType": "PLACE_ORDER",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 5
+    },
+    {
+      "rateLimitType": "MODIFY_ORDER",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 5
+    },
+    {
+      "rateLimitType": "MODIFY_POSITION",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 5
+    },
+    {
+      "rateLimitType": "DAILY_BAR",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 5
+    },
+    {
+      "rateLimitType": "QUOTES",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 10
+    },
+    {
+      "rateLimitType": "DEPTH",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 10
+    },
+    {
+      "rateLimitType": "TRADES",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 5
+    },
+    {
+      "rateLimitType": "QUOTES_HISTORY",
+      "measure": "SECONDS",
+      "intervalNum": 1,
+      "limit": 3
+    }
+  ],
+  "ordersConfig": {
+    "id": "orders",
+    "title": "Orders",
+    "columns": [
+      {
+        "id": "id"
+      },
+      {
+        "id": "tradableInstrumentId"
+      },
+      {
+        "id": "routeId"
+      },
+      {
+        "id": "qty"
+      },
+      {
+        "id": "side"
+      },
+      {
+        "id": "type"
+      },
+      {
+        "id": "status"
+      },
+      {
+        "id": "filledQty"
+      },
+      {
+        "id": "avgPrice"
+      },
+      {
+        "id": "price"
+      },
+      {
+        "id": "stopPrice"
+      },
+      {
+        "id": "validity"
+      },
+      {
+        "id": "expireDate"
+      },
+      {
+        "id": "createdDate"
+      },
+      {
+        "id": "lastModified"
+      },
+      {
+        "id": "isOpen"
+      },
+      {
+        "id": "positionId"
+      },
+      {
+        "id": "stopLoss"
+      },
+      {
+        "id": "stopLossType"
+      },
+      {
+        "id": "takeProfit"
+      },
+      {
+        "id": "takeProfitType"
+      },
+      {
+        "id": "strategyId"
+      }
+    ]
+  },
+  "positionsConfig": {
+    "id": "positions",
+    "title": "Positions",
+    "columns": [
+      {
+        "id": "id"
+      },
+      {
+        "id": "tradableInstrumentId"
+      },
+      {
+        "id": "routeId"
+      },
+      {
+        "id": "side"
+      },
+      {
+        "id": "qty"
+      },
+      {
+        "id": "avgPrice"
+      },
+      {
+        "id": "stopLossId"
+      },
+      {
+        "id": "takeProfitId"
+      },
+      {
+        "id": "openDate"
+      },
+      {
+        "id": "unrealizedPl"
+      },
+      {
+        "id": "strategyId"
+      }
+    ]
+  }
+}

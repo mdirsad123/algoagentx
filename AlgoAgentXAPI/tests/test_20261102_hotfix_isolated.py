@@ -86,6 +86,8 @@ def throttle(redis):
     class Adapter:
         environment = 'demo'
         _pace_request = fun
+        async def _yield_background(self): pass
+        async def _cooldown(self): return 0
     return Adapter
 
 
