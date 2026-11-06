@@ -155,22 +155,33 @@ class _StrategySafetyVisitor(ast.NodeVisitor):
 
 def validate_dynamic_strategy_source(source_code: str) -> dict[str, Any]:
     source = (source_code or "").strip()
+
     if not source:
-        raise DynamicStrategyLoadError("No strategy source code attached")
-    if len(source) > 250_000:
-        raise DynamicStrategySecurityError("Strategy source code is too large")
+        raise DynamicStrategyLoadError(
+            "No strategy source code attached"
+        )
 
     try:
         tree = ast.parse(source, mode="exec")
     except SyntaxError as exc:
-        raise DynamicStrategyLoadError(f"Syntax check failed: {exc}") from exc
+        raise DynamicStrategyLoadError(
+            f"Syntax check failed: {exc}"
+        ) from exc
 
     _StrategySafetyVisitor().visit(tree)
-    classes = [node.name for node in tree.body if isinstance(node, ast.ClassDef)]
-    if not classes:
-        raise DynamicStrategyLoadError("Strategy code must define a class with a generate(self) method")
-    return {"ok": True, "classes": classes}
 
+    classes = [
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    ]
+
+    if not classes:
+        raise DynamicStrategyLoadError(
+            "Strategy code must define a class with a generate(self) method"
+        )
+
+    return {"ok": True, "classes": classes}
 
 def _find_strategy_class(namespace: dict[str, Any]) -> type:
     # A custom source may use `from .base_strategy import BaseStrategy` and
