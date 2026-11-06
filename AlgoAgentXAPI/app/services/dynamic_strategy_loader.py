@@ -6,6 +6,7 @@ import inspect
 import math
 import sys
 from functools import lru_cache
+from threading import RLock
 import types
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
@@ -153,7 +154,9 @@ class _StrategySafetyVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def validate_dynamic_strategy_source(source_code: str) -> dict[str, Any]:
+def _validated_strategy_ast(source_code: str) -> tuple[ast.Module, list[str]]:
+    # Source length is not a resource budget. Keep the complete source and every
+    # security check; process isolation/memory limits belong to the worker host.
     source = (source_code or "").strip()
 
     if not source:
@@ -181,7 +184,18 @@ def validate_dynamic_strategy_source(source_code: str) -> dict[str, Any]:
             "Strategy code must define a class with a generate(self) method"
         )
 
+    return tree, classes
+
+
+def validate_dynamic_strategy_source(source_code: str) -> dict[str, Any]:
+    try:
+        _, classes = _validated_strategy_ast(source_code)
+    except (MemoryError, RecursionError) as exc:
+        raise DynamicStrategyLoadError(
+            "Strategy validation exhausted available memory or compiler recursion capacity"
+        ) from exc
     return {"ok": True, "classes": classes}
+
 
 def _find_strategy_class(namespace: dict[str, Any]) -> type:
     # A custom source may use `from .base_strategy import BaseStrategy` and
@@ -256,9 +270,14 @@ def extract_dynamic_strategy_params(parameters: dict[str, Any] | None) -> dict[s
     return result
 
 
+# lru_cache alone allows simultaneous misses for the same source. Serialize
+# loading (including temporary sys.modules registration) without locking generate().
+_DYNAMIC_LOAD_LOCK = RLock()
+
+
 @lru_cache(maxsize=64)
 def _load_dynamic_strategy_class_cached(source_code: str) -> type:
-    validate_dynamic_strategy_source(source_code)
+    tree, _ = _validated_strategy_ast(source_code)
     safe_builtins = dict(ALLOWED_BUILTINS)
     safe_builtins["__import__"] = _safe_import
     namespace: dict[str, Any] = {
@@ -270,7 +289,10 @@ def _load_dynamic_strategy_class_cached(source_code: str) -> type:
         "numpy": np,
         "math": math,
     }
-    code = compile(source_code, "<dynamic_strategy>", "exec")
+    # Compile the exact AST that passed validation rather than parsing a large
+    # source a second time. Release it before executing module-level definitions.
+    code = compile(tree, "<dynamic_strategy>", "exec")
+    del tree
 
     # dataclasses/typing may inspect sys.modules using the class __module__. Register
     # a short-lived module while executing the sandboxed namespace, then restore it.
@@ -296,7 +318,15 @@ def load_dynamic_strategy_class(source_code: str) -> type:
     # creates a new cache entry, while unchanged live candles avoid recompiling
     # large strategy modules on every runner invocation.
     source = str(source_code or "").strip()
-    return _load_dynamic_strategy_class_cached(source)
+    with _DYNAMIC_LOAD_LOCK:
+        try:
+            return _load_dynamic_strategy_class_cached(source)
+        except (MemoryError, RecursionError) as exc:
+            # Do not retry expensive compilation or fall back to another strategy.
+            # SIGKILL cannot be caught here; worker supervision remains required.
+            raise DynamicStrategyLoadError(
+                "Strategy loading exhausted available memory or compiler recursion capacity"
+            ) from exc
 
 
 def build_dynamic_strategy_entry(
