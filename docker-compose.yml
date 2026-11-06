@@ -326,6 +326,66 @@ services:
       retries: 3
       start_period: 20s
 
+  # Isolated heavy compute. Single child; recycling releases allocator high-water
+  # memory after each job. Limits protect live services, not a claim of capacity.
+  backtest_worker:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile.prod
+    container_name: algoagentx_backtest_worker
+    restart: unless-stopped
+    mem_limit: ${BACKTEST_MEMORY_LIMIT:-1536m}
+    memswap_limit: ${BACKTEST_MEMORY_SWAP_LIMIT:-2048m}
+    cpus: ${BACKTEST_CPUS:-1.0}
+    stop_grace_period: 15000s
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_prod:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      LIVE_LEGACY_RUNNER_ENABLED: "false"
+    command: ["celery", "-A", "app.backtest_celery.backtest_app", "worker", "--loglevel=info", "--concurrency=1", "--prefetch-multiplier=1", "--max-tasks-per-child=1", "--max-memory-per-child=655360", "--without-gossip", "--without-mingle", "-Q", "backtest", "-n", "backtest@%h"]
+    depends_on:
+      postgres_prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.backtest_celery.backtest_app inspect ping --destination=backtest@$${HOSTNAME} --timeout=5"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    profiles: ["backtest"]
+
+  backtest_dispatcher:
+    build:
+      context: ./AlgoAgentXAPI
+      dockerfile: Dockerfile.prod
+    container_name: algoagentx_backtest_dispatcher
+    restart: unless-stopped
+    mem_limit: 192m
+    stop_grace_period: 30s
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_prod:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      LIVE_LEGACY_RUNNER_ENABLED: "false"
+    command: ["python", "-m", "app.services.backtest_dispatcher"]
+    depends_on:
+      postgres_prod:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib,time; p=pathlib.Path('/tmp/backtest-dispatch-heartbeat'); assert p.exists() and time.time()-p.stat().st_mtime < 120"]
+      interval: 45s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    profiles: ["backtest"]
+
   # Optional worker. Enable only if you use Celery jobs/background queues.
   celery_worker:
     build:

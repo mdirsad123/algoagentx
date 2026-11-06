@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+from app.services.backtest_control import checkpoint
 
 try:
     from app.services.trading.risk_engine import calculate_position_size
@@ -233,6 +234,28 @@ def _equity_value(point: Any) -> float:
     return float(point or 0)
 
 
+class _ReplayRow:
+    """Read-only scalar view over unchanged columns; avoids two Series per bar.
+
+    Extension arrays retain pandas timestamps/NA semantics. The view only
+    exposes the requested row; strategy generation and indicator calculations
+    are deliberately left unchanged.
+    """
+    __slots__ = ("columns", "index", "offset")
+
+    def __init__(self, columns):
+        self.columns = columns
+        self.index = columns.keys()
+        self.offset = 0
+
+    def __getitem__(self, key):
+        return self.columns[key][self.offset]
+
+    def get(self, key, default=None):
+        column = self.columns.get(key)
+        return default if column is None else column[self.offset]
+
+
 def _build_summary(trades: List[Trade], equity_curve: List[float], final_capital: float, initial_capital: float, instrument_spec: dict[str, Any]) -> dict[str, Any]:
     pnls = [float(t.pnl or 0) for t in trades]
     gross_profit = sum(p for p in pnls if p > 0)
@@ -271,6 +294,7 @@ def run_backtest_engine(
     if strategy_params is None:
         strategy_params = {}
 
+    checkpoint("engine_preparation", 0, len(market_data))
     df = market_data.copy()
     required_columns = ["Date", "Open", "High", "Low", "Close"]
     for col in required_columns:
@@ -284,10 +308,15 @@ def run_backtest_engine(
     df = df.dropna(subset=["Date", "Open", "High", "Low", "Close"]).reset_index(drop=True)
 
     filtered_params = _filter_strategy_params(strategy_class, strategy_params)
+    checkpoint("strategy_generation")
     strategy = strategy_class(df, **filtered_params)
     generated_df = strategy.generate()
     strategy_diagnostics = dict(getattr(generated_df, "attrs", {}).get("strategy_diagnostics") or {})
     df = generated_df.copy()
+    # The generated frame is now owned by the engine. Drop strategy references
+    # before replay/persistence rather than retaining all generated intermediates.
+    del generated_df, strategy
+    checkpoint("replay", 0, len(df))
 
     if "Position" not in df.columns:
         raise ValueError("Strategy must return a DataFrame with Position column.")
@@ -478,9 +507,13 @@ def run_backtest_engine(
         original_quantity = None
         original_lot_size = None
 
+    columns = {name: df[name].array for name in df.columns}
+    row, signal_row = _ReplayRow(columns), _ReplayRow(columns)
     for i in range(1, len(df)):
-        row = df.iloc[i]
-        signal_row = df.iloc[i - 1]
+        if i % 1024 == 0:
+            checkpoint("replay", i, len(df))
+        row.offset = i
+        signal_row.offset = i - 1
 
         current_dt = row["Date"]
         if not reporting_started and report_start is not None and pd.Timestamp(current_dt) >= report_start:
@@ -806,6 +839,7 @@ def run_backtest_engine(
             append_equity(last_dt, capital)
             forced_eod_exit_count = int(end_trade_in_report)
 
+    checkpoint("engine_metrics", len(df), len(df))
     wins = [trade for trade in trades if trade.pnl > 0]
     win_rate = len(wins) / len(trades) if trades else 0.0
 

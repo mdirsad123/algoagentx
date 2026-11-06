@@ -1,0 +1,17 @@
+{
+  "release": "2026-10-28",
+  "type": "opt-in research DEMO monitor hybrid; frozen DB source unchanged",
+  "patch_files": {
+    "AlgoAgentXAPI/app/services/live/strategy_runner.py": "6dc590f1f0fbb2ca588fcdd497ee42e05a2f76d9ba1ad82274ca7c3a8caaffb1",
+    "AlgoAgentXAPI/app/services/live/v64_hybrid_gate.py": "f026db07f4ff72887c806234ad830d739ad420aa1cbdd5d3fa5878a8a41d1fb9",
+    "AlgoAgentXAPI/app/core/config.py": "46a52096d8ddb4e55adbfcef5a61f4dad2d6023f5723535796ffb9bef8a07772",
+    "AlgoAgentXAPI/strategies/v64_hybrid_incremental.py": "26699c47e24c99f12c66d3fdba2fd05b6da940fc329c78e8e28354cd56ac2106",
+    "AlgoAgentXAPI/tests/test_v64_hybrid_gate_20261028.py": "2174cb76ca9289f5506863e62ba6075baa4ec2295cd9ab22cc5fa6dbf6981035",
+    "production_patch/v64/verify_hybrid_80k_replay.py": "ff8fd9ecdbc79fb7ae9250d5e7252dcd723c657df5b1a6d20b9b9d01f0c5bcc2"
+  },
+  "excluded_private_inputs": "all environment files, credentials, ssh keys, private uploads, logs, local venvs",
+  "offline_initial_80k_comparison": "488 frozen historical signal rows matched; 108.653s vs 40.609s",
+  "offline_80k_next_candle": "116.361s frozen rolling vs 11.501s hybrid, HOLD matched",
+  "limitations": "active DB strategy hash, real TradeLocker 80K and comprehensive rolling BUY/SELL parity unverified",
+  "default": "hybrid off; monitor-only optional; zero broker orders by monitor-only runner"
+}

@@ -1,0 +1,38 @@
+{
+  "release": "2026-10-28-boundary-aware-tradelocker-polling",
+  "derived_from": "AlgoAgentX_Generic_Incremental_Gap_Recovery_2026-10-28.zip",
+  "modified": [
+    {
+      "path": "AlgoAgentXAPI/app/core/config.py",
+      "sha256": "0d16ed685400c51c845db4953df788e52d7f213cf721f990b716f4d8e4e8f330"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/live/candle_poll_schedule.py",
+      "sha256": "7fbd600799f3ae41b0ec21f9ccaa96fdbc5132f8e1ff04a265fbbbbb84178cdf"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/live/live_tradelocker_candle_worker.py",
+      "sha256": "8bfc5a0ed67edea3cdc926841a68c5d831b5535d434d016d38db306cda6f8839"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/live/auto_runner_service.py",
+      "sha256": "18acbd22a68e9a7d5f349c08fe547a8b0bb5a482c42ee55a23bae31cda4249b4"
+    },
+    {
+      "path": "AlgoAgentXAPI/tests/test_candle_boundary_idle_20261028.py",
+      "sha256": "06b7ceaea246baf39aa885657048da0e3a87e376d5582b0e76a3e8051cb92460"
+    },
+    {
+      "path": "MARKET_IDLE_ENV_ADDITIONS_2026-10-28.txt",
+      "sha256": "307acff2817583e988514a6cbcb08787797bbe18afd7d0b5be48fae368cfb6a8"
+    },
+    {
+      "path": "README_TRADELOCKER_MARKET_IDLE_2026-10-28.md",
+      "sha256": "348f9d7fc450f52b06c8aab7ee814f40ef980f162209ab4cd7fc195c960e2209"
+    }
+  ],
+  "frozen_strategy_unchanged": true,
+  "offline_unit_tests_passed": 32,
+  "broker_integration_unverified": true,
+  "session_gap_resolution_unverified": true
+}

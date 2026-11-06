@@ -1,3 +1,5 @@
+# Read-only exported production fixtures contain private strategy source/history.
+artifacts/backtest_private/
 # ============================================
 # AlgoAgentX - Production-safe .gitignore
 # ============================================

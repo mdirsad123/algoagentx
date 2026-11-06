@@ -1,4 +1,4 @@
-from sqlalchemy import Column, UUID, DateTime, Numeric, ForeignKey, Index
+from sqlalchemy import Column, UUID, DateTime, Numeric, ForeignKey, Index, Integer
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from ..base import Base
 
@@ -8,6 +8,7 @@ class EquityCurve(Base):
 
     backtest_id = Column(PG_UUID(as_uuid=True), ForeignKey("performance_metrics.id"), primary_key=True)
     timestamp = Column(DateTime(timezone=True), primary_key=True)
+    event_sequence = Column(Integer, primary_key=True, default=0, server_default="0")
     equity = Column(Numeric)
 
     # Index for analytics

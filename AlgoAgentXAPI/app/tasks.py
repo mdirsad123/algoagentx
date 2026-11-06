@@ -627,7 +627,39 @@ async def _mark_background_job_failed(session_factory, job_id: str, exc: Excepti
         logger.exception("Failed to persist terminal status for queued job %s", job_id)
 
 
-async def _run_backtest_v2_async(job_id: str, user_id: str, payload_dict: Dict[str, Any], plan_code: str | None = None):
+async def _run_backtest_v2_async(job_id: str, user_id=None, payload_dict=None, plan_code=None):
+    from .services.backtest_jobs import execute_job, current_claim
+    from .services.backtest_control import checkpoint
+    from .schemas.backtests import BacktestRunRequest
+    from .api.v1.backtests import _execute_backtest_sync
+
+    worker_engine, session_factory = _fresh_async_engine_and_sessionmaker()
+    try:
+        async def execute(db, durable_user_id, durable_payload, durable_plan):
+            async def publish_progress(progress, message):
+                checkpoint()
+                claim = current_claim.get()
+                async with session_factory() as progress_db:
+                    from sqlalchemy import text
+                    await progress_db.execute(text("""
+                        UPDATE job_status SET progress=:progress, message=:message, updated_at=now()
+                        WHERE id=:job AND status='running' AND EXISTS (
+                            SELECT 1 FROM backtest_execution WHERE job_id=:job AND fence=:fence AND owner=:owner
+                        )
+                    """), {"job": job_id, "progress": int(progress), "message": str(message)[:4000],
+                           "fence": claim.fence, "owner": claim.owner})
+                    await progress_db.commit()
+            return await _execute_backtest_sync(
+                BacktestRunRequest.model_validate(durable_payload), db,
+                {"user_id": durable_user_id}, {"plan_code": durable_plan},
+                execution_job_id=job_id, progress_callback=publish_progress,
+            )
+        return await execute_job(job_id, session_factory, execute)
+    finally:
+        await worker_engine.dispose()
+
+
+async def _legacy_unclaimed_backtest_v2_async(job_id: str, user_id: str, payload_dict: Dict[str, Any], plan_code: str | None = None):
     worker_engine, session_factory = _fresh_async_engine_and_sessionmaker()
     try:
         from .api.v1.backtests import _execute_backtest_sync
@@ -669,7 +701,7 @@ async def _run_backtest_v2_async(job_id: str, user_id: str, payload_dict: Dict[s
 
 
 @celery_app.task(name="app.tasks.run_backtest_v2_task", bind=True, max_retries=0)
-def run_backtest_v2_task(self, job_id: str, user_id: str, payload_dict: Dict[str, Any], plan_code: str | None = None):
+def run_backtest_v2_task(self, job_id: str, user_id=None, payload_dict=None, plan_code=None):
     """Durable Celery execution for multi-year Standard Backtests."""
     return asyncio.run(_run_backtest_v2_async(job_id, user_id, payload_dict, plan_code))
 
@@ -681,7 +713,7 @@ def run_backtest_v2_fallback(job_id: str, user_id: str, payload_dict: Dict[str, 
     HTTP response is returned immediately and the main event loop remains free.
     For production durability, run a Celery worker and Redis.
     """
-    return asyncio.run(_run_backtest_v2_async(job_id, user_id, payload_dict, plan_code))
+    raise RuntimeError("In-process backtest fallback is disabled; durable dispatch must recover this job")
 
 async def _run_strategy_sandbox_v2_async(job_id: str, admin_user_id: str, strategy_id: str, payload_dict: Dict[str, Any]):
     worker_engine, session_factory = _fresh_async_engine_and_sessionmaker()

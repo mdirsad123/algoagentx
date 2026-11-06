@@ -1,0 +1,57 @@
+{
+  "source": "algoagentx_market_data_ctrader_priority_20261031_updated.zip",
+  "patch": "Market Data V2 cTrader history and UI fixes",
+  "tests": "20 offline pytest passed; Python compilation and TS syntax passed",
+  "migration": "none for V2",
+  "changed": [
+    {
+      "path": "VERIFY_MARKET_DATA_HISTORY_FEEDS_20261031.sql",
+      "type": "added"
+    },
+    {
+      "path": "README_MARKET_DATA_FIX_20261031_V2.md",
+      "type": "added"
+    },
+    {
+      "path": "AlgoAgentXApp/app/globals.css",
+      "type": "modified"
+    },
+    {
+      "path": "AlgoAgentXApp/app/(admin)/admin/market-data/page.tsx",
+      "type": "modified"
+    },
+    {
+      "path": "AlgoAgentXApp/app/(admin)/admin/market-data/CloudManualFetch.tsx",
+      "type": "added"
+    },
+    {
+      "path": "AlgoAgentXApp/app/(admin)/admin/market-data/DailyHistoryPanel.tsx",
+      "type": "modified"
+    },
+    {
+      "path": "AlgoAgentXApp/lib/api/admin.ts",
+      "type": "modified"
+    },
+    {
+      "path": "AlgoAgentXAPI/tests/test_market_history_oct31_fixes.py",
+      "type": "added"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/brokers/ctrader.py",
+      "type": "modified"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/market_data/daily_sync.py",
+      "type": "modified"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/market_data/daily_tasks.py",
+      "type": "modified"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/api/v1/admin_market_data_sync.py",
+      "type": "modified"
+    }
+  ],
+  "excluded": "runtime secrets, production .env, private keys, runtime data, compiled caches"
+}

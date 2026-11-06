@@ -8,7 +8,7 @@ from uuid import uuid4
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, and_
+from sqlalchemy import select, update, delete, and_, text
 from sqlalchemy.orm import selectinload
 from ..db.models import JobStatus
 from ..celery_app import celery_app, is_celery_available
@@ -85,6 +85,12 @@ class JobService:
         if not job:
             return None
 
+        execution = None
+        if job.job_type == "backtest":
+            execution = (await db.execute(text("""
+                SELECT attempts, max_attempts, stage, heartbeat_at, cancel_requested,
+                       failure_reason, telemetry FROM backtest_execution WHERE job_id=:job
+            """), {"job": job_id})).mappings().one_or_none()
         return {
             "id": job.id,
             "job_type": job.job_type,
@@ -99,6 +105,7 @@ class JobService:
             "job_data": json.loads(job.job_data) if job.job_data else None,
             "result_data": json.loads(job.result_data) if job.result_data else None,
             "debit_txn_id": job.debit_txn_id,
+            "execution": dict(execution) if execution else None,
         }
 
     @staticmethod
@@ -294,6 +301,23 @@ class JobService:
             )
         )
         job = result.scalar_one_or_none()
+
+        if job and job.job_type == "backtest":
+            # Preserve identity and financial idempotency; never manufacture a
+            # second job when retrying the same durable execution.
+            execution = (await db.execute(text("""
+                SELECT attempts, max_attempts, cancel_requested FROM backtest_execution
+                WHERE job_id=:job FOR UPDATE
+            """), {"job": job_id})).mappings().one_or_none()
+            if execution:
+                if execution["cancel_requested"] or execution["attempts"] >= execution["max_attempts"]:
+                    return False
+                job.status = "queued"
+                job.completed_at = None
+                job.message = "Retry queued in PostgreSQL"
+                await db.execute(text("UPDATE backtest_execution SET dispatched_at=NULL WHERE job_id=:job"), {"job": job_id})
+                await db.commit()
+                return True
 
         if not job or job.retry_count >= job.max_retries:
             logger.warning(f"Job {job_id} cannot be retried - max retries reached or not found")

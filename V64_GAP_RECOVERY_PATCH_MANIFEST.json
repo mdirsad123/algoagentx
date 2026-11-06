@@ -1,0 +1,13 @@
+{
+  "release": "2026-10-28",
+  "classification": "experimental DEMO monitor-only candle catch-up; no broker order execution allowed",
+  "base": "AlgoAgentX_V64_Hybrid_DEMO_Monitor_2026-10-28.zip",
+  "fix": "Proactive bounded TradeLocker M5 missing-bar refetch and oldest-first runner evaluation",
+  "behavior": "Blocks and reports broker candles that cannot be recovered; does not create fake candles or advance strategy cursor",
+  "new_config_defaults": {
+    "LIVE_RUNNER_SEQUENTIAL_CATCHUP_ENABLED": false,
+    "LIVE_TRADELOCKER_GAP_BACKFILL_ENABLED": false
+  },
+  "tested": "offline Python tests, 42 selected tests passed; no active Docker, TradeLocker, or broker-order end-to-end verification",
+  "limitations": "Market session boundaries, real 80K TradeLocker rolling parity, order execution and persistent state across restarts remain unverified"
+}

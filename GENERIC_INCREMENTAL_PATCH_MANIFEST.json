@@ -1,0 +1,67 @@
+{
+  "version": "2026-10-28-generic-registered-adapters",
+  "status": "offline-tested; DEMO broker parity and complete V4.31B/gate incrementality unverified",
+  "checks": {
+    "tests_passed": 42,
+    "note": "LIVE_STRATEGY_HISTORY_DEFAULT_BARS=2000 test-only override for existing runtime-contract test; deployed V6.4 80K unchanged"
+  },
+  "modified_or_added": [
+    {
+      "path": "AlgoAgentXAPI/app/core/config.py",
+      "sha256": "b147cfc8fcba03fe9185af877b213965a45518170bea3ee33e7b248e97d1f10e"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/live/strategy_runner.py",
+      "sha256": "cc33019b0ea80524921270a84ef4c984fdf8094e9885aad50323bdb31cde2e30"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/live/auto_runner_service.py",
+      "sha256": "c11ae219f54d741d602b5071540e62abe8765d8d88514f427c4d3fe49b065b29"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/live/incremental_adapter_registry.py",
+      "sha256": "80b39293a9cb054acbaa3e533715c307b64e696a5037968609c6b991935b248e"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/live/retained_strategy_state.py",
+      "sha256": "caa6d41a410a97a040bff47c7daf9b00bf93a9e634d31cf2473b0f92801a8fb0"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/dynamic_strategy_loader.py",
+      "sha256": "6a8b38e1d1ba30e0623e4e2c8cc7fde98a209b5371d99f226d61a9a9bd53f8ce"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/live/candle_catchup.py",
+      "sha256": "7f1f3b8df70e0c7ca4cb95932388906e2bbb3e25538858467a3df86bfc5f972a"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/services/live/live_tradelocker_candle_worker.py",
+      "sha256": "2ef47980086fc9cbd25e4838fb34a74c80587baefc0dadbee51e5c76ed86be53"
+    },
+    {
+      "path": "AlgoAgentXAPI/app/tools/check_live_candle_gaps_readonly.py",
+      "sha256": "467248b18ad14b0d87f4e01964b2d63973803fdb131a0f5552cbd48952279d09"
+    },
+    {
+      "path": "AlgoAgentXAPI/tests/test_incremental_adapter_registry_20261028.py",
+      "sha256": "807d95bbb465615579fb36331eba5a405479a2993b46c29e6ac91e20f56631b8"
+    },
+    {
+      "path": "AlgoAgentXAPI/tests/test_candle_catchup_20261028.py",
+      "sha256": "54136ac2955b9cbf991486b65d76e2c5444b9bf055fb879cd9a104be2336dedd"
+    },
+    {
+      "path": "WATCH_INCREMENTAL.ps1",
+      "sha256": "332a34f6c59f82555444acfbf83114811364924ef6445d1a1f177b98ef5a76c5"
+    },
+    {
+      "path": "GENERIC_INCREMENTAL_ENV_ADDITIONS.txt",
+      "sha256": "2880fbb658dec7ce8a4849e16729258ac0cb7dd35186d62188a05fa26379cfbe"
+    },
+    {
+      "path": "README_GENERIC_INCREMENTAL_AND_GAP_RECOVERY_2026-10-28.md",
+      "sha256": "21a5aa1c11ed80c6fb8a20015fd24a72f5c4d9d59c0b7a99f8f6e3a3151119b2"
+    }
+  ],
+  "security": "env files, private credentials, pycache and binary key files excluded"
+}

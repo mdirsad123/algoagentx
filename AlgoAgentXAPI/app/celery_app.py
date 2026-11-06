@@ -24,6 +24,7 @@ celery_app.conf.update(
     
     # Worker settings
     worker_prefetch_multiplier=1,
+    task_routes={"app.tasks.run_backtest_v2_task": {"queue": "backtest"}},
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     

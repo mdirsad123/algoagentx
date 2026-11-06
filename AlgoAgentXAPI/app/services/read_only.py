@@ -68,7 +68,7 @@ class ReadOnlyService:
         """Get equity curve for a backtest"""
         result = await db.execute(
             select(EquityCurve).where(EquityCurve.backtest_id == backtest_id)
-            .order_by(EquityCurve.timestamp)
+            .order_by(EquityCurve.timestamp, EquityCurve.event_sequence)
         )
         curves = result.scalars().all()
         return [curve.__dict__ for curve in curves]

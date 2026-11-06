@@ -127,6 +127,8 @@ class BacktestService:
         warmup_requested = max(0, min(BacktestService.HISTORICAL_WARMUP_CANDLES, int(warmup_candles)))
         await emit_progress(35, f"Loading selected candles and up to {warmup_requested:,} historical warmup candles.")
         fetch_started = time_module.perf_counter()
+        from .backtest_control import checkpoint
+        checkpoint("candle_loading")
         market_data_df, selected_count, warmup_count = await BacktestService._fetch_market_data_with_warmup(
             db, instrument_id, resolved_timeframe, start_date, end_date,
             warmup_candles=warmup_requested,
@@ -304,8 +306,7 @@ class BacktestService:
         # MarketData objects. This substantially reduces memory and Python object
         # overhead for multi-year intraday backtests while preserving the exact
         # same candle values and chronological order.
-        rows = (
-            await db.execute(
+        statement = (
                 select(
                     MarketData.timestamp,
                     MarketData.open,
@@ -321,22 +322,21 @@ class BacktestService:
                     MarketData.timestamp <= end_dt,
                 )
                 .order_by(MarketData.timestamp.asc())
-            )
-        ).all()
-
-        if not rows:
-            return pd.DataFrame()
-
-        # Preserve DB candle timestamps exactly; only user-facing layers convert
-        # UTC instants to Asia/Kolkata for display.
-        df = pd.DataFrame.from_records(
-            rows,
-            columns=["Date", "Open", "High", "Low", "Close", "Volume"],
         )
-        df["Date"] = pd.to_datetime(df["Date"])
-        for column in ("Open", "High", "Low", "Close", "Volume"):
-            df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0.0).astype(float)
-        return df.reset_index(drop=True)
+        # Server-side cursor bounds temporary Row/Decimal allocations. Keep the
+        # same conversion, ordering and every candle; warmup stays unchanged.
+        frames = []
+        stream = await db.stream(statement.execution_options(yield_per=10000))
+        try:
+            async for rows in stream.partitions(10000):
+                frame = pd.DataFrame.from_records(rows, columns=["Date", "Open", "High", "Low", "Close", "Volume"])
+                frame["Date"] = pd.to_datetime(frame["Date"])
+                for column in ("Open", "High", "Low", "Close", "Volume"):
+                    frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0.0).astype(float)
+                frames.append(frame)
+        finally:
+            await stream.close()
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
     @staticmethod
     async def _fetch_market_data_with_warmup(

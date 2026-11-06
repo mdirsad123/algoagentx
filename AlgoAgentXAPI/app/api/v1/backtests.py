@@ -47,6 +47,9 @@ from ...services.pricing.backtest_pricing_service import BacktestPricingService
 from ...services.billing.credit_cost_service import CreditCostService
 from ...services.backtest_advanced_filters import apply_advanced_filters, build_filter_summary
 from ...services.trade_chart_context import load_trade_chart_candles
+from ...services.backtest_equity import iter_equity_events, equity_preview, persist_equity_events
+from ...services.backtest_jobs import register_job, dispatch_job, guard_finalization, current_claim
+from ...services.backtest_control import checkpoint
 from ...utils.api_response import success_response
 from ...utils.timezone import ensure_utc, iso_utc, format_kolkata_datetime, kolkata_date_key
 
@@ -854,6 +857,11 @@ def _trade_df_from_service(service_response) -> pd.DataFrame:
 
 
 def _service_equity_rows(service_response, start_date: date) -> list[dict]:
+    return [{**row, "timestamp": row["timestamp"].isoformat()}
+            for row in iter_equity_events(service_response.result)]
+
+
+def _legacy_service_equity_rows(service_response, start_date: date) -> list[dict]:
     """Build API/DB equity rows while keeping engine equity_curve as List[float].
 
     BACKTEST-EQUITY-REGRESSION-FIX-1 restores the stable engine contract:
@@ -913,12 +921,11 @@ def _downsample_rows(rows: list[dict], max_points: int = JOB_EQUITY_PREVIEW_MAX_
 
 
 def _equity_df_from_service(service_response, start_date: date) -> pd.DataFrame:
-    rows = _service_equity_rows(service_response, start_date)
-    if not rows:
+    result = service_response.result
+    if not result.equity_curve:
         return pd.DataFrame(columns=["timestamp", "equity"])
-    df = pd.DataFrame(rows)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    return df
+    return pd.DataFrame({"timestamp": pd.to_datetime(result.equity_timestamps),
+                         "equity": result.equity_curve})
 
 
 async def _quote_backtest_cost(
@@ -1606,18 +1613,11 @@ async def _save_backtest_payload(
                 raise
             logger.exception("Failed to persist trades for backtest %s. Report will use performance_metrics.trade_details fallback when available. Error: %s", backtest_id, exc)
 
-    equity_rows = _service_equity_rows(service_response, payload.start_date)
-    if equity_rows:
+    if service_response.result.equity_curve:
         try:
             async with db.begin_nested():
-                for row in equity_rows:
-                    db.add(
-                        EquityCurve(
-                            backtest_id=equity_fk_value,
-                            timestamp=_ensure_aware_datetime(row.get("timestamp")),
-                            equity=_decimal(row.get("equity")),
-                        )
-                    )
+                checkpoint("equity_persistence")
+                await persist_equity_events(db, equity_fk_value, service_response.result)
         except Exception:
             # An incomplete equity history must not be silently reported as a
             # successful saved backtest.  The enclosing transaction decides
@@ -2637,7 +2637,7 @@ async def _execute_backtest_sync(
         job.status = "running"
         job.progress = max(int(job.progress or 0), 10)
         job.message = "Running backtest in background"
-        job.job_data = json.dumps(payload.model_dump(mode="json"))
+        # Keep the original durable request, including its billing plan.
         job.started_at = job.started_at or datetime.utcnow()
     else:
         job_id = str(uuid4())
@@ -2722,6 +2722,7 @@ async def _execute_backtest_sync(
             trades=trade_df,
             initial_capital=_to_float(payload.capital),
         )
+        del trade_df, equity_df
 
         progress_message = "Saving backtest result and trade history."
         if progress_callback is not None:
@@ -2827,7 +2828,7 @@ async def _execute_backtest_sync(
             "avg_lot_size": result_summary.get("avg_lot_size"),
             "avg_quantity": result_summary.get("avg_quantity"),
             "professional_summary": result_summary,
-            "equity_curve": _downsample_rows(_equity_json_from_service(service_response, payload.start_date)),
+            "equity_curve": equity_preview(service_response.result, JOB_EQUITY_PREVIEW_MAX_POINTS),
             "saved": True,
         }
 
@@ -2836,6 +2837,7 @@ async def _execute_backtest_sync(
         job.message = "Backtest completed"
         job.result_data = json.dumps(result_data)
         job.completed_at = datetime.utcnow()
+        await guard_finalization(db)
         await db.commit()
 
         try:
@@ -2908,6 +2910,11 @@ async def _execute_backtest_sync(
             },
         )
     except Exception as exc:
+        if current_claim.get() is not None:
+            # Durable owner handles failures only after this entire transaction
+            # rolls back. Never let a stale owner overwrite a newer job state.
+            await db.rollback()
+            raise
         logger.exception("Backtest run failed for user %s", current_user["user_id"])
         rollback_ok = True
         try:
@@ -3029,6 +3036,8 @@ async def run_backtest(
     )
     db.add(job)
     try:
+        await db.flush()
+        await register_job(db, job_id)
         await db.commit()
     except Exception as exc:
         if not _is_connection_closed_error(exc):
@@ -3051,37 +3060,22 @@ async def run_backtest(
                 job_data=json.dumps(job_payload),
                 max_retries=0,
             ))
+        await db.flush()
+        await register_job(db, job_id)
         await db.commit()
 
-    dispatch_mode = "background"
+    dispatch_mode = "celery"
     try:
-        from ...celery_app import celery_app, is_celery_available, is_celery_worker_available
-        if is_celery_available() and is_celery_worker_available():
-            celery_app.send_task(
-                "app.tasks.run_backtest_v2_task",
-                args=[job_id, str(current_user["user_id"]), payload.model_dump(mode="json"), plan_code],
-            )
-            dispatch_mode = "celery"
-        else:
-            from ...tasks import run_backtest_v2_fallback
-            background_tasks.add_task(
-                run_backtest_v2_fallback,
-                job_id,
-                str(current_user["user_id"]),
-                payload.model_dump(mode="json"),
-                plan_code,
-            )
+        await dispatch_job(job_id)
+        # The durable dispatcher must not resend a task that is already waiting
+        # behind a healthy, long-running backtest. Record successful publish.
+        await db.execute(text("UPDATE backtest_execution SET dispatched_at=now() WHERE job_id=:job"),
+                         {"job": job_id})
+        await db.commit()
     except Exception:
-        logger.exception("Could not dispatch backtest %s to Celery; using local background worker", job_id)
-        from ...tasks import run_backtest_v2_fallback
-        background_tasks.add_task(
-            run_backtest_v2_fallback,
-            job_id,
-            str(current_user["user_id"]),
-            payload.model_dump(mode="json"),
-            plan_code,
-        )
-        dispatch_mode = "background"
+        await db.rollback()
+        logger.exception("Backtest %s may need dispatcher reconciliation after enqueue", job_id)
+        dispatch_mode = "durable_pending"
 
     activity_logger.info(
         "STANDARD BACKTEST queued | job=%s | mode=%s | strategy=%s | instrument=%s | timeframe=%s | range=%s..%s",
@@ -3894,7 +3888,7 @@ async def get_backtest_detail(
             await db.execute(
                 select(EquityCurve)
                 .where(cast(EquityCurve.backtest_id, String) == str(backtest_id))
-                .order_by(EquityCurve.timestamp.asc())
+                .order_by(EquityCurve.timestamp.asc(), EquityCurve.event_sequence.asc())
             )
         ).scalars().all()
         equity_data = [
