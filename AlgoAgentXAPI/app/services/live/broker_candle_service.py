@@ -128,7 +128,7 @@ async def _get_deployment_and_broker(db: AsyncSession, deployment_id: UUID) -> t
     return deployment, broker, source
 
 
-async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, count: int = 300) -> dict[str, Any]:
+async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, count: int = 300, *, allow_empty: bool = False) -> dict[str, Any]:
     deployment, broker, source = await _get_deployment_and_broker(db, deployment_id)
     safe_count = max(1, min(int(count or 300), 2000))
     resolved_symbol = _resolve_symbol(deployment, broker)
@@ -150,6 +150,27 @@ async def refresh_deployment_candles(db: AsyncSession, deployment_id: UUID, coun
         raise HTTPException(status_code=400, detail=message)
 
     if not rates:
+        # A successful TradeLocker REST response can contain no published bars
+        # during a weekend/session pause or a temporarily delayed data feed.
+        # The independent live poller opts into this non-error result so its
+        # M5-boundary backoff runs. Other callers preserve their prior behavior.
+        if source == "TRADELOCKER" and allow_empty:
+            await _write_log(
+                db, deployment, "CANDLE_REFRESH_NO_NEW_CANDLE",
+                f"No new broker candles available for {resolved_symbol} {deployment.timeframe}",
+                metadata={"source": source, "symbol": resolved_symbol, "timeframe": deployment.timeframe},
+            )
+            await db.commit()
+            return {
+                "source": source,
+                "symbol": deployment.instrument,
+                "resolved_symbol": resolved_symbol,
+                "timeframe": deployment.timeframe,
+                "requested_count": safe_count,
+                "upserted_count": 0,
+                "latest_candle_time": None,
+                "no_new_candle": True,
+            }
         if source == "MT5":
             message = f"No candles returned from MT5 Agent for {resolved_symbol} {deployment.timeframe}. In MT5, open Market Watch → Show All, open the symbol chart once, then refresh candles again."
         else:

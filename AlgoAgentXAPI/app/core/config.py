@@ -147,6 +147,7 @@ class Settings(BaseSettings):
     live_incremental_parity_approved: bool = Field(default=False, description="Operator declaration AFTER exact broker parity evidence")
     live_incremental_authorized_source_sha256: str = Field(default="", description="Optional one-source operator authorization; registry allowlist remains mandatory")
     live_incremental_max_advances: int = Field(default=48, description="Bounded cold rebase interval for any registered adapter")
+    live_incremental_require_adapter_instruments: str = Field(default="", description="Comma-separated DEMO instruments held (no orders) if an approved incremental adapter is not selected")
     live_v64_hybrid_enabled: bool = Field(default=False, description="Opt-in hybrid DEMO runner, disabled by default")
     live_v64_hybrid_monitor_only: bool = Field(default=False, description="Research mode: hybrid evaluation and signals only; NEVER broker order submission")
     live_v64_hybrid_max_advances: int = Field(default=48, description="Cold rebase interval for experimental hybrid; bounded 1..288")

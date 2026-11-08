@@ -1,0 +1,21 @@
+# Copy these settings to .env.prod AFTER reviewing currently running deployments.
+# Phase 1: DEMO monitor only, NEVER place broker orders.
+LIVE_INCREMENTAL_ENABLED=true
+LIVE_INCREMENTAL_ADAPTER_ENABLED=true
+LIVE_INCREMENTAL_MONITOR_ONLY=true
+LIVE_INCREMENTAL_PARITY_APPROVED=false
+LIVE_INCREMENTAL_MAX_ADVANCES=48
+LIVE_INCREMENTAL_AUTHORIZED_SOURCE_SHA256=a63659f9b6a4d0302165b94e9889b5da35e6fd2f4020d5893516ba4def9ad512
+# Set the existing LIVE_V64_HYBRID_ENABLED=false if present.
+# NEVER set monitor_only=false / parity_approved=true until exact 80K parity
+# and wall-clock benchmarks pass and you explicitly approve the deployment.
+LIVE_STRATEGY_HISTORY_DEFAULT_BARS=80000
+LIVE_STRATEGY_HISTORY_MAX_BARS=200000
+LIVE_STRATEGY_HISTORY_OVERRIDE_BARS=80000
+# The V9.32 class inherits LIVE_HISTORY_BARS=24000; override is necessary
+# unless DB parameter live_history_bars=80000 is explicitly set.
+LIVE_INCREMENTAL_REQUIRE_ADAPTER_INSTRUMENTS=XAUUSD,XAUUSD.X
+
+# WARNING: V9.32 has a demonstrated live right-edge signal mismatch.
+# This release HARD-BLOCKS order mode even if approval=true was mistakenly set.
+# Correct strategy source and register a new SHA before automatic orders.

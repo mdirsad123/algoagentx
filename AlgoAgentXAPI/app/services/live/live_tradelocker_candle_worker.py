@@ -87,7 +87,7 @@ async def _poll_one(deployment_id: UUID, now: datetime) -> dict:
         started = time.monotonic()
         log.info('TRADELOCKER_FETCH_START deployment=%s expected_open=%s last_stored=%s',
                  deployment_id, opened.isoformat(), stored.isoformat() if stored else None)
-        result = await refresh_deployment_candles(db, deployment_id, count=12)
+        result = await refresh_deployment_candles(db, deployment_id, count=12, allow_empty=True)
         elapsed = round(time.monotonic() - started, 3)
         new_open = result.get('latest_candle_time')
         if new_open and new_open.tzinfo is None: new_open = new_open.replace(tzinfo=timezone.utc)
@@ -267,9 +267,12 @@ async def _run(stop: asyncio.Event, stats: dict):
                         # Renew only the configured bounded retry budget when
                         # the expected closed-candle bucket actually advances.
                         bucket = str(result.get('open') or '')
-                        if bucket and missing_open.get(deployment_id) != bucket:
-                            missing_streak.pop(deployment_id, None)
+                        if bucket:
                             missing_open[deployment_id] = bucket
+                        # Preserve the sustained no-data streak across M5
+                        # buckets. After the initial bounded quick retries,
+                        # perform ONE poll per next M5 close (+idle grace),
+                        # including during a weekend. A real candle resets it.
                         missing_streak[deployment_id] = missing_streak.get(deployment_id, 0) + 1
                     elif reason != 'grace':
                         missing_streak.pop(deployment_id, None)

@@ -1,0 +1,84 @@
+{
+  "status": "EXPERIMENTAL_MONITOR_ONLY_ORDER_MODE_HARD_BLOCKED_RIGHT_EDGE_MISMATCH",
+  "version": "V9.32",
+  "normalized_source_sha256": "a63659f9b6a4d0302165b94e9889b5da35e6fd2f4020d5893516ba4def9ad512",
+  "original_source_untouched": true,
+  "required_history_bars": 80000,
+  "environment_monitor_only": true,
+  "environment_parity_approved": false,
+  "partial_incremental_components": [
+    "V3.5 horizontal zone/setup state controller"
+  ],
+  "recomputed_components": [
+    "V4.31B trendline",
+    "V8/V9 added trade families",
+    "portfolio one-position arbitration",
+    "V9.32 filters and HTF indicators"
+  ],
+  "files": {
+    ".env.prod": "3b13358b17396e7ffc8e5b3621e5b00f7f73a63661e34f102be374eaf4660ead",
+    ".env.prod.example": "026900dbe0c85fc422be684eb283e96e09ff0fab096840c99480b25a3b9977a8",
+    "AlgoAgentXAPI/app/core/config.py": "93cece99c0873d9ae2f6fda8270095a335d338042829e69263196836f9c4d051",
+    "AlgoAgentXAPI/app/services/live/incremental_adapter_registry.py": "f30117bc8bff5227c083dc6ac583febc82be02b14b4d75b15989cd0007158d86",
+    "AlgoAgentXAPI/app/services/live/v932_hybrid_gate.py": "e589b717642ec16e5f8fb0746f2965198e3314fcdf4463907cd0ccbacfef7abe",
+    "AlgoAgentXAPI/app/services/live/strategy_runner.py": "cab53e54006a9649215e8259801bb3d7ef4ee19008eac496fb45766844d5f578",
+    "AlgoAgentXAPI/strategies/v932_original_db_source.py": "a14039584670be7b21ae1c14068b1a071291e2f6860e9e7511cbbd33ae37097c",
+    "AlgoAgentXAPI/strategies/v932_pinned_strategy.py": "ef38ade30580a6dba918773aad2ac9c2a19384df54b9726708b21248ea3af248",
+    "AlgoAgentXAPI/strategies/v932_incremental.py": "839a730fdb1114400dbeff188416ad64aa85858fd7c74fee8695ec7c78a5b893",
+    "AlgoAgentXAPI/tests/test_v932_incremental_adapter.py": "6d2814fcca3047bc10c278e7f9d3fd380d44927312efc215d5eb667b9949f125",
+    "AlgoAgentXAPI/app/tools/verify_v932_incremental_parity.py": "64a249dc943a8d730a7c63a212fcb9c4d909a1b173f479e0ce8933ed59875f11",
+    "V932_DEMO_INCREMENTAL_ENV.txt": "03fb1e709b5c39742207855a81c5baf8a901668cf836bb512aaa04c7d298c854",
+    "README_V932_INCREMENTAL_DEMO.md": "8fc3756640945da87b92940ce9a9d101b470407e40e68fec3e74688aa6e2c670",
+    "HOW_TO_ADD_VNEXT_INCREMENTAL.md": "b48fdc3efd0e89f78e3ebd349bea9fcbfb6dfe3f671a6ba73d54cfd35b6734f2",
+    "V932_PARITY_5000.json": "a2f5699bcb29d938825dbfca397852b2549e79063df522bd183a988ddf1b10b6",
+    "AlgoAgentXAPI/app/tools/audit_v932_right_edge.py": "b443865b8af4f9f875f3336c76189302cc7a3691530afce98037feb83ef61856",
+    "V932_RIGHT_EDGE_AUDIT.json": "c67ed778d8873c4062be44066a4d2a14b9dc654b6c8b9d4408c1a1f00a282a4c",
+    "V932_PARITY_80000.json": "bfd95835cb6bf26de7cf58b15d234e352df81f2203b89c20efc2c125ee2fd3c6",
+    "V932_PARITY_BUY_9988.json": "690d207f8a99942d938932352edf2caebed488c5108968b258cdbb4e775d9d03",
+    "INSTALL_V932_SAFE.ps1": "b64b0eb6cb41c7be958a6b4514eee70fd0059ca0825c48ad019a0daaba219c70"
+  },
+  "verification": {
+    "unit_tests": "18 passed",
+    "real_candle_smoke_5000": "2 consecutive latest candle outputs match original; both HOLD; 0.618 and 0.617 seconds hybrid vs 6.227 and 6.28 seconds full history",
+    "80k_window": {
+      "passed": true,
+      "history": 80000,
+      "steps": 1,
+      "checks": [
+        {
+          "candle": "2026-11-04 18:25:00+00:00",
+          "same": true,
+          "different_field": "",
+          "frozen": {
+            "Date": "2026-11-04T18:25:00+00:00",
+            "Position": 0,
+            "strategy_stop_loss": null,
+            "strategy_target": null,
+            "signal_reason": ""
+          },
+          "hybrid": {
+            "Date": "2026-11-04T18:25:00+00:00",
+            "Position": 0,
+            "strategy_stop_loss": null,
+            "strategy_target": null,
+            "signal_reason": ""
+          },
+          "incremental_wall_s": 5.604,
+          "baseline_wall_s": 103.575
+        }
+      ],
+      "times": {
+        "cold_frozen_s": 104.80685857100025,
+        "cold_pinned_s": 103.23193310999977,
+        "cold_adapter_s": 132.75456245299983
+      }
+    },
+    "broker": "NOT TESTED",
+    "active_database": "NOT CONNECTED",
+    "right_edge": "PROVEN mismatch with original source: 2026-11-04 17:30 UTC BUY in 10K historical replay with future rows, HOLD at current-bar right edge; see V932_RIGHT_EDGE_AUDIT.json",
+    "signal_9988": "One latest-candle HOLD matched original at 9988 history; not proof of historical BUY being reachable live.",
+    "installer_powershell": "Source-path validation only; Windows execution not available in this environment"
+  },
+  "order_mode": "hard blocked in v932_hybrid_gate.py, even with operator approval flags",
+  "safety_note": "Do not enable automatic orders before a new causally corrected strategy source and SHA are independently replay-validated."
+}

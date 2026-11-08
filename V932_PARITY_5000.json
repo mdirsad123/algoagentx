@@ -1,0 +1,57 @@
+{
+  "history": 5000,
+  "steps": 2,
+  "csv": "../artifacts/backtest_private/xauusd.csv",
+  "first": "2026-10-09 12:40:00+00:00",
+  "last": "2026-11-04 18:25:00+00:00",
+  "times": {
+    "cold_frozen_s": 6.6155057460000535,
+    "cold_pinned_s": 6.410694900999715,
+    "cold_adapter_s": 7.875655748000099
+  },
+  "checks": [
+    {
+      "candle": "2026-11-04 18:20:00+00:00",
+      "same": true,
+      "different_field": "",
+      "frozen": {
+        "Date": "2026-11-04T18:20:00+00:00",
+        "Position": 0,
+        "strategy_stop_loss": null,
+        "strategy_target": null,
+        "signal_reason": ""
+      },
+      "hybrid": {
+        "Date": "2026-11-04T18:20:00+00:00",
+        "Position": 0,
+        "strategy_stop_loss": null,
+        "strategy_target": null,
+        "signal_reason": ""
+      },
+      "incremental_wall_s": 0.618,
+      "baseline_wall_s": 6.227
+    },
+    {
+      "candle": "2026-11-04 18:25:00+00:00",
+      "same": true,
+      "different_field": "",
+      "frozen": {
+        "Date": "2026-11-04T18:25:00+00:00",
+        "Position": 0,
+        "strategy_stop_loss": null,
+        "strategy_target": null,
+        "signal_reason": ""
+      },
+      "hybrid": {
+        "Date": "2026-11-04T18:25:00+00:00",
+        "Position": 0,
+        "strategy_stop_loss": null,
+        "strategy_target": null,
+        "signal_reason": ""
+      },
+      "incremental_wall_s": 0.617,
+      "baseline_wall_s": 6.28
+    }
+  ],
+  "passed": true
+}

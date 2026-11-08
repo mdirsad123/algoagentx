@@ -120,6 +120,8 @@ def test_readiness_uses_time_after_deployment_lookup(monkeypatch, worker, read_f
     monkeypatch.setattr(worker, 'refresh_deployment_candles', fetch)
     result = asyncio.run(worker._poll_one(DEPLOYMENT, at(1.98)))
     assert fetch.await_count == int(fetch_expected)
+    if fetch_expected:
+        assert fetch.await_args.kwargs.get('allow_empty') is True
     if not fetch_expected:
         assert result['skip'] == 'grace'
         assert result['retry_at'] == at(2).isoformat()
@@ -281,14 +283,14 @@ def test_registry_failure_keeps_cached_deployment_polling(monkeypatch, worker):
     assert 8 <= attempts[1] - attempts[0] < 8.2
 
 
-def test_empty_retry_budget_renews_at_next_actual_boundary(monkeypatch, worker):
+def test_prolonged_empty_stays_at_one_poll_per_next_m5_boundary(monkeypatch, worker):
     clock = [2.0]
     install_clock(monkeypatch, worker, clock)
     attempts = []
 
     class Stop:
         def is_set(self):
-            return len(attempts) >= 5 or clock[0] > 325
+            return len(attempts) >= 5 or clock[0] > 650
 
         async def wait(self):
             clock[0] += .1
@@ -304,4 +306,4 @@ def test_empty_retry_budget_renews_at_next_actual_boundary(monkeypatch, worker):
     asyncio.run(worker._run(Stop(), {}))
     assert len(attempts) == 5
     assert 309.9 <= attempts[3] <= 310.2
-    assert 8 <= attempts[4] - attempts[3] < 8.2
+    assert 299.9 <= attempts[4] - attempts[3] <= 300.2

@@ -35,7 +35,7 @@ from .retained_strategy_state import (
     signal_runtime_identity, fingerprint_fields,
 )
 from .runner_cache import history_ready_cache
-from .incremental_adapter_registry import select_registered_adapter, configured_max_advances
+from .incremental_adapter_registry import select_registered_adapter, configured_max_advances, adapter_required_for_instrument
 from .signal_contract import (
     _normalize_signal_value, _json_safe_value, _safe_float, _first_present,
     _safe_row_dict, extract_latest_signal_payload,
@@ -615,15 +615,29 @@ async def run_strategy_for_deployment(
                 deployment_id, adapter.adapter_id, adapter.source_sha256,
                 profile.required_history_bars, mode, hybrid_monitor_only,
             )
-            # Preserve the existing WATCH_V64_HYBRID.ps1 log markers.
-            logger.warning(
-                "RUNNER_V64_HYBRID_SELECTED deployment=%s source_sha256=%s bars=%s "
-                "mode=%s monitor_only=%s", deployment_id, adapter.source_sha256,
-                profile.required_history_bars, mode, hybrid_monitor_only,
-            )
+            if adapter.adapter_id == "v64_hybrid_v1":
+                # Preserve only genuine V6.4 legacy monitor log markers.
+                logger.warning(
+                    "RUNNER_V64_HYBRID_SELECTED deployment=%s source_sha256=%s bars=%s "
+                    "mode=%s monitor_only=%s", deployment_id, adapter.source_sha256,
+                    profile.required_history_bars, mode, hybrid_monitor_only,
+                )
         elif hybrid_reason != "disabled":
             logger.warning("RUNNER_INCREMENTAL_ADAPTER_FALLBACK deployment=%s reason=%s "
                            "mode=FULL_HISTORY", deployment_id, hybrid_reason)
+        # Explicit fail-closed instrument scope. Do not silently submit broker
+        # orders through FULL_HISTORY when an operator requires a source-pinned
+        # incremental adapter for this DEMO instrument. Other assets unaffected.
+        if execute and adapter_required_for_instrument(
+            settings, mode=mode, instrument=str(deployment.instrument),
+        ) and not hybrid_selected:
+            detail = {"error_code": "INCREMENTAL_ADAPTER_REQUIRED",
+                      "reason": hybrid_reason, "instrument": str(deployment.instrument),
+                      "message": "HOLD: required approved incremental adapter was not selected"}
+            await _log(db, deployment, "RUNNER_INCREMENTAL_ADAPTER_REQUIRED_HOLD",
+                       detail["message"], "WARNING", detail)
+            await db.commit()
+            return {"success": False, "final_action": "HOLD_INCREMENTAL_ADAPTER_REQUIRED", **detail}
         stage_clock.stop("resolve_strategy_and_runtime", timer)
         timer = stage_clock.start("history_readiness_check")
         authoritative_candle_time = _normalize_dt(candle_time) if candle_time is not None else None
@@ -695,7 +709,7 @@ async def run_strategy_for_deployment(
             )
         ) and mode in {"DEMO", "LIVE", "PAPER"} and execute and not refresh_broker_candles
         identity_runtime = signal_runtime_identity(
-            runtime_config, capital_independent=bool(hybrid_selected and adapter.adapter_id == 'v64_hybrid_v1'),
+            runtime_config, capital_independent=bool(hybrid_selected and adapter.adapter_id in {'v64_hybrid_v1', 'v932_hybrid_v1'}),
             configured_capital=deployment.capital,
         )
         identity_runtime['_v64_hybrid_runtime'] = bool(hybrid_selected)
@@ -745,8 +759,8 @@ async def run_strategy_for_deployment(
                     max_advances = configured_max_advances(settings)
                     if retained_states.rebase_due(state_id, history_bars=profile.required_history_bars,
                                                  max_advances=max_advances):
-                        logger.warning('RUNNER_V64_HYBRID_REBASE deployment=%s incremental_steps=%s history=%s',
-                                       deployment_id, warmed.candle_count-profile.required_history_bars,
+                        logger.warning('RUNNER_INCREMENTAL_ADAPTER_REBASE deployment=%s adapter=%s incremental_steps=%s history=%s',
+                                       deployment_id, adapter.adapter_id, warmed.candle_count-profile.required_history_bars,
                                        profile.required_history_bars)
                         retained_states.invalidate(state_id, 'hybrid_periodic_rolling_80k_rebase')
                         warmed = None
@@ -892,11 +906,17 @@ async def run_strategy_for_deployment(
         )
         await _log(db, deployment, "LIVE_ENGINE_QA_SIGNAL_CONTRACT_PASS", "Live engine signal contract validated", metadata=output_metadata)
 
-        if execute and bool(getattr(settings, "live_runner_stale_order_guard_enabled", False)):
+        # V9.32 hybrid still replays expensive history on cold/rebase. Never
+        # allow a delayed candidate order even when the global stale guard is
+        # intentionally disabled for other strategies.
+        v932_forced_stale_guard = bool(hybrid_selected and adapter and adapter.adapter_id == 'v932_hybrid_v1')
+        if execute and (bool(getattr(settings, "live_runner_stale_order_guard_enabled", False)) or v932_forced_stale_guard):
             candle_closes_at = latest_candle_time + timedelta(
                 seconds=parse_timeframe_to_seconds(str(deployment.timeframe or "M5"))
             )
             max_stale_age = max(0, int(getattr(settings, "live_runner_max_order_age_after_close_seconds", 60)))
+            if v932_forced_stale_guard:
+                max_stale_age = min(max_stale_age, 60)
             age = (datetime.now(timezone.utc) - candle_closes_at).total_seconds()
             if age > max_stale_age:
                 deployment.last_heartbeat_at = datetime.now(timezone.utc)

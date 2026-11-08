@@ -1,0 +1,25 @@
+{
+  "target": "2026-11-04T17:30:00Z",
+  "lookback": 10000,
+  "historical_full_window": {
+    "Date": "2026-11-04 17:30:00+00:00",
+    "Position": 1,
+    "signal_reason": "V432A_COMPRESS_LONG|V62_COMPRESSION_BREAK_LONG",
+    "SL": 4062.5889285714284,
+    "TP": 4081.312142857143
+  },
+  "as_latest_closed_candle": {
+    "Date": "2026-11-04 17:30:00+00:00",
+    "Position": 0,
+    "signal_reason": "",
+    "SL": null,
+    "TP": null
+  },
+  "latest_differs": true,
+  "future_candles_present": 11,
+  "wall_seconds": {
+    "full": 10.788,
+    "prefix": 10.713
+  },
+  "interpretation": "A right-edge mismatch means backtest entry parity cannot be assumed for this latest candle."
+}

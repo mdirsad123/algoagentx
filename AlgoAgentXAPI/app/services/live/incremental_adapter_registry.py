@@ -47,6 +47,17 @@ def select_registered_adapter(*, settings: Any, source_code: str, mode: str,
     authorized_sha = str(getattr(settings,
             "live_incremental_authorized_source_sha256" if use_generic
             else "live_v64_hybrid_authorized_source_sha256", "") or "")
+    # V9.32 is independently pinned to the uploaded, normalized DB source.
+    # Merely changing the .env SHA NEVER reuses the V6.4 algorithm.
+    from .v932_hybrid_gate import select_v932_hybrid_class, V932_NORMALIZED_SHA256
+    if source_code and sha256(source_code.strip().encode("utf-8")).hexdigest() == V932_NORMALIZED_SHA256:
+        class_932, reason_932 = select_v932_hybrid_class(
+            settings=settings, source_code=source_code, mode=mode,
+            instrument=instrument, timeframe_seconds=timeframe_seconds,
+            required_history_bars=required_history_bars,
+        )
+        return AdapterSelection(class_932, "v932_hybrid_v1" if class_932 else None,
+                                reason_932, monitor and bool(class_932), source_hash)
     # The pinned V6.4 descriptor is the first registered adapter. Additional
     # algorithms must implement and register their own explicit protocol.
     effective = SimpleNamespace(
@@ -69,3 +80,14 @@ def configured_max_advances(settings: Any) -> int:
     use_generic = bool(getattr(settings, "live_incremental_adapter_enabled", False))
     name = "live_incremental_max_advances" if use_generic else "live_v64_hybrid_max_advances"
     return max(1, min(288, int(getattr(settings, name, 48))))
+
+
+def adapter_required_for_instrument(settings: Any, *, mode: str, instrument: str) -> bool:
+    """Fail-closed opt-in for selected DEMO instruments, not a global kill switch."""
+    # This guard is deliberately independent of adapter-enabled/approved flags:
+    # turning the adapter off must NOT silently enable old full-history orders.
+    if str(mode).upper() != "DEMO":
+        return False
+    wanted = {x.strip().upper() for x in str(getattr(
+        settings, "live_incremental_require_adapter_instruments", "") or "").split(",") if x.strip()}
+    return str(instrument).upper().strip() in wanted

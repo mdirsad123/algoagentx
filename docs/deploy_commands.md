@@ -14,6 +14,7 @@ docker compose --env-file .env.prod -f docker-compose.yml down -v
 # 3. Production API/Web deploy and rebuild
 # all service build of prod
 docker compose --env-file .env.prod -f docker-compose.yml up -d --build
+docker compose --env-file .env.prod -f docker-compose.yml --profile backtest up -d
 
 # below is only for updated file restart
 docker compose --env-file .env.prod -f docker-compose.yml up -d --build --force-recreate api live_history_worker
