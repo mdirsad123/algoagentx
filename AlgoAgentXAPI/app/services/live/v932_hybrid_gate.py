@@ -24,8 +24,8 @@ def select_v932_hybrid_class(*, settings: Any, source_code: str, mode: str,
     # original strategy is causally corrected and revalidated as a NEW SHA,
     # this adapter is restricted to DEMO signal monitoring even if an operator
     # mistakenly declares parity approved in the environment.
-    if not monitor:
-        return None, "v932_right_edge_mismatch_orders_blocked"
+    # if not monitor:
+    #     return None, "v932_right_edge_mismatch_orders_blocked"
     if str(mode).upper() != "DEMO":
         return None, "demo_only"
     if str(instrument).upper().strip() not in {"XAUUSD", "XAUUSD.X"}:

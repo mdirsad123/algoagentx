@@ -23,7 +23,7 @@ docker compose --env-file .env.prod -f docker-compose.yml up -d --build --force-
 docker compose --env-file .env.prod logs -f api web live_market_worker live_strategy_worker live_reconcile_worker live_position_manager_worker live_history_worker redis postgres_prod live_legacy_runner_worker live_tradelocker_candle_worker
 
 docker compose --env-file .env.prod logs -f --tail=100 api live_legacy_runner_worker live_history_worker live_tradelocker_candle_worker
-
+ 
 ```powershell
 cd D:\Stock_market\algoagentx
 docker compose --env-file .env.prod stop api web          # stop only app or api
