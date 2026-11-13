@@ -23,7 +23,7 @@ docker compose --env-file .env.prod -f docker-compose.yml up -d --build --force-
 docker compose --env-file .env.prod logs -f api web live_market_worker live_strategy_worker live_reconcile_worker live_position_manager_worker live_history_worker redis postgres_prod live_legacy_runner_worker live_tradelocker_candle_worker
 
 docker compose --env-file .env.prod logs -f --tail=100 api live_legacy_runner_worker live_history_worker live_tradelocker_candle_worker
- 
+
 ```powershell
 cd D:\Stock_market\algoagentx
 docker compose --env-file .env.prod stop api web          # stop only app or api
@@ -34,6 +34,14 @@ docker compose --env-file .env.prod up -d --build api web # if changes app or ap
 # if backtest is stuck then need to start celery worker
 docker compose --env-file .env.prod -f docker-compose.yml --profile worker up -d --build
 docker compose --env-file .env.prod -f docker-compose.yml --profile worker up -d celery_worker
+
+# check strategy speed
+docker compose --env-file .env.prod logs -f --tail 0 --no-color live_legacy_runner_worker | ForEach-Object {
+    if ($_ -match 'RUNNER_GENERATE_COMPLETE.*deployment=([a-f0-9-]+).*total_wall_s=([\d.]+)') {
+        $strategy = if ($matches[1] -eq 'c07ddcb6-a82e-4174-8e35-e1b021edc871') { 'NAS100' } elseif ($matches[1] -eq '88a20c09-1035-45be-a07c-8b832cc7e91e') { 'GOLD' } else { 'OTHER' }
+        "$strategy : $($matches[2]) seconds"
+    }
+}
 
 Use this especially when:
 1. API logs — last 2 hours

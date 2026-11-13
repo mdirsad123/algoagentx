@@ -46,9 +46,8 @@ def select_v64_hybrid_class(*, settings: Any, source_code: str, mode: str,
     normalized_hash = sha256(source_code.strip().encode('utf8')).hexdigest()
     if raw_hash != BASELINE_SHA256 and normalized_hash != BASELINE_STRIPPED_SHA256:
         return None, 'db_source_sha_not_frozen_reference'
-    expected = str(getattr(settings, 'live_v64_hybrid_authorized_source_sha256', '') or '').strip().lower()
-    if not expected or expected != raw_hash:
-        return None, 'authorized_source_sha_missing_or_mismatch'
+    # The bundled baseline SHA(s) above are the source allowlist. Each DB
+    # revision is fingerprinted on every selection; no per-deployment .env SHA.
     # Imported only on genuinely approved DEMO deployments; no other strategy
     # sees this large research code or changes behavior.
     from strategies.v64_hybrid_incremental import Strategy

@@ -523,6 +523,7 @@ async def load_live_candles_for_runner(
     filters = [
         LiveMarketCandle.deployment_id == deployment.id,
         LiveMarketCandle.is_closed.is_(True),
+        LiveMarketCandle.timeframe == deployment.timeframe,
     ]
     if through_candle_time is not None:
         filters.append(LiveMarketCandle.candle_time <= through_candle_time)

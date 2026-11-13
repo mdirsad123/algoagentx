@@ -11,6 +11,7 @@ from __future__ import annotations
 import pandas as pd
 from .v932_pinned_strategy import V932_FilterOnly_Research
 from .v64_hybrid_incremental import XAUUSD5MSupplyDemandRejectionV35CandidateA as StatefulV35
+from .v932_trendline_stream import TrendlineCache, activate, deactivate
 
 
 class Strategy(V932_FilterOnly_Research):
@@ -23,12 +24,17 @@ class Strategy(V932_FilterOnly_Research):
         self._v932_raw_history = None
         self._v932_primed = False
         self._v932_cached_hor_history = None
+        self._v932_trendline_cache = TrendlineCache()
 
     def generate(self):
         # Exact frozen source calculation on cold start; no incremental cache.
         if self._v932_primed:
             raise RuntimeError("V932_GENERATE_NOT_PERMITTED_AFTER_PRIME")
-        result = super().generate()
+        token = activate(self._v932_trendline_cache)
+        try:
+            result = super().generate()
+        finally:
+            deactivate(token)
         engine = StatefulV35(self.df)
         horizontal = engine.generate()
         if not getattr(engine, "_live_v35_state", None):
@@ -83,7 +89,11 @@ class Strategy(V932_FilterOnly_Research):
         try:
             # This replays V4 trendline, full combination, and V8/V9 filters.
             # It can be slow; DO NOT APPROVE until 80K benchmarks pass.
-            output = super().generate()
+            token = activate(self._v932_trendline_cache)
+            try:
+                output = super().generate()
+            finally:
+                deactivate(token)
         finally:
             self._v932_cached_hor_history = None
         if not pd.Timestamp(output.iloc[-1]["Date"]) == c["Date"]:

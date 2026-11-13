@@ -1,5 +1,6 @@
 import axiosInstance from "../axios";
 import { HEAVY_API_TIMEOUT_MS, POLLING_API_TIMEOUT_MS } from "../api-timeouts";
+import { pollSandboxJob } from "./sandbox-polling";
 
 const unwrap = <T>(response: any): T => {
   const payload = response?.data;
@@ -1497,6 +1498,7 @@ export const adminApi = {
   runAdminStrategySandboxBacktest: async (
     strategyId: string,
     payload: { instrument_id: number; timeframe: string; start_date: string; end_date: string; capital?: number; runtime_config?: Record<string, any> },
+    onUpdate?: (job: { jobId: string; status: string; progress: number; message: string }) => void,
   ): Promise<AdminStrategySandboxResult> => {
     const queued = unwrap<any>(await axiosInstance.post(
       `/api/v1/admin/strategy-requests/strategies/${strategyId}/sandbox-backtest`,
@@ -1504,23 +1506,10 @@ export const adminApi = {
       { timeout: HEAVY_API_TIMEOUT_MS },
     ));
 
-    if (!queued?.job_id || !["pending", "queued", "running"].includes(String(queued?.status || "").toLowerCase())) {
-      return queued as AdminStrategySandboxResult;
-    }
-
-    for (;;) {
-      await new Promise((resolve) => window.setTimeout(resolve, 3000));
-      const jobResponse = await axiosInstance.get(`/api/v1/jobs/${queued.job_id}`, { timeout: POLLING_API_TIMEOUT_MS });
-      const job = jobResponse.data || {};
-      const status = String(job.status || "").toLowerCase();
-      if (status === "completed") {
-        return (job.result_data || {}) as AdminStrategySandboxResult;
-      }
-      if (status === "failed") {
-        const errorMessage = job.result_data?.error || job.message || "Sandbox backtest failed";
-        throw new Error(String(errorMessage));
-      }
-    }
+    return pollSandboxJob<AdminStrategySandboxResult>(queued, async (jobId) => {
+      const response = await axiosInstance.get(`/api/v1/jobs/${jobId}`, { timeout: POLLING_API_TIMEOUT_MS });
+      return response.data;
+    }, { onUpdate });
   },
 
   getAdminBacktestEngineSource: async (): Promise<AdminBacktestEngineSource> =>

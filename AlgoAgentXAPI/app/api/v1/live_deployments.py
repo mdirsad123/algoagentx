@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import secrets
+import asyncio
+import json
 from datetime import datetime, time, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -1585,7 +1587,41 @@ async def get_deployment_readiness(deployment_id: UUID, db: AsyncSession = Depen
 
 @router.post("/{deployment_id}/compatibility-check", status_code=202)
 async def check_deployment_live_compatibility(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    await get_deployment_or_404(db, deployment_id, current_user)
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+
+    # If the EXACT strategy/configuration was previously deep-verified, return a
+    # fresh lightweight eligibility check immediately. This avoids waiting in
+    # the single-worker full dry-test queue just to revalidate unchanged code.
+    # A new/changed source still uses the original isolated deep Celery job.
+    redis_client = redis_manager.client
+    if redis_client is not None:
+        from ...services.live.compatibility_cache import reuse_deep_cache
+        from ...services.live.settings_validation import configuration_fingerprint, COMPATIBILITY_TTL
+        try:
+            fingerprint = await configuration_fingerprint(db, row)
+            raw = await asyncio.wait_for(
+                redis_client.get(f'live:compatibility:deep_verified:{deployment_id}'), timeout=1.0
+            )
+            if raw:
+                verified = json.loads(raw)
+                # Only run even a lightweight DB check when proof is plausibly for
+                # this exact configuration. No implicit background strategy run.
+                if (isinstance(verified, dict) and verified.get('fingerprint') == fingerprint):
+                    lightweight = await run_live_compatibility_check(db, deployment_id, deep_strategy_check=False)
+                    result = reuse_deep_cache(fingerprint, lightweight, verified)
+                    if result is not None:
+                        await asyncio.wait_for(
+                            redis_client.set(
+                                f'live:compatibility:approved:{deployment_id}',
+                                json.dumps({'fingerprint': fingerprint, 'status': result['status']}),
+                                ex=COMPATIBILITY_TTL,
+                            ), timeout=1.0,
+                        )
+                        return success_response({'result': result, 'cached': True}, 'Verified output reused; current broker and settings rechecked')
+        except Exception as exc:
+            # Optional reuse is never a reason to block the normal queued deep
+            # check. Errors fail closed to the original validation path.
+            logger.warning('COMPATIBILITY_FAST_CACHE_UNAVAILABLE deployment=%s error=%s', deployment_id, type(exc).__name__)
     job = await enqueue_dry_test(str(deployment_id), kind='compatibility')
     return success_response(job, 'Compatibility check queued; settings remain editable')
 

@@ -11,6 +11,8 @@ import types
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 
+from .live.universal_incremental import inspect_incremental_source, make_incremental_strategy_class
+
 import numpy as np
 import pandas as pd
 
@@ -251,7 +253,9 @@ _META_PARAM_KEYS = {
     "performance_metrics", "runtime_config", "default_runtime_config", "runtime_config_schema", "engine_mode",
     "source_code_sha256", "live_history_bars", "required_history_bars",
     "live_incremental_enabled", "live_incremental_parity_verified",
+    "live_incremental_extended_parity_verified",
     "live_incremental_approved_source_sha256", "live_incremental_adapter_id",
+    "live_incremental_contract", "source_file_relative_path",
 }
 
 
@@ -310,7 +314,11 @@ def _load_dynamic_strategy_class_cached(source_code: str) -> type:
         else:
             sys.modules[module_name] = previous_module
 
-    return _find_strategy_class(namespace)
+    klass = _find_strategy_class(namespace)
+    contract = inspect_incremental_source(source_code)
+    if contract["compatible"]:
+        return make_incremental_strategy_class(klass)
+    return klass
 
 
 def load_dynamic_strategy_class(source_code: str) -> type:

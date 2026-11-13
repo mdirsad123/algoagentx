@@ -1063,10 +1063,19 @@ async def _execute_signal_for_account(db: AsyncSession, deployment: StrategyDepl
     # already carry the original candle deadline; never reset it mid-execution.
     if order_request_context.get() is not None:
         return await _execute_signal_for_account_inner(db, deployment, signal)
-    context = OrderRequestContext(float('inf'), str(signal.id), str(deployment.broker_account_id), time.time())
+    deadline = float('inf')
+    if str(getattr(signal, 'source', '')).upper() == 'ENGINE':
+        from .runner_scheduler import ensure_utc, parse_timeframe_to_seconds
+        candle = ensure_utc(getattr(signal, 'candle_time', None))
+        if candle is None:
+            raise ValueError('Engine order requires its original candle timestamp')
+        deadline = (candle.timestamp() + parse_timeframe_to_seconds(deployment.timeframe)
+                    + max(0, int(getattr(settings, 'live_runner_max_order_age_after_close_seconds', 60))))
+    context = OrderRequestContext(deadline, str(signal.id), str(deployment.broker_account_id), time.time())
     context.metrics['deployment_id'] = str(deployment.id)
     token = order_request_context.set(context)
     try:
+        check_order_deadline()
         return await _execute_signal_for_account_inner(db, deployment, signal)
     finally:
         order_request_context.reset(token)
@@ -1503,6 +1512,11 @@ async def execute_signal(db: AsyncSession, deployment: StrategyDeployment, signa
     # loaded, fail safe to the proven single-account primary path.
     deployment_state = object.__getattribute__(deployment, "__dict__")
     signal_state = object.__getattribute__(signal, "__dict__")
+    payload = signal_state.get('raw_payload') or {}
+    if isinstance(payload, dict) and payload.get('broker_orders_suppressed') is True:
+        signal.status = 'REJECTED'
+        signal.rejection_reason = 'Monitor/catch-up signals cannot be replayed as broker orders'
+        return None
 
     deployment_id = deployment_state.get("id")
     deployment_user_id = deployment_state.get("user_id")

@@ -199,7 +199,8 @@ class LiveStrategyWorker:
                                 },
                             )
                             final_action = str(result.get("final_action") or "").upper()
-                            retry_required = final_action in {"LOCK_SKIPPED", "HOLD_NOT_ENOUGH_CANDLES"}
+                            retry_required = (not result.get('success', False)
+                                              or final_action in {"LOCK_SKIPPED", "HOLD_NOT_ENOUGH_CANDLES"})
                             await self.trace.annotate(
                                 trace_id,
                                 status="RETRY_PENDING" if retry_required else "COMPLETED",

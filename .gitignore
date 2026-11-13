@@ -179,3 +179,32 @@ migration.log
 
 # Interactive, machine-local debugging only; keep regression tests tracked.
 /AlgoAgentXAPI/tests/local_debug/
+
+# Reproducible local caches and build metadata (not application state).
+.ruff_cache/
+*.tsbuildinfo
+
+# One-off source snapshots and patch backups; keep the canonical source tree.
+/codex_snapshot/
+/AUTO_TRADE_COMPAT_BACKUP_*/
+/NAS100_PATCH_BACKUP_*/
+
+# Generated verification output; private candle fixtures remain ignored above.
+/artifacts/*.log
+/artifacts/copy_*.txt
+/artifacts/*_review_*.md
+/artifacts/v933_native_compat/
+/research_validation/
+/live_speed.txt
+/*_AUDIT.json
+/*_PATCH_MANIFEST.json
+/*_VERIFICATION_*.json
+/V932_PARITY_*.json
+/AlgoAgentXAPI/*_AUDIT.json
+/AlgoAgentXAPI/*_PATCH_MANIFEST.json
+/AlgoAgentXAPI/*_VERIFICATION_*.json
+/AlgoAgentXAPI/V932_PARITY_*.json
+
+# Generated patch archives only; do not hide arbitrary application ZIP assets.
+/artifacts/**/*.zip
+/AlgoAgentXApp/algoagentx.zip

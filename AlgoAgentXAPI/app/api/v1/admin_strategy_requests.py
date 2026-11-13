@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from typing import Any, Optional
 from pathlib import Path
 
@@ -9,6 +11,7 @@ import hashlib
 import re
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select, update, String
 from sqlalchemy.exc import IntegrityError
@@ -30,6 +33,10 @@ from ...db.models import (
 )
 from ...services.backtest_service import BacktestService
 from ...services.dynamic_strategy_loader import validate_dynamic_strategy_source, DynamicStrategyLoadError, DynamicStrategySecurityError
+from ...services.live.universal_incremental import inspect_incremental_source
+from ...services.strategy_source_files import export_strategy_source
+import logging
+
 from ...services.strategy_registry import resolve_strategy
 from ...services.live.strategy_history_profile import resolve_live_strategy_profile
 from ...services.trading.runtime_config_service import get_system_default_runtime_config, get_default_runtime_config_schema, normalize_runtime_config
@@ -45,6 +52,7 @@ from .strategies import (
 )
 
 router = APIRouter()
+source_log = logging.getLogger(__name__)
 VALID_VISIBILITY = {PRIVATE_VISIBILITY, PUBLIC_VISIBILITY}
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -322,7 +330,9 @@ def _build_default_runtime_config(params: dict[str, Any] | None = None, strategy
         if str(key).startswith("_") or key in {
             "source_code", "strategy_type", "market", "timeframe", "entry_rules", "exit_rules",
             "confirmation_rules", "risk_rules", "invalidation_rules", "trade_management_rules", "notes",
-            "performance_metrics",
+            "performance_metrics", "source_code_sha256", "live_incremental_contract",
+            "live_incremental_enabled", "live_incremental_parity_verified",
+            "live_incremental_approved_source_sha256", "source_file_relative_path",
         }:
             continue
         if isinstance(value, (str, int, float, bool)):
@@ -741,6 +751,11 @@ def _apply_payload_to_parameters(params: dict[str, Any], payload: StrategyCreate
     # actually changed. Merely pressing Save with identical code no longer wipes it.
     if before != _runtime_contract_snapshot(params):
         params["_workflow"] = {}
+        params.pop("live_incremental_contract", None)
+        params["live_incremental_enabled"] = False
+        params["live_incremental_parity_verified"] = False
+        params["live_incremental_extended_parity_verified"] = False
+        params.pop("live_incremental_approved_source_sha256", None)
 
     return params
 
@@ -976,6 +991,7 @@ async def validate_strategy_code(
 
     syntax_ok = True
     syntax_message = "No custom source code attached. Static registry strategy will be used if available."
+    compatibility = inspect_incremental_source(source_code) if source_code.strip() else None
     if source_code.strip():
         try:
             safety = validate_dynamic_strategy_source(source_code)
@@ -985,46 +1001,106 @@ async def validate_strategy_code(
             syntax_ok = False
             syntax_message = f"Dynamic source check failed: {exc}"
 
-    instrument_id = payload.instrument_id
-    timeframe = payload.timeframe or params.get("timeframe") or "5m"
-    if instrument_id is None:
-        instrument_id = (await db.execute(select(Instrument.id).order_by(Instrument.id.asc()).limit(1))).scalar()
-    if instrument_id is None:
-        raise HTTPException(status_code=400, detail="No instrument available for validation")
+    # Admin Verify Code is an explicit acceptance gate for *new* native strategies.
+    # Existing live deployments are not modified by this check.
+    if source_code.strip() and (not syntax_ok or not compatibility["compatible"]):
+        validation_message = syntax_message if not syntax_ok else (
+            "Universal incremental incompatible: " + " ".join(compatibility["errors"])
+        )
+        updated = dict(params)
+        updated["live_incremental_contract"] = compatibility
+        updated["live_incremental_enabled"] = False
+        updated["live_incremental_parity_verified"] = False
+        updated["live_incremental_extended_parity_verified"] = False
+        updated.pop("live_incremental_approved_source_sha256", None)
+        updated = _set_workflow_state(updated, validation={
+            "ok": False, "message": validation_message,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "source_hash": _strategy_hash_from_params(updated),
+            "sample_result": None,
+        })
+        strategy.parameters = updated
+        strategy.verified_at = None
+        await db.commit()
+        return success_response({
+            "strategy_id": strategy_id, "strategy_name": strategy.name,
+            "syntax_ok": syntax_ok, "validation_ok": False,
+            "incremental_compatible": False, "incremental_contract": compatibility,
+            "message": validation_message, "sample_result": None,
+        }, validation_message)
 
-    start_date, end_date = await _resolve_validation_window(db, int(instrument_id), str(timeframe), payload.start_date, payload.end_date)
+    if source_code.strip():
+        # Quick Verify must never run a full historical backtest or demand
+        # 80K stored candles. The (independent) Sandbox endpoint owns replay;
+        # native streaming parity is a separate acceptance/activation gate.
+        # "compatible" below means *structurally* compatible, NOT that
+        # initialize/on_closed_bar match generate() or may place live orders.
+        updated = dict(strategy.parameters or {})
+        updated["live_incremental_contract"] = {
+            **compatibility,
+            "verification_mode": "static_only",
+            "right_edge_smoke_passed": False,
+            "right_edge_samples": 0,
+            "activation_status": "extended_parity_required",
+        }
+        updated["live_incremental_enabled"] = False
+        updated["live_incremental_parity_verified"] = False
+        updated["live_incremental_extended_parity_verified"] = False
+        updated.pop("live_incremental_approved_source_sha256", None)
+        validation_message = (
+            "Source syntax/security and native incremental STRUCTURE passed "
+            "(static only; no market candles or backtest executed). "
+            "Run Sandbox Backtest for trading behavior. Native live execution "
+            "remains disabled until independent extended parity approval."
+        )
+        source_hash = _strategy_hash_from_params(updated)
+        updated = _set_workflow_state(updated, validation={
+            "ok": True,
+            "message": validation_message,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "source_hash": source_hash,
+            "sample_result": None,
+            "verification_mode": "static_only",
+        })
+        strategy.parameters = updated
+        strategy.verified_at = datetime.now(timezone.utc)
+        # An already-successful Sandbox, published status or deployment must
+        # not be downgraded simply because an admin re-ran Quick Verify.
+        if str(getattr(strategy, "lifecycle_status", "") or "").upper() in {
+            "", "DRAFT", "UNDER_DEVELOPMENT", "VERIFIED",
+        }:
+            strategy.lifecycle_status = "VERIFIED"
+        await db.commit()
+        return success_response({
+            "strategy_id": strategy_id,
+            "strategy_name": strategy.name,
+            "syntax_ok": True,
+            "validation_ok": True,
+            "incremental_compatible": True,
+            "incremental_contract": updated["live_incremental_contract"],
+            "verification_mode": "static_only",
+            "native_live_approved": False,
+            "message": validation_message,
+            "sample_result": None,
+        }, validation_message)
 
+    # Registry-only strategies also avoid candles, construction and generate().
+    import inspect
     sample_result = None
     validation_ok = False
     validation_message = syntax_message
     try:
-        service_response = await BacktestService.run_backtest(
-            db=db,
-            strategy_id=strategy_id,
-            instrument_id=int(instrument_id),
-            timeframe=str(timeframe),
-            start_date=start_date,
-            end_date=end_date,
-            initial_capital=payload.capital,
-        )
-        trades = service_response.result.trades or []
-        buy_count = sum(1 for t in trades if str(getattr(t, "direction", "")).upper() == "LONG")
-        sell_count = sum(1 for t in trades if str(getattr(t, "direction", "")).upper() == "SHORT")
-        sample_result = {
-            "instrument_id": int(instrument_id),
-            "timeframe": str(timeframe),
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(),
-            "total_trades": len(trades),
-            "buy_signals": buy_count,
-            "sell_signals": sell_count,
-            "final_capital": float(service_response.final_capital),
-        }
-        validation_ok = syntax_ok
-        validation_message = "Validation run completed successfully." if syntax_ok else syntax_message
+        strategy_class, _, _ = resolve_strategy(strategy_id, strategy.name, params)
+        generate = getattr(strategy_class, "generate", None)
+        if not callable(generate) or inspect.iscoroutinefunction(generate):
+            raise ValueError("Strategy requires a synchronous generate(self) method")
+        inspect.signature(generate).bind(None)
+        compatibility = inspect_incremental_source(inspect.getsource(strategy_class))
+        validation_ok = True
+        validation_message = "Registry interface passed (static only; no candles or generate() execution). Native live approval requires independent extended parity."
     except Exception as exc:
         validation_ok = False
-        validation_message = f"Validation backtest failed: {exc}"
+        validation_message = f"Static registry interface check failed: {exc}"
 
     params = dict(strategy.parameters or {})
     params = _set_workflow_state(params, validation={
@@ -1036,7 +1112,7 @@ async def validate_strategy_code(
     })
     strategy.parameters = params
     strategy.verified_at = datetime.now(timezone.utc) if validation_ok else None
-    if validation_ok:
+    if validation_ok and str(getattr(strategy, "lifecycle_status", "") or "").upper() in {"", "DRAFT", "UNDER_DEVELOPMENT", "VERIFIED"}:
         strategy.lifecycle_status = "VERIFIED"
     await db.commit()
 
@@ -1045,10 +1121,32 @@ async def validate_strategy_code(
         "strategy_name": strategy.name,
         "syntax_ok": syntax_ok,
         "validation_ok": validation_ok,
+        "incremental_compatible": compatibility["compatible"] if compatibility else None,
+        "incremental_contract": compatibility,
+        "verification_mode": "static_only",
+        "native_live_approved": False,
         "message": validation_message,
         "sample_result": sample_result,
     })
 
+
+
+@router.get("/strategies/{strategy_id}/source-file")
+async def download_strategy_source_file(
+    strategy_id: str,
+    admin_user: dict = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download exact DB source as .py; source mirror is an immutable convenience."""
+    strategy = await _get_strategy_or_404(db, strategy_id)
+    source = str((strategy.parameters or {}).get("source_code") or "").strip()
+    if not source:
+        raise HTTPException(status_code=404, detail="This strategy has no attached Python source")
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    return Response(
+        content=source + "\n", media_type="text/x-python",
+        headers={"Content-Disposition": f'attachment; filename="{strategy.id}_{digest[:12]}.py"'},
+    )
 
 
 @router.get("/strategies/{strategy_id}")
@@ -1093,6 +1191,7 @@ async def _execute_sandbox_backtest(
     payload: StrategySandboxBacktestIn,
     admin_user: dict,
     db: AsyncSession,
+    progress_callback=None,
 ):
     strategy = await _get_strategy_or_404(db, strategy_id)
     resolved_start_date, resolved_end_date = await _resolve_validation_window(db, int(payload.instrument_id), str(payload.timeframe), payload.start_date, payload.end_date)
@@ -1105,6 +1204,8 @@ async def _execute_sandbox_backtest(
         end_date=resolved_end_date,
         initial_capital=payload.capital,
         runtime_config=payload.runtime_config,
+        progress_callback=progress_callback,
+        activity_label="ADMIN_SANDBOX",
     )
 
     result = service_response.result
@@ -1261,63 +1362,87 @@ async def _execute_sandbox_backtest(
 async def sandbox_backtest_strategy(
     strategy_id: str,
     payload: StrategySandboxBacktestIn,
-    background_tasks: BackgroundTasks,
     admin_user: dict = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Queue strategy sandbox validation so large historical windows do not timeout."""
+    """Dispatch heavy sandbox calculations to the isolated backtest worker.
+
+    The backtest Celery app and worker consume `backtest` only. The old generic
+    Celery ping could select a live worker and send this job to an unconsumed
+    default queue, leaving the Admin UI spinning indefinitely.
+    """
     await _get_strategy_or_404(db, strategy_id)
+    from ...backtest_celery import backtest_app, sandbox_worker_state
+
+    # Celery inspect uses remote-control broadcasts, not the task-delivery
+    # channel. A slow or busy worker may be healthy yet fail the inspect call.
+    # Only a *confirmed* outdated consumer is a reason to reject submission.
+    # On an inconclusive reply, use the real Redis send_task result, create a
+    # durable PostgreSQL job and show its state to the admin instead of 503.
+    worker_state = await asyncio.to_thread(sandbox_worker_state)
+    if worker_state == "misconfigured":
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Backtest worker consumes the queue but does not register the "
+                "Sandbox task. Rebuild the backtest_worker image and recreate "
+                "the backtest_worker container."
+            ),
+        )
+    if worker_state != "ready":
+        source_log.warning(
+            "SANDBOX_WORKER_INSPECT_UNCONFIRMED strategy=%s; trying actual broker dispatch",
+            strategy_id,
+        )
+
     job_id = str(uuid4())
-    job_payload = {"strategy_id": strategy_id, **payload.model_dump(mode="json")}
     job = JobStatus(
         id=job_id,
         user_id=as_uuid_or_str(admin_user["user_id"]),
         job_type="strategy_sandbox",
         status="queued",
         progress=0,
-        message="Strategy sandbox queued. Long date ranges run in the background.",
-        job_data=__import__("json").dumps(job_payload),
+        message="Queued on dedicated backtest worker",
+        job_data=__import__("json").dumps(
+            {"strategy_id": strategy_id, **payload.model_dump(mode="json")}
+        ),
         max_retries=0,
     )
     db.add(job)
     await db.commit()
 
-    dispatch_mode = "background"
     try:
-        from ...celery_app import celery_app, is_celery_available, is_celery_worker_available
-        if is_celery_available() and is_celery_worker_available():
-            celery_app.send_task(
-                "app.tasks.run_strategy_sandbox_v2_task",
-                args=[job_id, str(admin_user["user_id"]), strategy_id, payload.model_dump(mode="json")],
-            )
-            dispatch_mode = "celery"
-        else:
-            from ...tasks import run_strategy_sandbox_v2_fallback
-            background_tasks.add_task(
-                run_strategy_sandbox_v2_fallback,
-                job_id,
-                str(admin_user["user_id"]),
-                strategy_id,
+        # Do not use app.celery_app: its default queue may have no consumer.
+        # The worker's task registration is in app.backtest_tasks.
+        await asyncio.to_thread(
+            backtest_app.send_task,
+            "app.tasks.run_strategy_sandbox_v2_task",
+            args=[
+                job_id, str(admin_user["user_id"]), strategy_id,
                 payload.model_dump(mode="json"),
-            )
-    except Exception:
-        from ...tasks import run_strategy_sandbox_v2_fallback
-        background_tasks.add_task(
-            run_strategy_sandbox_v2_fallback,
-            job_id,
-            str(admin_user["user_id"]),
-            strategy_id,
-            payload.model_dump(mode="json"),
+            ],
+            queue="backtest",
+            task_id=job_id,
+            retry=False,
         )
-        dispatch_mode = "background"
+    except Exception:
+        source_log.exception("SANDBOX_DISPATCH_FAILED job=%s strategy=%s", job_id, strategy_id)
+        job.status = "failed"
+        job.progress = 0
+        job.message = "Sandbox worker dispatch failed; no calculation was started. Retry."
+        job.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+        raise HTTPException(status_code=503, detail=job.message)
 
+    source_log.info("SANDBOX_DISPATCHED job=%s strategy=%s queue=backtest", job_id, strategy_id)
     return success_response({
         "job_id": job_id,
         "status": "queued",
         "progress": 0,
         "poll_url": f"/api/v1/jobs/{job_id}",
-        "execution_mode": dispatch_mode,
-        "message": "Sandbox backtest queued successfully.",
+        "execution_mode": "backtest_worker",
+        "worker_inspect_status": worker_state,
+        "message": "Sandbox backtest queued on dedicated backtest worker.",
     })
 
 @router.get("/strategies")
@@ -1393,6 +1518,10 @@ async def create_strategy(
     visibility = _normalize_visibility(payload.visibility)
     params = _apply_payload_to_parameters(dict(payload.parameters or {}), payload)
 
+    # New source must be saved privately first; its Verify/Sandbox state does
+    # not exist yet. Avoid rejecting an admin's initial Save operation.
+    if visibility == PUBLIC_VISIBILITY and params.get("source_code"):
+        visibility = PRIVATE_VISIBILITY
     default_runtime_config = _build_default_runtime_config(params, name)
     strategy = Strategy(
         id=str(uuid4()),
@@ -1415,6 +1544,10 @@ async def create_strategy(
 
     await db.commit()
     await db.refresh(strategy)
+    try:
+        export_strategy_source(str(strategy.id), str(params.get("source_code") or ""))
+    except OSError:
+        source_log.exception("Strategy source mirror write failed strategy=%s; DB source remains authoritative", strategy.id)
 
     return success_response(_serialize_strategy(strategy), "Strategy created successfully")
 
@@ -1475,6 +1608,10 @@ async def update_strategy(
 
     await db.commit()
     await db.refresh(strategy)
+    try:
+        export_strategy_source(str(strategy.id), str(params.get("source_code") or ""))
+    except OSError:
+        source_log.exception("Strategy source mirror write failed strategy=%s; DB source remains authoritative", strategy.id)
 
     message = (
         "Strategy updated and moved to Private because executable code/config changed. Run Verify Code + Sandbox, then Publish again."
@@ -1921,6 +2058,14 @@ def _ensure_strategy_runtime_resolvable(strategy: Strategy) -> None:
 
 
 def _ensure_publish_gate(params: dict[str, Any]) -> None:
+    source = str(params.get("source_code") or "").strip()
+    if source:
+        contract = inspect_incremental_source(source)
+        if not contract["compatible"]:
+            raise HTTPException(status_code=400, detail=(
+                "Publish blocked: source is not native incremental compatible. "
+                + " ".join(contract["errors"])
+            ))
     workflow = _get_workflow_state(params)
     current_hash = _strategy_hash_from_params(params)
     validation = workflow.get("validation") or {}

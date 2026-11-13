@@ -325,6 +325,8 @@ export default function AdminStrategyWorkspacePage() {
   const [sandboxing, setSandboxing] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [sandboxResult, setSandboxResult] = useState<AdminStrategySandboxResult | null>(null);
+  const [sandboxJob, setSandboxJob] = useState<{ jobId: string; status: string; progress: number; message: string } | null>(null);
+  const [sandboxError, setSandboxError] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Array<{ id: number; symbol: string }>>([]);
   const [versions, setVersions] = useState<StrategyVersion[]>([]);
   const [workflow, setWorkflow] = useState<StrategyWorkflowStatus | null>(null);
@@ -567,7 +569,7 @@ export default function AdminStrategyWorkspacePage() {
     try {
       // Verify must run against what is currently visible in the editor, not an
       // older source_code value already stored in the DB. Persist the current
-      // workspace first, then invoke the validation/backtest endpoint.
+      // workspace first, then invoke static code verification (not a backtest).
       const savePayload = {
         name: form.name,
         description: form.description,
@@ -619,20 +621,24 @@ export default function AdminStrategyWorkspacePage() {
 
   const runSandbox = async () => {
     setSandboxing(true);
+    setSandboxResult(null);
+    setSandboxJob(null);
+    setSandboxError(null);
     try {
       const res = await adminApi.runAdminStrategySandboxBacktest(strategyId, {
         ...sandboxInput,
-        runtime_config: runtimeDeepMerge(runtimePresetConfig, {
-          strategy_params: { ...(runtimePresetConfig?.strategy_params || {}), debug_mode: true },
-          sl_tp: { ...(runtimePresetConfig?.sl_tp || {}), use_strategy_suggested_sl: true },
-          execution: { ...(runtimePresetConfig?.execution || {}), allow_long: false, allow_short: true },
-        }),
-      });
+        // Use the selected runtime settings exactly. Never force SELL-only or
+        // override the strategy's configured stops when verifying another asset.
+        runtime_config: runtimePresetConfig,
+      }, (job) => setSandboxJob(job));
       setSandboxResult(res);
+      setSandboxing(false);
       toast.success("Sandbox backtest completed");
       await refreshWorkflowAndVersions();
     } catch (error: any) {
-      toast.error(error?.message || "Sandbox backtest failed");
+      const message = error?.message || "Sandbox backtest failed";
+      setSandboxError(message);
+      toast.error(message);
     } finally {
       setSandboxing(false);
     }
@@ -1361,9 +1367,18 @@ export default function AdminStrategyWorkspacePage() {
               <Button variant="outline" onClick={() => void verifyCode()} disabled={verifying} className="rounded-xl"><ShieldCheck className="mr-2 h-4 w-4" />Quick Verify</Button>
               <Button onClick={() => void runSandbox()} disabled={sandboxing} className="rounded-xl bg-primary text-primary-foreground"><Play className="mr-2 h-4 w-4" />{sandboxing ? "Running..." : "Run Sandbox Backtest"}</Button>
             </div>
-            {(verifying || sandboxing) && (
-              <p className="mt-3 text-sm text-muted-foreground">Loading may take a few minutes on large datasets. Please keep this page open while the backend finishes.</p>
+            {verifying && (
+              <p className="text-sm text-muted-foreground">Checking source syntax, security, and incremental interface; no historical replay.</p>
             )}
+            {sandboxJob && (
+              <div className="rounded-lg border border-border/50 bg-background/20 p-3 text-sm" role="status" aria-live="polite">
+                <p className="font-medium">Sandbox {sandboxJob.status} · {sandboxJob.progress}%</p>
+                <p className="text-muted-foreground">{sandboxJob.message || "Waiting for worker"}</p>
+                <p className="break-all text-xs text-muted-foreground">Job ID: {sandboxJob.jobId}</p>
+              </div>
+            )}
+            {sandboxError && <p className="text-sm text-destructive" role="alert">{sandboxError}</p>}
+            <p className="text-xs text-muted-foreground">Sandbox tests the selected dates without an 80K-bar warmup. Use a separate full-history parity test before approving live incremental trading.</p>
             {sandboxResult && (
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3 text-sm">

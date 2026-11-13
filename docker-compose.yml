@@ -57,6 +57,8 @@ services:
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
       # API is HTTP-only. Non-cTrader strategy scheduler lives in a dedicated process.
       LIVE_LEGACY_RUNNER_ENABLED: "false"
+      # Separate appuser-owned volume; old runtime volumes may be root-owned.
+      STRATEGY_SOURCE_EXPORT_DIR: /app/strategy_sources
     depends_on:
       postgres_prod:
         condition: service_healthy
@@ -67,6 +69,7 @@ services:
     volumes:
       # Optional: keep generated reports/uploads persistent if your API writes local files.
       - api_runtime_data:/app/runtime_data
+      - strategy_source_data:/app/strategy_sources
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 30s
@@ -532,4 +535,5 @@ volumes:
   postgres_data:
   redis_data:
   api_runtime_data:
+  strategy_source_data:
 

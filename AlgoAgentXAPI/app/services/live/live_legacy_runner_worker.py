@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import multiprocessing as mp
 import signal
 import threading
 from datetime import datetime, timezone
@@ -113,7 +115,89 @@ def publish_heartbeat_forever(
             pass
 
 
+async def _shard_runner() -> None:
+    """One scheduler shard with its own event loop, DB engine and retained cache."""
+    await redis_manager.initialize()
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except NotImplementedError:
+            pass
+    runner = asyncio.create_task(auto_runner_loop(), name="legacy-runner-shard")
+    logger.warning("Legacy runner process shard=%s/%s active", os.environ.get("LIVE_LEGACY_RUNNER_SHARD_INDEX"), os.environ.get("LIVE_LEGACY_RUNNER_SHARD_COUNT"))
+    try:
+        await stop.wait()
+    finally:
+        runner.cancel()
+        await asyncio.gather(runner, return_exceptions=True)
+        await redis_manager.close()
+
+
+def _shard_entry(index: int, count: int) -> None:
+    # Spawn, never fork: asyncpg/SQLAlchemy engines must not cross forks.
+    os.environ["LIVE_LEGACY_RUNNER_SHARD_INDEX"] = str(index)
+    os.environ["LIVE_LEGACY_RUNNER_SHARD_COUNT"] = str(count)
+    asyncio.run(_shard_runner())
+
+
+async def _supervise_process_pool(stop: asyncio.Event, processes: int) -> None:
+    ctx = mp.get_context("spawn")
+    children: dict[int, mp.Process] = {}
+
+    def launch(i: int) -> None:
+        child = ctx.Process(target=_shard_entry, args=(i, processes),
+                            name=f"algoagentx-legacy-runner-{i}", daemon=False)
+        child.start()
+        children[i] = child
+        logger.warning("Live strategy pool shard STARTED index=%s/%s pid=%s", i, processes, child.pid)
+
+    monitor = RunnerMonitor()
+    thread_stop = threading.Event()
+    pulse = threading.Thread(target=publish_heartbeat_forever, args=(thread_stop, monitor),
+                             name="legacy-runner-pool-heartbeat", daemon=True)
+    pulse.start()
+    try:
+        for i in range(processes):
+            launch(i)
+        while not stop.is_set():
+            for i, child in list(children.items()):
+                if not child.is_alive():
+                    logger.error("Live strategy process shard exited index=%s code=%s restarting", i, child.exitcode)
+                    await asyncio.to_thread(child.join, 1)
+                    launch(i)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=3)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        for child in children.values():
+            if child.is_alive():
+                child.terminate()
+        for child in children.values():
+            await asyncio.to_thread(child.join, 10)
+            if child.is_alive():
+                child.kill()
+                await asyncio.to_thread(child.join, 3)
+        thread_stop.set()
+        await asyncio.to_thread(pulse.join, 3)
+
+
 async def main() -> None:
+    processes = int(getattr(settings, "live_legacy_runner_processes", 1))
+    if processes > 1:
+        # One Docker service, a configurable pool of independent CPU processes.
+        # Existing single-process mode remains the backward-compatible default.
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, stop.set)
+            except NotImplementedError:
+                pass
+        await _supervise_process_pool(stop, processes)
+        return
     await redis_manager.initialize()
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

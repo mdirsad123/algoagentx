@@ -1,36 +1,181 @@
-# Python / virtualenv
+# Read-only exported production fixtures contain private strategy source/history.
+artifacts/backtest_private/
+# ============================================
+# AlgoAgentX - Production-safe .gitignore
+# ============================================
+
+# ----------------------------
+# Node / Next.js dependencies
+# ----------------------------
+**/node_modules/
+.npm/
+.yarn/
+.pnpm-store/
+
+# IMPORTANT:
+# Keep lock files in Git for reproducible Docker builds.
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# ----------------------------
+# Python environments / cache
+# ----------------------------
+**/venv/
+**/.venv/
+**/env/
 __pycache__/
+**/__pycache__/
 *.py[cod]
-*.pyo
-.venv/
-venv/
-.env/
-
-# Environment secrets
-.env
-.env.*
-!.env.example
-!.env.prod.example
-
-# Local runtime / logs / uploads
-*.log
-logs/
-uploads/
-media/
-*.sqlite
-*.db
-*.dump
-*.sql.dump
-
-# Build / cache
+*$py.class
+.Python
 .pytest_cache/
 .mypy_cache/
-.ruff_cache/
-dist/
-build/
-*.egg-info/
+.pyre/
+.hypothesis/
+.tox/
+.nox/
 
-# OS / editor
-.DS_Store
+# Python packaging/build artifacts
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IMPORTANT:
+# Do NOT ignore generic "lib/" or "lib64/" directories.
+# AlgoAgentXApp/lib contains application source code.
+
+# ----------------------------
+# Environment / secrets
+# ----------------------------
+.env
+.env.*
+*.env
+
+# Keep safe templates/examples
+!.env.example
+!.env.local.example
+!.env.prod.example
+!.env.dev.example
+!*.env.example
+
+# Explicit application env files
+AlgoAgentXAPI/.env
+AlgoAgentXAPI/.env.*
+AlgoAgentXApp/.env
+AlgoAgentXApp/.env.*
+!AlgoAgentXAPI/.env.example
+!AlgoAgentXAPI/.env.prod.example
+!AlgoAgentXApp/.env.example
+!AlgoAgentXApp/.env.local.example
+
+# ----------------------------
+# Next.js generated output
+# ----------------------------
+**/.next/
+**/out/
+
+# ----------------------------
+# Database / runtime data
+# ----------------------------
+*.db
+*.sqlite
+*.sqlite3
+**/backup_db/
+**/*.sql.gz
+**/*.dump
+dump.rdb
+
+# Runtime-generated uploads/output
+**/scripts/output/
+
+# ----------------------------
+# Logs / cache / coverage
+# ----------------------------
+*.log
+logs/
+**/*.log
+.cache/
+**/.cache/
+*.cache
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+*.py,cover
+
+# ----------------------------
+# IDE / editor / OS files
+# ----------------------------
 .vscode/
+*.code-workspace
+*.code-profile
 .idea/
+*.iml
+*.iws
+*.ipr
+*.swp
+*.swo
+*~
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+[Tt]humbs.db
+
+# ----------------------------
+# Docker local runtime data
+# ----------------------------
+**/docker-volumes/
+docker-compose.override.yml
+
+# ----------------------------
+# Misc temporary files
+# ----------------------------
+tmp/
+temp/
+*.tmp
+*.temp
+.ipynb_checkpoints/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# ----------------------------
+# Sensitive files
+# ----------------------------
+*.pem
+*.key
+*.cert
+credentials
+*.credentials
+
+# ----------------------------
+# Project-specific generated files
+# ----------------------------
+migration.log
+
+# IMPORTANT:
+# Do NOT ignore test_*.py globally.
+# Tests are source code and should normally be committed.
+
+# Interactive, machine-local debugging only; keep regression tests tracked.
+/AlgoAgentXAPI/tests/local_debug/

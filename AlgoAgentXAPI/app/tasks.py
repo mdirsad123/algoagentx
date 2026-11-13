@@ -719,35 +719,47 @@ async def _run_strategy_sandbox_v2_async(job_id: str, admin_user_id: str, strate
     worker_engine, session_factory = _fresh_async_engine_and_sessionmaker()
     try:
         from .api.v1.admin_strategy_requests import StrategySandboxBacktestIn, _execute_sandbox_backtest
+        from .services.sandbox_jobs import (
+            claim_sandbox, finish_sandbox, expire_stale_sandbox, update_sandbox_progress,
+        )
 
         payload = StrategySandboxBacktestIn.model_validate(payload_dict)
+
+        async def publish_sandbox_progress(progress: int, message: str) -> None:
+            # Separate short transaction: the backtest's DB session may hold a
+            # streaming result or long transaction while the engine executes.
+            async with session_factory() as progress_db:
+                await update_sandbox_progress(progress_db, job_id, progress, message)
         async with session_factory() as db:
             job = await db.get(JobStatus, str(job_id))
-            if job is not None:
-                job.status = "running"
-                job.progress = 10
-                job.message = "Running strategy sandbox in background"
-                job.started_at = job.started_at or datetime.utcnow()
-                await db.commit()
+            if job is None:
+                logger.error("SANDBOX_JOB_NOT_FOUND job=%s", job_id)
+                return {"job_id": job_id, "status": "failed", "error": "Job not found"}
+            await expire_stale_sandbox(db, job)
+            if not await claim_sandbox(db, job_id):
+                await db.refresh(job)
+                logger.info("SANDBOX_JOB_NOT_CLAIMED job=%s status=%s", job_id, job.status)
+                return {"job_id": job_id, "status": job.status}
+            logger.info("SANDBOX_JOB_STARTED job=%s strategy=%s", job_id, strategy_id)
 
             response = await _execute_sandbox_backtest(
                 strategy_id=strategy_id,
                 payload=payload,
                 admin_user={"user_id": admin_user_id, "role": "admin"},
                 db=db,
+                progress_callback=publish_sandbox_progress,
             )
             data = response.get("data") if isinstance(response, dict) else response
-            job = await db.get(JobStatus, str(job_id))
-            if job is not None:
-                job.status = "completed"
-                job.progress = 100
-                job.message = "Strategy sandbox completed"
-                job.result_data = json.dumps(data, default=str)
-                job.completed_at = datetime.utcnow()
-                await db.commit()
+            if not await finish_sandbox(db, job_id, "completed", "Strategy sandbox completed", data):
+                await db.refresh(job)
+                return {"job_id": job_id, "status": job.status}
+            logger.info("SANDBOX_JOB_COMPLETE job=%s strategy=%s", job_id, strategy_id)
             return data
     except Exception as exc:
-        await _mark_background_job_failed(session_factory, job_id, exc)
+        from .services.sandbox_jobs import finish_sandbox
+        async with session_factory() as failure_db:
+            message = str(getattr(exc, "detail", None) or exc)
+            await finish_sandbox(failure_db, job_id, "failed", message, {"error": message})
         logger.exception("Queued strategy sandbox job %s failed", job_id)
         return {"job_id": job_id, "status": "failed", "error": str(getattr(exc, "detail", None) or exc)}
     finally:
@@ -939,33 +951,74 @@ def warm_live_strategy_history_task(self, deployment_id: str, required_count: in
 
 @celery_app.task(name="app.tasks.run_live_compatibility_task", bind=True, time_limit=1800)
 def run_live_compatibility_task(self, deployment_id: str):
-    """Explicit deep compatibility on the existing isolated validation queue."""
+    """Fast repeat validation backed by a previously successful full 80K check.
+
+    The first check of an unknown/changed source still performs the original deep
+    strategy execution. Subsequent checks of the same fingerprint reuse ONLY
+    the dynamic-output proof; broker, risk, routing and candle coverage are
+    validated again. Auto Trade enable approval TTL remains unchanged.
+    """
     from uuid import UUID
     import redis
     from sqlalchemy import select
     from .core.config import settings
     from .db.models import StrategyDeployment
     from .services.live.compatibility_service import run_live_compatibility_check
+    from .services.live.compatibility_cache import (
+        DEEP_CACHE_TTL_SECONDS, create_deep_cache, reuse_deep_cache,
+    )
     from .services.live.settings_validation import configuration_fingerprint, COMPATIBILITY_TTL
 
-    async def execute():
+    async def execute(*, deep: bool):
         engine, sessions = _fresh_async_engine_and_sessionmaker()
         try:
             async with sessions() as db:
                 row = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == UUID(deployment_id)))).scalar_one()
-                fingerprint = await configuration_fingerprint(db, row)
-                result = await run_live_compatibility_check(db, UUID(deployment_id))
-                return fingerprint, result
+                fingerprint_before = await configuration_fingerprint(db, row)
+                result = await run_live_compatibility_check(db, UUID(deployment_id), deep_strategy_check=deep)
+                # Fail closed if saved strategy/configuration changes during the test.
+                db.expire_all()
+                row_after = (await db.execute(
+                    select(StrategyDeployment).where(StrategyDeployment.id == UUID(deployment_id))
+                    .execution_options(populate_existing=True)
+                )).scalar_one()
+                fingerprint_after = await configuration_fingerprint(db, row_after)
+                if fingerprint_after != fingerprint_before:
+                    return fingerprint_after, {
+                        'status': 'FAIL', 'summary': 'Configuration changed during compatibility validation. Re-run Check.',
+                        'checks': [{'name': 'Configuration consistency', 'status': 'FAIL',
+                                    'message': 'Saved configuration changed while validation was running.'}],
+                    }
+                return fingerprint_before, result
         finally:
             await engine.dispose()
 
     client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+    approval_key = f'live:compatibility:approved:{deployment_id}'
+    deep_key = f'live:compatibility:deep_verified:{deployment_id}'
     try:
-        client.delete(f'live:compatibility:approved:{deployment_id}')
-        fingerprint, result = asyncio.run(execute())
+        fingerprint, lightweight = asyncio.run(execute(deep=False))
+        stored = None
+        try:
+            raw = client.get(deep_key)
+            stored = json.loads(raw) if raw else None
+        except (TypeError, ValueError, redis.RedisError):
+            stored = None
+        result = reuse_deep_cache(fingerprint, lightweight, stored)
+        if result is None:
+            if lightweight.get('status') == 'FAIL':
+                result = lightweight
+            else:
+                fingerprint, result = asyncio.run(execute(deep=True))
+                deep_proof = create_deep_cache(fingerprint, result)
+                if deep_proof:
+                    client.set(deep_key, json.dumps(deep_proof, default=str), ex=DEEP_CACHE_TTL_SECONDS)
+            result.setdefault('verification_mode', 'full_deep' if lightweight.get('status') != 'FAIL' else 'lightweight_failed')
         if result.get('status') in {'PASS', 'WARNING'}:
-            client.set(f'live:compatibility:approved:{deployment_id}',
+            client.set(approval_key,
                        json.dumps({'fingerprint': fingerprint, 'status': result['status']}), ex=COMPATIBILITY_TTL)
+        else:
+            client.delete(approval_key)
         return json.loads(json.dumps(result, default=str))
     finally:
         try:

@@ -3,6 +3,7 @@ from .password_reset_tokens import PasswordResetToken
 from .admin_login_otp import AdminLoginOtp
 from .instruments import AssetClass, Timeframe, Instrument
 from .strategies import Strategy, StrategyRuntimePreset, StrategyAsset
+from .live_strategy_registry import LiveStrategyRevision, LiveStrategyRuntime, LiveStrategyCheckpoint
 from .market_data import MarketData
 from .market_data_sync import MarketDataSyncConfig, MarketDataFeedCandle, MarketDataSyncRun, MarketDataSyncBatch, MarketDataCanonicalProvenance
 from .backtests import PerformanceMetric
@@ -79,6 +80,9 @@ __all__ = [
     "Strategy",
     "StrategyRuntimePreset",
     "StrategyAsset",
+    "LiveStrategyRevision",
+    "LiveStrategyRuntime",
+    "LiveStrategyCheckpoint",
     "MarketData",
     "PerformanceMetric",
     "Trade",

@@ -352,8 +352,9 @@ export const liveTradingApi = {
   },
 
   async runCompatibilityCheck(id: string, signal?: AbortSignal): Promise<LiveCompatibilityResult> {
-    const response = await axiosInstance.post<Envelope<{ job_id: string }>>(`/api/v1/live/deployments/${id}/compatibility-check`, undefined, { timeout: 15000, signal });
+    const response = await axiosInstance.post<Envelope<{ job_id?: string; result?: LiveCompatibilityResult; cached?: boolean }>>(`/api/v1/live/deployments/${id}/compatibility-check`, undefined, { timeout: 15000, signal });
     const job = unwrap(response.data);
+    if (job?.cached && job?.result) return job.result;
     if (!job?.job_id) throw new Error("Compatibility queue returned no job. Please retry.");
     const deadline = Date.now() + 30 * 60 * 1000;
     while (Date.now() < deadline) {

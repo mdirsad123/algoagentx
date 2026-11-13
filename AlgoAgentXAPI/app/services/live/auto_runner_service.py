@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import logging
 import time
 from datetime import timedelta
@@ -23,8 +24,9 @@ from .live_event_bus import LiveEventBus
 from ...core.redis_manager import redis_manager
 from .trading_safety import check_platform_mode_allowed, get_platform_trading_settings
 from .runner_cache import warmup_gate, history_ready_cache, eligible_scan_cache
-from .candle_catchup import plan_recovery
+from .candle_catchup import plan_recovery, required_broker_fetch_bars
 from .candle_worker_health import collector_owns_broker_ingestion
+from .deployment_lock import deployment_worker_index
 
 logger = logging.getLogger(__name__)
 _RUNNER_SCAN_LOCK = asyncio.Lock()
@@ -34,6 +36,13 @@ _RUNNER_SCAN_LOCK = asyncio.Lock()
 _CANDLE_RETRY_ATTEMPTS: dict[tuple[str, str], int] = {}
 # Throttle a known missing-bar log instead of flooding every scheduler tick.
 _GAP_WAIT_LOG_AT: dict[str, float] = {}
+# Bounded, per-process DEMO history-refetch budget. A reboot restarts the
+# attempts but cannot authorize an order or skip a candle by itself.
+# Only successful broker-history calls count toward a no-bar cold re-seed.
+_DEMO_GAP_RECOVERY: dict[str, dict[str, Any]] = {}
+_DEMO_GAP_MAX_FETCH_ATTEMPTS = 3
+_DEMO_GAP_FETCH_SPACING_SECONDS = 12.0
+_DEMO_GAP_RESEED_RETRY_SECONDS = 300.0
 # Only dedicated TradeLocker+DB-backed runners use this idle throttle.
 # Never block Run Once, other brokers or a new M5 candle boundary.
 _TRADELOCKER_NO_CANDLE_IDLE: dict[str, tuple[str, object, int]] = {}
@@ -73,12 +82,11 @@ async def _wait_for_dedicated_tradelocker_candle(db, deployment, expected_open, 
 
 
 def _sequential_monitor_enabled(deployment: StrategyDeployment, *, force: bool) -> bool:
-    # Optional chronological catch-up for ANY DEMO M5 deployment. This does
+    # Chronological catch-up for every M5 deployment. This does
     # not turn strategies incremental: unsupported code uses FULL_HISTORY.
     # Recovery of older bars is state-only, never a delayed broker order.
-    return (not force and str(deployment.mode or '').upper() == 'DEMO'
-            and str(deployment.timeframe or '').upper() in {'M5', '5M', '5MIN'}
-            and bool(getattr(settings, 'live_runner_sequential_catchup_enabled', False)))
+    return (str(deployment.mode or '').upper() in {'DEMO', 'LIVE', 'PAPER'}
+            and str(deployment.timeframe or '').upper() in {'M5', '5M'})
 
 # Live timing knobs — change these values only when you want to tune timing.
 MARKET_DATA_FETCH_DELAY_SECONDS = 1   # start fetching closed candle after +1s
@@ -171,8 +179,137 @@ async def _schedule_retry(db: AsyncSession, deployment: StrategyDeployment, now,
     return result
 
 
+async def _try_demo_gap_recovery(
+    db: AsyncSession, deployment: StrategyDeployment, *, recovery, latest_closed_candle_time,
+    interval_s: int,
+) -> dict[str, Any] | None:
+    """Try three broker refetches; optionally cold-reseed an audited DEMO adapter.
+
+    No synthetic bars, no jump of an unverified cursor, and no historical orders.
+    Small holes are eligible only after three broker refetches and cold re-seeding; LIVE and unregistered adapters stay blocked.
+    """
+    deployment_id = deployment.id
+    key = str(deployment_id)
+    if not recovery.missing_open or recovery.pending_bars < 2:
+        return None
+    broker = (await db.execute(select(BrokerAccount).where(
+        BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
+    if broker is None or get_broker_code(broker) != 'TRADELOCKER':
+        return None
+
+    missing_key = recovery.missing_open.isoformat()
+    state = _DEMO_GAP_RECOVERY.get(key)
+    if state is None or state['missing'] != missing_key:
+        state = {'missing': missing_key, 'attempts': 0, 'successes': 0,
+                 'last_attempt': -1e12, 'last_reseed': -1e12, 'reseed_failures': 0}
+        _DEMO_GAP_RECOVERY[key] = state
+    moment = time.monotonic()
+    if state['attempts'] < _DEMO_GAP_MAX_FETCH_ATTEMPTS:
+        if moment - state['last_attempt'] < _DEMO_GAP_FETCH_SPACING_SECONDS:
+            return None
+        count = required_broker_fetch_bars(
+            newest=latest_closed_candle_time,
+            previous=deployment.last_processed_candle_time,
+            timeframe_seconds=interval_s, margin=20, limit=2000,
+        )
+        if count is None:
+            logger.error('RUNNER_DEMO_GAP_TOO_OLD deployment=%s missing=%s manual_review_required=true',
+                         deployment_id, missing_key)
+            return None
+        state['attempts'] += 1
+        state['last_attempt'] = moment
+        # Close the read transaction before the broker network request.
+        await db.rollback()
+        try:
+            refresh = await refresh_deployment_candles(db, deployment_id, count=count)
+            state['successes'] += 1
+            logger.warning('RUNNER_DEMO_GAP_FETCH deployment=%s missing=%s attempt=%s/%s '
+                           'broker_history_succeeded=true requested=%s upserted=%s',
+                           deployment_id, missing_key, state['attempts'],
+                           _DEMO_GAP_MAX_FETCH_ATTEMPTS, count, refresh.get('upserted_count'))
+        except Exception as exc:
+            # A network/broker failure cannot establish that the candle did not
+            # exist. Do not promote such failures into a skip authorization.
+            await db.rollback()
+            logger.error('RUNNER_DEMO_GAP_FETCH_ERROR deployment=%s missing=%s attempt=%s/%s error=%s',
+                         deployment_id, missing_key, state['attempts'],
+                         _DEMO_GAP_MAX_FETCH_ATTEMPTS, str(exc)[:200])
+        return None
+
+    if state['successes'] < 2:
+        # No reliable history evidence: remain blocked, not a blind skip.
+        return None
+    if state['reseed_failures'] >= 2 or moment - state['last_reseed'] < _DEMO_GAP_RESEED_RETRY_SECONDS:
+        return None
+    # Even a short hole is replayed only after attempts fail. Require two
+    # actually published consecutive broker M5 candles before cold re-seeding.
+    minimum_missing = max(1, int(getattr(settings, 'live_runner_demo_observed_gap_min_missing_bars', 6)))
+    two = await get_latest_closed_candles(db, deployment_id, limit=2)
+    if len(two) != 2:
+        return None
+    newest = _normalize_dt(two[0].get('candle_time'))
+    preceding = _normalize_dt(two[1].get('candle_time'))
+    first_pending = (await db.execute(select(func.min(LiveMarketCandle.candle_time)).where(
+        LiveMarketCandle.deployment_id == deployment_id,
+        LiveMarketCandle.timeframe == deployment.timeframe,
+        LiveMarketCandle.is_closed.is_(True),
+        LiveMarketCandle.candle_time > deployment.last_processed_candle_time,
+    ))).scalar_one_or_none()
+    from .candle_catchup import utc
+    from .gap_resume_policy import eligible_for_demo_cold_reseed
+    if first_pending is None or newest is None or preceding is None:
+        return None
+    missing_slots = max(0, int((utc(first_pending) - utc(deployment.last_processed_candle_time)).total_seconds()
+                                // interval_s) - 1)
+    if not eligible_for_demo_cold_reseed(
+        mode=str(deployment.mode or ''), enabled=True,
+        timeframe_seconds=interval_s,
+        missing_slots=missing_slots, min_missing_slots=minimum_missing,
+        attempts=state['attempts'], successful_refetches=state['successes'],
+        broker_source_verified=all(str(x.get('source') or '').upper() == 'TRADELOCKER' for x in two),
+        last_two_broker_bars_consecutive=(newest == preceding + timedelta(seconds=interval_s)),
+    ):
+        return None
+    # Cold 80K reseed of the exact registered strategy at the *last observed*
+    # candle. The entire reseed candle is historical: suppress broker orders,
+    # regardless of Auto Trade state or the global stale-order guard.
+    state['last_reseed'] = moment
+    await db.rollback()
+    logger.warning('RUNNER_DEMO_GAP_RESEED_START deployment=%s missing=%s target=%s '
+                   'attempts=%s broker_history_successes=%s historical_orders_suppressed=true',
+                   deployment_id, missing_key, newest, state['attempts'], state['successes'])
+    try:
+        output = await run_strategy_for_deployment(
+            db, deployment_id, execute=True, refresh_broker_candles=False,
+            candle_time=newest, suppress_broker_order_for_catchup=True,
+            allow_demo_gap_reseed=True,
+        )
+    except Exception as exc:
+        await db.rollback()
+        state['reseed_failures'] += 1
+        logger.error('RUNNER_DEMO_GAP_RESEED_FAILED deployment=%s target=%s error=%s',
+                     deployment_id, newest, str(exc)[:220])
+        return None
+    action = str(output.get('final_action') or '')
+    if output.get('success') and action not in {'LOCK_SKIPPED','HOLD_CANDLE_GAP','CANDLE_ALREADY_PROCESSED'}:
+        _DEMO_GAP_RECOVERY.pop(key, None)
+        logger.warning('RUNNER_DEMO_GAP_RESEED_DONE deployment=%s target=%s action=%s '
+                       'broker_orders_suppressed=true next_fresh_candle_only=true',
+                       deployment_id, newest, action)
+        return {'deployment_id': key, 'ran': True, 'success': True,
+                'recovery_action': 'DEMO_COLD_RESEEDED',
+                'historical_orders_suppressed': True,
+                'last_processed_candle_time': newest.isoformat()}
+    if action != 'LOCK_SKIPPED':
+        state['reseed_failures'] += 1
+    logger.warning('RUNNER_DEMO_GAP_RESEED_NOT_COMPLETED deployment=%s target=%s action=%s',
+                   deployment_id, newest, action)
+    return None
+
+
 async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force: bool = False, claimed: bool = False) -> dict[str, Any]:
-    deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
+    deployment = (await db.execute(select(StrategyDeployment).where(
+        StrategyDeployment.id == deployment_id).execution_options(populate_existing=True))).scalar_one_or_none()
     if deployment is None:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
@@ -304,13 +441,16 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
         candles = await get_latest_closed_candles(db, deployment.id, limit=1)
         latest = candles[0] if candles else None
         latest_closed_candle_time = _normalize_dt(latest.get("candle_time") if latest else None)
+        # Available backlog must not wait for the newest bucket to be ingested.
+        available_backlog = bool(last_processed is not None and latest_closed_candle_time is not None
+                                 and latest_closed_candle_time > last_processed)
 
         # Only hit the broker when the exact expected just-closed candle is not yet
         # present locally. Do at most 20 broker refresh attempts, one every 1 second.
         # After attempt 20 we stop hammering cTrader, but the 1-second scheduler still
         # checks the local DB; if another ingestion path stores the candle, strategy
         # execution becomes eligible according to STRATEGY_RUN_DELAY_SECONDS.
-        if latest_closed_candle_time is None or latest_closed_candle_time < expected_closed_open:
+        if not available_backlog and (latest_closed_candle_time is None or latest_closed_candle_time < expected_closed_open):
             # TradeLocker dedicated data-only worker continues to poll while this
             # scheduler spends time on the full V6.4 calculation. Prevent duplicate
             # REST requests from competing for the same broker rate limits.
@@ -372,7 +512,7 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
 
         result["latest_closed_candle_time"] = latest_closed_candle_time.isoformat() if latest_closed_candle_time else None
 
-        if latest_closed_candle_time is None or latest_closed_candle_time < expected_closed_open:
+        if not available_backlog and (latest_closed_candle_time is None or latest_closed_candle_time < expected_closed_open):
             attempts = int(_CANDLE_RETRY_ATTEMPTS.get(retry_key, 0))
             # When a dedicated TradeLocker collector has stalled, one bounded
             # inline fetch per M5 bucket is sufficient. Idle DB-only checks
@@ -411,10 +551,11 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
 
         _TRADELOCKER_NO_CANDLE_IDLE.pop(str(deployment.id), None)
 
+        latest_closed_candle_time = min(latest_closed_candle_time, expected_closed_open)
         # A newer candle is present. Market data may arrive before the strategy's
         # configured execution delay. Keep the candle stored, but do not run the
         # strategy until STRATEGY_RUN_DELAY_SECONDS has elapsed after candle close.
-        if not force and now < strategy_eligible_at:
+        if not force and not available_backlog and now < strategy_eligible_at:
             deployment.next_run_at = strategy_eligible_at
             result.update(
                 skipped=True,
@@ -457,6 +598,23 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
                 newest=latest_closed_candle_time, timeframe_seconds=interval_s,
             )
             if recovery.action == 'WAIT_FOR_BACKFILL':
+                # Default remains fail-closed. The operator may separately opt
+                # into DEMO-only, source-pinned cold re-seeding after three
+                # bounded broker-history requests fail to recover a long gap.
+                if (not force and str(deployment.mode or '').upper() == 'DEMO'
+                        and bool(getattr(settings, 'live_runner_demo_observed_gap_resume_enabled', False))
+                        and deployment.broker_account_id):
+                    recovery_result = await _try_demo_gap_recovery(
+                        db, deployment, recovery=recovery,
+                        latest_closed_candle_time=latest_closed_candle_time,
+                        interval_s=interval_s,
+                    )
+                    if recovery_result is not None:
+                        return recovery_result
+                    # Broker refresh commits/rolls back the current transaction;
+                    # SQLAlchemy expires ORM attributes on rollback. Reload the
+                    # deployment before the ordinary WAIT path writes timestamps.
+                    await db.refresh(deployment)
                 moment = time.monotonic()
                 if moment - _GAP_WAIT_LOG_AT.get(str(deployment_id), -1e12) > 30:
                     logger.warning(
@@ -466,6 +624,20 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
                         recovery.pending_bars,
                     )
                     _GAP_WAIT_LOG_AT[str(deployment_id)] = moment
+                    # The dedicated collector owns TradeLocker backfill. Other
+                    # polling deployments get one bounded repair attempt, never
+                    # fabricated bars or a cursor jump across missing history.
+                    collector_owned = False
+                    if deployment.broker_account_id and getattr(settings, 'live_tradelocker_candle_worker_enabled', False):
+                        gap_broker = (await db.execute(select(BrokerAccount).where(
+                            BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
+                        collector_owned = bool(gap_broker and get_broker_code(gap_broker) == 'TRADELOCKER')
+                    if deployment.broker_account_id and not collector_owned:
+                        repair_count = required_broker_fetch_bars(
+                            newest=latest_closed_candle_time, previous=last_processed,
+                            timeframe_seconds=interval_s)
+                        if repair_count is not None:
+                            await refresh_deployment_candles(db, deployment.id, count=repair_count)
                 # Dedicated TradeLocker collector attempts bounded refetch.
                 # Waiting instead of generating signals against discontinuous
                 # candle inputs is deliberate; market closures may be legitimate.
@@ -488,6 +660,14 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
                         recovery.target.isoformat(), recovery.pending_bars,
                     )
             _GAP_WAIT_LOG_AT.pop(str(deployment_id), None)
+            _DEMO_GAP_RECOVERY.pop(str(deployment_id), None)
+
+        eligible_at = latest_closed_candle_time + timedelta(
+            seconds=parse_timeframe_to_seconds(str(deployment.timeframe or 'M5')) + _strategy_run_delay(deployment))
+        if utc_now() < eligible_at:
+            result.update(skipped=True, reason='Waiting for closed-candle strategy delay',
+                          next_run_at=eligible_at.isoformat())
+            return result
 
         # Candle is available: clear retry state before strategy execution.
         await _write_log(db, deployment, "AUTO_RUNNER_WAKEUP", "New closed candle ready for strategy evaluation", metadata={"timeframe": deployment.timeframe, "scheduled_at": due_at.isoformat() if due_at else None})
@@ -551,7 +731,8 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
             return await _schedule_retry(db, deployment, utc_now(), "Runner was busy; retry scheduled without consuming the candle.", result)
 
         deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one()
-        deployment.last_processed_candle_time = latest_closed_candle_time
+        # The runner alone commits the authoritative cursor/checkpoint. A later
+        # scheduler transaction must never rewind a concurrently advanced cursor.
         deployment.last_runner_at = now
         deployment.last_heartbeat_at = now
         deployment.next_run_at = calculate_next_runner_at(
@@ -656,7 +837,7 @@ async def run_due_deployments(db: AsyncSession | None = None) -> dict[str, Any]:
             ) if owns_session else None
             if cached_ids is None:
                 deployment_ids = (await session.execute(
-                    query.order_by(StrategyDeployment.created_at.asc()).limit(100)
+                    query.order_by(StrategyDeployment.created_at.asc())
                 )).scalars().all()
                 if owns_session:
                     eligible_scan_cache.store(list(deployment_ids),
@@ -665,6 +846,18 @@ async def run_due_deployments(db: AsyncSession | None = None) -> dict[str, Any]:
             else:
                 deployment_ids = list(cached_ids)
 
+            # Optional persistent multi-process pool. Every process sees the same
+            # deployment registry but owns a deterministic subset; source/runtime
+            # are still resolved from DB and execution remains lock-protected.
+            # No separate container/adapter is created for each deployment.
+            shard_count = max(1, int(os.environ.get("LIVE_LEGACY_RUNNER_SHARD_COUNT", "1")))
+            shard_index = int(os.environ.get("LIVE_LEGACY_RUNNER_SHARD_INDEX", "0"))
+            if not 0 <= shard_index < shard_count:
+                raise ValueError("Invalid live runner shard index")
+            if shard_count > 1:
+                # Registry additions/removals never move existing deployments.
+                deployment_ids = [deployment_id for deployment_id in deployment_ids
+                                  if deployment_worker_index(deployment_id, shard_count) == shard_index]
             results: list[dict[str, Any]] = []
             for deployment_id in deployment_ids:
                 results.append(await run_deployment_if_due(session, deployment_id, claimed=True))

@@ -13,12 +13,14 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 import logging
+import math
+import os
 from typing import Any
 
 import pandas as pd
 
 log = logging.getLogger(__name__)
-MAX_RETAINED = 8
+MAX_RETAINED = max(1, int(os.environ.get("LIVE_INCREMENTAL_CACHE_CAPACITY", "128")))
 
 
 def utc(value: datetime | None) -> datetime | None:
@@ -40,11 +42,11 @@ def signature(*, strategy_id: str, params: dict, runtime: dict, history_bars: in
 
 
 def signal_runtime_identity(runtime: dict, *, capital_independent: bool, configured_capital: Any) -> dict:
-    """Only the source-pinned V6.4 adapter is proven independent of broker equity.
+    """Use configured capital for source-declared capital-independent signal state.
 
-    Never mutate execution runtime: order preview/sizing must still resolve current
-    broker equity. Preserve explicitly configured capital edits in cache identity.
-    Native/unknown incremental strategies retain the original strict fingerprint.
+    Never mutate execution runtime: order preview/sizing still uses live broker
+    equity. Only the state fingerprint uses configured capital, because native
+    on_closed_bar receives no broker-equity input.
     """
     identity = deepcopy(runtime)
     if capital_independent:
@@ -66,13 +68,23 @@ def fingerprint_fields(*, params: dict, runtime: dict) -> dict[str, str]:
     return result
 
 
+def canonical_candle(candle: dict) -> dict:
+    values = {k: float(candle[k] if k in candle else candle[k.lower()])
+              for k in ('Open', 'High', 'Low', 'Close', 'Volume')}
+    if not all(math.isfinite(value) for value in values.values()):
+        raise ValueError('Candle contains nonfinite OHLCV')
+    raw_time = candle.get('Date', candle.get('candle_time'))
+    if raw_time is None or pd.isna(raw_time):
+        raise ValueError('Candle timestamp is missing')
+    return {'Date': utc(pd.Timestamp(raw_time).to_pydatetime()), **values}
+
+
 def candle_fingerprint(candle: dict) -> str:
     # Finalized broker OHLCV is authoritative; normalize Decimal/float formatting
     # for checks across cold DB and generated incremental DataFrame paths.
-    value = {k: str(float(candle[k] if k in candle else candle[k.lower()]))
-             for k in ('Open', 'High', 'Low', 'Close', 'Volume')}
-    raw_time = candle.get('Date', candle.get('candle_time'))
-    value['Date'] = utc(pd.Timestamp(raw_time).to_pydatetime()).isoformat()
+    canonical = canonical_candle(candle)
+    value = {k: str(v) for k, v in canonical.items()}
+    value['Date'] = canonical['Date'].isoformat()
     return sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
@@ -82,12 +94,16 @@ def is_opted_in(strategy_class: type, params: dict, *, global_enabled: bool) -> 
     source = params.get('source_code')
     if source:
         approved = str(params.get('live_incremental_approved_source_sha256') or '').lower()
-        actual = sha256(str(source).encode('utf8')).hexdigest()
+        actual = sha256(str(source).strip().encode('utf8')).hexdigest()
         if not approved or approved != actual:
             return False
     return bool(
         global_enabled and params.get('live_incremental_enabled') is True
         and params.get('live_incremental_parity_verified') is True
+        # Admin Verify Code checks only three recent right-edge candles. That
+        # smoke check must never by itself authorize native broker execution.
+        # Extended multi-session parity is an independent approval gate.
+        and params.get('live_incremental_extended_parity_verified') is True
         and getattr(strategy_class, 'LIVE_INCREMENTAL_VERSION', None) == 1
         and callable(getattr(strategy_class, 'start_live_incremental', None))
         and callable(getattr(strategy_class, 'on_closed_candle', None))
@@ -178,6 +194,9 @@ class RetainedStateCache:
               fields: dict | None = None, observed_capital: str | None = None) -> bool:
         self.invalidate(deployment_id, 'new_cold_warmup')
         try:
+            if ('Date' not in generated or generated.empty or
+                    utc(pd.Timestamp(generated.iloc[-1]['Date']).to_pydatetime()) != utc(candle_time)):
+                raise ValueError('Warmup output must end at the requested candle')
             accepted = strategy.start_live_incremental(generated)
             if accepted is not True:
                 return False
@@ -196,10 +215,11 @@ class RetainedStateCache:
 
     def advance(self, deployment_id: str, *, fingerprint: str, last_processed: datetime | None,
                 next_candle_time: datetime, timeframe_seconds: int, candle: dict,
-                previous_candle: dict | None = None) -> tuple[pd.DataFrame, int] | None:
+                previous_candle: dict | None = None, fields: dict | None = None) -> tuple[pd.DataFrame, int] | None:
         entry = self.get_for_next_candle(deployment_id, fingerprint=fingerprint,
                                          last_processed=last_processed, next_candle_time=next_candle_time,
-                                         timeframe_seconds=timeframe_seconds, previous_candle=previous_candle)
+                                         timeframe_seconds=timeframe_seconds, previous_candle=previous_candle,
+                                         fields=fields)
         if entry is None:
             return None
         try:

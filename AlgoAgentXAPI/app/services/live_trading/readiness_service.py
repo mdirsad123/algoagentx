@@ -21,6 +21,10 @@ from ..brokers.factory import get_broker_code
 from ..live.order_preview_service import build_live_order_preview, find_live_instrument_spec, resolve_live_runtime_config
 from ..strategy_registry import resolve_strategy
 from ..live.strategy_history_profile import resolve_live_strategy_profile
+from ..live.v932_runtime_readiness import gold_monitor_only_adapter
+from ..live.incremental_adapter_registry import select_registered_adapter, v932_demo_forward_test_orders_permitted
+from ..live.runner_scheduler import parse_timeframe_to_seconds
+from ...core.config import settings
 from ..trading.guardrails import validate_instrument_spec
 from ..trading.runtime_config_service import validate_runtime_config
 from ..live.trading_safety import day_start_utc, get_platform_trading_settings
@@ -113,10 +117,45 @@ async def check_strategy_ready(db: AsyncSession, deployment: StrategyDeployment)
         deployable = bool(getattr(strategy, "is_deployable_paper", False))
         deploy_msg = "Strategy is enabled for PAPER deployment." if deployable else "Ask admin to enable Paper Deployment for this strategy."
 
-    return [
+    result = [
         _check("strategy_public", "Strategy published", PASS if visibility == "PUBLIC" else FAIL, "Strategy is public and deployable." if visibility == "PUBLIC" else "Only PUBLIC strategies can be deployed.", "Open Strategy", "/strategies"),
         _check("strategy_deployable_for_mode", "Strategy deployable for mode", PASS if deployable else FAIL, deploy_msg, "Open Strategy", "/strategies"),
     ]
+    # The UI's trade-readiness badge must reflect the *real runner* policy.
+    # A DEMO toggle is not proof that a hybrid adapter can submit orders.
+    # Scope this check to the exact V9.32 source, leaving NAS100 unchanged.
+    monitor_adapter = gold_monitor_only_adapter(strategy_params=strategy.parameters, mode=mode)
+    if monitor_adapter:
+        authorized_demo = False
+        if monitor_adapter == 'v932_hybrid_v1':
+            # Match the actual runner selection rather than assuming Auto Trade
+            # or an unverified strategy label implies adapter eligibility.
+            from strategies.v932_original_db_source import Strategy as V932Strategy
+            params = strategy.parameters if isinstance(strategy.parameters, dict) else {}
+            required = resolve_live_strategy_profile(V932Strategy, params).required_history_bars
+            choice = select_registered_adapter(
+                settings=settings, source_code=str(params.get('source_code') or ''),
+                mode=mode, instrument=str(deployment.instrument),
+                timeframe_seconds=parse_timeframe_to_seconds(str(deployment.timeframe or 'M5')),
+                required_history_bars=required,
+            )
+            authorized_demo = v932_demo_forward_test_orders_permitted(
+                source_code=str(params.get('source_code') or ''),
+                mode=mode, selection=choice,
+            )
+        result.append(_check(
+            "adapter_order_permission", "Gold incremental order permission",
+            PASS if authorized_demo else FAIL,
+            ("V9.32 DEMO hybrid forward-test orders enabled by the global monitor "
+             "setting; existing broker, candle-age and duplicate checks still apply. "
+             "Historical right-edge parity is NOT approved."
+             if authorized_demo else
+             f"{monitor_adapter} is monitor-only or is not eligible for DEMO orders."),
+            "Open Compatibility", f"/live-trading/{deployment.id}",
+            data={"adapter_id": monitor_adapter, "order_authorized": authorized_demo,
+                  "native_incremental": False, "historical_parity_approved": False},
+        ))
+    return result
 
 
 async def check_broker_ready(db: AsyncSession, deployment: StrategyDeployment) -> list[dict[str, Any]]:
@@ -467,7 +506,7 @@ async def build_live_deployment_readiness(db: AsyncSession, deployment_id: UUID,
     ]:
         checks.extend(await _safe(label, fn, fallback))
 
-    blocking = {"deployment_exists", "deployment_status_running", "strategy_public", "strategy_deployable_for_mode", "broker_connected", "instrument_spec_exists", "instrument_spec_valid", "latest_entry_plan_ok", "risk_preview_ok", "live_compatibility_ok", "platform_mode_allowed", "global_kill_switch_off", "max_daily_loss_not_exceeded", "max_trades_not_exceeded", "no_blocking_runner_error", "no_blocking_broker_error", "duplicate_protection_enabled", "funded_profile_attached", "funded_phase_valid", "funded_risk_plan_valid", "funded_broker_balance_fresh", "funded_broker_equity_fresh", "funded_broker_currency_matches", "funded_rule_clock_valid", "funded_state_initialized", "funded_guard_not_breached"}
+    blocking = {"deployment_exists", "deployment_status_running", "strategy_public", "strategy_deployable_for_mode", "broker_connected", "instrument_spec_exists", "instrument_spec_valid", "latest_entry_plan_ok", "risk_preview_ok", "live_compatibility_ok", "platform_mode_allowed", "global_kill_switch_off", "max_daily_loss_not_exceeded", "max_trades_not_exceeded", "no_blocking_runner_error", "adapter_order_permission", "no_blocking_broker_error", "duplicate_protection_enabled", "funded_profile_attached", "funded_phase_valid", "funded_risk_plan_valid", "funded_broker_balance_fresh", "funded_broker_equity_fresh", "funded_broker_currency_matches", "funded_rule_clock_valid", "funded_state_initialized", "funded_guard_not_breached"}
     has_blocking_fail = any(c.get("status") == FAIL and c.get("key") in blocking for c in checks)
     has_warning = any(c.get("status") == WARNING for c in checks)
     ready_to_auto_trade = not has_blocking_fail and bool(getattr(deployment, "auto_trade_enabled", False)) and bool(getattr(deployment, "auto_runner_enabled", False))

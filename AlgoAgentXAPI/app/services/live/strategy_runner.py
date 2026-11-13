@@ -26,16 +26,19 @@ from .pnl_service import to_decimal
 from .runner_scheduler import calculate_next_runner_after_candle, calculate_next_runner_at, ensure_utc
 from ..live_trading.paper_position_manager import process_paper_positions_for_deployment
 from .live_latency_trace_service import LiveLatencyTraceService
-from .deployment_lock import try_deployment_xact_lock
+from .deployment_lock import try_deployment_xact_lock, serialize_deployment_run
 from .strategy_history_profile import resolve_live_strategy_profile, runtime_contract_violations
 from .history_warmup_queue import enqueue_history_warmup
 from .runner_diagnostics import StageClock, profile_generate
 from .retained_strategy_state import (
     retained_states, is_opted_in, signature as incremental_signature,
-    signal_runtime_identity, fingerprint_fields,
+    signal_runtime_identity, fingerprint_fields, canonical_candle,
 )
 from .runner_cache import history_ready_cache
-from .incremental_adapter_registry import select_registered_adapter, configured_max_advances, adapter_required_for_instrument
+from .native_checkpoint_store import restore_native_checkpoint, stage_native_checkpoint
+from .incremental_adapter_registry import select_registered_adapter, configured_max_advances, adapter_required_for_instrument, v932_demo_forward_test_orders_permitted
+from .v932_hybrid_gate import V932_NORMALIZED_SHA256
+from .v933_causal_gate import matches_v933_causal_source
 from .signal_contract import (
     _normalize_signal_value, _json_safe_value, _safe_float, _first_present,
     _safe_row_dict, extract_latest_signal_payload,
@@ -493,6 +496,7 @@ async def run_full_dry_test_for_deployment(db: AsyncSession, deployment_id: UUID
     return {"success": True, "deployment_id": str(deployment.id), "strategy_name": canonical_name, "latest_candle_time": latest_candle_time.isoformat(), "signal": signal_type, "steps": steps, "entry_plan": entry_plan, "risk_preview": preview, "final_action": final_action, "message": f"Full dry test completed: {final_action.replace('_', ' ').title()}"}
 
 
+@serialize_deployment_run
 async def run_strategy_for_deployment(
     db: AsyncSession,
     deployment_id: UUID,
@@ -503,8 +507,10 @@ async def run_strategy_for_deployment(
     trace_id: str | None = None,
     event_context: dict[str, Any] | None = None,
     suppress_broker_order_for_catchup: bool = False,
+    allow_demo_gap_reseed: bool = False,
 ) -> dict[str, Any]:
-    deployment = (await db.execute(select(StrategyDeployment).where(StrategyDeployment.id == deployment_id))).scalar_one_or_none()
+    deployment = (await db.execute(select(StrategyDeployment).where(
+        StrategyDeployment.id == deployment_id).execution_options(populate_existing=True))).scalar_one_or_none()
     if deployment is None:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
@@ -537,6 +543,30 @@ async def run_strategy_for_deployment(
                 latest_runner_log=latest_log_message,
                 final_action="LOCK_SKIPPED",
             ).to_dict()
+
+        # Reload after the lock: another runner may have committed since the
+        # scheduler loaded this identity-map object. Never evaluate an old cursor.
+        await db.refresh(deployment)
+        if candle_time is not None and execute:
+            cursor = ensure_utc(getattr(deployment, 'last_processed_candle_time', None))
+            requested = ensure_utc(candle_time)
+            if cursor is not None and requested <= cursor:
+                return {'success': True, 'duplicate': True, 'executed': False,
+                        'final_action': 'CANDLE_ALREADY_PROCESSED',
+                        'message': 'Closed candle already processed'}
+            if (cursor is not None and str(deployment.timeframe).upper() in {'M5', '5M'}
+                    and requested != cursor + timedelta(
+                    seconds=parse_timeframe_to_seconds(str(deployment.timeframe or 'M5')))):
+                # The only exception is a separately authorized DEMO, order-suppressed,
+                # cold re-seed after bounded broker-history refetches. Never let Run Once,
+                # ordinary events or LIVE mode leap over a candle without evaluation.
+                permitted_reseed = (allow_demo_gap_reseed
+                                    and str(deployment.mode or '').upper() == 'DEMO'
+                                    and suppress_broker_order_for_catchup
+                                    and bool(getattr(settings, 'live_runner_demo_observed_gap_resume_enabled', False)))
+                if not permitted_reseed:
+                    return {'success': False, 'executed': False, 'final_action': 'HOLD_CANDLE_GAP',
+                            'message': 'Recover preceding closed candles before this candle'}
 
         await _log(db, deployment, "RUNNER_STARTED", "Strategy runner started", metadata={"execute": execute, "trace_id": trace_id, "event_context": event_context or {}})
         await _log(db, deployment, "LIVE_ENGINE_QA_STARTED", "Live engine final QA runner cycle started", metadata={"context": "runner", "execute": execute})
@@ -589,6 +619,22 @@ async def run_strategy_for_deployment(
         hybrid_class = adapter.strategy_class if adapter else None
         hybrid_reason = adapter.reason if adapter else "disabled"
         hybrid_selected = hybrid_class is not None
+        native_selected = is_opted_in(
+            strategy_class, strategy_params,
+            global_enabled=bool(getattr(settings, "live_incremental_enabled", False)),
+        )
+        if allow_demo_gap_reseed:
+            # A cold 80K calculation from the actual latest stored candles is
+            # mandatory; skip/trade-from-old-state is NOT an acceptable recovery.
+            # This is intentionally scoped to the audited NAS100 adapter.
+            if not (mode == 'DEMO' and suppress_broker_order_for_catchup
+                    and bool(getattr(settings, 'live_runner_demo_observed_gap_resume_enabled', False))
+                    and hybrid_selected and adapter.adapter_id == 'nas100_v48_native_v1'):
+                detail = {'error_code': 'GAP_RESEED_ADAPTER_NOT_APPROVED',
+                          'message': 'HOLD: Gap reseed requires audited NAS100 V4.8 DEMO adapter and order suppression'}
+                await _log(db, deployment, 'RUNNER_GAP_RESEED_REJECTED', detail['message'], 'ERROR', detail)
+                await db.commit()
+                return {'success': False, 'executed': False, 'final_action': 'HOLD_GAP_RESEED_NOT_APPROVED', **detail}
         hybrid_monitor_only = bool(adapter and adapter.monitor_only)
         # Operator can keep DEMO Auto Trade ON. Research monitor mode (if
         # requested) never submits broker orders, even on full-history fallback.
@@ -601,9 +647,33 @@ async def run_strategy_for_deployment(
             and bool(getattr(settings, "live_v64_hybrid_enabled", False))
             and bool(getattr(settings, "live_v64_hybrid_monitor_only", False))
         )
-        force_monitor_no_orders = mode == "DEMO" and (
-            generic_monitor_requested or legacy_monitor_requested or suppress_broker_order_for_catchup
+        pinned_v932 = hashlib.sha256(str(strategy_params.get('source_code') or '').strip().encode()).hexdigest() == V932_NORMALIZED_SHA256
+        # V9.33 fixes the known right-edge exclusion but remains a RESEARCH
+        # strategy. Even if adapter-required is off, never execute it via
+        # unverified full-history fallback. This branch is Gold-source scoped.
+        pinned_v933_research = matches_v933_causal_source(str(strategy_params.get('source_code') or ''))
+        # Frozen V9.32 DEMO forward-test authorization requires *both* its
+        # exact pinned adapter selection and the single global monitor toggle
+        # set to False. A failed selection, LIVE mode, or full-history fallback
+        # must not inherit this permission. Historical parity is NOT claimed.
+        v932_demo_order_selected = bool(
+            hybrid_selected and v932_demo_forward_test_orders_permitted(
+                source_code=str(strategy_params.get('source_code') or ''),
+                mode=mode, selection=adapter,
+            )
         )
+        force_monitor_no_orders = (
+            suppress_broker_order_for_catchup
+            or (pinned_v932 and not v932_demo_order_selected)
+            or pinned_v933_research or hybrid_monitor_only
+            or (mode == "DEMO" and (generic_monitor_requested or legacy_monitor_requested))
+        )
+        if v932_demo_order_selected:
+            logger.warning(
+                "RUNNER_V932_DEMO_FORWARD_TEST_ORDERS_ENABLED deployment=%s "
+                "source_pinned=true historical_parity_approved=false",
+                deployment_id,
+            )
         if suppress_broker_order_for_catchup:
             logger.warning("RUNNER_HISTORICAL_CATCHUP_ORDER_SUPPRESSED deployment=%s candle=%s "
                            "reason=state_replay_not_a_current_trade", deployment_id, candle_time)
@@ -622,15 +692,23 @@ async def run_strategy_for_deployment(
                     "mode=%s monitor_only=%s", deployment_id, adapter.source_sha256,
                     profile.required_history_bars, mode, hybrid_monitor_only,
                 )
+        elif native_selected:
+            logger.info("RUNNER_NATIVE_INCREMENTAL_SELECTED deployment=%s source_sha256=%s",
+                        deployment_id, str(strategy_params.get("source_code_sha256") or ""))
         elif hybrid_reason != "disabled":
-            logger.warning("RUNNER_INCREMENTAL_ADAPTER_FALLBACK deployment=%s reason=%s "
-                           "mode=FULL_HISTORY", deployment_id, hybrid_reason)
+            # The required-adapter guard below will HOLD instead of evaluating
+            # full history. Report that accurately in the initial log marker.
+            fail_closed = (execute and adapter_required_for_instrument(
+                settings, mode=mode, instrument=str(deployment.instrument)))
+            logger.warning("RUNNER_INCREMENTAL_ADAPTER_FALLBACK deployment=%s reason=%s mode=%s",
+                           deployment_id, hybrid_reason,
+                           "HOLD_REQUIRED_ADAPTER" if fail_closed else "FULL_HISTORY")
         # Explicit fail-closed instrument scope. Do not silently submit broker
         # orders through FULL_HISTORY when an operator requires a source-pinned
         # incremental adapter for this DEMO instrument. Other assets unaffected.
         if execute and adapter_required_for_instrument(
             settings, mode=mode, instrument=str(deployment.instrument),
-        ) and not hybrid_selected:
+) and not (hybrid_selected or native_selected):
             detail = {"error_code": "INCREMENTAL_ADAPTER_REQUIRED",
                       "reason": hybrid_reason, "instrument": str(deployment.instrument),
                       "message": "HOLD: required approved incremental adapter was not selected"}
@@ -639,52 +717,8 @@ async def run_strategy_for_deployment(
             await db.commit()
             return {"success": False, "final_action": "HOLD_INCREMENTAL_ADAPTER_REQUIRED", **detail}
         stage_clock.stop("resolve_strategy_and_runtime", timer)
-        timer = stage_clock.start("history_readiness_check")
         authoritative_candle_time = _normalize_dt(candle_time) if candle_time is not None else None
         history_status = None
-        if mode in {"DEMO", "LIVE"}:
-            history_signature = (
-                f"{deployment.strategy_id}|{deployment.broker_account_id}|"
-                f"{deployment.timeframe}|{deployment.instrument}|{getattr(deployment, 'instrument_key', None)}"
-            )
-            history_cached = history_ready_cache.can_reuse(
-                deployment.id, required=profile.required_history_bars,
-                signature=history_signature, through=authoritative_candle_time,
-            )
-            if history_cached:
-                # Positive result is only a short-lived hint; every FULL_HISTORY
-                # load still verifies count and exact requested candle. No
-                # strategy BUY/SELL decision is ever read from this cache.
-                history_status = {'ready': True, 'required_count': profile.required_history_bars,
-                                  'source': 'positive_short_ttl_cache'}
-            else:
-                history_status = await get_deployment_candle_history_status(
-                    db,
-                    deployment,
-                    profile.required_history_bars,
-                    through_candle_time=authoritative_candle_time,
-                )
-                if history_status.get('ready'):
-                    history_ready_cache.remember(
-                        deployment.id, required=profile.required_history_bars,
-                        signature=history_signature, through=authoritative_candle_time,
-                    )
-            if not history_status.get("ready"):
-                history_ready_cache.invalidate(deployment.id)
-                history_status["warmup_queue"] = enqueue_history_warmup(deployment.id, profile.required_history_bars)
-                detail = {
-                    "ok": False,
-                    "error_code": "STRATEGY_HISTORY_INSUFFICIENT",
-                    "message": f"HOLD - Strategy requires {profile.required_history_bars} closed candles; only {history_status.get('stored_count', 0)} are available. Background warm-up is queued/running.",
-                    "required_history_bars": profile.required_history_bars,
-                    "stored_history_bars": history_status.get("stored_count", 0),
-                    "history": history_status,
-                }
-                await _log(db, deployment, "RUNNER_STRATEGY_HISTORY_INSUFFICIENT", detail["message"], "WARNING", detail)
-                await db.commit()
-                return {"success": False, **detail, "final_action": "HOLD_STRATEGY_HISTORY"}
-
-        stage_clock.stop("history_readiness_check", timer)
         refresh_warning = None
         if mode in {"DEMO", "LIVE"} and refresh_broker_candles:
             await _log(db, deployment, "RUNNER_CANDLE_REFRESH_STARTED", "Refreshing latest broker closed candles before strategy run")
@@ -694,22 +728,43 @@ async def run_strategy_for_deployment(
                 refresh_warning = str(getattr(exc, "detail", None) or exc)
                 await _log(db, deployment, "RUNNER_CANDLE_REFRESH_WARNING", f"Broker candle refresh failed; using stored candles if available: {refresh_warning}", "WARNING", {"deployment_id": str(deployment.id), "instrument": deployment.instrument, "instrument_key": getattr(deployment, "instrument_key", None)})
 
+        if execute and authoritative_candle_time is None:
+            # Manual runs share the durable cursor and cannot replay a previous
+            # signal or jump over missing bars, even after an inline refresh.
+            cursor = ensure_utc(getattr(deployment, 'last_processed_candle_time', None))
+            next_open = cursor + timedelta(seconds=parse_timeframe_to_seconds(
+                str(deployment.timeframe or 'M5'))) if cursor is not None else None
+            pending = await load_live_candles_for_runner(db, deployment, limit=1,
+                                                        through_candle_time=next_open)
+            authoritative_candle_time = _normalize_dt(pending[0]['candle_time']) if pending else None
+            if cursor is not None and (authoritative_candle_time is None or authoritative_candle_time <= cursor):
+                return {'success': False, 'executed': False, 'final_action': 'HOLD_NO_NEW_CANDLE',
+                        'message': 'No consecutive closed candle available'}
+
         # The shared runner is universal; incremental calculation is NOT. A
         # strategy must implement the explicit v1 protocol and have an
         # independently recorded parity approval. All other strategies run the
         # original full-history generate() path without semantic changes.
         source_code = str(strategy_params.get("source_code") or "").strip()
-        source_code_sha256 = str(strategy_params.get("source_code_sha256") or "").strip()
-        if source_code and not source_code_sha256:
-            source_code_sha256 = hashlib.sha256(source_code.encode("utf-8")).hexdigest()
+        source_code_sha256 = hashlib.sha256(source_code.encode("utf-8")).hexdigest() if source_code else ""
         incremental_allowed = (
-            hybrid_selected or is_opted_in(
-                strategy_class, strategy_params,
-                global_enabled=bool(getattr(settings, "live_incremental_enabled", False)),
-            )
+            hybrid_selected or native_selected
         ) and mode in {"DEMO", "LIVE", "PAPER"} and execute and not refresh_broker_candles
+        if (execute and mode in {"DEMO", "LIVE"}
+                and bool(getattr(settings, "live_incremental_no_live_full_history", False))
+                and not incremental_allowed and not refresh_broker_candles):
+            # Optional operator mode after migrating old batch-only strategies:
+            # prevents a slow 80K fallback from blocking other deployments.
+            detail = {"error_code": "NATIVE_INCREMENTAL_REQUIRED",
+                      "message": "HOLD: strategy is not eligible for native incremental execution"}
+            await _log(db, deployment, "RUNNER_NATIVE_INCREMENTAL_REQUIRED_HOLD",
+                       detail["message"], "WARNING", detail)
+            await db.commit()
+            return {"success": False, "final_action": "HOLD_NATIVE_INCREMENTAL_REQUIRED", **detail}
         identity_runtime = signal_runtime_identity(
-            runtime_config, capital_independent=bool(hybrid_selected and adapter.adapter_id in {'v64_hybrid_v1', 'v932_hybrid_v1'}),
+            runtime_config, capital_independent=(
+                native_selected or bool(hybrid_selected and adapter.adapter_id in {'v64_hybrid_v1', 'v932_hybrid_v1', 'nas100_v48_native_v1'})
+            ),
             configured_capital=deployment.capital,
         )
         identity_runtime['_v64_hybrid_runtime'] = bool(hybrid_selected)
@@ -727,6 +782,13 @@ async def run_strategy_for_deployment(
             instrument=str(getattr(deployment, 'instrument_key', None) or deployment.instrument),
         ) if incremental_allowed else ""
         state_id = str(deployment.id)
+        if allow_demo_gap_reseed:
+            # A discontinuity invalidates the entire retained indicator state.
+            # The cold 80K source calculation will prime a fresh state before
+            # the processed cursor is advanced. Failure leaves cursor untouched.
+            retained_states.invalidate(state_id, 'demo_gap_reseed_must_cold_prime')
+            logger.warning('RUNNER_DEMO_GAP_COLD_RESEED deployment=%s latest=%s broker_orders_suppressed=true',
+                           deployment_id, authoritative_candle_time)
         if not incremental_allowed:
             retained_states.invalidate(state_id, 'incremental_not_enabled_or_unsupported')
 
@@ -743,6 +805,19 @@ async def run_strategy_for_deployment(
                 probe_time = _normalize_dt(latest_probe.get('candle_time'))
                 if authoritative_candle_time is not None and probe_time != authoritative_candle_time:
                     raise HTTPException(status_code=409, detail='Requested closed candle not available')
+                # New compatible DB strategies can resume from a JSON checkpoint
+                # after process restart (only when source/runtime/cursor match).
+                if (bool(getattr(strategy_class, "LIVE_INCREMENTAL_NATIVE", False))
+                        and state_id not in retained_states._entries
+                        and getattr(deployment, 'last_processed_candle_time', None) is not None
+                        and len(probe) > 1):
+                    await restore_native_checkpoint(
+                        db, deployment_id=state_id, fingerprint=fingerprint,
+                        source_sha=source_code_sha256,
+                        last_processed=getattr(deployment, 'last_processed_candle_time', None),
+                        strategy_class=strategy_class, params=params, prior_candle=probe[1],
+                        fields=identity_fields, observed_capital=observed_capital,
+                    )
                 warmed = retained_states.get_for_next_candle(
                     state_id, fingerprint=fingerprint,
                     last_processed=getattr(deployment, 'last_processed_candle_time', None),
@@ -751,11 +826,15 @@ async def run_strategy_for_deployment(
                     previous_candle=probe[1] if len(probe) > 1 else None,
                     fields=identity_fields, observed_capital=observed_capital,
                 )
+                if warmed is not None and warmed.candle_count < profile.required_history_bars:
+                    retained_states.invalidate(state_id, 'checkpoint_warmup_incomplete')
+                    warmed = None
                 # Experimental adapter appends to history. Rebase from the
                 # authoritative *rolling 80K* window periodically so memory
                 # and source-history dependence cannot grow without a bound.
                 # This is a cold full evaluation, not a shortened warmup.
-                if hybrid_selected and warmed is not None:
+                if (hybrid_selected and warmed is not None
+                        and adapter.adapter_id != 'nas100_v48_native_v1'):
                     max_advances = configured_max_advances(settings)
                     if retained_states.rebase_due(state_id, history_bars=profile.required_history_bars,
                                                  max_advances=max_advances):
@@ -766,6 +845,41 @@ async def run_strategy_for_deployment(
                         warmed = None
 
         if warmed is None:
+            timer = stage_clock.start("history_readiness_check")
+            if mode in {"DEMO", "LIVE"}:
+                history_signature = (
+                    f"{deployment.strategy_id}|{deployment.broker_account_id}|"
+                    f"{deployment.timeframe}|{deployment.instrument}|{getattr(deployment, 'instrument_key', None)}"
+                )
+                if history_ready_cache.can_reuse(
+                    deployment.id, required=profile.required_history_bars,
+                    signature=history_signature, through=authoritative_candle_time,
+                ):
+                    history_status = {'ready': True, 'required_count': profile.required_history_bars,
+                                      'source': 'positive_short_ttl_cache'}
+                else:
+                    history_status = await get_deployment_candle_history_status(
+                        db, deployment, profile.required_history_bars,
+                        through_candle_time=authoritative_candle_time,
+                    )
+                    if history_status.get('ready'):
+                        history_ready_cache.remember(
+                            deployment.id, required=profile.required_history_bars,
+                            signature=history_signature, through=authoritative_candle_time,
+                        )
+                if not history_status.get('ready'):
+                    history_ready_cache.invalidate(deployment.id)
+                    history_status['warmup_queue'] = enqueue_history_warmup(deployment.id, profile.required_history_bars)
+                    detail = {
+                        'ok': False, 'error_code': 'STRATEGY_HISTORY_INSUFFICIENT',
+                        'message': f"HOLD - Strategy requires {profile.required_history_bars} closed candles; only {history_status.get('stored_count', 0)} are available. Background warm-up is queued/running.",
+                        'required_history_bars': profile.required_history_bars,
+                        'stored_history_bars': history_status.get('stored_count', 0), 'history': history_status,
+                    }
+                    await _log(db, deployment, 'RUNNER_STRATEGY_HISTORY_INSUFFICIENT', detail['message'], 'WARNING', detail)
+                    await db.commit()
+                    return {'success': False, **detail, 'final_action': 'HOLD_STRATEGY_HISTORY'}
+            stage_clock.stop('history_readiness_check', timer)
             timer = stage_clock.start("load_closed_candles")
             candles = await load_live_candles_for_runner(
                 db, deployment, limit=profile.required_history_bars,
@@ -801,6 +915,7 @@ async def run_strategy_for_deployment(
                     f"(expected {authoritative_candle_time.isoformat()}, got {latest_candle_time.isoformat()})."
                 ))
             timer = stage_clock.start("build_dataframe")
+            canonical_candle(latest_candle)
             df = _candles_to_dataframe(candles)
             stage_clock.stop("build_dataframe", timer, bars=len(df))
             history_bars_used = len(df)
@@ -814,26 +929,45 @@ async def run_strategy_for_deployment(
                 generated = _run_strategy_generate(strategy_instance)
             stage_clock.stop("strategy_generate", timer, bars=len(df))
             if incremental_allowed and isinstance(generated, pd.DataFrame) and not generated.empty:
-                retained_states.prime(
+                primed = retained_states.prime(
                     state_id, fingerprint=fingerprint, candle_time=latest_candle_time,
                     strategy=strategy_instance, generated=generated,
                     candle_count=len(df), latest_candle=latest_candle,
                     fields=identity_fields, observed_capital=observed_capital,
                 )
+                # Never silently fall back to repeated 80K evaluation/orders
+                # after an explicitly selected NAS100 native state fails parity
+                # or initialization. HOLD with an actionable error instead.
+                if (hybrid_selected and adapter.adapter_id == 'nas100_v48_native_v1'
+                        and not primed):
+                    detail = {"error_code": "NAS100_INCREMENTAL_PRIME_FAILED",
+                              "message": "HOLD: NAS100 V4.8 incremental initialization/parity failed; inspect runner logs"}
+                    await _log(db, deployment, 'RUNNER_NAS100_INCREMENTAL_PRIME_FAILED',
+                               detail["message"], 'ERROR', detail)
+                    await db.commit()
+                    return {"success": False, "final_action": "HOLD_INCREMENTAL_PRIME_FAILED", **detail}
+            elif hybrid_selected and adapter.adapter_id == 'nas100_v48_native_v1':
+                detail = {"error_code": "NAS100_INCREMENTAL_GENERATE_INVALID",
+                          "message": "HOLD: NAS100 V4.8 full-history warmup produced no valid DataFrame"}
+                await _log(db, deployment, 'RUNNER_NAS100_INCREMENTAL_GENERATE_INVALID',
+                           detail["message"], 'ERROR', detail)
+                await db.commit()
+                return {"success": False, "final_action": "HOLD_INCREMENTAL_GENERATE_INVALID", **detail}
             runner_mode = 'FULL_HISTORY'
         else:
             latest_candle = latest_probe
             latest_candle_time = _normalize_dt(latest_candle.get('candle_time'))
             # Incremental strategy code receives the same canonical OHLCV names
             # as its initial DataFrame. No implicit indicator approximations.
-            df = _candles_to_dataframe([latest_candle])
+            candle = canonical_candle(latest_candle)
             timer = stage_clock.start('strategy_incremental_update')
             incremental = retained_states.advance(
                 state_id, fingerprint=fingerprint,
                 last_processed=getattr(deployment, 'last_processed_candle_time', None),
                 next_candle_time=latest_candle_time,
                 timeframe_seconds=parse_timeframe_to_seconds(str(deployment.timeframe or 'M5')),
-                candle=df.iloc[-1].to_dict(), previous_candle=probe[1] if len(probe) > 1 else None,
+                candle=candle, previous_candle=probe[1] if len(probe) > 1 else None,
+                fields=identity_fields,
             )
             stage_clock.stop('strategy_incremental_update', timer, bars=1)
             if incremental is None:
@@ -849,6 +983,9 @@ async def run_strategy_for_deployment(
                         state_id, latest_candle_time.isoformat(), history_bars_used)
 
         latest_close = to_decimal(latest_candle.get("close"))
+        if latest_candle_time + timedelta(seconds=parse_timeframe_to_seconds(
+                str(deployment.timeframe or 'M5'))) > datetime.now(timezone.utc):
+            raise HTTPException(status_code=409, detail='Requested candle has not closed')
         latest_symbol = str(latest_candle.get("symbol") or deployment.instrument)
         deployment.last_runner_at = datetime.now(timezone.utc)
         deployment.next_run_at = calculate_next_runner_after_candle(
@@ -910,7 +1047,7 @@ async def run_strategy_for_deployment(
         # allow a delayed candidate order even when the global stale guard is
         # intentionally disabled for other strategies.
         v932_forced_stale_guard = bool(hybrid_selected and adapter and adapter.adapter_id == 'v932_hybrid_v1')
-        if execute and (bool(getattr(settings, "live_runner_stale_order_guard_enabled", False)) or v932_forced_stale_guard):
+        if execute and signal_type != 'HOLD' and not force_monitor_no_orders:
             candle_closes_at = latest_candle_time + timedelta(
                 seconds=parse_timeframe_to_seconds(str(deployment.timeframe or "M5"))
             )
@@ -918,9 +1055,12 @@ async def run_strategy_for_deployment(
             if v932_forced_stale_guard:
                 max_stale_age = min(max_stale_age, 60)
             age = (datetime.now(timezone.utc) - candle_closes_at).total_seconds()
-            if age > max_stale_age:
+            if age < 0 or age > max_stale_age:
                 deployment.last_heartbeat_at = datetime.now(timezone.utc)
                 _mark_candle_processed(deployment, latest_candle_time)
+                if getattr(strategy_class, 'LIVE_INCREMENTAL_NATIVE', False):
+                    await stage_native_checkpoint(db, deployment_id=state_id, fingerprint=fingerprint,
+                                                  source_sha=source_code_sha256, candle_time=latest_candle_time)
                 await _log(db, deployment, "RUNNER_STALE_SIGNAL_BLOCKED",
                            "Stale candle evaluated; skipped live order to avoid executing a delayed signal",
                            "WARNING", {"signal_type": signal_type, "candle_time": latest_candle_time.isoformat(),
@@ -942,6 +1082,9 @@ async def run_strategy_for_deployment(
         if signal_type == "HOLD":
             deployment.last_heartbeat_at = datetime.now(timezone.utc)
             _mark_candle_processed(deployment, latest_candle_time)
+            if getattr(strategy_class, 'LIVE_INCREMENTAL_NATIVE', False):
+                await stage_native_checkpoint(db, deployment_id=state_id, fingerprint=fingerprint,
+                                              source_sha=source_code_sha256, candle_time=latest_candle_time)
             latest_log_message = "HOLD - no tradeable signal, not saved"
             await _log(
                 db,
@@ -972,6 +1115,9 @@ async def run_strategy_for_deployment(
         if duplicate is not None:
             deployment.last_heartbeat_at = datetime.now(timezone.utc)
             _mark_candle_processed(deployment, latest_candle_time)
+            if incremental_allowed and getattr(strategy_class, 'LIVE_INCREMENTAL_NATIVE', False):
+                await stage_native_checkpoint(db, deployment_id=state_id, fingerprint=fingerprint,
+                                              source_sha=source_code_sha256, candle_time=latest_candle_time)
             latest_log_message = "Duplicate tradeable signal ignored"
             await _log(
                 db,
@@ -1024,6 +1170,8 @@ async def run_strategy_for_deployment(
                 "loaded_history_bars": history_bars_used,
                 "history_ready": history_bars_used >= profile.required_history_bars,
                 "execute_requested": execute,
+                "broker_orders_suppressed": force_monitor_no_orders,
+                "historical_catchup": suppress_broker_order_for_catchup,
                 "latest_candle_time": latest_candle_time.isoformat(),
                 "resolved_symbol": latest_symbol,
                 "display_symbol": deployment.instrument,
@@ -1056,6 +1204,9 @@ async def run_strategy_for_deployment(
             duplicate = await _find_duplicate_engine_signal(db, deployment.id, latest_candle_time, signal_type, strategy_id=deployment.strategy_id, symbol=latest_symbol, timeframe=deployment.timeframe)
             deployment.last_heartbeat_at = datetime.now(timezone.utc)
             _mark_candle_processed(deployment, latest_candle_time)
+            if incremental_allowed and getattr(strategy_class, 'LIVE_INCREMENTAL_NATIVE', False):
+                await stage_native_checkpoint(db, deployment_id=state_id, fingerprint=fingerprint,
+                                              source_sha=source_code_sha256, candle_time=latest_candle_time)
             latest_log_message = "Duplicate tradeable signal blocked by DB idempotency guard"
             await _log(
                 db,
@@ -1140,6 +1291,9 @@ async def run_strategy_for_deployment(
             )
 
         _mark_candle_processed(deployment, latest_candle_time)
+        if getattr(strategy_class, 'LIVE_INCREMENTAL_NATIVE', False):
+            await stage_native_checkpoint(db, deployment_id=state_id, fingerprint=fingerprint,
+                                          source_sha=source_code_sha256, candle_time=latest_candle_time)
         await db.commit()
         await db.refresh(signal)
         if order is not None:
@@ -1164,6 +1318,7 @@ async def run_strategy_for_deployment(
         ).to_dict()
 
     except HTTPException as exc:
+        retained_states.invalidate(str(deployment_id), 'runner_transaction_failed')
         latest_log_message = str(exc.detail)
         # A failed flush/commit leaves AsyncSession in a failed transaction.
         # Always rollback before any new ORM query/log write, for BOTH the
@@ -1177,6 +1332,7 @@ async def run_strategy_for_deployment(
             await db.commit()
         raise
     except Exception as exc:
+        retained_states.invalidate(str(deployment_id), 'runner_transaction_failed')
         logger.exception("Strategy runner failed for deployment %s", deployment_id)
         latest_log_message = f"Strategy runner failed: {exc.__class__.__name__}: {str(exc)[:240]}"
         # Never attempt to reuse a poisoned transaction after DBAPI/flush errors.
@@ -1208,12 +1364,25 @@ async def run_strategy_for_candle(
     This is the Redis worker entry point.  Broker candle refresh is disabled so
     no polling or second cTrader connection can enter the critical path.
     """
-    return await run_strategy_for_deployment(
-        db,
-        deployment_id,
-        execute=execute,
-        refresh_broker_candles=False,
-        candle_time=candle_time,
-        trace_id=trace_id,
-        event_context=event_context,
-    )
+    # Redis can deliver a later event before its predecessor (or lose events
+    # during downtime). Recover from PostgreSQL in bounded chronological batches.
+    for _ in range(8):
+        row = (await db.execute(select(
+            StrategyDeployment.last_processed_candle_time, StrategyDeployment.timeframe,
+        ).where(StrategyDeployment.id == deployment_id))).one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail='Deployment not found')
+        cursor = ensure_utc(row.last_processed_candle_time)
+        target = ensure_utc(candle_time)
+        if execute and cursor is not None and cursor < target:
+            target = min(target, cursor + timedelta(seconds=parse_timeframe_to_seconds(row.timeframe)))
+        result = await run_strategy_for_deployment(
+            db, deployment_id, execute=execute, refresh_broker_candles=False,
+            candle_time=target, trace_id=trace_id, event_context=event_context,
+            suppress_broker_order_for_catchup=target < ensure_utc(candle_time),
+        )
+        if (not result.get('success') or result.get('final_action') == 'LOCK_SKIPPED'
+                or target == ensure_utc(candle_time)):
+            return result
+    return {'success': False, 'executed': False, 'final_action': 'CATCHUP_PENDING',
+            'message': 'Historical candles recovered; remaining event stays pending'}

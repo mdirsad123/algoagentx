@@ -85,6 +85,10 @@ class JobService:
         if not job:
             return None
 
+        if job.job_type == "strategy_sandbox":
+            from .sandbox_jobs import expire_stale_sandbox
+            await expire_stale_sandbox(db, job)
+
         execution = None
         if job.job_type == "backtest":
             execution = (await db.execute(text("""

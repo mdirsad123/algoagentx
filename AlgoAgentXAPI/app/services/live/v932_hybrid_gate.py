@@ -16,16 +16,11 @@ def select_v932_hybrid_class(*, settings: Any, source_code: str, mode: str,
         return None, "live_incremental_globally_disabled"
     if not bool(getattr(settings, "live_incremental_adapter_enabled", False)):
         return None, "adapter_disabled"
-    monitor = bool(getattr(settings, "live_incremental_monitor_only", True))
-    # SOURCE-LEVEL SAFETY BLOCK: The frozen V9.32 source has a demonstrable
-    # historical-vs-live right-edge discrepancy. Example: its V62 compression
-    # long appeared at 2026-11-04 17:30 UTC in a replay with later candles,
-    # but is HOLD when that time is the most recently closed bar. Until the
-    # original strategy is causally corrected and revalidated as a NEW SHA,
-    # this adapter is restricted to DEMO signal monitoring even if an operator
-    # mistakenly declares parity approved in the environment.
-    # if not monitor:
-    #     return None, "v932_right_edge_mismatch_orders_blocked"
+    # Exact-source eligibility is established below; the global monitor flag
+    # only controls DEMO forward-test order submission after that selection.
+    # NOTE: Frozen V9.32 has a documented historical-vs-right-edge BUY
+    # discrepancy (2026-11-04 17:30 UTC). Operator-requested DEMO forward
+    # testing does not turn that historical mismatch into parity approval.
     if str(mode).upper() != "DEMO":
         return None, "demo_only"
     if str(instrument).upper().strip() not in {"XAUUSD", "XAUUSD.X"}:
@@ -37,15 +32,19 @@ def select_v932_hybrid_class(*, settings: Any, source_code: str, mode: str,
     actual = sha256(str(source_code).strip().encode("utf-8")).hexdigest()
     if actual != V932_NORMALIZED_SHA256:
         return None, "v932_db_source_mismatch"
-    authorized = str(getattr(settings, "live_incremental_authorized_source_sha256", "") or "").strip().lower()
-    if authorized != actual:
-        return None, "authorized_source_sha_missing_or_mismatch"
+    # The immutable V932_NORMALIZED_SHA256 is the only trusted source pin.
+    # No global per-deployment environment SHA authorization is consulted.
     # Double check bundled original to detect accidentally changed research code.
     from strategies import v932_original_db_source as original
-    import inspect
     from pathlib import Path
     original_path = Path(original.__file__)
     if sha256(original_path.read_text(encoding="utf8").strip().encode("utf8")).hexdigest() != actual:
         return None, "bundled_source_mismatch"
     from strategies.v932_incremental import Strategy
-    return Strategy, "selected_monitor_only" if monitor else "selected"
+    # A user can forward-test the exact pinned V9.32 right-edge signals on a
+    # DEMO account. This is an operator permission, NOT a parity certification:
+    # the frozen historical replay still disagrees on a known old BUY signal.
+    # LIVE is rejected above; stale/replay/duplicate order checks remain in the
+    # shared runner. No strategy logic or source fingerprint is modified.
+    monitor = bool(getattr(settings, "live_incremental_monitor_only", True))
+    return Strategy, "selected_monitor_only" if monitor else "selected_demo_forward_test"

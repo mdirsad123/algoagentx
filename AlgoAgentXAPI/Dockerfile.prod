@@ -37,6 +37,7 @@ COPY . .
 
 # Never run production API as root.
 RUN useradd --create-home --shell /bin/bash appuser \
+    && mkdir -p /app/strategy_sources \
     && chown -R appuser:appuser /app
 USER appuser
 
