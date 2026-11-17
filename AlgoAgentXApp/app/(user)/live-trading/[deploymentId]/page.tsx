@@ -10,6 +10,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { PageShell } from "@/components/ui/PageShell";
 import { OrderCalculationAuditPanel } from "@/components/live/OrderCalculationAuditPanel";
+import { ManualSignalVerificationPanel } from "@/components/live/ManualSignalVerificationPanel";
 import { useToast } from "@/components/shared/toast";
 import { liveTradingApi } from "@/lib/api/live-trading";
 import axiosInstance from "@/lib/axios";
@@ -960,6 +961,15 @@ export default function LiveDeploymentDetailPage() {
               <div className="responsive-table-wrapper mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="text-purple-200"><tr><th>Time</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr></thead><tbody className="divide-y divide-white/10">{latestCandles.map((candle, index) => <tr key={candle.id || `${candle.candle_time}-${index}`} className="text-purple-50"><td className="py-3">{date(candle.candle_time)}</td><td>{num(candle.open)}</td><td>{num(candle.high)}</td><td>{num(candle.low)}</td><td>{num(candle.close)}</td><td>{num(candle.volume)}</td></tr>)}</tbody></table></div>
             )}
           </GlassCard>
+
+          <ManualSignalVerificationPanel
+            deploymentId={deploymentId}
+            mode={mode}
+            latestClose={candleSnapshot?.latest_close == null ? null : Number(candleSnapshot.latest_close)}
+            primaryOrders={recentOrders}
+            copyOrders={copyOrders}
+            onComplete={() => loadSummary(true)}
+          />
 
           <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
             <GlassCard className="p-6" hoverEffect={false}>

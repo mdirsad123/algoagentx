@@ -909,7 +909,7 @@ def warm_live_strategy_history_task(self, deployment_id: str, required_count: in
             "required_count": str(int(required_count)),
             "updated_at": datetime.utcnow().isoformat() + "Z",
         })
-        r.expire(status_key, 7200)
+        r.expire(status_key, 604800)
         result = asyncio.run(_warm_live_strategy_history_async(str(deployment_id), int(required_count)))
         if result.get("error") and not result.get("ready"):
             raise RuntimeError(str(result["error"]))
@@ -919,7 +919,7 @@ def warm_live_strategy_history_task(self, deployment_id: str, required_count: in
             "required_count": str(int(result.get("required_count") or required_count)),
             "updated_at": datetime.utcnow().isoformat() + "Z",
         })
-        r.expire(status_key, 7200)
+        r.expire(status_key, 604800)
         return result
     except Retry:
         raise
@@ -932,7 +932,7 @@ def warm_live_strategy_history_task(self, deployment_id: str, required_count: in
             "error": str(exc)[:1000],
             "updated_at": datetime.utcnow().isoformat() + "Z",
         })
-        r.expire(status_key, 7200)
+        r.expire(status_key, 604800)
         if terminal:
             raise
         # Slow exponential backoff reduces request storms after HTTP 429.
@@ -1067,3 +1067,116 @@ def run_live_full_dry_test_task(self, deployment_id: str):
             client.close()
         except Exception:
             logger.exception("Could not release dry-test dedupe marker")
+
+
+async def _verified_gap_reseed_async(deployment_id: str, missing_iso: str, target_iso: str) -> dict[str, Any]:
+    """Validate session closure AGAIN before a one-time, order-suppressed rebase."""
+    from uuid import UUID
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select, func
+    from .db.models import BrokerAccount, StrategyDeployment, LiveMarketCandle
+    from .services.brokers.factory import get_broker_adapter, get_broker_code
+    from .services.live.broker_session_gap import fetch_tradelocker_calendar, classify_missing_slots
+    from .services.live.strategy_runner import run_strategy_for_deployment
+    from .services.live.runner_scheduler import parse_timeframe_to_seconds
+
+    deployment_uuid = UUID(deployment_id)
+    requested_missing = datetime.fromisoformat(missing_iso)
+    target = datetime.fromisoformat(target_iso)
+    if requested_missing.tzinfo is None or target.tzinfo is None:
+        return {'success': False, 'reason': 'unaware_times'}
+    engine, sessions = _fresh_async_engine_and_sessionmaker()
+    try:
+        async with sessions() as db:
+            deployment = (await db.execute(select(StrategyDeployment).where(
+                StrategyDeployment.id == deployment_uuid))).scalar_one_or_none()
+            if not deployment or deployment.status != 'RUNNING' or deployment.mode != 'DEMO':
+                return {'success': False, 'reason': 'deployment_not_eligible'}
+            step = parse_timeframe_to_seconds(str(deployment.timeframe))
+            cursor = deployment.last_processed_candle_time
+            if cursor is None:
+                return {'success': False, 'reason': 'no_cursor'}
+            cursor = cursor if cursor.tzinfo else cursor.replace(tzinfo=timezone.utc)
+            if cursor + timedelta(seconds=step) != requested_missing:
+                return {'success': False, 'reason': 'cursor_advanced_or_gap_changed'}
+            first = (await db.execute(select(func.min(LiveMarketCandle.candle_time)).where(
+                LiveMarketCandle.deployment_id == deployment_uuid,
+                LiveMarketCandle.timeframe == deployment.timeframe,
+                LiveMarketCandle.is_closed.is_(True),
+                LiveMarketCandle.candle_time > cursor,
+            ))).scalar_one_or_none()
+            if first is None:
+                return {'success': False, 'reason': 'missing_postclosure_candles'}
+            first = first if first.tzinfo else first.replace(tzinfo=timezone.utc)
+            if first <= requested_missing or first > target:
+                return {'success': False, 'reason': 'gap_no_longer_matches'}
+            broker = (await db.execute(select(BrokerAccount).where(
+                BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
+            if broker is None or get_broker_code(broker) != 'TRADELOCKER':
+                return {'success': False, 'reason': 'broker_not_supported'}
+            adapter = get_broker_adapter(broker, db)
+            calendar = await fetch_tradelocker_calendar(
+                adapter, str(deployment.broker_symbol or deployment.instrument))
+            verification = classify_missing_slots(calendar=calendar, missing_open=requested_missing,
+                first_pending=first, timeframe_seconds=step) if calendar else 'UNKNOWN'
+            if verification != 'CLOSED':
+                return {'success': False, 'reason': f'broker_session_{verification.lower()}'}
+            # One-time actual 80K cold evaluation. Every older signal, including
+            # the latest *reseed* signal, has broker orders unconditionally blocked.
+            await db.rollback()
+            result = await run_strategy_for_deployment(
+                db, deployment_uuid, execute=True, refresh_broker_candles=False,
+                candle_time=target, suppress_broker_order_for_catchup=True,
+                allow_demo_gap_reseed=True, recovery_calendar=calendar,
+                recovery_expected_cursor=cursor)
+            # A completed Celery task is not a recovered strategy. Verify that
+            # the durable cursor moved to the exact real closed target candle.
+            await db.refresh(deployment)
+            advanced = deployment.last_processed_candle_time
+            advanced = advanced if advanced is None or advanced.tzinfo else advanced.replace(tzinfo=timezone.utc)
+            return {**result, 'recovery_cursor_valid': advanced == target,
+                    'recovery_cursor_after': advanced.isoformat() if advanced else None}
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(name='app.tasks.verified_gap_reseed_task', bind=True, max_retries=0,
+                 time_limit=2400, soft_time_limit=2300)
+def verified_gap_reseed_task(self, deployment_id: str, missing_iso: str, target_iso: str):
+    """Run on EXISTING live_history worker; normal strategy runner remains responsive."""
+    import redis
+    from .core.config import settings
+
+    key = f'live:gap:reseed:queued:{deployment_id}:{missing_iso}'
+    status_key = f'live:gap:reseed:status:{deployment_id}'
+    r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        previous = r.hgetall(status_key)
+        attempts = (int(previous.get('attempts') or 0) if previous.get('missing_open') == missing_iso else 0) + 1
+        r.hset(status_key, mapping={'status': 'RUNNING', 'missing_open': missing_iso,
+                                    'started_at': int(__import__('time').time()),
+                                    'target_open': target_iso, 'attempts': attempts})
+        result = asyncio.run(_verified_gap_reseed_async(deployment_id, missing_iso, target_iso))
+        good = (bool(result.get('success')) and result.get('recovery_cursor_valid') is True
+                and str(result.get('final_action')) not in {
+                    'LOCK_SKIPPED', 'HOLD_INCREMENTAL_PRIME_FAILED', 'HOLD_GAP_RESEED_NOT_APPROVED',
+                    'HOLD_CANDLE_GAP', 'CANDLE_ALREADY_PROCESSED'})
+        # Only an unavailable broker calendar is retryable: the broker's
+        # subsequent response may verify closure. Never loop infinitely on
+        # source/parity validation errors or falsely mark such jobs recovered.
+        reason = str(result.get('final_action') or result.get('reason') or 'unknown')[:200]
+        stage = ('RECOVERED' if good else
+                 'RETRYABLE' if reason == 'broker_session_unknown' and attempts < 3
+                 else 'REQUIRES_ATTENTION')
+        r.hset(status_key, mapping={'status': stage, 'missing_open': missing_iso,
+                                    'attempts': attempts, 'retry_at': int(__import__('time').time()) + 300,
+                                    'reason': reason})
+        return {'deployment_id': deployment_id, 'success': good,
+                'status': stage, 'reason': reason}
+    except Exception as exc:
+        r.hset(status_key, mapping={'status': 'REQUIRES_ATTENTION', 'missing_open': missing_iso, 'reason': type(exc).__name__})
+        # Operator must explicitly re-arm a failed same-gap task after audit.
+        raise
+    finally:
+        r.delete(key)
+        r.close()

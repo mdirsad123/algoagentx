@@ -22,6 +22,14 @@ ls -la
 # ssh key for github on ubuntu
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL2GzRSr+7arB8zXP8P1qSpqCoiyuTxl6bG8gVl1vND+ algoagentx-oracle
 
+--------------------------------------
+# ubuntu rustdesk
+RustDesk Password: 6196e2345cd1aa76c9c9f4a11bb2606d
+rustdesk --get-id: 1557347169
+
+# ubuntu server account password
+Algo(@)agent123
+
 -----------------------------------
 # copy 4 .env file on my ubuntu below command if private key under the download
 scp -i "C:\Users\mdsah\Downloads\ssh-key-private.key" "D:\Stock_market\algoagentx\.env.dev" ubuntu@130.210.58.143:/home/ubuntu/stock_market/algoagentx/.env.dev

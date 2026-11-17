@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import logging
 import time
@@ -41,7 +42,7 @@ _GAP_WAIT_LOG_AT: dict[str, float] = {}
 # Only successful broker-history calls count toward a no-bar cold re-seed.
 _DEMO_GAP_RECOVERY: dict[str, dict[str, Any]] = {}
 _DEMO_GAP_MAX_FETCH_ATTEMPTS = 3
-_DEMO_GAP_FETCH_SPACING_SECONDS = 12.0
+_DEMO_GAP_FETCH_SPACING_SECONDS = 300.0
 _DEMO_GAP_RESEED_RETRY_SECONDS = 300.0
 # Only dedicated TradeLocker+DB-backed runners use this idle throttle.
 # Never block Run Once, other brokers or a new M5 candle boundary.
@@ -183,127 +184,167 @@ async def _try_demo_gap_recovery(
     db: AsyncSession, deployment: StrategyDeployment, *, recovery, latest_closed_candle_time,
     interval_s: int,
 ) -> dict[str, Any] | None:
-    """Try three broker refetches; optionally cold-reseed an audited DEMO adapter.
+    """Session-aware, restart-durable recovery. Never skip unknown/open sessions.
 
-    No synthetic bars, no jump of an unverified cursor, and no historical orders.
-    Small holes are eligible only after three broker refetches and cold re-seeding; LIVE and unregistered adapters stay blocked.
+    A verified CLOSED interval triggers a *queued* 80K cold reseed in the
+    already deployed live_history worker. The shared runner and NAS100 remain
+    free. All history signals are suppressed in the reseed task.
     """
     deployment_id = deployment.id
     key = str(deployment_id)
-    if not recovery.missing_open or recovery.pending_bars < 2:
+    if recovery.missing_open is None or recovery.pending_bars < 2:
         return None
     broker = (await db.execute(select(BrokerAccount).where(
         BrokerAccount.id == deployment.broker_account_id))).scalar_one_or_none()
     if broker is None or get_broker_code(broker) != 'TRADELOCKER':
         return None
-
     missing_key = recovery.missing_open.isoformat()
+    redis_key = f'live:gap:recovery:{key}'
     state = _DEMO_GAP_RECOVERY.get(key)
-    if state is None or state['missing'] != missing_key:
-        state = {'missing': missing_key, 'attempts': 0, 'successes': 0,
-                 'last_attempt': -1e12, 'last_reseed': -1e12, 'reseed_failures': 0}
+    redis = redis_manager.client
+    if state is None or state.get('missing') != missing_key:
+        state = None
+        if redis is not None:
+            try:
+                stored = await redis.get(redis_key)
+                if stored:
+                    state = json.loads(stored)
+            except Exception:
+                logger.warning('RUNNER_GAP_RETRY_STATE_REDIS_UNAVAILABLE deployment=%s', key)
+        if not isinstance(state, dict) or state.get('missing') != missing_key:
+            state = {'missing': missing_key, 'attempts': 0, 'successes': 0,
+                     'last_attempt': 0.0, 'session_checked_at': 0.0,
+                     'session_status': 'UNKNOWN'}
         _DEMO_GAP_RECOVERY[key] = state
-    moment = time.monotonic()
-    if state['attempts'] < _DEMO_GAP_MAX_FETCH_ATTEMPTS:
-        if moment - state['last_attempt'] < _DEMO_GAP_FETCH_SPACING_SECONDS:
-            return None
-        count = required_broker_fetch_bars(
-            newest=latest_closed_candle_time,
-            previous=deployment.last_processed_candle_time,
-            timeframe_seconds=interval_s, margin=20, limit=2000,
-        )
-        if count is None:
-            logger.error('RUNNER_DEMO_GAP_TOO_OLD deployment=%s missing=%s manual_review_required=true',
-                         deployment_id, missing_key)
-            return None
-        state['attempts'] += 1
-        state['last_attempt'] = moment
-        # Close the read transaction before the broker network request.
-        await db.rollback()
-        try:
-            refresh = await refresh_deployment_candles(db, deployment_id, count=count)
-            state['successes'] += 1
-            logger.warning('RUNNER_DEMO_GAP_FETCH deployment=%s missing=%s attempt=%s/%s '
-                           'broker_history_succeeded=true requested=%s upserted=%s',
-                           deployment_id, missing_key, state['attempts'],
-                           _DEMO_GAP_MAX_FETCH_ATTEMPTS, count, refresh.get('upserted_count'))
-        except Exception as exc:
-            # A network/broker failure cannot establish that the candle did not
-            # exist. Do not promote such failures into a skip authorization.
-            await db.rollback()
-            logger.error('RUNNER_DEMO_GAP_FETCH_ERROR deployment=%s missing=%s attempt=%s/%s error=%s',
-                         deployment_id, missing_key, state['attempts'],
-                         _DEMO_GAP_MAX_FETCH_ATTEMPTS, str(exc)[:200])
-        return None
 
-    if state['successes'] < 2:
-        # No reliable history evidence: remain blocked, not a blind skip.
-        return None
-    if state['reseed_failures'] >= 2 or moment - state['last_reseed'] < _DEMO_GAP_RESEED_RETRY_SECONDS:
-        return None
-    # Even a short hole is replayed only after attempts fail. Require two
-    # actually published consecutive broker M5 candles before cold re-seeding.
-    minimum_missing = max(1, int(getattr(settings, 'live_runner_demo_observed_gap_min_missing_bars', 6)))
-    two = await get_latest_closed_candles(db, deployment_id, limit=2)
-    if len(two) != 2:
-        return None
-    newest = _normalize_dt(two[0].get('candle_time'))
-    preceding = _normalize_dt(two[1].get('candle_time'))
+    async def persist_state():
+        if redis is not None:
+            try:
+                # One per deployment; preserve the 3-attempt cap across any restart.
+                await redis.set(redis_key, json.dumps(state))
+                return True
+            except Exception:
+                logger.warning('RUNNER_GAP_RETRY_STATE_PERSIST_FAILED deployment=%s', key)
+        return False
+
     first_pending = (await db.execute(select(func.min(LiveMarketCandle.candle_time)).where(
         LiveMarketCandle.deployment_id == deployment_id,
         LiveMarketCandle.timeframe == deployment.timeframe,
         LiveMarketCandle.is_closed.is_(True),
         LiveMarketCandle.candle_time > deployment.last_processed_candle_time,
     ))).scalar_one_or_none()
-    from .candle_catchup import utc
-    from .gap_resume_policy import eligible_for_demo_cold_reseed
-    if first_pending is None or newest is None or preceding is None:
+    if first_pending is None:
         return None
-    missing_slots = max(0, int((utc(first_pending) - utc(deployment.last_processed_candle_time)).total_seconds()
-                                // interval_s) - 1)
-    if not eligible_for_demo_cold_reseed(
-        mode=str(deployment.mode or ''), enabled=True,
-        timeframe_seconds=interval_s,
-        missing_slots=missing_slots, min_missing_slots=minimum_missing,
-        attempts=state['attempts'], successful_refetches=state['successes'],
-        broker_source_verified=all(str(x.get('source') or '').upper() == 'TRADELOCKER' for x in two),
-        last_two_broker_bars_consecutive=(newest == preceding + timedelta(seconds=interval_s)),
-    ):
+    first_pending = _normalize_dt(first_pending)
+    two = await get_latest_closed_candles(db, deployment_id, limit=2)
+    newest = _normalize_dt(two[0].get('candle_time')) if two else None
+    real_bars_valid = bool(
+        newest
+        and all(str(x.get('source') or '').upper() == 'TRADELOCKER' for x in two)
+        and newest >= latest_closed_candle_time
+        and first_pending > recovery.missing_open
+    )
+    now_epoch = time.time()
+    # Only consult the broker's actual instrument session metadata. Historical
+    # API no-data alone is never a verified market closure. Retry the calendar
+    # probe at most once per M5 cycle if its schema/network is unavailable.
+    if real_bars_valid and now_epoch - float(state.get('session_checked_at', 0)) >= 300:
+        from .broker_session_gap import verified_tradelocker_gap_status
+        from ..brokers.factory import get_broker_adapter
+        adapter = get_broker_adapter(broker, db)
+        symbol = str(deployment.broker_symbol or deployment.instrument)
+        await db.rollback()
+        status = await verified_tradelocker_gap_status(
+            adapter, symbol, recovery.missing_open, first_pending,
+            timeframe_seconds=interval_s)
+        await db.refresh(deployment)
+        state['session_status'] = status
+        state['session_checked_at'] = now_epoch
+        await persist_state()
+        logger.warning('RUNNER_MARKET_SESSION_GAP_DETECTED deployment=%s symbol=%s missing_open=%s '
+                       'first_real_open=%s broker_calendar_result=%s',
+                       key, deployment.instrument, missing_key, first_pending, status)
+        # ORM may be expired after rollback. The caller reloads it.
+
+    if real_bars_valid and state.get('session_status') == 'CLOSED':
+        from .gap_reseed_queue import enqueue_verified_gap_reseed
+        # Broker-calendar-proven closed sessions are not missing live trading
+        # candles. Three backfill attempts are reserved for REAL/UNKNOWN gaps;
+        # do not invent attempt counts to satisfy the older observed-gap policy.
+        if (str(deployment.mode or '').upper() != 'DEMO' or interval_s != 300
+                or first_pending <= recovery.missing_open):
+            return None
+        if redis is None:
+            logger.error('RUNNER_RECOVERY_VALIDATION_FAILED deployment=%s redis_unavailable=true', key)
+            return None
+        try:
+            status_key = f'live:gap:reseed:status:{key}'
+            recovered = await redis.hgetall(status_key)
+            if recovered:
+                decoded = {str(k.decode() if isinstance(k, bytes) else k):
+                           str(v.decode() if isinstance(v, bytes) else v)
+                           for k, v in recovered.items()}
+                if decoded.get('missing_open') == missing_key:
+                    from .verified_recovery import recovery_status_blocks
+                    if recovery_status_blocks(decoded, now=time.time()):
+                        return None
+        except Exception:
+            logger.error('RUNNER_RECOVERY_VALIDATION_FAILED deployment=%s redis_status_unavailable=true', key)
+            return None
+        queued = enqueue_verified_gap_reseed(deployment_id, recovery.missing_open,
+                                             min(newest, latest_closed_candle_time))
+        logger.warning('RUNNER_MARKET_SESSION_GAP_CONFIRMED deployment=%s missing_open=%s '
+                       'first_real_open=%s cold_reseed_queued=%s historical_orders_suppressed=true',
+                       key, missing_key, first_pending, queued.get('queued'))
+        if queued.get('queued'):
+            return {'deployment_id': key, 'ran': False, 'skipped': True,
+                    'reason': 'VERIFIED_SESSION_GAP_RESEED_QUEUED',
+                    'historical_orders_suppressed': True,
+                    'missing_candle_open': missing_key}
         return None
-    # Cold 80K reseed of the exact registered strategy at the *last observed*
-    # candle. The entire reseed candle is historical: suppress broker orders,
-    # regardless of Auto Trade state or the global stale-order guard.
-    state['last_reseed'] = moment
+
+    # For genuine OPEN or UNKNOWN gaps do at most three broker-history
+    # requests, spaced by M5 boundaries. Never invent OHLCV or cold rebase
+    # across any candle that the broker session says MAY have existed.
+    if int(state.get('attempts', 0)) >= _DEMO_GAP_MAX_FETCH_ATTEMPTS:
+        if not state.get('exhausted_logged'):
+            logger.error('RUNNER_BACKFILL_EXHAUSTED deployment=%s missing_open=%s '
+                         'session=%s needs_attention=true orders_blocked=true',
+                         key, missing_key, state.get('session_status', 'UNKNOWN'))
+            state['exhausted_logged'] = True
+            await persist_state()
+        return None
+    if now_epoch - float(state.get('last_attempt', 0)) < _DEMO_GAP_FETCH_SPACING_SECONDS:
+        return None
+    count = required_broker_fetch_bars(
+        newest=latest_closed_candle_time,
+        previous=deployment.last_processed_candle_time,
+        timeframe_seconds=interval_s, margin=20, limit=2000,
+    )
+    if count is None:
+        state['attempts'] = _DEMO_GAP_MAX_FETCH_ATTEMPTS
+        await persist_state()
+        logger.error('RUNNER_BACKFILL_EXHAUSTED deployment=%s reason=gap_older_than_broker_lookback', key)
+        return None
+    state['attempts'] = int(state.get('attempts', 0)) + 1
+    state['last_attempt'] = now_epoch
+    if not await persist_state():  # Never spend an undurable retry budget.
+        return None
     await db.rollback()
-    logger.warning('RUNNER_DEMO_GAP_RESEED_START deployment=%s missing=%s target=%s '
-                   'attempts=%s broker_history_successes=%s historical_orders_suppressed=true',
-                   deployment_id, missing_key, newest, state['attempts'], state['successes'])
     try:
-        output = await run_strategy_for_deployment(
-            db, deployment_id, execute=True, refresh_broker_candles=False,
-            candle_time=newest, suppress_broker_order_for_catchup=True,
-            allow_demo_gap_reseed=True,
-        )
+        refresh = await refresh_deployment_candles(db, deployment_id, count=count)
+        state['successes'] = int(state.get('successes', 0)) + 1
+        logger.warning('RUNNER_BACKFILL_ATTEMPT deployment=%s missing_open=%s '
+                       'attempt=%s/%s broker_history_succeeded=true requested=%s upserted=%s',
+                       key, missing_key, state['attempts'], _DEMO_GAP_MAX_FETCH_ATTEMPTS,
+                       count, refresh.get('upserted_count'))
     except Exception as exc:
         await db.rollback()
-        state['reseed_failures'] += 1
-        logger.error('RUNNER_DEMO_GAP_RESEED_FAILED deployment=%s target=%s error=%s',
-                     deployment_id, newest, str(exc)[:220])
-        return None
-    action = str(output.get('final_action') or '')
-    if output.get('success') and action not in {'LOCK_SKIPPED','HOLD_CANDLE_GAP','CANDLE_ALREADY_PROCESSED'}:
-        _DEMO_GAP_RECOVERY.pop(key, None)
-        logger.warning('RUNNER_DEMO_GAP_RESEED_DONE deployment=%s target=%s action=%s '
-                       'broker_orders_suppressed=true next_fresh_candle_only=true',
-                       deployment_id, newest, action)
-        return {'deployment_id': key, 'ran': True, 'success': True,
-                'recovery_action': 'DEMO_COLD_RESEEDED',
-                'historical_orders_suppressed': True,
-                'last_processed_candle_time': newest.isoformat()}
-    if action != 'LOCK_SKIPPED':
-        state['reseed_failures'] += 1
-    logger.warning('RUNNER_DEMO_GAP_RESEED_NOT_COMPLETED deployment=%s target=%s action=%s',
-                   deployment_id, newest, action)
+        logger.warning('RUNNER_BACKFILL_ATTEMPT deployment=%s missing_open=%s '
+                       'attempt=%s/%s broker_history_succeeded=false error_type=%s',
+                       key, missing_key, state['attempts'], _DEMO_GAP_MAX_FETCH_ATTEMPTS,
+                       type(exc).__name__)
+    await persist_state()
     return None
 
 
@@ -610,6 +651,12 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
                         interval_s=interval_s,
                     )
                     if recovery_result is not None:
+                        # Queue success is NOT candle success. Keep the cursor
+                        # unchanged until the history worker validates and commits.
+                        await db.refresh(deployment)
+                        deployment.next_run_at = utc_now() + timedelta(seconds=60)
+                        deployment.last_heartbeat_at = utc_now()
+                        await db.commit()
                         return recovery_result
                     # Broker refresh commits/rolls back the current transaction;
                     # SQLAlchemy expires ORM attributes on rollback. Reload the
@@ -643,7 +690,7 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
                 # candle inputs is deliberate; market closures may be legitimate.
                 # Don't insert a LiveTradeLog row on every idle retry;
                 # periodic warning above is the readable diagnostic marker.
-                deployment.next_run_at = utc_now() + timedelta(seconds=5)
+                deployment.next_run_at = utc_now() + timedelta(seconds=300)
                 deployment.last_runner_at = utc_now()
                 result.update(skipped=True, reason='CANDLE_BACKFILL_WAIT',
                               missing_candle_open=recovery.missing_open.isoformat(),
@@ -744,6 +791,8 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
         deployment.runner_last_error = None
         await _write_log(db, deployment, "AUTO_RUNNER_COMPLETED", runner_result.get("message") or "Auto runner completed", metadata={"runner": runner_result, "latest_closed_candle_time": latest_closed_candle_time.isoformat(), "next_run_at": deployment.next_run_at.isoformat()})
         await db.commit()
+        logger.warning('RUNNER_CURSOR_COMMITTED deployment=%s cursor_after=%s',
+                       deployment_id, deployment.last_processed_candle_time)
         result.update(ran=True, runner=runner_result, message=runner_result.get("message"), next_run_at=deployment.next_run_at.isoformat())
         # Best-effort diagnostics after the trading cursor commit; failure here
         # must not cause this candle to be re-executed or change its risk outcome.

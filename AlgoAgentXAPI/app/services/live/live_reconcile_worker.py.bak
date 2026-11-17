@@ -1,0 +1,452 @@
+"""Slow safety/repair reconciliation isolated from the order hot path."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import signal
+import time
+import hashlib
+from datetime import datetime, timezone, timedelta
+from types import SimpleNamespace
+from typing import Any
+
+from sqlalchemy import select, or_, update, func
+
+from ...core.config import settings
+from ...core.redis_manager import redis_manager
+from ...db.models import BrokerAccount, StrategyDeployment, LiveOrder, LivePosition, LiveSignal, LiveTradeLog
+from ..brokers.request_context import broker_read_context
+from ...db.session import async_session
+from ..brokers.factory import get_broker_code
+from .broker_sync_service import (
+    sync_copy_target_positions,
+    sync_ctrader_account_positions_via_gateway,
+    sync_ctrader_deployment_via_gateway,
+    sync_deployment_broker_state,
+)
+from .live_event_bus import LiveEventBus, worker_identity
+from .deployment_lock import try_deployment_xact_lock
+
+logger = logging.getLogger(__name__)
+
+
+class LiveReconcileWorker:
+    def __init__(self, redis_client: Any):
+        self.bus = LiveEventBus(redis_client)
+        self.worker_id = worker_identity("live-reconcile")
+        self._stop = asyncio.Event()
+        self._semaphore = asyncio.Semaphore(max(1, int(settings.live_worker_concurrency)))
+        self._last_error: str | None = None
+        self._last_result: dict[str, Any] = {}
+        self._tl_next_poll: dict[str, float] = {}
+        self._tl_error_count: dict[str, int] = {}
+        self._invalid_ctrader_credentials = {}
+        self._manual_task: asyncio.Task | None = None
+
+    async def _copy_poll_relevant(self, db, deployment, broker) -> bool:
+        # Open copy positions remain managed even if the primary is flat. Idle
+        # accounts need no recurring pre-trade poll: entry always checks fresh.
+        positions = await db.execute(select(LivePosition.id).where(
+            LivePosition.deployment_id == deployment.id,
+            LivePosition.broker_account_id == broker.id,
+            LivePosition.status == 'OPEN').limit(1))
+        if positions.scalar_one_or_none() is not None:
+            return True
+        orders = await db.execute(select(LiveOrder.id).where(
+            LiveOrder.deployment_id == deployment.id,
+            LiveOrder.broker_account_id == broker.id,
+            LiveOrder.status.in_(('PENDING', 'SUBMITTED', 'PLACED', 'ACCEPTED', 'PENDING_DEMO'))).limit(1))
+        return orders.scalar_one_or_none() is not None
+
+    def _ctrader_poll_due(self, broker) -> bool:
+        fingerprint = hashlib.sha256(str(broker.encrypted_token or '').encode()).hexdigest()
+        if self._invalid_ctrader_credentials.get(str(broker.id)) == fingerprint:
+            return False
+        expiry = broker.token_expires_at
+        if expiry and expiry.replace(tzinfo=expiry.tzinfo or timezone.utc) <= datetime.now(timezone.utc):
+            self._invalid_ctrader_credentials[str(broker.id)] = fingerprint
+            logger.warning('CTRADER_RECONNECT_REQUIRED account=%s outcome=expired_session', broker.id)
+            return False
+        return True
+
+    async def _tradelocker_poll_due(self, account_id, *, urgent: bool = False) -> bool:
+        # Pending orders / open positions require more frequent reconciliation.
+        # Idle accounts should not repeatedly use broker reads every minute.
+        env_name = 'TRADELOCKER_BACKGROUND_ACTIVE_SYNC_SECONDS' if urgent else 'TRADELOCKER_BACKGROUND_IDLE_SYNC_SECONDS'
+        default = 60 if urgent else 120
+        try:
+            cadence = max(30, min(600, int(__import__('os').getenv(env_name, str(default)))))
+        except (ValueError, TypeError):
+            cadence = default
+        key = f'tradelocker:background-sync:{account_id}'
+        redis = redis_manager.client
+        if redis is not None:
+            # Shared broker cooldowns must block background polling, otherwise
+            # every deployment repeats the same HTTP 429 after 60 seconds.
+            if await redis.pttl('tradelocker:cooldown:demo') > 0 or await redis.pttl('tradelocker:cooldown:live') > 0:
+                return False
+            if await redis.pttl(f'tradelocker:background-backoff:{account_id}') > 0:
+                return False
+            return bool(await redis.set(key, '1', nx=True, ex=cadence))
+        now = time.monotonic()
+        if self._tl_next_poll.get(key, 0) > now:
+            return False
+        self._tl_next_poll[key] = now + cadence
+        return True
+
+    async def _tradelocker_sync_failed(self, account_id, exc: Exception) -> None:
+        key = str(account_id)
+        failures = min(5, self._tl_error_count.get(key, 0) + 1)
+        self._tl_error_count[key] = failures
+        backoff = min(600, 30 * (2 ** failures))
+        if redis_manager.client is not None:
+            try:
+                await redis_manager.client.set(f'tradelocker:background-backoff:{key}',
+                                               '1', ex=backoff)
+                return
+            except Exception:
+                pass
+        self._tl_next_poll[f'tradelocker:background-sync:{key}'] = time.monotonic() + backoff
+
+    async def _tradelocker_sync_succeeded(self, account_id) -> None:
+        self._tl_error_count.pop(str(account_id), None)
+        if redis_manager.client is not None:
+            try:
+                await redis_manager.client.delete(f'tradelocker:background-backoff:{account_id}')
+            except Exception:
+                pass
+
+    async def stop(self) -> None:
+        self._stop.set()
+
+    async def _manual_queue_loop(self) -> None:
+        """Poll manual intents independently from slow broker reconciliation cycles.
+
+        Keep execution serial and keep the existing expiry/idempotency guards:
+        this is only a faster *dispatcher*, never a second order pipeline.
+        """
+        import os
+        try:
+            interval_s = max(1.0, min(10.0, float(os.getenv('LIVE_MANUAL_QUEUE_POLL_SECONDS', '2'))))
+        except (ValueError, TypeError):
+            interval_s = 2.0
+        logger.info('MANUAL_SIGNAL_DISPATCHER_STARTED interval_s=%.1f', interval_s)
+        while not self._stop.is_set():
+            try:
+                await self._drain_one_manual_signal()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Database/Redis outages must not permanently disable dispatch.
+                # Signals remain RECEIVED and still expire if they become stale.
+                logger.exception('MANUAL_ORDER_WORKER_EXCEPTION')
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=interval_s)
+            except asyncio.TimeoutError:
+                pass
+
+    async def run(self) -> None:
+        health_task = asyncio.create_task(self._health_loop())
+        # One dedicated queue consumer in the EXISTING reconciliation service.
+        # A slow _run_cycle() can no longer delay the next claim by 30+ seconds.
+        self._manual_task = asyncio.create_task(self._manual_queue_loop())
+        try:
+            while not self._stop.is_set():
+                try:
+                    await self._run_cycle()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # DB/Redis/Docker DNS interruptions are recoverable.  The old
+                    # loop exited the whole worker on one failed cycle.
+                    self._last_error = str(exc)[:1000]
+                    logger.warning("Reconcile cycle temporarily failed: %s", exc)
+                try:
+                    await asyncio.wait_for(
+                        self._stop.wait(),
+                        timeout=max(5, int(settings.live_reconcile_interval_seconds)),
+                    )
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            if self._manual_task is not None:
+                # Shutdown cancels the task. A durable PROCESSING record will
+                # be left for broker reconciliation, never blind resubmission.
+                self._manual_task.cancel()
+                await asyncio.gather(self._manual_task, return_exceptions=True)
+            health_task.cancel()
+            await asyncio.gather(health_task, return_exceptions=True)
+
+    async def _drain_one_manual_signal(self) -> None:
+        """Claim one durable manual intent, then call the ORIGINAL execution path.
+
+        Compare-and-swap status is committed BEFORE broker requests. An abrupt
+        process exit cannot cause an unknown primary POST to be sent twice.
+        """
+        import os
+        from .execution_engine import execute_signal
+        max_age_s = max(20, min(180, int(os.getenv('LIVE_MANUAL_MAX_QUEUE_AGE_SECONDS', '90'))))
+        async with async_session() as db:
+            pending = (await db.execute(select(LiveSignal.id, LiveSignal.created_at).where(
+                LiveSignal.source == 'MANUAL',
+                LiveSignal.status == 'RECEIVED',
+            ).order_by(LiveSignal.created_at.asc()).limit(1))).first()
+            if pending is None:
+                return
+            signal_id, created_at = pending
+            now = datetime.now(timezone.utc)
+            age_s = (now - (created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc))).total_seconds()
+            new_status = 'REJECTED' if age_s > max_age_s else 'PROCESSING'
+            claimed = (await db.execute(update(LiveSignal).where(
+                LiveSignal.id == signal_id, LiveSignal.status == 'RECEIVED',
+            ).values(status=new_status,
+                     **({'rejection_reason': 'Manual request expired in queue before broker submission'}
+                        if new_status == 'REJECTED' else {})).returning(LiveSignal.id))).scalar_one_or_none()
+            await db.commit()
+            if claimed is None or new_status != 'PROCESSING':
+                if new_status == 'REJECTED':
+                    logger.warning('MANUAL_SIGNAL_QUEUE_EXPIRED signal=%s age_s=%.1f', signal_id, age_s)
+                return
+        try:
+            async with async_session() as db:
+                signal = (await db.execute(select(LiveSignal).where(LiveSignal.id == signal_id))).scalar_one()
+                deployment = (await db.execute(select(StrategyDeployment).where(
+                    StrategyDeployment.id == signal.deployment_id))).scalar_one()
+                if (str(deployment.status).upper() != 'RUNNING'
+                        or not deployment.auto_trade_enabled
+                        or str(deployment.mode).upper() not in {'DEMO', 'LIVE'}):
+                    signal.status = 'REJECTED'
+                    signal.rejection_reason = 'Deployment no longer eligible for live manual orders'
+                    await db.commit()
+                    return
+                logger.warning('MANUAL_SIGNAL_PIPELINE_STARTED deployment=%s signal=%s', deployment.id, signal_id)
+                await execute_signal(db, deployment, signal)
+                await db.commit()
+                logger.warning('MANUAL_SIGNAL_PIPELINE_COMPLETED deployment=%s signal=%s', deployment.id, signal_id)
+        except asyncio.CancelledError:
+            logger.error('MANUAL_SIGNAL_INTERRUPTED signal=%s broker_state_must_be_reconciled=true', signal_id)
+            raise
+        except Exception as exc:
+            logger.exception('MANUAL_SIGNAL_PIPELINE_ERROR signal=%s broker_outcome_may_be_unknown=true', signal_id)
+            # Never resend automatically. Even if the primary was committed,
+            # copies can still be picked up by their EXISTING durable intents.
+            async with async_session() as db:
+                await db.execute(update(LiveSignal).where(
+                    LiveSignal.id == signal_id,
+                    LiveSignal.status == 'PROCESSING',
+                ).values(status='ERROR', rejection_reason=(
+                    'Manual processing interrupted. Check primary/copy broker orders before retry: '
+                    + type(exc).__name__)))
+                await db.commit()
+
+    async def _run_cycle(self) -> None:
+        async with async_session() as db:
+            rows = (
+                await db.execute(
+                    select(StrategyDeployment.id, BrokerAccount)
+                    .join(BrokerAccount, BrokerAccount.id == StrategyDeployment.broker_account_id)
+                    .where(
+                        StrategyDeployment.status == "RUNNING",
+                        StrategyDeployment.broker_account_id.is_not(None),
+                        BrokerAccount.status == "CONNECTED",
+                    )
+                )
+            ).all()
+        tasks = [
+            asyncio.create_task(self._sync_one(deployment_id, get_broker_code(broker), broker.id))
+            for deployment_id, broker in rows
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        errors = [str(result) for result in results if isinstance(result, Exception)]
+        self._last_error = errors[-1] if errors else None
+        self._last_result = {
+            "checked": len(rows),
+            "synced": len(rows) - len(errors),
+            "errors": errors[:20],
+        }
+
+    async def _sync_one(self, deployment_id: Any, broker_code: str, primary_account_id: Any = None) -> dict[str, Any]:
+        async with self._semaphore:
+            # 1) Primary account keeps the existing reconciliation path.
+            async with async_session() as db:
+                if not await try_deployment_xact_lock(db, deployment_id):
+                    await db.rollback()
+                    return {
+                        "success": True,
+                        "deployment_id": str(deployment_id),
+                        "synced": False,
+                        "skipped": "DEPLOYMENT_BUSY",
+                    }
+                try:
+                    if broker_code in {"CTRADER", "CTRADER_API"} and settings.ctrader_persistent_connection_enabled:
+                        primary = await sync_ctrader_deployment_via_gateway(db, deployment_id)
+                    elif broker_code == 'TRADELOCKER' and not await self._tradelocker_poll_due(
+                        primary_account_id or f'primary:{deployment_id}', urgent=bool(
+                            (await db.execute(select(LiveOrder.id).where(
+                                LiveOrder.deployment_id == deployment_id,
+                                LiveOrder.broker_account_id == primary_account_id,
+                                LiveOrder.status.in_(('PENDING', 'PLACED', 'SUBMITTED', 'ACCEPTED', 'PENDING_DEMO'))
+                            ).limit(1))).scalar_one_or_none()
+                            or (await db.execute(select(LivePosition.id).where(
+                                LivePosition.deployment_id == deployment_id,
+                                LivePosition.broker_account_id == primary_account_id,
+                                LivePosition.status == 'OPEN'
+                            ).limit(1))).scalar_one_or_none()
+                        )):
+                        primary = {'synced': False, 'skipped': 'BACKGROUND_CADENCE'}
+                    else:
+                        primary = await sync_deployment_broker_state(db, deployment_id)
+                        if broker_code == 'TRADELOCKER':
+                            await self._tradelocker_sync_succeeded(primary_account_id)
+                except Exception as exc:
+                    if broker_code == 'TRADELOCKER':
+                        await self._tradelocker_sync_failed(primary_account_id, exc)
+                    await db.rollback()
+                    primary = {'synced': False, 'error_type': type(exc).__name__}
+                    logger.warning('Primary reconciliation failed deployment=%s type=%s; copies remain independent', deployment_id, type(exc).__name__)
+
+            # Broker-verified fills may arrive after the original signal runner
+            # finishes. Process only durable, recent, marked copy intents.
+            if broker_code == 'TRADELOCKER' and primary.get('synced', True) is not False:
+                try:
+                    from .execution_engine import dispatch_confirmed_copy_orders
+                    primary['deferred_copy'] = await dispatch_confirmed_copy_orders(deployment_id)
+                except Exception as exc:
+                    logger.warning('Deferred copy reconcile failed deployment=%s type=%s',
+                                   deployment_id, type(exc).__name__)
+                    primary['deferred_copy_error_type'] = type(exc).__name__
+
+            # 2) Copy accounts are reconciled independently AFTER primary truth is
+            # safely committed. This is essential for asynchronous MT5 copies:
+            # the MT5 entry command may fill at the terminal after execute_signal
+            # returns, so only broker reconciliation can create its LivePosition.
+            copy_results: list[dict[str, Any]] = []
+            async with async_session() as db:
+                if not await try_deployment_xact_lock(db, deployment_id):
+                    await db.rollback()
+                    return {**primary, "copy_accounts": copy_results, "copy_sync_skipped": "DEPLOYMENT_BUSY"}
+
+                deployment = (await db.execute(
+                    select(StrategyDeployment).where(StrategyDeployment.id == deployment_id)
+                )).scalar_one_or_none()
+                if deployment is None:
+                    return {**primary, "copy_accounts": copy_results}
+
+                copy_enabled = bool(
+                    settings.live_copy_trading_enabled
+                    and bool(getattr(deployment, "copy_trading_enabled", False))
+                    and str(getattr(deployment, "account_policy_type", "STANDARD") or "STANDARD").upper() == "STANDARD"
+                )
+                raw_ids = list(getattr(deployment, "copy_broker_account_ids", None) or []) if copy_enabled else []
+                # Disabling/deselecting future copies must not abandon existing
+                # copy exposure or uncertain acknowledgements.
+                for model, statuses in ((LivePosition, ('OPEN',)),
+                                        (LiveOrder, ('PENDING', 'SUBMITTED', 'PLACED', 'ACCEPTED', 'PENDING_DEMO'))):
+                    active_ids = (await db.execute(select(model.broker_account_id).where(
+                        model.deployment_id == deployment.id, model.status.in_(statuses),
+                        model.broker_account_id.is_not(None)).distinct())).scalars().all()
+                    raw_ids.extend(active_ids)
+                seen = {str(deployment.broker_account_id)} if deployment.broker_account_id else set()
+                for raw_id in raw_ids:
+                    if not raw_id or str(raw_id) in seen:
+                        continue
+                    seen.add(str(raw_id))
+                    broker = (await db.execute(
+                        select(BrokerAccount).where(
+                            BrokerAccount.id == raw_id,
+                            BrokerAccount.user_id == deployment.user_id,
+                        )
+                    )).scalar_one_or_none()
+                    if broker is None or str(broker.status or "").upper() != "CONNECTED":
+                        copy_results.append({"broker_account_id": str(raw_id), "synced": False, "skipped": "DISCONNECTED"})
+                        continue
+                    if str(getattr(broker, "mode", "") or "").upper() != str(getattr(deployment, "mode", "") or "").upper():
+                        copy_results.append({"broker_account_id": str(raw_id), "synced": False, "skipped": "MODE_MISMATCH"})
+                        continue
+
+                    try:
+                        code = get_broker_code(broker)
+                        if code in {'CTRADER', 'CTRADER_API'} and not self._ctrader_poll_due(broker):
+                            copy_results.append({'broker_account_id': str(broker.id), 'synced': False, 'skipped': 'RECONNECT_REQUIRED'})
+                            continue
+                        if code == 'TRADELOCKER' and not await self._copy_poll_relevant(db, deployment, broker):
+                            copy_results.append({'broker_account_id': str(broker.id), 'synced': False, 'skipped': 'NO_OPEN_OR_PENDING_EXPOSURE'})
+                            continue
+                        if code == 'TRADELOCKER' and not await self._tradelocker_poll_due(broker.id, urgent=True):
+                            copy_results.append({'broker_account_id': str(broker.id), 'synced': False, 'skipped': 'BACKGROUND_CADENCE'})
+                            continue
+                        if code in {"CTRADER", "CTRADER_API"} and settings.ctrader_persistent_connection_enabled:
+                            result = await sync_ctrader_account_positions_via_gateway(db, deployment, broker.id)
+                        else:
+                            snapshot = {c.name: getattr(deployment, c.name) for c in StrategyDeployment.__table__.columns}
+                            proxy = SimpleNamespace(**snapshot)
+                            proxy.broker_account_id = broker.id
+                            audit_token = broker_read_context.set({'deployment_id': str(deployment_id)})
+                            try:
+                                result = await sync_copy_target_positions(
+                                    db, proxy, reconcile_full_exits=(code == "TRADELOCKER"), refresh_financials=False)
+                            finally:
+                                broker_read_context.reset(audit_token)
+                        copy_results.append({"broker_account_id": str(broker.id), "synced": True, **result})
+                        if code == 'TRADELOCKER':
+                            await self._tradelocker_sync_succeeded(broker.id)
+                    except Exception as exc:
+                        from ..brokers.auth_failure_guard import invalid_token_error
+                        if code in {'CTRADER', 'CTRADER_API'} and invalid_token_error(exc):
+                            self._invalid_ctrader_credentials[str(broker.id)] = hashlib.sha256(str(broker.encrypted_token or '').encode()).hexdigest()
+                        if code == 'TRADELOCKER':
+                            await self._tradelocker_sync_failed(broker.id, exc)
+                        logger.warning("Copy-account reconcile failed deployment=%s account=%s: %s", deployment_id, raw_id, exc)
+                        copy_results.append({"broker_account_id": str(raw_id), "synced": False, "error": str(exc)})
+
+                await db.commit()
+
+            return {**primary, "copy_accounts": copy_results}
+
+    async def _health_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                await self.bus.heartbeat(
+                    "live_reconcile_worker",
+                    self.worker_id,
+                    {
+                        "status": "DEGRADED" if self._last_error else "HEALTHY",
+                        "last_error": self._last_error,
+                        "last_result": self._last_result,
+                    },
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Reconcile-worker heartbeat temporarily failed: %s", exc)
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                pass
+
+
+async def main() -> None:
+    from ...core.logging_config import configure_logging
+    configure_logging()
+    if not (settings.live_event_pipeline_enabled and settings.live_reconcile_worker_enabled):
+        logger.warning("Live reconcile worker is idle because its feature flags are disabled")
+        while True:
+            await asyncio.sleep(3600)
+    if not await redis_manager.initialize():
+        raise RuntimeError("Redis is required by live_reconcile_worker")
+    worker = LiveReconcileWorker(redis_manager.client)
+    loop = asyncio.get_running_loop()
+    for signame in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(signame, lambda: asyncio.create_task(worker.stop()))
+        except NotImplementedError:
+            pass
+    try:
+        await worker.run()
+    finally:
+        await redis_manager.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -662,17 +662,26 @@ class LiveEquityPointOut(LiveBaseModel):
 
 
 class ManualDeploymentSignalIn(LiveBaseModel):
+    # Manual order verification submits real broker orders through execute_signal.
+    # No HOLD/EXIT, no implicit SL/TP, no silent test-mode fallback.
     signal_type: Optional[str] = None
     signal: Optional[str] = None
-    price: Decimal
-    reason: Optional[str] = "Manual signal test"
-    candle_time: Optional[datetime] = None
+    price: Decimal = Field(gt=0)
+    stop_loss: Decimal = Field(gt=0)
+    target: Decimal = Field(gt=0)
+    request_id: UUID
+    confirmation: str
+    reason: Optional[str] = "Manual broker execution verification"
 
     @model_validator(mode="after")
     def normalize_signal_field(self):
         value = _upper(self.signal_type or self.signal)
-        if value not in SIGNAL_TYPES:
-            raise ValueError(f"Invalid signal. Allowed: {sorted(SIGNAL_TYPES)}")
+        if value not in {"BUY", "SELL"}:
+            raise ValueError("Manual entry must be BUY or SELL")
+        if value == "BUY" and not (self.stop_loss < self.price < self.target):
+            raise ValueError("BUY requires stop_loss < entry < target")
+        if value == "SELL" and not (self.target < self.price < self.stop_loss):
+            raise ValueError("SELL requires target < entry < stop_loss")
         self.signal_type = value
         self.signal = value
         return self

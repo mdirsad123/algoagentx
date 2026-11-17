@@ -7,15 +7,15 @@ import logging
 import signal
 import time
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, update, func
 
 from ...core.config import settings
 from ...core.redis_manager import redis_manager
-from ...db.models import BrokerAccount, StrategyDeployment, LiveOrder, LivePosition
+from ...db.models import BrokerAccount, StrategyDeployment, LiveOrder, LivePosition, LiveSignal, LiveTradeLog
 from ..brokers.request_context import broker_read_context
 from ...db.session import async_session
 from ..brokers.factory import get_broker_code
@@ -42,6 +42,7 @@ class LiveReconcileWorker:
         self._tl_next_poll: dict[str, float] = {}
         self._tl_error_count: dict[str, int] = {}
         self._invalid_ctrader_credentials = {}
+        self._manual_task: asyncio.Task | None = None
 
     async def _copy_poll_relevant(self, db, deployment, broker) -> bool:
         # Open copy positions remain managed even if the primary is flat. Idle
@@ -69,7 +70,15 @@ class LiveReconcileWorker:
             return False
         return True
 
-    async def _tradelocker_poll_due(self, account_id) -> bool:
+    async def _tradelocker_poll_due(self, account_id, *, urgent: bool = False) -> bool:
+        # Pending orders / open positions require more frequent reconciliation.
+        # Idle accounts should not repeatedly use broker reads every minute.
+        env_name = 'TRADELOCKER_BACKGROUND_ACTIVE_SYNC_SECONDS' if urgent else 'TRADELOCKER_BACKGROUND_IDLE_SYNC_SECONDS'
+        default = 60 if urgent else 120
+        try:
+            cadence = max(30, min(600, int(__import__('os').getenv(env_name, str(default)))))
+        except (ValueError, TypeError):
+            cadence = default
         key = f'tradelocker:background-sync:{account_id}'
         redis = redis_manager.client
         if redis is not None:
@@ -79,11 +88,11 @@ class LiveReconcileWorker:
                 return False
             if await redis.pttl(f'tradelocker:background-backoff:{account_id}') > 0:
                 return False
-            return bool(await redis.set(key, '1', nx=True, ex=60))
+            return bool(await redis.set(key, '1', nx=True, ex=cadence))
         now = time.monotonic()
         if self._tl_next_poll.get(key, 0) > now:
             return False
-        self._tl_next_poll[key] = now + 60
+        self._tl_next_poll[key] = now + cadence
         return True
 
     async def _tradelocker_sync_failed(self, account_id, exc: Exception) -> None:
@@ -111,8 +120,37 @@ class LiveReconcileWorker:
     async def stop(self) -> None:
         self._stop.set()
 
+    async def _manual_queue_loop(self) -> None:
+        """Poll manual intents independently from slow broker reconciliation cycles.
+
+        Keep execution serial and keep the existing expiry/idempotency guards:
+        this is only a faster *dispatcher*, never a second order pipeline.
+        """
+        import os
+        try:
+            interval_s = max(1.0, min(10.0, float(os.getenv('LIVE_MANUAL_QUEUE_POLL_SECONDS', '2'))))
+        except (ValueError, TypeError):
+            interval_s = 2.0
+        logger.info('MANUAL_SIGNAL_DISPATCHER_STARTED interval_s=%.1f', interval_s)
+        while not self._stop.is_set():
+            try:
+                await self._drain_one_manual_signal()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Database/Redis outages must not permanently disable dispatch.
+                # Signals remain RECEIVED and still expire if they become stale.
+                logger.exception('MANUAL_ORDER_WORKER_EXCEPTION')
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=interval_s)
+            except asyncio.TimeoutError:
+                pass
+
     async def run(self) -> None:
         health_task = asyncio.create_task(self._health_loop())
+        # One dedicated queue consumer in the EXISTING reconciliation service.
+        # A slow _run_cycle() can no longer delay the next claim by 30+ seconds.
+        self._manual_task = asyncio.create_task(self._manual_queue_loop())
         try:
             while not self._stop.is_set():
                 try:
@@ -132,8 +170,80 @@ class LiveReconcileWorker:
                 except asyncio.TimeoutError:
                     pass
         finally:
+            if self._manual_task is not None:
+                # Shutdown cancels the task. A durable PROCESSING record will
+                # be left for broker reconciliation, never blind resubmission.
+                self._manual_task.cancel()
+                await asyncio.gather(self._manual_task, return_exceptions=True)
             health_task.cancel()
             await asyncio.gather(health_task, return_exceptions=True)
+
+    async def _drain_one_manual_signal(self) -> None:
+        """Claim one durable manual intent, then call the ORIGINAL execution path.
+
+        Compare-and-swap status is committed BEFORE broker requests. An abrupt
+        process exit cannot cause an unknown primary POST to be sent twice.
+        """
+        import os
+        from .execution_engine import execute_signal
+        max_age_s = max(20, min(180, int(os.getenv('LIVE_MANUAL_MAX_QUEUE_AGE_SECONDS', '90'))))
+        async with async_session() as db:
+            pending = (await db.execute(select(LiveSignal.id, LiveSignal.created_at).where(
+                LiveSignal.source == 'MANUAL',
+                LiveSignal.status == 'RECEIVED',
+            ).order_by(LiveSignal.created_at.asc()).limit(1))).first()
+            if pending is None:
+                return
+            signal_id, created_at = pending
+            now = datetime.now(timezone.utc)
+            age_s = (now - (created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc))).total_seconds()
+            new_status = 'REJECTED' if age_s > max_age_s else 'PROCESSING'
+            claimed = (await db.execute(update(LiveSignal).where(
+                LiveSignal.id == signal_id, LiveSignal.status == 'RECEIVED',
+            ).values(status=new_status,
+                     **({'rejection_reason': 'Manual request expired in queue before broker submission'}
+                        if new_status == 'REJECTED' else {})).returning(LiveSignal.id))).scalar_one_or_none()
+            await db.commit()
+            if claimed is None or new_status != 'PROCESSING':
+                if new_status == 'REJECTED':
+                    logger.warning('MANUAL_SIGNAL_QUEUE_EXPIRED signal=%s age_s=%.1f', signal_id, age_s)
+                return
+        try:
+            async with async_session() as db:
+                signal = (await db.execute(select(LiveSignal).where(LiveSignal.id == signal_id))).scalar_one()
+                deployment = (await db.execute(select(StrategyDeployment).where(
+                    StrategyDeployment.id == signal.deployment_id))).scalar_one()
+                if (str(deployment.status).upper() != 'RUNNING'
+                        or not deployment.auto_trade_enabled
+                        or str(deployment.mode).upper() not in {'DEMO', 'LIVE'}):
+                    signal.status = 'REJECTED'
+                    signal.rejection_reason = 'Deployment no longer eligible for live manual orders'
+                    await db.commit()
+                    return
+                # ORM objects may expire after execute_signal()/commit().
+                # Capture the immutable ID before any broker or DB awaits so a
+                # successful order cannot be reported as a pipeline failure by
+                # a post-commit logging-only MissingGreenlet.
+                deployment_id_for_log = str(deployment.id)
+                logger.warning('MANUAL_SIGNAL_PIPELINE_STARTED deployment=%s signal=%s', deployment_id_for_log, signal_id)
+                await execute_signal(db, deployment, signal)
+                await db.commit()
+                logger.warning('MANUAL_SIGNAL_PIPELINE_COMPLETED deployment=%s signal=%s', deployment_id_for_log, signal_id)
+        except asyncio.CancelledError:
+            logger.error('MANUAL_SIGNAL_INTERRUPTED signal=%s broker_state_must_be_reconciled=true', signal_id)
+            raise
+        except Exception as exc:
+            logger.exception('MANUAL_SIGNAL_PIPELINE_ERROR signal=%s broker_outcome_may_be_unknown=true', signal_id)
+            # Never resend automatically. Even if the primary was committed,
+            # copies can still be picked up by their EXISTING durable intents.
+            async with async_session() as db:
+                await db.execute(update(LiveSignal).where(
+                    LiveSignal.id == signal_id,
+                    LiveSignal.status == 'PROCESSING',
+                ).values(status='ERROR', rejection_reason=(
+                    'Manual processing interrupted. Check primary/copy broker orders before retry: '
+                    + type(exc).__name__)))
+                await db.commit()
 
     async def _run_cycle(self) -> None:
         async with async_session() as db:
@@ -176,7 +286,19 @@ class LiveReconcileWorker:
                 try:
                     if broker_code in {"CTRADER", "CTRADER_API"} and settings.ctrader_persistent_connection_enabled:
                         primary = await sync_ctrader_deployment_via_gateway(db, deployment_id)
-                    elif broker_code == 'TRADELOCKER' and not await self._tradelocker_poll_due(primary_account_id or f'primary:{deployment_id}'):
+                    elif broker_code == 'TRADELOCKER' and not await self._tradelocker_poll_due(
+                        primary_account_id or f'primary:{deployment_id}', urgent=bool(
+                            (await db.execute(select(LiveOrder.id).where(
+                                LiveOrder.deployment_id == deployment_id,
+                                LiveOrder.broker_account_id == primary_account_id,
+                                LiveOrder.status.in_(('PENDING', 'PLACED', 'SUBMITTED', 'ACCEPTED', 'PENDING_DEMO'))
+                            ).limit(1))).scalar_one_or_none()
+                            or (await db.execute(select(LivePosition.id).where(
+                                LivePosition.deployment_id == deployment_id,
+                                LivePosition.broker_account_id == primary_account_id,
+                                LivePosition.status == 'OPEN'
+                            ).limit(1))).scalar_one_or_none()
+                        )):
                         primary = {'synced': False, 'skipped': 'BACKGROUND_CADENCE'}
                     else:
                         primary = await sync_deployment_broker_state(db, deployment_id)
@@ -256,7 +378,7 @@ class LiveReconcileWorker:
                         if code == 'TRADELOCKER' and not await self._copy_poll_relevant(db, deployment, broker):
                             copy_results.append({'broker_account_id': str(broker.id), 'synced': False, 'skipped': 'NO_OPEN_OR_PENDING_EXPOSURE'})
                             continue
-                        if code == 'TRADELOCKER' and not await self._tradelocker_poll_due(broker.id):
+                        if code == 'TRADELOCKER' and not await self._tradelocker_poll_due(broker.id, urgent=True):
                             copy_results.append({'broker_account_id': str(broker.id), 'synced': False, 'skipped': 'BACKGROUND_CADENCE'})
                             continue
                         if code in {"CTRADER", "CTRADER_API"} and settings.ctrader_persistent_connection_enabled:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import hashlib
 import secrets
 import asyncio
 import json
@@ -12,7 +14,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import settings
@@ -1981,60 +1983,157 @@ async def get_deployment_live_sync_status(deployment_id: UUID, db: AsyncSession 
         "platform_auto_sync_enabled": bool(getattr(settings, "broker_auto_sync_enabled", True)),
     })
 
+def _manual_order_enabled() -> bool:
+    # Explicit operational opt-in. Never activate actual broker orders by simply
+    # deploying this code. DEMO means actual TradeLocker demo orders, not mocks.
+    return os.environ.get('LIVE_MANUAL_ORDER_TEST_ENABLED', 'false').strip().lower() == 'true'
+
+
+@router.get("/{deployment_id}/manual-signal/status")
+async def manual_signal_status(deployment_id: UUID, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    row = await get_deployment_or_404(db, deployment_id, current_user)
+    return success_response({
+        'enabled': _manual_order_enabled(),
+        'mode': row.mode,
+        'running': row.status == 'RUNNING',
+        'auto_trade_enabled': bool(row.auto_trade_enabled),
+        'copy_trading_enabled': bool(row.copy_trading_enabled and settings.live_copy_trading_enabled),
+        'copy_account_count': len(row.copy_broker_account_ids or []) if row.copy_trading_enabled else 0,
+    })
+
+
 @router.post("/{deployment_id}/manual-signal")
 async def create_deployment_manual_signal(deployment_id: UUID, payload: ManualDeploymentSignalIn, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     await require_active_subscription_for_live_trading(db, user_id_from(current_user))
     row = await get_deployment_or_404(db, deployment_id, current_user)
-    signal_type = payload.signal_type
-    side = "LONG" if signal_type == "BUY" else "SHORT" if signal_type == "SELL" else None
+    if not _manual_order_enabled():
+        raise HTTPException(status_code=403, detail='Manual broker execution is disabled. Set LIVE_MANUAL_ORDER_TEST_ENABLED=true on the API service.')
+    mode = str(row.mode or '').upper()
+    if mode not in {'DEMO', 'LIVE'}:
+        raise HTTPException(status_code=400, detail='Manual order verification requires a real connected DEMO or LIVE broker. PAPER/mock is forbidden.')
+    expected = 'PLACE DEMO ORDER' if mode == 'DEMO' else 'PLACE LIVE ORDER'
+    if payload.confirmation != expected:
+        raise HTTPException(status_code=400, detail=f'Type {expected} to confirm actual broker order submission.')
+    if row.status != 'RUNNING' or not row.auto_trade_enabled:
+        raise HTTPException(status_code=409, detail='Deployment must be RUNNING with Auto Trade enabled. No signal was submitted.')
+    if not row.broker_account_id:
+        raise HTTPException(status_code=409, detail='Connect a primary broker account before submitting manual orders.')
+    broker = (await db.execute(select(BrokerAccount).where(
+        BrokerAccount.id == row.broker_account_id, BrokerAccount.user_id == row.user_id,
+    ))).scalar_one_or_none()
+    if broker is None or broker.status != 'CONNECTED' or str(broker.mode).upper() != mode:
+        raise HTTPException(status_code=409, detail='Primary account is disconnected or has a DEMO/LIVE environment mismatch.')
+
+    # Serialise concurrent/manual double-clicks on this deployment and reject
+    # reuse of the same request UUID (including browser timeouts/retries).
+    lock_key = int.from_bytes(hashlib.sha256(f'manual:{deployment_id}'.encode()).digest()[:8], 'big', signed=True)
+    acquired = (await db.execute(text('SELECT pg_try_advisory_xact_lock(:key)'), {'key': lock_key})).scalar_one()
+    if not acquired:
+        raise HTTPException(status_code=409, detail='Another manual order request is in progress for this deployment.')
+    prior = (await db.execute(select(LiveSignal.id).where(
+        LiveSignal.deployment_id == deployment_id,
+        LiveSignal.source == 'MANUAL',
+        LiveSignal.raw_payload['manual_request_id'].astext == str(payload.request_id),
+    ).limit(1))).scalar_one_or_none()
+    if prior is not None:
+        raise HTTPException(status_code=409, detail='This manual request ID was already recorded. Check orders before trying again.')
+
     now = datetime.now(timezone.utc)
     signal = LiveSignal(
         deployment_id=row.id,
         user_id=row.user_id,
         strategy_id=row.strategy_id,
-        source="MANUAL",
+        source='MANUAL',
         symbol=row.instrument,
         timeframe=row.timeframe,
-        signal_type=signal_type,
-        side=side,
+        signal_type=payload.signal_type,
+        side='LONG' if payload.signal_type == 'BUY' else 'SHORT',
         price=payload.price,
-        candle_time=payload.candle_time or now,
+        # Distinct real-time event; never replay a historical strategy candle.
+        candle_time=now,
         confidence=None,
-        reason=payload.reason or "Manual signal test",
-        raw_payload={"source": "manual-signal-panel", "price": str(payload.price), "signal_type": signal_type},
-        status="RECEIVED",
+        reason=payload.reason or 'Manual broker execution verification',
+        raw_payload={
+            'source': 'manual-live-order-verification',
+            'manual_request_id': str(payload.request_id),
+            'manual_confirmation_mode': mode,
+            'strategy_stop_loss': str(payload.stop_loss),
+            'strategy_target': str(payload.target),
+            'price': str(payload.price),
+            'signal_type': payload.signal_type,
+        },
+        status='RECEIVED',
     )
     row.last_signal_at = now
     db.add(signal)
     await db.flush()
-    await _write_log(db, row, "SIGNAL_RECEIVED", f"Manual {signal_type} signal received", metadata={"signal_id": str(signal.id), "price": str(payload.price)})
+    await _write_log(db, row, 'MANUAL_ORDER_VERIFICATION_REQUESTED',
+                     f'Manual {payload.signal_type} {mode} broker execution requested',
+                     metadata={'signal_id': str(signal.id), 'manual_request_id': str(payload.request_id),
+                               'price': str(payload.price), 'stop_loss': str(payload.stop_loss),
+                               'target': str(payload.target), 'copy_enabled': bool(row.copy_trading_enabled)})
 
-    latest_order = None
-    message = "Signal saved"
-    if row.status != "RUNNING":
-        signal.status = "REJECTED"
-        signal.rejection_reason = f"Deployment is {row.status}"
-        message = signal.rejection_reason
-        await _write_log(db, row, "RISK_REJECTED", message, "WARNING", {"signal_id": str(signal.id)})
-    elif not row.auto_trade_enabled:
-        signal.status = "ACCEPTED"
-        message = "Auto trade is disabled; signal saved without execution"
-        await _write_log(db, row, "EXECUTION_SKIPPED", message, metadata={"signal_id": str(signal.id)})
-    else:
-        latest_order = await execute_signal(db, row, signal)
-        message = signal.rejection_reason or ("Signal executed" if signal.status == "EXECUTED" else f"Signal {signal.status.lower()}")
-
+    # Persist the intent BEFORE any broker call. The existing reconciliation
+    # service claims it atomically and invokes the SAME execute_signal() used
+    # by strategy-generated signals. The HTTP request must not wait for three
+    # slow copy accounts and report a false failure after the primary fills.
+    # Once claimed, an interrupted request is not automatically replayed:
+    # broker reconciliation/operator review must resolve an uncertain outcome.
     await db.commit()
     await db.refresh(signal)
-    if latest_order is not None:
-        await db.refresh(latest_order)
     return success_response({
-        "signal": dump_one(LiveSignalOut, signal),
-        "order": dump_one(LiveOrderOut, latest_order) if latest_order else None,
-        "message": message,
-        "status": signal.status,
-    }, message)
+        'signal': dump_one(LiveSignalOut, signal),
+        'order': None,
+        'message': 'Manual broker order queued for the existing live execution pipeline. Do NOT resubmit; monitor primary and copy orders.',
+        'status': 'QUEUED',
+        'request_id': str(payload.request_id),
+    }, 'Manual broker order queued')
 
+
+@router.get("/{deployment_id}/manual-signal/requests/{request_id}")
+async def manual_signal_request_status(deployment_id: UUID, request_id: UUID,
+                                       db: AsyncSession = Depends(get_db),
+                                       current_user: dict = Depends(get_current_user)):
+    deployment = await get_deployment_or_404(db, deployment_id, current_user)
+    signal = (await db.execute(select(LiveSignal).where(
+        LiveSignal.deployment_id == deployment_id,
+        LiveSignal.source == 'MANUAL',
+        LiveSignal.raw_payload['manual_request_id'].astext == str(request_id),
+    ))).scalar_one_or_none()
+    if signal is None:
+        raise HTTPException(status_code=404, detail='Manual request not found')
+    primary_order = (await db.execute(select(LiveOrder).where(
+        LiveOrder.signal_id == signal.id,
+        LiveOrder.broker_account_id == (await db.execute(select(StrategyDeployment.broker_account_id).where(
+            StrategyDeployment.id == deployment_id))).scalar_one_or_none(),
+    ).order_by(LiveOrder.created_at.desc()).limit(1))).scalar_one_or_none()
+    # Display the result for EACH selected account. A successful primary is
+    # not an all-copies-success acknowledgement. Missing rows are explicitly
+    # NOT_RECORDED, not falsely reported as a successful copy execution.
+    copies = [str(item) for item in (deployment.copy_broker_account_ids or [])
+              if str(item) != str(deployment.broker_account_id)] if deployment.copy_trading_enabled else []
+    copy_orders = (await db.execute(select(LiveOrder).where(
+        LiveOrder.deployment_id == deployment_id, LiveOrder.signal_id == signal.id,
+    ).order_by(LiveOrder.created_at.desc()))).scalars().all()
+    latest_by_account = {}
+    for order in copy_orders:
+        latest_by_account.setdefault(str(order.broker_account_id), order)
+    copy_results = [
+        {'account_id': account_id,
+         'status': latest_by_account[account_id].status if account_id in latest_by_account else 'NOT_RECORDED',
+         'broker_order_id': latest_by_account[account_id].broker_order_id if account_id in latest_by_account else None,
+         'error': (latest_by_account[account_id].error_message or '')[:220] if account_id in latest_by_account else None}
+        for account_id in copies
+    ]
+    return success_response({
+        'request_id': str(request_id), 'signal_id': str(signal.id),
+        'status': signal.status, 'rejection_reason': signal.rejection_reason,
+        'primary_order_status': primary_order.status if primary_order else None,
+        'primary_order_id': str(primary_order.id) if primary_order else None,
+        'copy_results': copy_results,
+        'copy_filled': sum(item['status'] in {'FILLED', 'RECONCILED'} for item in copy_results),
+        'copy_expected': len(copy_results),
+    })
 
 
 @router.get("/{deployment_id}/final-qa")

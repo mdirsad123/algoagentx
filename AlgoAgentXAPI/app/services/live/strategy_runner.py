@@ -508,6 +508,8 @@ async def run_strategy_for_deployment(
     event_context: dict[str, Any] | None = None,
     suppress_broker_order_for_catchup: bool = False,
     allow_demo_gap_reseed: bool = False,
+    recovery_calendar: dict[str, Any] | None = None,
+    recovery_expected_cursor: datetime | None = None,
 ) -> dict[str, Any]:
     deployment = (await db.execute(select(StrategyDeployment).where(
         StrategyDeployment.id == deployment_id).execution_options(populate_existing=True))).scalar_one_or_none()
@@ -547,6 +549,27 @@ async def run_strategy_for_deployment(
         # Reload after the lock: another runner may have committed since the
         # scheduler loaded this identity-map object. Never evaluate an old cursor.
         await db.refresh(deployment)
+        recovery_opens = None
+        if allow_demo_gap_reseed:
+            # Recheck authoritative rows AFTER the existing deployment lock.
+            # A boolean flag alone is never permission to jump over history.
+            from .verified_recovery import validate_recovery_candles
+            from ...db.models import LiveMarketCandle
+            cursor = ensure_utc(deployment.last_processed_candle_time)
+            if (not recovery_calendar or cursor != recovery_expected_cursor
+                    or candle_time is None or not suppress_broker_order_for_catchup):
+                return {'success': False, 'final_action': 'HOLD_RECOVERY_EVIDENCE_MISMATCH'}
+            rows = (await db.execute(select(LiveMarketCandle).where(
+                LiveMarketCandle.deployment_id == deployment_id,
+                LiveMarketCandle.timeframe == deployment.timeframe,
+                LiveMarketCandle.candle_time > cursor,
+                LiveMarketCandle.candle_time <= candle_time,
+            ).order_by(LiveMarketCandle.candle_time))).scalars().all()
+            recovery_opens = validate_recovery_candles(
+                candles=[{k: getattr(row, k) for k in
+                          ('candle_time', 'open', 'high', 'low', 'close', 'volume', 'source', 'is_closed')}
+                         for row in rows], cursor=cursor, target=ensure_utc(candle_time),
+                calendar=recovery_calendar, now=datetime.now(timezone.utc))
         if candle_time is not None and execute:
             cursor = ensure_utc(getattr(deployment, 'last_processed_candle_time', None))
             requested = ensure_utc(candle_time)
@@ -624,14 +647,17 @@ async def run_strategy_for_deployment(
             global_enabled=bool(getattr(settings, "live_incremental_enabled", False)),
         )
         if allow_demo_gap_reseed:
-            # A cold 80K calculation from the actual latest stored candles is
-            # mandatory; skip/trade-from-old-state is NOT an acceptable recovery.
-            # This is intentionally scoped to the audited NAS100 adapter.
-            if not (mode == 'DEMO' and suppress_broker_order_for_catchup
-                    and bool(getattr(settings, 'live_runner_demo_observed_gap_resume_enabled', False))
-                    and hybrid_selected and adapter.adapter_id == 'nas100_v48_native_v1'):
+            # Only exact-source, registered, DEMO adapters can perform a
+            # cold recovery. A broker-session verification is required by the
+            # OUTER queued recovery task; this gate separately validates source
+            # identity/capability. Neither check alone grants order permission.
+            from .gap_reseed_capability import approved_for_gap_reseed
+            if not approved_for_gap_reseed(
+                    selection=adapter, source_code=str(strategy_params.get('source_code') or ''),
+                    mode=mode, suppressed=suppress_broker_order_for_catchup,
+                    enabled=bool(getattr(settings, 'live_runner_demo_observed_gap_resume_enabled', False))):
                 detail = {'error_code': 'GAP_RESEED_ADAPTER_NOT_APPROVED',
-                          'message': 'HOLD: Gap reseed requires audited NAS100 V4.8 DEMO adapter and order suppression'}
+                          'message': 'HOLD: Gap recovery requires registered exact-source DEMO incremental adapter and suppressed orders'}
                 await _log(db, deployment, 'RUNNER_GAP_RESEED_REJECTED', detail['message'], 'ERROR', detail)
                 await db.commit()
                 return {'success': False, 'executed': False, 'final_action': 'HOLD_GAP_RESEED_NOT_APPROVED', **detail}
@@ -917,6 +943,13 @@ async def run_strategy_for_deployment(
             timer = stage_clock.start("build_dataframe")
             canonical_candle(latest_candle)
             df = _candles_to_dataframe(candles)
+            if recovery_opens is not None:
+                # No truncation of the recovery interval by the rolling warmup
+                # limit. Full generate processes every REAL row in date order.
+                dates = tuple(ensure_utc(pd.Timestamp(t).to_pydatetime()) for t in df['Date'])
+                if (not dates or any(a >= b for a, b in zip(dates, dates[1:]))
+                        or tuple(t for t in dates if t > recovery_expected_cursor) != recovery_opens):
+                    raise ValueError('RECOVERY_HISTORY_TRUNCATED_OR_UNORDERED')
             stage_clock.stop("build_dataframe", timer, bars=len(df))
             history_bars_used = len(df)
             timer = stage_clock.start("strategy_class_init")
@@ -938,18 +971,18 @@ async def run_strategy_for_deployment(
                 # Never silently fall back to repeated 80K evaluation/orders
                 # after an explicitly selected NAS100 native state fails parity
                 # or initialization. HOLD with an actionable error instead.
-                if (hybrid_selected and adapter.adapter_id == 'nas100_v48_native_v1'
+                if (hybrid_selected and adapter.adapter_id in {'nas100_v48_native_v1', 'v932_hybrid_v1'}
                         and not primed):
-                    detail = {"error_code": "NAS100_INCREMENTAL_PRIME_FAILED",
-                              "message": "HOLD: NAS100 V4.8 incremental initialization/parity failed; inspect runner logs"}
-                    await _log(db, deployment, 'RUNNER_NAS100_INCREMENTAL_PRIME_FAILED',
+                    detail = {"error_code": "INCREMENTAL_PRIME_FAILED",
+                              "message": f"HOLD: {adapter.adapter_id} initialization/parity failed; inspect runner logs"}
+                    await _log(db, deployment, 'RUNNER_INCREMENTAL_PRIME_FAILED',
                                detail["message"], 'ERROR', detail)
                     await db.commit()
                     return {"success": False, "final_action": "HOLD_INCREMENTAL_PRIME_FAILED", **detail}
-            elif hybrid_selected and adapter.adapter_id == 'nas100_v48_native_v1':
-                detail = {"error_code": "NAS100_INCREMENTAL_GENERATE_INVALID",
-                          "message": "HOLD: NAS100 V4.8 full-history warmup produced no valid DataFrame"}
-                await _log(db, deployment, 'RUNNER_NAS100_INCREMENTAL_GENERATE_INVALID',
+            elif hybrid_selected and adapter.adapter_id in {'nas100_v48_native_v1', 'v932_hybrid_v1'}:
+                detail = {"error_code": "INCREMENTAL_GENERATE_INVALID",
+                          "message": f"HOLD: {adapter.adapter_id} full-history warmup produced no valid DataFrame"}
+                await _log(db, deployment, 'RUNNER_INCREMENTAL_GENERATE_INVALID',
                            detail["message"], 'ERROR', detail)
                 await db.commit()
                 return {"success": False, "final_action": "HOLD_INCREMENTAL_GENERATE_INVALID", **detail}
@@ -1004,6 +1037,33 @@ async def run_strategy_for_deployment(
                        time.perf_counter() - runner_total_started)
         if generated is None or not isinstance(generated, pd.DataFrame) or generated.empty:
             raise HTTPException(status_code=400, detail="Strategy did not return a valid DataFrame")
+        if recovery_opens is not None:
+            # Exit before signal persistence, preview, primary execution, copy
+            # fanout, or EXIT handling. Even the target signal is historical.
+            from .verified_recovery import validate_recovery_state
+            validate_recovery_state(generated=generated,
+                                    entry=retained_states._entries.get(state_id),
+                                    fingerprint=fingerprint, opens=recovery_opens,
+                                    previous=recovery_expected_cursor)
+            if getattr(strategy_class, 'LIVE_INCREMENTAL_NATIVE', False):
+                if not await stage_native_checkpoint(db, deployment_id=state_id, fingerprint=fingerprint,
+                                                     source_sha=source_code_sha256, candle_time=latest_candle_time):
+                    raise ValueError('RECOVERY_CHECKPOINT_NOT_PERSISTED')
+            _mark_candle_processed(deployment, latest_candle_time)
+            await _log(db, deployment, 'RUNNER_RECOVERY_VALIDATED',
+                       'Real-candle recovery validated; all historical orders suppressed', metadata={
+                           'cursor_before': recovery_expected_cursor.isoformat(),
+                           'cursor_after': latest_candle_time.isoformat(),
+                           'real_candles': len(recovery_opens), 'fingerprint': fingerprint,
+                           'historical_orders_suppressed': True,
+                           'state_restore': 'native_checkpoint' if getattr(strategy_class, 'LIVE_INCREMENTAL_NATIVE', False)
+                           else 'validated_cold_rebuild_from_postgresql'})
+            await db.commit()
+            logger.warning('RUNNER_RECOVERY_CURSOR_ADVANCED deployment=%s cursor_before=%s cursor_after=%s '
+                           'real_candles=%s historical_orders=0', deployment_id, recovery_expected_cursor,
+                           latest_candle_time, len(recovery_opens))
+            return {'success': True, 'executed': False, 'final_action': 'RECOVERY_VALIDATED',
+                    'recovery_cursor_valid': True, 'historical_orders_suppressed': True}
         await latency_trace.mark(trace_id, "t7", status="STRATEGY_FINISHED")
 
         timer = stage_clock.start("extract_latest_signal")

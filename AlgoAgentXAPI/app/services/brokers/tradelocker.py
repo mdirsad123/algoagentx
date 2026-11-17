@@ -57,6 +57,19 @@ def _retry_after_seconds(value: str | None) -> float:
             return 10.0
 
 
+def _bounded_429_cooldown(retry_after: str | None) -> float:
+    """Rate-limit responses with Retry-After: 0 still require shared backoff.
+
+    This is intentionally conservative; it is NOT a broker-published quota.
+    Never shorten a positive Retry-After value provided by TradeLocker.
+    """
+    try:
+        minimum = max(1.0, min(60.0, float(os.getenv('TRADELOCKER_429_MIN_COOLDOWN_SECONDS', '8'))))
+    except (ValueError, TypeError):
+        minimum = 8.0
+    return max(minimum, _retry_after_seconds(retry_after))
+
+
 def _number(value):
     try:
         return Decimal(str(value)) if value is not None else None
@@ -67,6 +80,13 @@ def _number(value):
 class TradeLockerAdapter(BrokerAdapter):
     def __init__(self, account):
         self.account = account
+        # Capture the SQLAlchemy primary key while the account is loaded.
+        # The auto runner rolls back its AsyncSession before broker metadata
+        # requests; rollback expires mapped attributes. Never re-read an
+        # expired ORM attribute in the synchronous HTTP audit logger, or an
+        # otherwise successful request can raise sqlalchemy MissingGreenlet.
+        account_pk = getattr(account, 'id', None)
+        self.broker_account_db_id = str(account_pk) if account_pk is not None else None
         self.meta = account.metadata_json or {}
         self.environment = str(self.meta.get('tradelocker_environment') or 'demo').lower()
         if self.environment not in ('demo', 'live'):
@@ -139,9 +159,9 @@ class TradeLockerAdapter(BrokerAdapter):
         """
         try:
             spacing_ms = max(0, min(5000, int(os.environ.get(
-                'TRADELOCKER_SHARED_REQUEST_SPACING_MS', '300'))))
+                'TRADELOCKER_SHARED_REQUEST_SPACING_MS', '600'))))
         except ValueError:
-            spacing_ms = 300
+            spacing_ms = 600
         if spacing_ms == 0:
             return
         key = f'tradelocker:request-slot:{self.environment}'
@@ -197,7 +217,12 @@ class TradeLockerAdapter(BrokerAdapter):
         developer_key = os.environ.get('TRADELOCKER_DEVELOPER_API_KEY', '').strip()
         if developer_key:
             headers['tl-developer-api-key'] = developer_key
-        deadline = min(time.time() + 15, context.deadline if context else float('inf'))
+        # Order-context reads may need to wait behind a shared 429 cooldown.
+        # Keep strict per-request budget but do not throw away the entire
+        # remaining copy execution window after only fifteen seconds.
+        priority_budget = max(15, min(60, int(os.getenv('TRADELOCKER_PRIORITY_REQUEST_BUDGET_SECONDS', '30'))))
+        deadline = min(time.time() + (priority_budget if context else 15),
+                       context.deadline if context else float('inf'))
         safe_read = method.upper() == 'GET' or path == '/auth/jwt/token'
         response = None
         for attempt in range(3):
@@ -237,14 +262,14 @@ class TradeLockerAdapter(BrokerAdapter):
             logger.log(logging.WARNING if response.status_code >= 400 else logging.INFO,
                        'TRADELOCKER_OUTCOME deployment=%s account=%s endpoint=%s status=%s attempt=%s outcome=%s',
                        (context.metrics.get('deployment_id') if context else audit.get('deployment_id')),
-                       context.account_id if context else getattr(getattr(self, 'account', None), 'id', self.account_id),
+                       context.account_id if context else (self.broker_account_db_id or self.account_id),
                        path, response.status_code, attempt + 1, 'http_ack' if response.status_code < 400 else 'http_rejected')
             if context:
                 context.metrics['http_requests'] = context.metrics.get('http_requests', 0) + 1
                 context.metrics['retry_attempts'] = context.metrics.get('retry_attempts', 0) + int(attempt > 0)
                 context.metrics['http_429_count'] = context.metrics.get('http_429_count', 0) + int(response.status_code == 429)
             if response.status_code == 429:
-                wait = _retry_after_seconds(response.headers.get('Retry-After'))
+                wait = _bounded_429_cooldown(response.headers.get('Retry-After'))
                 await self._cooldown(wait)
                 logger.warning('TRADELOCKER_COOLDOWN account=%s endpoint=%s status=429 attempt=%s cooldown_s=%s', self.account_id, path, attempt + 1, wait)
             elif response.status_code == 401 and auth:
@@ -418,14 +443,14 @@ class TradeLockerAdapter(BrokerAdapter):
                 if self._config_cache is None:
                     async def load_config():
                         return (await self._request('GET', '/trade/config')).get('d') or {}
-                    self._config_cache = await shared_cached(f'tradelocker:config:v2:{key}', 300, load_config) if key else await load_config()
+                    self._config_cache = await shared_cached(f'tradelocker:config:v2:{key}', 1800, load_config) if key else await load_config()
                     if not isinstance(self._config_cache, dict):
                         raise RuntimeError('TradeLocker configuration schema invalid')
                     if client is not None and shared_key and self._config_cache:
-                        await client.set(shared_key, json.dumps(self._config_cache), ex=300)
+                        await client.set(shared_key, json.dumps(self._config_cache), ex=1800)
                 if key and self._config_cache:
-                    _SESSION_CACHE.setdefault(key, {}).update(config=self._config_cache, config_expiry=time.monotonic() + 300)
-            self._config_expires = time.monotonic() + 300
+                    _SESSION_CACHE.setdefault(key, {}).update(config=self._config_cache, config_expiry=time.monotonic() + 1800)
+            self._config_expires = time.monotonic() + 1800
         return self._config_cache
 
     async def get_account_info(self):
@@ -531,11 +556,11 @@ class TradeLockerAdapter(BrokerAdapter):
                         if not isinstance(data, dict) or not isinstance(data.get('instruments'), list):
                             raise RuntimeError('TradeLocker instruments response missing valid instruments list')
                         return data['instruments']
-                    self._instrument_cache = await shared_cached(f'tradelocker:instruments:v2:{key}', 300, load_instruments) if key else await load_instruments()
+                    self._instrument_cache = await shared_cached(f'tradelocker:instruments:v2:{key}', 1800, load_instruments) if key else await load_instruments()
                     if client is not None and shared_key:
-                        await client.set(shared_key, json.dumps(self._instrument_cache), ex=300)
+                        await client.set(shared_key, json.dumps(self._instrument_cache), ex=1800)
                 if key:
-                    _SESSION_CACHE.setdefault(key, {}).update(instruments=self._instrument_cache, instruments_expiry=time.monotonic() + 300)
+                    _SESSION_CACHE.setdefault(key, {}).update(instruments=self._instrument_cache, instruments_expiry=time.monotonic() + 1800)
         return self._instrument_cache
 
     async def get_symbols(self, query=None, limit=200):

@@ -35,13 +35,26 @@ docker compose --env-file .env.prod up -d --build api web # if changes app or ap
 docker compose --env-file .env.prod -f docker-compose.yml --profile worker up -d --build
 docker compose --env-file .env.prod -f docker-compose.yml --profile worker up -d celery_worker
 
-# check strategy speed
+# check strategy speed windows powerhsell
 docker compose --env-file .env.prod logs -f --tail 0 --no-color live_legacy_runner_worker | ForEach-Object {
     if ($_ -match 'RUNNER_GENERATE_COMPLETE.*deployment=([a-f0-9-]+).*total_wall_s=([\d.]+)') {
         $strategy = if ($matches[1] -eq 'c07ddcb6-a82e-4174-8e35-e1b021edc871') { 'NAS100' } elseif ($matches[1] -eq '88a20c09-1035-45be-a07c-8b832cc7e91e') { 'GOLD' } else { 'OTHER' }
         "$strategy : $($matches[2]) seconds"
     }
 }
+
+# below for oracle bash to check strategy speed
+docker compose --env-file .env.prod logs -f --tail 0 --no-color live_legacy_runner_worker | grep --line-buffered 'RUNNER_GENERATE_COMPLETE' | awk '{
+  if (match($0, /deployment=[a-f0-9-]+/)) {
+    id=substr($0, RSTART+11, RLENGTH-11)
+    if (match($0, /total_wall_s=[0-9.]+/)) {
+      seconds=substr($0, RSTART+13, RLENGTH-13)
+      strategy=(id=="c07ddcb6-a82e-4174-8e35-e1b021edc871" ? "NAS100" : id=="88a20c09-1035-45be-a07c-8b832cc7e91e" ? "GOLD" : "OTHER")
+      print strategy " : " seconds " seconds"
+      fflush()
+    }
+  }
+}'
 
 Use this especially when:
 1. API logs — last 2 hours

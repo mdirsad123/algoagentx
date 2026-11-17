@@ -369,11 +369,24 @@ export const liveTradingApi = {
     throw new Error("Compatibility check is still queued or running. Settings remain editable; retry Check to reconnect to the active job.");
   },
 
-  async createDeploymentManualSignal(id: string, payload: { signal_type?: string; signal?: string; price: number; reason?: string | null }): Promise<ManualSignalResponse> {
-    const response = await axiosInstance.post<Envelope<ManualSignalResponse>>(`/api/v1/live/deployments/${id}/manual-signal`, payload);
+  async getManualSignalStatus(id: string): Promise<{ enabled: boolean; mode: string; running: boolean; auto_trade_enabled: boolean; copy_trading_enabled: boolean; copy_account_count: number }> {
+    const response = await axiosInstance.get<Envelope<{ enabled: boolean; mode: string; running: boolean; auto_trade_enabled: boolean; copy_trading_enabled: boolean; copy_account_count: number }>>(`/api/v1/live/deployments/${id}/manual-signal/status`);
     return unwrap(response.data);
   },
 
+  async createDeploymentManualSignal(id: string, payload: { signal_type: "BUY" | "SELL"; price: number; stop_loss: number; target: number; request_id: string; confirmation: string; reason?: string }): Promise<ManualSignalResponse> {
+    // Submit a durable intent; the existing reconciliation worker calls the
+    // same execute_signal() pipeline outside this HTTP request.
+    const response = await axiosInstance.post<Envelope<ManualSignalResponse>>(`/api/v1/live/deployments/${id}/manual-signal`, payload, { timeout: 20000 });
+    return unwrap(response.data);
+  },
+
+
+  async getManualSignalRequest(id: string, requestId: string): Promise<{ status: string; signal_id: string; rejection_reason?: string | null; primary_order_status?: string | null; copy_filled: number; copy_expected: number; copy_results: { account_id: string; status: string; broker_order_id?: string | null; error?: string | null }[] }> {
+    const response = await axiosInstance.get<Envelope<{ status: string; signal_id: string; rejection_reason?: string | null; primary_order_status?: string | null; copy_filled: number; copy_expected: number; copy_results: { account_id: string; status: string; broker_order_id?: string | null; error?: string | null }[] }>>(
+      `/api/v1/live/deployments/${id}/manual-signal/requests/${requestId}`, { timeout: 12000 });
+    return unwrap(response.data);
+  },
 
   async refreshDeploymentCandles(id: string, count = 100): Promise<LiveCandleSnapshot> {
     const response = await axiosInstance.post<Envelope<LiveCandleSnapshot>>(`/api/v1/live/deployments/${id}/refresh-candles`, null, { params: { count } });

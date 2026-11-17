@@ -208,3 +208,4 @@ migration.log
 # Generated patch archives only; do not hide arbitrary application ZIP assets.
 /artifacts/**/*.zip
 /AlgoAgentXApp/algoagentx.zip
+/bat_file/oracle_cloud_ubuntu_cmd.txt

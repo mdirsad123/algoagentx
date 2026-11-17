@@ -248,6 +248,24 @@ async def _existing_order_for_client_id(db: AsyncSession, client_order_id: str) 
     return (await db.execute(select(LiveOrder).where(LiveOrder.client_order_id == client_order_id))).scalar_one_or_none()
 
 
+def _is_recoverable_copy_pre_submit_throttle(*, is_tradelocker: bool, is_copy: bool,
+                                               submitted_at: str | None, success: bool,
+                                               message: str) -> bool:
+    """Only transient failures proven to occur BEFORE an order POST can retry.
+
+    HTTP POST 429/timeout is not eligible because submitted_at is already set.
+    An unknown post-submit result must be reconciled, never sent twice.
+    """
+    message = str(message or '').lower()
+    return bool(
+        is_tradelocker and is_copy and not submitted_at and not success
+        and any(token in message for token in (
+            '429', 'cooldown', 'request pacing', 'rate limit',
+            'route allowance', 'request coordinator', 'background read deferred',
+        ))
+    )
+
+
 def _safe_to_reclaim_copy_pre_submit(order: LiveOrder | None) -> bool:
     if order is None or str(getattr(order, 'status', '')).upper() != 'SKIPPED':
         return False
@@ -542,6 +560,16 @@ async def _execute_demo_entry(
     actual_qty = _result_volume(result, qty)
     resolved_broker_symbol = _resolved_order_symbol(result, broker_symbol)
 
+    # A known pre-submit throttling failure is safe to reconsider while the
+    # ORIGINAL primary fill is still recent. No POST may have started.
+    # Any ambiguous/attempted POST remains PENDING for broker reconciliation.
+    transient_before_submit = _is_recoverable_copy_pre_submit_throttle(
+        is_tradelocker=is_tradelocker,
+        is_copy=bool(getattr(deployment, '_copy_execution_target', False)),
+        submitted_at=context.metrics.get('submitted_at') if context is not None else None,
+        success=bool(result.success),
+        message=str(getattr(result, 'message', '') or ''),
+    )
     order_values = dict(
         trace_id=getattr(signal, 'trace_id', None),
         deployment_id=deployment.id,
@@ -561,10 +589,12 @@ async def _execute_demo_entry(
         target=target,
         status=(str(getattr(result, "status", "") or "PLACED").upper() if result.success
                 else "PENDING" if get_broker_code(broker) == 'TRADELOCKER' and str(getattr(result, 'status', '')).upper() == 'UNCERTAIN'
-                else "SKIPPED" if str(getattr(result, 'status', '')).upper() == 'SKIPPED'
+                else "SKIPPED" if transient_before_submit or str(getattr(result, 'status', '')).upper() == 'SKIPPED'
                 else "ERROR"),
         error_message=None if result.success else result.message,
         raw_response={**(result.raw_response or {}), "client_order_id": client_order_id,
+                      **({'safe_pre_submit_retry': True, 'requires_reconciliation': False}
+                         if transient_before_submit else {}),
                       'execution_timing': dict(context.metrics) if context else {},
                       **({"sizing": sizing_metadata} if sizing_metadata else {})},
     )
