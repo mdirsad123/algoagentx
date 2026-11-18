@@ -64,6 +64,24 @@ def _symbols_match(requested: object, actual: object) -> bool:
     return bool(req and act and (req == act or req.startswith(act) or act.startswith(req)))
 
 
+def _tradelocker_position_matches_deployment(deployment: StrategyDeployment, broker_symbol: object) -> bool:
+    """A shared TradeLocker account must not assign another market's position here.
+
+    For example, X479 can be NAS100's primary and GOLD's copy at the same
+    time. /positions returns the *whole account*, not just the instrument
+    being reconciled. Match broker_symbol first and also accept the configured
+    strategy instrument (e.g. XAUUSD versus XAUUSD.X).
+
+    If the target has no identifiable instrument, fail closed: assigning an
+    unknown position to this deployment corrupts downstream exposure/exit state.
+    """
+    # The broker-specific symbol is the authoritative choice when configured.
+    # Fall back to the deployment instrument only when no broker mapping exists.
+    # An inconsistent/stale secondary alias must not broaden ownership.
+    configured = getattr(deployment, "broker_symbol", None) or getattr(deployment, "instrument", None)
+    return _symbols_match(configured, broker_symbol)
+
+
 def _normalize_order_status(value: object) -> str:
     v = str(value or "").strip().lower()
     if v in {"complete", "completed", "filled", "fill", "executed"}:
@@ -354,6 +372,8 @@ async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, 
     closed = 0
     total_unrealized = Decimal("0")
     total_realized = Decimal("0")
+    unrelated_positions_skipped = 0
+    foreign_owner_conflicts = 0
     provider_upper = provider_code.upper()
     normalizer = (_tradelocker_position_values if provider_upper == "TRADELOCKER" else _mt5_position_values if provider_upper == "MT5" else _ctrader_position_values if provider_upper in {"CTRADER", "CTRADER_API"} else _upstox_position_values)
 
@@ -362,6 +382,16 @@ async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, 
             continue
         values = normalizer(raw, deployment)
         if not values:
+            continue
+        # TradeLocker returns all instruments on one account. The same broker
+        # account may be a primary for NAS100 and a copy target for GOLD.
+        # Never create an XAUUSD position under a NAS100 deployment (or vice
+        # versa). Account-scoped snapshots are still read in full so transport
+        # errors cannot be mistaken for a flat account.
+        if provider_upper == "TRADELOCKER" and not _tradelocker_position_matches_deployment(
+            deployment, values["symbol"]
+        ):
+            unrelated_positions_skipped += 1
             continue
         total_unrealized += _dec(values.get("unrealized"))
         total_realized += _dec(values.get("realized"))
@@ -385,6 +415,23 @@ async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, 
                 and p.side == values["side"]
                 and _symbols_match(p.symbol, values["symbol"])
             ), None)
+        if existing is None and provider_upper == "TRADELOCKER" and broker_position_id:
+            # Even two deployments trading the SAME symbol must not each
+            # manufacture ownership of one broker position. Only an existing
+            # OPEN row under this deployment can be updated. Ownership across
+            # deployments requires an explicit order/position reconciliation,
+            # not time/qty/price guesses.
+            foreign_owner = (await db.execute(select(LivePosition.id).where(
+                LivePosition.broker_account_id == deployment.broker_account_id,
+                LivePosition.broker_position_id == broker_position_id,
+                LivePosition.deployment_id != deployment.id,
+                LivePosition.status == "OPEN",
+            ).limit(1))).scalar_one_or_none()
+            if foreign_owner is not None:
+                # Fail closed rather than assign a second position to this
+                # deployment. Expose the count in reconciliation audit stats.
+                foreign_owner_conflicts += 1
+                continue
         if existing is None:
             existing = LivePosition(
                 deployment_id=deployment.id,
@@ -483,6 +530,8 @@ async def reconcile_positions(db: AsyncSession, deployment: StrategyDeployment, 
     return {
         "positions_created": created,
         "positions_updated": updated,
+        "positions_unrelated_skipped": unrelated_positions_skipped,
+        "positions_foreign_owner_conflicts": foreign_owner_conflicts,
         "positions_closed": closed,
         "management_states_closed": management_states_closed,
         "open_positions_count": len([p for p in open_rows if p.status == "OPEN"]),

@@ -101,6 +101,28 @@ def _symbol_compact(value: object) -> str:
     return "".join(ch for ch in str(value or "").strip().upper() if ch.isalnum())
 
 
+def _copy_pending_entry_conflicts(pending_orders, deployment_id: object, symbol: object) -> bool:
+    """Prevent duplicate/ambiguous entries without coupling unrelated markets.
+
+    The same broker account can be NAS100 primary and XAUUSD copy. A pending
+    NAS100 entry must not block a new XAUUSD order. Pending entries from this
+    deployment *or the same underlying symbol on another deployment* remain
+    blockers until broker history confirms their outcome.
+    """
+    wanted = _symbol_compact(symbol)
+    if not wanted:
+        # Missing instrument identity is not proof that the pending order is
+        # unrelated; do not loosen the safety gate.
+        return bool(pending_orders)
+    for row in pending_orders:
+        if str(row.deployment_id) == str(deployment_id):
+            return True
+        existing = _symbol_compact(row.symbol)
+        if not existing or wanted == existing or wanted.startswith(existing) or existing.startswith(wanted):
+            return True
+    return False
+
+
 def _canonical_symbol_fallback(value: object) -> str:
     """Best-effort broker-neutral symbol for cross-broker routing.
 
@@ -1948,13 +1970,21 @@ async def _dispatch_copy_account(*, account_id, deployment_snapshot, signal_snap
             if primary_mode and str(broker.mode).upper() != primary_mode:
                 raise ValueError('Copy target DEMO/LIVE environment differs from primary')
             if copy_signal.signal_type in {'BUY', 'SELL'}:
-                unresolved = (await copy_db.execute(select(LiveOrder.id).where(
+                # Isolate distinct markets on a shared broker account while
+                # keeping same-deployment/same-instrument duplicate protection.
+                # X479 may be NAS100's primary AND GOLD's copy: an unrelated
+                # NAS100 pending order must not block a GOLD copy entry.
+                unresolved = (await copy_db.execute(select(
+                    LiveOrder.deployment_id, LiveOrder.symbol,
+                ).where(
                     LiveOrder.broker_account_id == account_id,
                     LiveOrder.action == 'ENTRY',
                     LiveOrder.status.in_(('PENDING', 'SUBMITTED', 'PLACED', 'ACCEPTED', 'PENDING_DEMO')),
-                ).limit(1))).scalar_one_or_none()
-                if unresolved is not None:
-                    raise ValueError('Destination account has an unresolved entry; reconcile before another signal')
+                ))).all()
+                if _copy_pending_entry_conflicts(
+                    unresolved, target.id, canonical_symbol or primary_signal_symbol
+                ):
+                    raise ValueError('Destination account has an unresolved entry for this deployment/instrument; reconcile before another signal')
             if canonical_symbol:
                 target.instrument = target.broker_symbol = copy_signal.symbol = canonical_symbol
                 target.instrument_key = None
