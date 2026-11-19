@@ -51,6 +51,8 @@ def validate_recovery_candles(*, candles, cursor, target, calendar, now, step=30
 TRANSIENT_RECOVERY_REASONS = frozenset({
     'broker_session_unknown', 'LOCK_SKIPPED', 'TimeoutError',
     'ConnectionError', 'OSError', 'OperationalError', 'InterfaceError',
+    'WORKER_LOST', 'WORKER_LOST_SIGKILL', 'TimeLimitExceeded',
+    'SoftTimeLimitExceeded', 'HTTP_429', 'HTTP_502', 'HTTP_503', 'HTTP_504',
 })
 
 
@@ -73,6 +75,11 @@ def recovery_status_blocks(status, *, now):
     started = float(status.get('started_at') or 0)
     retry_at = float(status.get('retry_at') or 0)
     attempts = int(status.get('attempts') or 0)
+    from .recovery_lifecycle import MAX_ATTEMPTS, POLICY_VERSION
+    if (status.get('policy_version') == POLICY_VERSION
+            and int(status.get('cycle_attempts') or 0) >= MAX_ATTEMPTS
+            and stage != 'RECOVERED'):
+        return True
     if stage == 'RUNNING':
         return now < started + 2500
     if stage == 'RECOVERED':
@@ -95,7 +102,10 @@ def recovery_status_blocks(status, *, now):
 
 
 def validate_recovery_state(*, generated, entry, fingerprint, opens, previous):
-    dates = tuple(pd.Timestamp(t).to_pydatetime() for t in generated['Date'])
+    # Frozen batch strategies may emit UTC-naive dates; compare canonical UTC
+    # instants, exactly as the candle loader and retained cache do.
+    from .retained_strategy_state import utc
+    dates = tuple(utc(pd.Timestamp(t).to_pydatetime()) for t in generated['Date'])
     if (entry is None or entry.fingerprint != fingerprint or entry.candle_time != opens[-1]
             or entry.candle_count != len(generated)
             or tuple(t for t in dates if t > previous) != opens

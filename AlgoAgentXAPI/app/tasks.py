@@ -20,6 +20,7 @@ from .services.backtest_service import BacktestService
 from .services.metrics import MetricsCalculator
 from .services.credits.management import CreditManagementService
 from .services.ai_screener.job_handlers import AIScreenerJobService
+from .services.live.recovery_task import RecoveryTask
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -1140,22 +1141,31 @@ async def _verified_gap_reseed_async(deployment_id: str, missing_iso: str, targe
         await engine.dispose()
 
 
-@celery_app.task(name='app.tasks.verified_gap_reseed_task', bind=True, max_retries=0,
-                 time_limit=2400, soft_time_limit=2300)
+# Prevent immediate redelivery storms if a heavy recovery child is SIGKILLed.
+# Global Celery task_reject_on_worker_lost=True remains unchanged for all
+# other tasks; the recovery cursor stays unchanged until verified replay.
+@celery_app.task(name='app.tasks.verified_gap_reseed_task', bind=True, base=RecoveryTask, max_retries=0,
+                 time_limit=2400, soft_time_limit=2300,
+                 acks_late=True, reject_on_worker_lost=False)
 def verified_gap_reseed_task(self, deployment_id: str, missing_iso: str, target_iso: str):
     """Run on EXISTING live_history worker; normal strategy runner remains responsive."""
     import redis
     from .core.config import settings
 
-    key = f'live:gap:reseed:queued:{deployment_id}:{missing_iso}'
-    status_key = f'live:gap:reseed:status:{deployment_id}'
-    r = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    from .services.live.recovery_lifecycle import claim, finish, exception_reason, MAX_ATTEMPTS
+    r = redis.Redis.from_url(settings.redis_url, decode_responses=True,
+                             socket_connect_timeout=2, socket_timeout=2)
+    token = None
+    attempts = 0
+    task_id = str(self.request.id)
     try:
-        previous = r.hgetall(status_key)
-        attempts = (int(previous.get('attempts') or 0) if previous.get('missing_open') == missing_iso else 0) + 1
-        r.hset(status_key, mapping={'status': 'RUNNING', 'missing_open': missing_iso,
-                                    'started_at': int(__import__('time').time()),
-                                    'target_open': target_iso, 'attempts': attempts})
+        token, attempts = claim(r, deployment_id, task_id, missing_iso, target_iso)
+        if token is None:
+            return {'deployment_id': deployment_id, 'success': False,
+                    'status': 'DUPLICATE_OR_HELD', 'admission': attempts}
+        logger.warning('RUNNER_RECOVERY_TASK_STARTED deployment=%s task_id=%s '
+                       'attempts=%s historical_orders_suppressed=true',
+                       deployment_id, self.request.id, attempts)
         result = asyncio.run(_verified_gap_reseed_async(deployment_id, missing_iso, target_iso))
         good = (bool(result.get('success')) and result.get('recovery_cursor_valid') is True
                 and str(result.get('final_action')) not in {
@@ -1168,11 +1178,10 @@ def verified_gap_reseed_task(self, deployment_id: str, missing_iso: str, target_
         from .services.live.verified_recovery import (TRANSIENT_RECOVERY_REASONS,
                                                       recovery_retry_delay_seconds)
         reason = str(result.get('final_action') or result.get('reason') or 'unknown')[:200]
-        stage = ('RECOVERED' if good else 'RETRYABLE' if reason in TRANSIENT_RECOVERY_REASONS
+        stage = ('RECOVERED' if good else 'RETRYABLE' if reason in TRANSIENT_RECOVERY_REASONS and attempts < MAX_ATTEMPTS
                  else 'REQUIRES_ATTENTION')
         retry_at = int(__import__('time').time()) + recovery_retry_delay_seconds(attempts)
-        r.hset(status_key, mapping={'status': stage, 'missing_open': missing_iso,
-                                    'attempts': attempts, 'retry_at': retry_at, 'reason': reason})
+        finish(r, deployment_id, task_id, token, stage=stage, reason=reason, retry_at=retry_at)
         logger.warning('RUNNER_RECOVERY_TASK_STATUS deployment=%s stage=%s reason=%s '
                        'attempts=%s cursor_valid=%s historical_orders_suppressed=true',
                        deployment_id, stage, reason, attempts,
@@ -1182,17 +1191,55 @@ def verified_gap_reseed_task(self, deployment_id: str, missing_iso: str, target_
     except Exception as exc:
         from .services.live.verified_recovery import (TRANSIENT_RECOVERY_REASONS,
                                                       recovery_retry_delay_seconds)
-        reason = type(exc).__name__
-        stage = 'RETRYABLE' if reason in TRANSIENT_RECOVERY_REASONS else 'REQUIRES_ATTENTION'
+        reason = exception_reason(exc)
+        stage = 'RETRYABLE' if reason in TRANSIENT_RECOVERY_REASONS and attempts < MAX_ATTEMPTS else 'REQUIRES_ATTENTION'
         retry_at = int(__import__('time').time()) + recovery_retry_delay_seconds(attempts)
-        r.hset(status_key, mapping={'status': stage, 'missing_open': missing_iso,
-                                    'attempts': attempts, 'reason': reason,
-                                    'retry_at': retry_at})
+        if token is not None:
+            finish(r, deployment_id, task_id, token, stage=stage, reason=reason, retry_at=retry_at)
         logger.error('RUNNER_RECOVERY_TASK_EXCEPTION deployment=%s stage=%s '
                      'reason=%s attempts=%s cursor_unchanged_or_unverified=true',
                      deployment_id, stage, reason, attempts)
         # No broker orders are retried. Historical parity failures still block.
         raise
     finally:
-        r.delete(key)
+        r.close()
+
+
+# This signal is delivered by the Celery parent for a lost prefork child.
+# The child itself cannot update Redis after a SIGKILL.
+from celery.signals import task_failure
+
+
+@task_failure.connect(weak=False)
+def _hold_lost_verified_gap_reseed(sender=None, task_id=None, exception=None,
+                                  args=None, **kwargs):
+    if (getattr(sender, 'name', None) != 'app.tasks.verified_gap_reseed_task'
+            or type(exception).__name__ not in {'WorkerLostError', 'TimeLimitExceeded'}
+            or not isinstance(args, (list, tuple)) or len(args) < 2
+            or not task_id):
+        return
+    from .services.live.recovery_worker_loss import (
+        worker_loss_reason, worker_loss_cgroup_memory_events,
+    )
+    from .core.config import settings
+    import redis
+
+    deployment_id, missing_iso = str(args[0]), str(args[1])
+    reason = ('TimeLimitExceeded' if type(exception).__name__ == 'TimeLimitExceeded'
+              else worker_loss_reason(str(exception)))
+    r = redis.Redis.from_url(settings.redis_url, decode_responses=True,
+                             socket_connect_timeout=2, socket_timeout=2)
+    try:
+        from .services.live.recovery_lifecycle import worker_lost
+        changed = worker_lost(r, deployment_id, str(task_id), missing_iso, reason)
+        if changed:
+            logger.error('RUNNER_RECOVERY_WORKER_LOST deployment=%s task_id=%s '
+                         'reason=%s cursor_requires_database_verification=true bounded_retry=true '
+                         'cgroup_memory_events=%s',
+                         deployment_id, task_id, reason,
+                         worker_loss_cgroup_memory_events())
+    except Exception:
+        logger.exception('RUNNER_RECOVERY_WORKER_LOST_STATUS_FAILED deployment=%s '
+                         'task_id=%s', deployment_id, task_id)
+    finally:
         r.close()

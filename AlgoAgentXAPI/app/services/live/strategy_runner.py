@@ -559,16 +559,17 @@ async def run_strategy_for_deployment(
             if (not recovery_calendar or cursor != recovery_expected_cursor
                     or candle_time is None or not suppress_broker_order_for_catchup):
                 return {'success': False, 'final_action': 'HOLD_RECOVERY_EVIDENCE_MISMATCH'}
-            rows = (await db.execute(select(LiveMarketCandle).where(
+            # Project only validation fields. ORM eager joins repeat strategy
+            # source/config JSON for EVERY candle and inflate recovery memory.
+            columns = ('candle_time', 'open', 'high', 'low', 'close', 'volume', 'source', 'is_closed')
+            rows = (await db.execute(select(*(getattr(LiveMarketCandle, k) for k in columns)).where(
                 LiveMarketCandle.deployment_id == deployment_id,
                 LiveMarketCandle.timeframe == deployment.timeframe,
                 LiveMarketCandle.candle_time > cursor,
                 LiveMarketCandle.candle_time <= candle_time,
-            ).order_by(LiveMarketCandle.candle_time))).scalars().all()
+            ).order_by(LiveMarketCandle.candle_time))).mappings().all()
             recovery_opens = validate_recovery_candles(
-                candles=[{k: getattr(row, k) for k in
-                          ('candle_time', 'open', 'high', 'low', 'close', 'volume', 'source', 'is_closed')}
-                         for row in rows], cursor=cursor, target=ensure_utc(candle_time),
+                candles=rows, cursor=cursor, target=ensure_utc(candle_time),
                 calendar=recovery_calendar, now=datetime.now(timezone.utc))
         if candle_time is not None and execute:
             cursor = ensure_utc(getattr(deployment, 'last_processed_candle_time', None))
@@ -834,6 +835,7 @@ async def run_strategy_for_deployment(
                 # New compatible DB strategies can resume from a JSON checkpoint
                 # after process restart (only when source/runtime/cursor match).
                 if (bool(getattr(strategy_class, "LIVE_INCREMENTAL_NATIVE", False))
+                        and not allow_demo_gap_reseed
                         and state_id not in retained_states._entries
                         and getattr(deployment, 'last_processed_candle_time', None) is not None
                         and len(probe) > 1):
