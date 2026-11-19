@@ -1,4 +1,4 @@
-"""NAS100 V4.8-only adapter authorization (DEMO, M5, 80K, source pinned).
+"""NAS100 V4.8-only adapter authorization (DEMO/LIVE, M5, 80K, source pinned).
 
 Do not mutate the DB strategy; avoid approving variants by title/symbol.
 Monitor-only is diagnostic; explicit parity approval is required for orders.
@@ -18,8 +18,8 @@ def select_nas100_v48_class(*, settings: Any, source_code: str, mode: str,
         return None, "live_incremental_globally_disabled"
     if not bool(getattr(settings, "live_incremental_adapter_enabled", False)):
         return None, "adapter_disabled"
-    if str(mode).upper() != "DEMO":
-        return None, "demo_only"
+    if str(mode).upper() not in {'DEMO', 'LIVE'}:
+        return None, 'broker_mode_required'
     if str(instrument).upper().strip() not in {"NAS100", "NAS100.X", "USTECH", "USTECH.X", "USTEC", "USTEC.X", "USTECH100", "USTECH100.X", "US100", "US100.X"}:
         return None, "nas100_instrument_not_allowed"
     if int(timeframe_seconds) != 300:

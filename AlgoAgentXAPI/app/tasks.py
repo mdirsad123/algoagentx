@@ -1091,7 +1091,8 @@ async def _verified_gap_reseed_async(deployment_id: str, missing_iso: str, targe
         async with sessions() as db:
             deployment = (await db.execute(select(StrategyDeployment).where(
                 StrategyDeployment.id == deployment_uuid))).scalar_one_or_none()
-            if not deployment or deployment.status != 'RUNNING' or deployment.mode != 'DEMO':
+            if (not deployment or deployment.status != 'RUNNING'
+                    or str(deployment.mode or '').upper() not in {'DEMO', 'LIVE'}):
                 return {'success': False, 'reason': 'deployment_not_eligible'}
             step = parse_timeframe_to_seconds(str(deployment.timeframe))
             cursor = deployment.last_processed_candle_time

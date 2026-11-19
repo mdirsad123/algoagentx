@@ -581,11 +581,11 @@ async def run_strategy_for_deployment(
             if (cursor is not None and str(deployment.timeframe).upper() in {'M5', '5M'}
                     and requested != cursor + timedelta(
                     seconds=parse_timeframe_to_seconds(str(deployment.timeframe or 'M5')))):
-                # The only exception is a separately authorized DEMO, order-suppressed,
+                # The only exception is a separately authorized TradeLocker, order-suppressed,
                 # cold re-seed after bounded broker-history refetches. Never let Run Once,
-                # ordinary events or LIVE mode leap over a candle without evaluation.
+                # ordinary events or unverified sessions leap over a candle without evaluation.
                 permitted_reseed = (allow_demo_gap_reseed
-                                    and str(deployment.mode or '').upper() == 'DEMO'
+                                    and str(deployment.mode or '').upper() in {'DEMO', 'LIVE'}
                                     and suppress_broker_order_for_catchup
                                     and bool(getattr(settings, 'live_runner_demo_observed_gap_resume_enabled', False)))
                 if not permitted_reseed:
@@ -631,7 +631,7 @@ async def run_strategy_for_deployment(
             return {"success": False, **detail, "final_action": "HOLD_RUNTIME_CONTRACT_MISMATCH"}
 
         # Strictly opt-in runtime adapter. The authoritative DB Strategy source
-        # remains FROZEN and used in backtests; only the DEMO runner can select
+        # remains FROZEN and used in backtests; DEMO and LIVE can select
         # this audited hybrid when all independent approval switches match.
         # Profile/runtime contract intentionally resolved from ORIGINAL class.
         adapter = select_registered_adapter(
@@ -648,7 +648,7 @@ async def run_strategy_for_deployment(
             global_enabled=bool(getattr(settings, "live_incremental_enabled", False)),
         )
         if allow_demo_gap_reseed:
-            # Only exact-source, registered, DEMO adapters can perform a
+            # Only exact-source, registered, supported-mode adapters can perform a
             # cold recovery. A broker-session verification is required by the
             # OUTER queued recovery task; this gate separately validates source
             # identity/capability. Neither check alone grants order permission.
@@ -658,7 +658,7 @@ async def run_strategy_for_deployment(
                     mode=mode, suppressed=suppress_broker_order_for_catchup,
                     enabled=bool(getattr(settings, 'live_runner_demo_observed_gap_resume_enabled', False))):
                 detail = {'error_code': 'GAP_RESEED_ADAPTER_NOT_APPROVED',
-                          'message': 'HOLD: Gap recovery requires registered exact-source DEMO incremental adapter and suppressed orders'}
+                          'message': 'HOLD: Gap recovery requires registered exact-source incremental adapter and suppressed orders'}
                 await _log(db, deployment, 'RUNNER_GAP_RESEED_REJECTED', detail['message'], 'ERROR', detail)
                 await db.commit()
                 return {'success': False, 'executed': False, 'final_action': 'HOLD_GAP_RESEED_NOT_APPROVED', **detail}
@@ -693,7 +693,7 @@ async def run_strategy_for_deployment(
             suppress_broker_order_for_catchup
             or (pinned_v932 and not v932_demo_order_selected)
             or pinned_v933_research or hybrid_monitor_only
-            or (mode == "DEMO" and (generic_monitor_requested or legacy_monitor_requested))
+            or (mode in {'DEMO', 'LIVE'} and (generic_monitor_requested or legacy_monitor_requested))
         )
         if v932_demo_order_selected:
             logger.warning(

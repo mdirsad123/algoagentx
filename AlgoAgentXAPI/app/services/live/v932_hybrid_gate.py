@@ -1,4 +1,4 @@
-"""Strict per-source V9.32 DEMO hybrid gate (NO implicit parity approval).
+"""Strict per-source V9.32 DEMO/LIVE hybrid gate (NO implicit parity approval).
 Source pin is the UTF-8 stripped DB source SHA displayed in AlgoAgentX.
 The bundled original must not be changed when a future strategy is added.
 """
@@ -21,8 +21,8 @@ def select_v932_hybrid_class(*, settings: Any, source_code: str, mode: str,
     # NOTE: Frozen V9.32 has a documented historical-vs-right-edge BUY
     # discrepancy (2026-11-04 17:30 UTC). Operator-requested DEMO forward
     # testing does not turn that historical mismatch into parity approval.
-    if str(mode).upper() != "DEMO":
-        return None, "demo_only"
+    if str(mode).upper() not in {'DEMO', 'LIVE'}:
+        return None, 'broker_mode_required'
     if str(instrument).upper().strip() not in {"XAUUSD", "XAUUSD.X"}:
         return None, "instrument_not_allowed"
     if int(timeframe_seconds) != 300:
@@ -44,7 +44,8 @@ def select_v932_hybrid_class(*, settings: Any, source_code: str, mode: str,
     # A user can forward-test the exact pinned V9.32 right-edge signals on a
     # DEMO account. This is an operator permission, NOT a parity certification:
     # the frozen historical replay still disagrees on a known old BUY signal.
-    # LIVE is rejected above; stale/replay/duplicate order checks remain in the
+    # LIVE order placement is controlled independently in strategy_runner;
+    # stale/replay/duplicate order checks remain in the
     # shared runner. No strategy logic or source fingerprint is modified.
     monitor = bool(getattr(settings, "live_incremental_monitor_only", True))
     return Strategy, "selected_monitor_only" if monitor else "selected_demo_forward_test"

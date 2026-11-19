@@ -158,8 +158,8 @@ class Settings(BaseSettings):
     live_v64_hybrid_authorized_source_sha256: str = Field(default="", description="DEPRECATED/ignored: V6.4 frozen source fingerprint is enforced automatically")
     live_runner_sequential_catchup_enabled: bool = Field(default=False, description="Process queued DEMO monitor-only candles oldest first; block when a broker candle is absent")
     live_tradelocker_gap_backfill_enabled: bool = Field(default=False, description="Read-only gap detection plus bounded TradeLocker history refetch; does not place orders")
-    live_tradelocker_session_gap_resume_enabled: bool = Field(default=False, description="DEMO only: resume after two matching broker-history snapshots confirm long no-bar interval")
-    live_runner_demo_observed_gap_resume_enabled: bool = Field(default=False, description="DEMO M5 only: bounded long gap continuation from actual consecutive stored broker candles; NOT proof of official exchange closure")
+    live_tradelocker_session_gap_resume_enabled: bool = Field(default=False, description="TradeLocker DEMO/LIVE: resume after two matching broker-history snapshots confirm long no-bar interval")
+    live_runner_demo_observed_gap_resume_enabled: bool = Field(default=False, description="TradeLocker DEMO/LIVE M5: enable broker-calendar-verified cold gap recovery; ordinary observed history alone is NOT proof of closure")
     live_runner_demo_observed_gap_min_missing_bars: int = Field(default=6, description="Minimum absent M5 candle slots for DEMO broker-observed continuation; short holes remain blocked")
     live_tradelocker_session_gap_min_missing_bars: int = Field(default=6, description="Never classify a 1-5 missing M5 bar run as a session closure")
     # Per-timeframe candle-boundary polling, not per-second REST requests.

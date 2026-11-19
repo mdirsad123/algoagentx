@@ -140,10 +140,10 @@ def configured_max_advances(settings: Any) -> int:
 
 
 def adapter_required_for_instrument(settings: Any, *, mode: str, instrument: str) -> bool:
-    """Fail-closed opt-in for selected DEMO instruments, not a global kill switch."""
+    """Fail-closed opt-in for selected broker instruments, not a global kill switch."""
     # This guard is deliberately independent of adapter-enabled/approved flags:
     # turning the adapter off must NOT silently enable old full-history orders.
-    if str(mode).upper() != "DEMO":
+    if str(mode).upper() not in {'DEMO', 'LIVE'}:
         return False
     wanted = {x.strip().upper() for x in str(getattr(
         settings, "live_incremental_require_adapter_instruments", "") or "").split(",") if x.strip()}

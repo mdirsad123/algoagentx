@@ -6,7 +6,7 @@ from hashlib import sha256
 
 def approved_for_gap_reseed(*, selection, source_code: str, mode: str,
                             suppressed: bool, enabled: bool) -> bool:
-    if str(mode).upper() != 'DEMO' or not suppressed or not enabled or selection is None:
+    if str(mode).upper() not in {'DEMO', 'LIVE'} or not suppressed or not enabled or selection is None:
         return False
     if selection.strategy_class is None:
         return False

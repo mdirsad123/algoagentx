@@ -26,8 +26,8 @@ def select_v933_causal_hybrid(*, settings: Any, source_code: str, mode: str,
     # Global monitor=False is a request, never adapter eligibility evidence.
     # This unverified hybrid remains monitor-only in the registry and runner.
     # No Gold-specific environment opt-in is needed to select it safely.
-    if mode.upper() != 'DEMO':
-        return None, 'demo_only'
+    if mode.upper() not in {'DEMO', 'LIVE'}:
+        return None, 'broker_mode_required'
     if instrument.strip().upper() not in {'XAUUSD', 'XAUUSD.X'}:
         return None, 'instrument_not_allowed'
     if timeframe_seconds != 300:

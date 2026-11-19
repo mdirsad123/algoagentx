@@ -1,4 +1,4 @@
-"""Fail-closed *runtime-only* V6.4 adapter gate for local TradeLocker DEMO.
+"""Fail-closed *runtime-only* V6.4 adapter gate for TradeLocker DEMO/LIVE.
 
 The real DB Strategy source stays authoritative and unchanged. This gate ONLY
 selects a trusted, bundled research candidate when an operator has approved
@@ -32,8 +32,8 @@ def select_v64_hybrid_class(*, settings: Any, source_code: str, mode: str,
         return None, 'parity_not_approved'
     if not _true(getattr(settings, 'live_incremental_enabled', False)):
         return None, 'live_incremental_globally_disabled'
-    if str(mode).upper() != 'DEMO':
-        return None, 'demo_only'
+    if str(mode).upper() not in {'DEMO', 'LIVE'}:
+        return None, 'broker_mode_required'
     if str(instrument).upper().strip() not in {'XAUUSD.X', 'XAUUSD'}:
         return None, 'instrument_not_allowed'
     if timeframe_seconds != 300:
@@ -48,7 +48,7 @@ def select_v64_hybrid_class(*, settings: Any, source_code: str, mode: str,
         return None, 'db_source_sha_not_frozen_reference'
     # The bundled baseline SHA(s) above are the source allowlist. Each DB
     # revision is fingerprinted on every selection; no per-deployment .env SHA.
-    # Imported only on genuinely approved DEMO deployments; no other strategy
+    # Imported only on genuinely approved broker deployments; no other strategy
     # sees this large research code or changes behavior.
     from strategies.v64_hybrid_incremental import Strategy
     return Strategy, ('selected_monitor_only' if monitor_only else 'selected')

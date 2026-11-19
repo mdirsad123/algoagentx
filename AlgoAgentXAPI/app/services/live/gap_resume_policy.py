@@ -1,4 +1,4 @@
-"""Pure operator opt-in policy for long broker-observed DEMO M5 discontinuities.
+"""Pure operator opt-in policy for long broker-observed TradeLocker M5 discontinuities.
 
 It is *not* a broker-session calendar and cannot prove whether a historical
 bar should have existed. A recovered gap always requires full cold re-seeding
@@ -13,7 +13,7 @@ def eligible_for_demo_cold_reseed(*, mode: str, enabled: bool, timeframe_seconds
                                   broker_source_verified: bool,
                                   last_two_broker_bars_consecutive: bool) -> bool:
     return (
-        mode.upper() == 'DEMO'
+        mode.upper() in {'DEMO', 'LIVE'}
         and enabled is True
         and timeframe_seconds == 300
         and missing_slots >= max(1, min_missing_slots)

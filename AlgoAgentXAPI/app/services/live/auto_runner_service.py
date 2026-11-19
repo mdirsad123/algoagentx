@@ -187,7 +187,7 @@ async def _try_demo_gap_recovery(
 ) -> dict[str, Any] | None:
     """Session-aware, restart-durable recovery. Never skip unknown/open sessions.
 
-    A verified CLOSED interval triggers a *queued* 80K cold reseed in the
+    For TradeLocker DEMO or LIVE, a verified CLOSED interval queues an 80K cold reseed in the
     already deployed live_history worker. The shared runner and NAS100 remain
     free. All history signals are suppressed in the reseed task.
     """
@@ -272,7 +272,7 @@ async def _try_demo_gap_recovery(
         # Broker-calendar-proven closed sessions are not missing live trading
         # candles. Three backfill attempts are reserved for REAL/UNKNOWN gaps;
         # do not invent attempt counts to satisfy the older observed-gap policy.
-        if (str(deployment.mode or '').upper() != 'DEMO' or interval_s != 300
+        if (str(deployment.mode or '').upper() not in {'DEMO', 'LIVE'} or interval_s != 300
                 or first_pending <= recovery.missing_open):
             return None
         if redis is None:
@@ -662,9 +662,9 @@ async def run_deployment_if_due(db: AsyncSession, deployment_id: UUID, *, force:
             )
             if recovery.action == 'WAIT_FOR_BACKFILL':
                 # Default remains fail-closed. The operator may separately opt
-                # into DEMO-only, source-pinned cold re-seeding after three
+                # into TradeLocker DEMO/LIVE, source-pinned cold re-seeding after three
                 # bounded broker-history requests fail to recover a long gap.
-                if (not force and str(deployment.mode or '').upper() == 'DEMO'
+                if (not force and str(deployment.mode or '').upper() in {'DEMO', 'LIVE'}
                         and bool(getattr(settings, 'live_runner_demo_observed_gap_resume_enabled', False))
                         and deployment.broker_account_id):
                     recovery_result = await _try_demo_gap_recovery(
