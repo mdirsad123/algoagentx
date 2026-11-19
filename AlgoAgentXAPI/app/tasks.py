@@ -1161,21 +1161,37 @@ def verified_gap_reseed_task(self, deployment_id: str, missing_iso: str, target_
                 and str(result.get('final_action')) not in {
                     'LOCK_SKIPPED', 'HOLD_INCREMENTAL_PRIME_FAILED', 'HOLD_GAP_RESEED_NOT_APPROVED',
                     'HOLD_CANDLE_GAP', 'CANDLE_ALREADY_PROCESSED'})
-        # Only an unavailable broker calendar is retryable: the broker's
-        # subsequent response may verify closure. Never loop infinitely on
-        # source/parity validation errors or falsely mark such jobs recovered.
+        # Broker-session UNKNOWN and deployment-lock contention are transient;
+        # neither justifies moving a cursor. Back off durably and re-verify the
+        # CLOSED market interval in each new task. Source, prime, parity, and
+        # historical data validation failures are terminal until repaired.
+        from .services.live.verified_recovery import (TRANSIENT_RECOVERY_REASONS,
+                                                      recovery_retry_delay_seconds)
         reason = str(result.get('final_action') or result.get('reason') or 'unknown')[:200]
-        stage = ('RECOVERED' if good else
-                 'RETRYABLE' if reason == 'broker_session_unknown' and attempts < 3
+        stage = ('RECOVERED' if good else 'RETRYABLE' if reason in TRANSIENT_RECOVERY_REASONS
                  else 'REQUIRES_ATTENTION')
+        retry_at = int(__import__('time').time()) + recovery_retry_delay_seconds(attempts)
         r.hset(status_key, mapping={'status': stage, 'missing_open': missing_iso,
-                                    'attempts': attempts, 'retry_at': int(__import__('time').time()) + 300,
-                                    'reason': reason})
+                                    'attempts': attempts, 'retry_at': retry_at, 'reason': reason})
+        logger.warning('RUNNER_RECOVERY_TASK_STATUS deployment=%s stage=%s reason=%s '
+                       'attempts=%s cursor_valid=%s historical_orders_suppressed=true',
+                       deployment_id, stage, reason, attempts,
+                       result.get('recovery_cursor_valid'))
         return {'deployment_id': deployment_id, 'success': good,
                 'status': stage, 'reason': reason}
     except Exception as exc:
-        r.hset(status_key, mapping={'status': 'REQUIRES_ATTENTION', 'missing_open': missing_iso, 'reason': type(exc).__name__})
-        # Operator must explicitly re-arm a failed same-gap task after audit.
+        from .services.live.verified_recovery import (TRANSIENT_RECOVERY_REASONS,
+                                                      recovery_retry_delay_seconds)
+        reason = type(exc).__name__
+        stage = 'RETRYABLE' if reason in TRANSIENT_RECOVERY_REASONS else 'REQUIRES_ATTENTION'
+        retry_at = int(__import__('time').time()) + recovery_retry_delay_seconds(attempts)
+        r.hset(status_key, mapping={'status': stage, 'missing_open': missing_iso,
+                                    'attempts': attempts, 'reason': reason,
+                                    'retry_at': retry_at})
+        logger.error('RUNNER_RECOVERY_TASK_EXCEPTION deployment=%s stage=%s '
+                     'reason=%s attempts=%s cursor_unchanged_or_unverified=true',
+                     deployment_id, stage, reason, attempts)
+        # No broker orders are retried. Historical parity failures still block.
         raise
     finally:
         r.delete(key)

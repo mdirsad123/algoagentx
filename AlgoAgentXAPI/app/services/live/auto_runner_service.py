@@ -37,6 +37,7 @@ _RUNNER_SCAN_LOCK = asyncio.Lock()
 _CANDLE_RETRY_ATTEMPTS: dict[tuple[str, str], int] = {}
 # Throttle a known missing-bar log instead of flooding every scheduler tick.
 _GAP_WAIT_LOG_AT: dict[str, float] = {}
+_RECOVERY_BLOCK_LOG_AT: dict[str, float] = {}
 # Bounded, per-process DEMO history-refetch budget. A reboot restarts the
 # attempts but cannot authorize an order or skip a candle by itself.
 # Only successful broker-history calls count toward a no-bar cold re-seed.
@@ -285,9 +286,30 @@ async def _try_demo_gap_recovery(
                            str(v.decode() if isinstance(v, bytes) else v)
                            for k, v in recovered.items()}
                 if decoded.get('missing_open') == missing_key:
-                    from .verified_recovery import recovery_status_blocks
+                    from .verified_recovery import (recovery_status_blocks,
+                                                    TRANSIENT_RECOVERY_REASONS)
                     if recovery_status_blocks(decoded, now=time.time()):
+                        # Previously, a terminal Celery marker could hide why
+                        # the runner recognized CLOSED every 5 minutes but
+                        # never enqueued a new recovery. Surface the stored
+                        # reason without logging secrets or broker responses.
+                        stage = decoded.get('status', 'UNKNOWN')
+                        reason = decoded.get('reason', 'unknown')
+                        now_monotonic = time.monotonic()
+                        if now_monotonic - _RECOVERY_BLOCK_LOG_AT.get(key, -1e12) >= 300:
+                            logger.warning('RUNNER_RECOVERY_STATUS_BLOCKED deployment=%s '
+                                           'missing_open=%s stage=%s reason=%s attempts=%s',
+                                           key, missing_key, stage, reason,
+                                           decoded.get('attempts', '?'))
+                            _RECOVERY_BLOCK_LOG_AT[key] = now_monotonic
                         return None
+                    if (decoded.get('status') in {'REQUIRES_ATTENTION', 'RETRYABLE'}
+                            and decoded.get('reason') in TRANSIENT_RECOVERY_REASONS):
+                        logger.warning('RUNNER_RECOVERY_TRANSIENT_REARM deployment=%s '
+                                       'missing_open=%s previous_stage=%s reason=%s attempts=%s '
+                                       'broker_calendar_result=CLOSED historical_orders_suppressed=true',
+                                       key, missing_key, decoded.get('status'),
+                                       decoded.get('reason'), decoded.get('attempts', '?'))
         except Exception:
             logger.error('RUNNER_RECOVERY_VALIDATION_FAILED deployment=%s redis_status_unavailable=true', key)
             return None

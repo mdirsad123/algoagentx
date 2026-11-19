@@ -42,21 +42,55 @@ def validate_recovery_candles(*, candles, cursor, target, calendar, now, step=30
     return tuple(opens)
 
 
-def recovery_status_blocks(status, *, now):
-    """A dead history worker's RUNNING marker must not permanently wedge a gap.
+# A broker calendar read, advisory-lock conflict, or infrastructure timeout is
+# not evidence of invalid market history. These may be retried after a durable
+# cooldown. Parity, history validation, source pinning, and prime failures MUST
+# remain operator-held. In particular, no retry changes a deployment cursor or
+# sends an order: the queued worker independently re-verifies the broker session
+# and runs with historical orders suppressed.
+TRANSIENT_RECOVERY_REASONS = frozenset({
+    'broker_session_unknown', 'LOCK_SKIPPED', 'TimeoutError',
+    'ConnectionError', 'OSError', 'OperationalError', 'InterfaceError',
+})
 
-    Queue lease exceeds Celery's hard time limit. Absence of a start timestamp
-    in legacy RUNNING records is conservatively treated as expired; the runner
-    advisory lock still prevents overlapping strategy evaluation.
+
+def recovery_retry_delay_seconds(attempts: int) -> int:
+    """Broker-metadata retries only; independent of the 3-history-fetch cap."""
+    return min(1800, 300 * (2 ** min(max(0, int(attempts) - 1), 3)))
+
+
+def recovery_status_blocks(status, *, now):
+    """Respect in-flight locks and fail-closed checks; heal only transient stalls.
+
+    Legacy celery tasks could persist REQUIRES_ATTENTION after a third 429/
+    unknown-calendar attempt. That stranded even a newly broker-confirmed
+    CLOSED NAS100 session. Those known transient statuses now re-arm after
+    a cooldown, but any invalid source/state/parity outcome stays blocked.
+    The caller must verify the CLOSED session before it may queue again.
     """
-    stage = status.get('status')
+    stage = str(status.get('status') or '')
+    reason = str(status.get('reason') or '')
+    started = float(status.get('started_at') or 0)
+    retry_at = float(status.get('retry_at') or 0)
+    attempts = int(status.get('attempts') or 0)
     if stage == 'RUNNING':
-        return now < float(status.get('started_at') or 0) + 2500
-    if stage in {'REQUIRES_ATTENTION', 'RECOVERED'}:
+        return now < started + 2500
+    if stage == 'RECOVERED':
+        # The scheduler checks the actual database cursor separately. Never
+        # replay a task whose successful commit might already have happened.
+        return True
+    if stage == 'REQUIRES_ATTENTION':
+        if reason in TRANSIENT_RECOVERY_REASONS:
+            return now < (retry_at or (started + 2500))
         return True
     if stage == 'RETRYABLE':
-        return (int(status.get('attempts') or 0) >= 3
-                or now < float(status.get('retry_at') or 0))
+        if reason and reason not in TRANSIENT_RECOVERY_REASONS:
+            return True
+        # Support legacy RETRYABLE hashes without retry_at: a 3-attempt cap
+        # formerly indicated terminal attention. New task writes retry_at.
+        if not retry_at and attempts >= 3:
+            return True
+        return now < retry_at
     return False
 
 
